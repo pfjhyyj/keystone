@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from fastapi import FastAPI, Response
 
 from keystone import __version__
-from keystone.composition import build_catalog
+from keystone.composition import build_catalog, build_flow_definitions
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.http import install_errors
@@ -17,7 +17,7 @@ from keystone.platform.dictionary.controllers import router as dictionary_router
 from keystone.platform.files.controllers import router as files_router
 from keystone.platform.files.services.grants import FileGrantService
 from keystone.platform.files.storage import StorageRegistry
-from keystone.platform.flow.catalog import Definition, build_definitions
+from keystone.platform.flow.catalog import Definition
 from keystone.platform.flow.controllers import router as flow_router
 from keystone.platform.flow.services.runs import FlowService
 from keystone.platform.identity.controllers import router as identity_router
@@ -59,10 +59,8 @@ class Runtime:
 
 
 def build_runtime(settings: Settings) -> Runtime:
-    from keystone.businesses.document_review.contracts import definition
-
     catalog = build_catalog()
-    definitions = build_definitions((definition,), catalog.permissions)
+    definitions = build_flow_definitions(catalog)
     load_models()
     heads = expected_heads(settings)
     runtime = Runtime(
@@ -78,11 +76,6 @@ def build_runtime(settings: Settings) -> Runtime:
 
         runtime.flow_engine = Engine(settings)
     return runtime
-
-
-def register_workflows():
-    # Executable business imports belong to the composition root, never the HTTP catalog.
-    from keystone.businesses.document_review import workflow  # noqa: F401
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:

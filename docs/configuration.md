@@ -72,3 +72,5 @@ S3 必须显式填写 endpoint、bucket、region（默认 us-east-1）、access_
 POST /api/v1/files 可传 storage_key=cloud；省略使用默认源，新 File 保存源键及位置指纹。已有文件的源键不随默认配置变化，现有幂等请求省略源时继续定位原源。同一请求键改源报冲突；业务创建本地/云端两份文件应使用不同请求键，并维护两份引用及备份关系。详情仅返回源键。
 
 单本地源也使用 FILE_STORAGES 显式声明 driver 与 root。空映射表示文件存储未配置，协调目录不会自动变成内容源。多源字段直接包含在初始文件结构中，File 的 storage_key 必须由上传服务写入，数据库没有隐式 local 默认值；已有文件的源键及原存储身份须保留，删除源配置会使该源历史文件不可读、不可清理，不会回退到其他源。更换 bucket/endpoint/prefix/region 属于目标变化；使用原源身份的文件会拒绝访问，应使用新源键及业务迁移。密钥轮换不改变存储身份。各进程仍须共享同一宿主协调卷，不提供多宿主锁。
+
+Flow 默认启用，`KEYSTONE_FLOW_ENABLED=false` 只用于明确不执行流程的环境；模型发送仍默认 `disabled`，不会随 Flow 启动而开启。已有实际 `.env` 的显式值优先；旧环境若仍显式设为 false，需同步改为 true。Casbin 权限判断保留。

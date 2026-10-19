@@ -9,6 +9,29 @@ from sqlalchemy.engine import make_url
 from keystone.core.asyncio import new_event_loop
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--require-postgres",
+        action="store_true",
+        help="Fail instead of skipping DB integration tests",
+    )
+
+
+def pytest_configure(config):
+    if not config.getoption("--require-postgres"):
+        return
+    try:
+        url = make_url(os.environ.get("KEYSTONE_TEST_DATABASE_URL", ""))
+        valid = url.drivername == "postgresql+psycopg" and url.database == "keystone_test"
+    except Exception:
+        valid = False
+    if not valid:
+        raise pytest.UsageError(
+            "--require-postgres needs KEYSTONE_TEST_DATABASE_URL pointing to keystone_test "
+            "with the postgresql+psycopg driver"
+        )
+
+
 def pytest_asyncio_loop_factories():
     return {"keystone": new_event_loop}
 

@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     file_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1, le=64 * 1024 * 1024)
     model_mode: Literal["disabled", "mock", "live"] = "disabled"
     model_secrets: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
-    flow_enabled: bool = False
+    flow_enabled: bool = True
     session_hours: int = Field(default=8, ge=1, le=168)
     pat_max_days: int = Field(default=90, ge=1, le=365)
     browser_origins: list[str] = [

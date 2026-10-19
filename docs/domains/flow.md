@@ -1,8 +1,6 @@
 # Keystone Flow 领域
 
-状态：最小实现 v1.1，2026-10-18；16 字段 FlowRun、DBOS Worker、Pydantic AI/Harness、文件审查示例及管理页面已接入，使用模拟渠道完成执行和恢复验证；后台已整理发起/详情弹窗、状态筛选、取消确认和轮询。领域模型保持不变，部署限于一个 API、一个 Worker 和共享本地文件卷。
-
-模型接入已增加 OpenRouter live，Flow/Agent 直接复用相同 ModelRuntime，不新增执行分支或 FlowRun 字段；独立 Worker 已通过本机 HTTP 的两轮 Agent 调用验证，尚未发起真实模型请求。API/Worker 的运行模式和秘密配置必须一致，mock/live 分开数据库和文件卷；发起表单提示实际模式，live 流程可能计费，取消不撤销已发生的调用。边界见[OpenRouter 接入](model-access.md#78-openrouter-live-接入)。
+模型接入已增加 OpenRouter live，Flow/Agent 直接复用相同 ModelRuntime，不新增执行分支或 FlowRun 字段。API/Worker 的运行模式和秘密配置必须一致，mock/live 分开数据库和文件卷；发起表单提示实际模式，live 流程可能计费，取消不撤销已发生的调用。边界见[OpenRouter 接入](model-access.md#77-openrouter-live-接入)。
 
 [范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项) · [当前实现](#7-当前实现)
 
@@ -143,7 +141,7 @@ cancel_requested_at 有值但 status 尚未变为 cancelled 时，界面显示�
 
 不建步骤表不意味着看不到执行过程。StepExecution 是按需从 DBOS 历史转换的只读视图，首版展示 workflow_id、执行内 step_id、name、可取得的开始/结束时间及脱敏失败信息；以 workflow_id＋step_id 区分调用，不以步骤名称唯一。没有检查点或引擎不可达时明确返回信息未形成/不可用，不虚构进度百分比。
 
-首版对外只返回上述白名单过程信息，不透传 DBOS 原始参数、返回值、检查点、消息历史或异常文本；子流程必须确认属于已授权 Run，客户端不能通过任意 workflow_id 查询引擎。步骤访问沿用 Run 查看权限；查询引擎后返回前重新检查当前权限。业务结果通过 FlowRun.result 的明确契约展示，过程证据确需开放时保存为受控 File，不能借步骤详情绕过文件授权。参考 Ether 的 [步骤投影](M:/code/ether-workspace/ether/packages/flow/src/ether_flow/engine.py) 与 [查询后复查权限](M:/code/ether-workspace/ether/packages/platform/src/ether/flow/service.py)。
+首版对外只返回上述白名单过程信息，不透传 DBOS 原始参数、返回值、检查点、消息历史或异常文本；子流程必须确认属于已授权 Run，客户端不能通过任意 workflow_id 查询引擎。步骤访问沿用 Run 查看权限；查询引擎后返回前重新检查当前权限。业务结果通过 FlowRun.result 的明确契约展示，过程证据确需开放时保存为受控 File，不能借步骤详情绕过文件授权。参考 Ether 的 步骤投影 与 查询后复查权限。
 
 业务 node_key 是代码阶段标识，例如 review；一个阶段可能对应多个 DBOS 步骤或子流程，不能把两者强行视作一对一。首版不建立自己的 DAG、步骤状态机或运行事件表，也不承诺重建每个未持久化普通函数的运行过程。
 
@@ -174,7 +172,7 @@ Agent 在代码中声明稳定 agent_key、提示词、输出类型、工具、S
 
 受理幂等采用平台公开约定的有限保证窗口（当前 7 天），从首次受理的 created_at 起算，不新增过期字段。窗口内必须保留 Run，包括成功、失败和取消的运行；同一请求重试只返回原记录，不重新执行。窗口外只要原记录仍在就继续去重，记录已清理则无法保证旧请求不会被视为新请求。调用方只能在保证窗口内自动重试；主动重新执行必须使用新 request_key。查询和重试仍受当前身份与访问权限约束。
 
-不保留额外幂等墓碑表，也不承诺删除原记录后仍永久识别旧请求。自动清理启用前必须确定并向调用方说明保证窗口与历史保留策略；清理不能早于已承诺的窗口。具体窗口长度留到部署配置确定。该窗口约束的是 Flow 受理去重，不替代已有 Run 内的 ModelInvocation 防重发保护。
+不保留额外幂等墓碑表，也不承诺删除原记录后仍永久识别旧请求。当前不规划历史清理；未来如启用，须先明确保留策略并告知调用方，不能早于已承诺的 7 天幂等窗口。该窗口约束的是 Flow 受理去重，不替代已有 Run 内的 ModelInvocation 防重发保护。
 
 ### 3.2 取消
 
@@ -184,7 +182,7 @@ Agent 在代码中声明稳定 agent_key、提示词、输出类型、工具、S
 
 API 仅在首次接受非终态 Run 的取消请求时设置 cancel_requested_at，并同事务记录实际取消人的审计。重复取消不覆盖时间、不重复生成首次取消请求日志；对已经终态的 Run，在完成当前授权检查后直接返回现有状态，不写新的取消意图、不重新打开运行。
 
-Worker 再调用 DBOS；通知失败可以重试，查询到 DBOS 取消状态后同步为 cancelled。尚未提交的运行由同一个协调循环核实未入队后取消，不再投递。若运行已经完成，保留实际完成结果。取消不能保证正在执行的步骤或已发出的外部请求立即停止，也不撤销已发生的业务写入或费用。该幂等行为参考 Ether 的 [request_cancel](M:/code/ether-workspace/ether/packages/platform/src/ether/flow/models.py)，Keystone 额外明确独立 flow:cancel 权限。
+Worker 再调用 DBOS；通知失败可以重试，查询到 DBOS 取消状态后同步为 cancelled。尚未提交的运行由同一个协调循环核实未入队后取消，不再投递。若运行已经完成，保留实际完成结果。取消不能保证正在执行的步骤或已发出的外部请求立即停止，也不撤销已发生的业务写入或费用。该幂等行为参考 Ether 的 request_cancel，Keystone 额外明确独立 flow:cancel 权限。
 
 ### 3.3 恢复、业务写入与外部副作用
 
@@ -206,7 +204,7 @@ Agent 配置 Pydantic AI 的 `DBOSDurability`，从 DBOS workflow 或其兼容�
 
 每次新的模型请求尝试在发送前单独登记 ModelInvocation，并关联运行、业务步骤和 Agent 调用；登记不证明上游已经接受请求。工具进度和 Agent 事件可以流式展示，但不新增一张完整聊天消息表。引擎为了恢复可能持久化消息和工具结果，这与调用表默认不存正文是两件事，必须限制检查点的访问、大小和保留期。业务需要保存过程证据时显式生成受控 File，不默认复制全部对话到审计日志。
 
-请求次数、工具次数、token 和总时长分别设上限，Agent 的输出修正、工具重试、引擎恢复与传输重试不能无限叠加。结构校验成功仅说明格式满足契约，不能代替业务效果验收。
+请求次数、工具次数、token 和总时长分别设上限，Agent 的输出修正、工具重试、引擎恢复与传输重试不能无限叠加。结构校验成功仅说明格式满足契约，不代表业务结果正确。
 
 ### 3.5 结果同步与文件保留
 
@@ -228,7 +226,7 @@ Run 的结果、输出引用及相应引用审计在同一事务内保存。引�
 
 首版输入、中间产物与输出引用都保留到 Run 清理，不在终态提前释放中间产物；失败或取消运行已生成的文件也按此规则保留。代价是中间文件保留更久，换取统一的清理边界。业务采用与 Run 清理需要事务协调：采用方确认 Run 及结果仍可用，并完成业务记录和引用的原子保存；清理先完成时明确返回不可采用，不能保存悬空业务记录。具体引用与删除互斥规则见[文件领域](files.md#32-flow-文件引用与业务采用)。
 
-这沿用 Ether 的 [结果同步](M:/code/ether-workspace/ether/packages/platform/src/ether/flow/reconcile.py) 和 [产物引用登记](M:/code/ether-workspace/ether/packages/platform/src/ether/files/service.py) 边界；Keystone 首版统一延后到 Run 清理时释放产物引用，不搬入 Ether 的终态临时引用释放或整套业务投影字段。
+这沿用 Ether 的 结果同步 和 产物引用登记 边界；Keystone 首版统一延后到 Run 清理时释放产物引用，不搬入 Ether 的终态临时引用释放或整套业务投影字段。
 
 ## 4. 权限与审计
 
@@ -276,7 +274,7 @@ Worker 代表原用户执行且仍通过当前授权的业务变更，以该用�
 
 核对依据：[DBOS WorkflowStatus](https://docs.dbos.dev/python/reference/contexts#workflow-status)、[DBOS Client](https://docs.dbos.dev/python/reference/client)。这些是当前官方接口；实现时仍需核对所固定的 SDK 版本。
 
-Ether 的 [Run 模型](M:/code/ether-workspace/ether/packages/platform/src/ether/flow/models.py) 同时保存 definition_revision、definition_snapshot、entrypoint、application_version，但没有冻结用户全部权限的快照；[授权实现](M:/code/ether-workspace/ether/packages/platform/src/ether/flow/authorization.py) 检查当前权限与流程要求。它的 [快照构造](M:/code/ether-workspace/ether/packages/platform/src/ether/flow/schemas.py) 还服务于应用归属和业务投影，Keystone 首版不需要完整搬入，也不保存用户权限快照。
+Ether 的 Run 模型 同时保存 definition_revision、definition_snapshot、entrypoint、application_version，但没有冻结用户全部权限的快照；授权实现 检查当前权限与流程要求。它的 快照构造 还服务于应用归属和业务投影，Keystone 首版不需要完整搬入，也不保存用户权限快照。
 
 ### 5.2 部署与参考范围
 
@@ -293,27 +291,25 @@ Ether 的 [Run 模型](M:/code/ether-workspace/ether/packages/platform/src/ether
 ## 6. 待确定事项
 
 - 真实供应商逐个联调，核对模型工具调用、结构化输出与实际账务能力；模拟完成不代表模型判断质量或真实计费正确。
-- 历史保留期、备份恢复和升级操作规程随部署验收落实。当前没有 Run、DBOS 历史、调用记录或凭据的自动清理；不得单独删除仍承担恢复义务的记录。
-- 具体业务出现后实现“采用结果”的业务用例，在同一事务写业务记录及自身文件引用。当前示例止于报告生成，不为验收增加业务采用表或通用投影机制。
+- 历史清理暂不纳入首版，不设定保留天数或清理入口；有实际容量或运维需求后再评估。当前保留 Run、DBOS 历史、调用记录和凭据，仍须遵守引用与恢复约束。备份恢复与升级沿用部署规程。
+- 具体业务出现后实现“采用结果”的业务用例，在同一事务写业务记录及自身文件引用。当前示例止于报告生成，不增加占位业务表或通用投影机制。
 - 人工待办、多 Worker 接管、流式 Agent 过程展示和复杂表单按实际业务另行扩展。
-
-源码参考：[Ether Flow](M:/code/ether-workspace/ether/docs/flows.md)、[素材粗选编排](M:/code/ether-workspace/ether-flows-media-selection/src/ether_flows_media_selection/workflows/select_material_v17/workflow.py)、[审片阶段](M:/code/ether-workspace/ether-flows-media-selection/src/ether_flows_media_selection/workflows/review_segment_v10/steps/step_02_review_segment.py)、[Agent 能力声明](M:/code/ether-workspace/ether-flows-media-selection/src/ether_flows_media_selection/workflows/review_segment_v10/agent.py)、[模型发送保护](M:/code/ether-workspace/ether-flows-media-selection/src/ether_flows_media_selection/adapters/first_image_model.py)。参考其代码组织与边界，不直接照搬完整实现。
 
 ## 7. 当前实现
 
 ### 7.1 装配、迁移与接口
 
-轻量定义目录由 build_definitions 根据 bootstrap 的显式列表构建，拒绝重复键、空白或重复执行入口，并对每个定义检查 required_permissions、model_field 是否存在于序列化输入的顶层字段，以及输入输出文件路径是否符合契约。文件路径使用对象点路径，末端为字符串 ID 或 ID 列表；支持嵌套契约与可空值，空值不登记引用，不支持通配符或穿越对象数组。重复路径、未声明字段、数字等不匹配类型在启动时拒绝；实际 ID 仍在使用时转换为 UUID 并校验文件权限。
+轻量定义目录由 build_definitions 根据 composition.py 的显式列表构建，拒绝重复键、空白或重复执行入口，并对每个定义检查 required_permissions、model_field 是否存在于序列化输入的顶层字段，以及输入输出文件路径是否符合契约。文件路径使用对象点路径，末端为字符串 ID 或 ID 列表；支持嵌套契约与可空值，空值不登记引用，不支持通配符或穿越对象数组。重复路径、未声明字段、数字等不匹配类型在启动时拒绝；实际 ID 仍在使用时转换为 UUID 并校验文件权限。
 
 输出契约统一由 Definition.output_schema() 按 `mode="serialization", by_alias=False` 生成，启动校验、目录展示与 Run 快照共用。工作流输出使用 `model_dump(mode="json", by_alias=False)`，字段序列化器按实际返回类型描述；输出字段和文件路径使用原字段名，不使用别名。输入目录保留校验契约，允许按输入契约接收别名；受理后同样按原字段名序列化，供模型选择和文件路径读取。已有 Run 继续使用原快照，不重写历史结果契约。
 
 输入文件 ID 在创建 Run 和解析模型选择之前提取；非法 UUID 或超过 100 个不同文件 ID 返回 `422 flow_invalid_input`，不保存 Run 或引用、不占用请求幂等键，并沿用失败审计。文件存在性与授权仍由 Files 服务检查；结果文件错误继续在同步边界转换为 flow_invalid_output。
 
-不可变映射由当前 Runtime.flow_definitions 持有，目录展示、发起、ExecutionIdentity 授权及 reconcile 补投都使用同一映射；不再保留全局 _definitions 或覆盖式注册。Worker 继续由 register_workflows 单独显式导入 workflow，装饰器使用 definition.entrypoint，避免手写第二份入口名。`pytest tests/test_flow_catalog.py` 在干净子进程中观察真实 DBOS 装饰器注册，检查显式目录的所有入口都已注册，同时确认 API 装配未导入 workflow；不连接数据库、不启动 DBOS、不使用私有注册表。未增加插件发现、执行版本字段或多项目调度能力。
+不可变映射由当前 Runtime.flow_definitions 持有，目录展示、发起、ExecutionIdentity 授权及 reconcile 补投都使用同一映射；不再保留全局 _definitions 或覆盖式注册。Worker 继续由 register_workflows 单独显式导入 workflow，装饰器使用 definition.entrypoint，避免手写第二份入口名。未增加插件发现、执行版本字段或多项目调度能力。
 
 代码位于 backend/src/keystone/platform/flow/；迁移 0006_flow 只增加 keystone.flow_runs，保持上文 16 字段，不增加投递、步骤、Agent、租约或快照版本表。DBOS 自己管理同一 PostgreSQL 的 dbos schema，通过一次性 `keystone migrate-flow` 初始化/升级；API 和 Worker 启动均不运行迁移。
 
-bootstrap 显式注册轻量 Definition；只有 Worker 装配 workflow、Agent 和 Skills。新增业务流程时在业务目录声明契约、编排和受控能力，在 bootstrap 注册，不修改平台执行器。API 使用 DBOSClient 查询历史，不启动 DBOS 执行器。`KEYSTONE_FLOW_ENABLED` 默认 false；本轮验证同时设置 `KEYSTONE_MODEL_MODE=mock`，凭据仅用环境中的假秘密引用。
+composition.py 集中声明轻量 Definition，bootstrap 加载该目录；只有 Worker 装配 workflow、Agent 和 Skills。新增业务流程时在业务目录声明契约、编排和受控能力，在 composition.py 注册，不修改平台执行器。API 使用 DBOSClient 查询历史，不启动 DBOS 执行器。`KEYSTONE_FLOW_ENABLED` 默认 true。
 
 | 接口 | 当前行为 |
 |---|---|
@@ -350,15 +346,9 @@ Worker 入口维护[本地健康文件](../deployment.md#12-worker-最小健康�
 
 报告上传使用稳定的 flow:<run_id>:report 请求键，完成确认与 artifact.report 引用同事务保存。结果同步验证原输出契约，原子保存终态、result、output 引用和 system 审计，只保留本 Run 已登记且仍可保留的文件。已有调用回执和文件事实不因撤权或取消而丢弃；新的受保护操作仍被阻断。
 
-### 7.4 验证范围
+### 7.4 管理后台
 
-PostgreSQL 集成测试启动真实独立 DBOS Worker，使用内存模拟渠道，覆盖正常两轮模型/工具调用、重复受理和并发幂等、审计失败回滚、固定选择重放、PAT 撤销、取消范围、在途取消仍保存费用、受限文件引用、缺失版本和步骤白名单。
-
-恢复测试强制结束进程后启动同制品 Worker：发送前已登记和响应后未落检查点均以 model_result_unavailable 停止，不再发送；前者记录 unknown，后者保留已确认成功。报告上传后未落检查点则复用模型检查点和原文件继续成功，不重复模型调用或上传文件。另验证同卷单 Worker 互斥及有序停止。浏览器验证受理 pending、独立执行、完成结果、步骤与费用展示。具体测试结果见[实施记录](../implementation-plan.md#46-阶段-5flow-模拟验证)。
-
-### 7.5 管理后台
-
-/admin/flows 将流程目录、发起表单和运行详情分开。只有 flow:start 时加载目录和发起能力；只有 flow:read 时仅查询运行，不额外读取文件和模型目录。运行按状态过滤并以 50 条分页，列表只要存在 pending/running 就每 3 秒刷新；自动刷新可保留上一批行，失败明确提示。详情弹窗独立轮询当前未完成运行，不叠加同一弹窗的查询；关闭、切换运行或离开页面后丢弃旧结果并停止相应轮询。
+/admin/flows 将流程目录、发起表单和运行详情分开。只有 flow:start 时加载目录和发起能力；只有 flow:read 时仅查询运行，不额外读取文件和模型目录。运行按状态过滤并以 50 条分页，列表只要存在 pending/running 就每 3 秒刷新；自动刷新可保留上一批行，失败明确提示。详情抽屉独立轮询当前未完成运行，不叠加同一弹窗的查询；关闭、切换运行或离开页面后丢弃旧结果并停止相应轮询。
 
 发起弹窗为文本审查提供分页文件/模型选择，也允许输入已知源文件 UUID；可见不代表可读，最终由 API 判断。其他定义使用不超过 64 KiB 的 JSON 对象输入并展示输入 Schema，不建设通用表单引擎。原输入与 request_key 保留在当前页面，提交失败及关闭重开都可继续使用同一请求；修改输入或点击“准备新的运行”产生新请求键，离开页面后不持久保存草稿。重复受理遵守现有 7 天窗口，不新增恢复令牌或运行快照。
 
@@ -366,12 +356,11 @@ PostgreSQL 集成测试启动真实独立 DBOS Worker，使用内存模拟渠道
 
 取消按钮要求 flow:cancel，且为自己的可见运行或具有 flow:manage。操作需确认；收到请求回执只显示取消处理中，等执行端确认后才显示已取消，不声称撤销已发生的费用和文件写入。终态运行无取消按钮。Flow enabled 仅代表启用配置，界面明确不把它当作 Worker 在线状态。
 
-参考 Ether 的 FlowStartDialog、FlowRunDialog 和 useFlowRunDetail，保留分区失败处理、请求代次和关闭清理；不引入人工任务、可视化编排或 DBOS 管理控制台。浏览器测试启动独立真实 DBOS Worker，验证模拟 Agent 执行、步骤/费用、报告下载及重复提交，见[第三批实施记录](../implementation-plan.md#411-管理后台第三批)。
+参考 Ether 的 FlowStartDialog、FlowRunDialog 和 useFlowRunDetail，保留分区失败处理、请求代次和关闭清理；不引入人工任务、可视化编排或 DBOS 管理控制台。
 
+### 代码组织
 
-### 代码组织（2026-10-19）
-
-FlowRun 独立于 models/flow_run.py，接口和用例分别位于 controllers/runs.py、services/runs.py。ExecutionIdentity 继承 AccessContext，只提供 Run 执行授权。Flow 不直接读写文件引用、渠道配置或模型调用表：模型选择/恢复、文件引用保留通过所属领域的内部服务完成，仍保持原事务、Worker 独占锁、受控 owner/slot 和取消授权规则。响应字段在 schemas/runs.py 明确列出。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。领域字段、权限和生命周期不变。
+FlowRun 独立于 models/flow_run.py，接口和用例分别位于 controllers/runs.py、services/runs.py。ExecutionIdentity 继承 AccessContext，只提供 Run 执行授权。Flow 不直接读写文件引用、渠道配置或模型调用表：模型选择/恢复、文件引用保留通过所属领域的内部服务完成，仍保持原事务、Worker 独占锁、受控 owner/slot 和取消授权规则。响应字段在 schemas/runs.py 明确列出。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
 ExecutionIdentity 只覆盖身份授权，共用 AccessContext 的事务、锁、失败审计及冲突转译；session_only 仍会拒绝执行身份。host.read_file 返回 bytes，要求调用方提供 max_bytes；host.upload 显式接收 content_type。UTF-8 解码、16 KiB 限制及相应业务错误留在 document_review。Files 校验受控上传并原子保留引用，Flow 只传固定 owner/slot 和文件 ID；输出协调将 file_reference_invalid 转为 flow_invalid_output，不改公开错误契约。
 

@@ -1,17 +1,35 @@
 <script setup lang="ts">
-// Adapted from Ether's native dialog: focus containment, Escape and busy protection.
-import { onBeforeUnmount, ref, useId, watch } from 'vue'
-const props = defineProps<{ title: string; busy?: boolean }>()
+import { ElDialog, ElDrawer } from 'element-plus'
+const props = withDefaults(
+  defineProps<{ title: string; busy?: boolean; drawer?: boolean; width?: string }>(),
+  { width: '620px' },
+)
 const emit = defineEmits<{ close: [] }>()
-const element = ref<HTMLDialogElement>()
-const titleId = useId()
-watch(element, value => value?.showModal(), { flush: 'post' })
-onBeforeUnmount(() => element.value?.close())
-function cancel(event: Event) { event.preventDefault(); if (!props.busy) emit('close') }
+function close() {
+  if (!props.busy) emit('close')
+}
 </script>
 <template>
-  <dialog ref="element" class="app-dialog" :aria-labelledby="titleId" @cancel="cancel">
-    <header class="dialog-heading"><h2 :id="titleId">{{ title }}</h2><button type="button" class="secondary" :disabled="busy" aria-label="关闭对话框" @click="emit('close')">关闭</button></header>
+  <component
+    :is="drawer ? ElDrawer : ElDialog"
+    :model-value="true"
+    :title="title"
+    :width="drawer ? undefined : width"
+    :size="drawer ? 'min(760px, 100vw)' : undefined"
+    :close-on-click-modal="false"
+    :close-on-press-escape="!busy"
+    :show-close="false"
+    :append-to-body="false"
+    class="app-dialog"
+    destroy-on-close
+    @update:model-value="close"
+  >
+    <template #header="{ titleId }">
+      <div class="dialog-heading">
+        <h2 :id="titleId">{{ title }}</h2>
+        <el-button text :disabled="busy" aria-label="关闭对话框" @click="close">关闭</el-button>
+      </div>
+    </template>
     <slot />
-  </dialog>
+  </component>
 </template>

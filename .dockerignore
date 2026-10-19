@@ -9,6 +9,8 @@
 !frontend/
 !frontend/admin/
 !frontend/admin/package.json
+!frontend/admin/.prettierrc.json
+!frontend/admin/.prettierignore
 !frontend/admin/pnpm-lock.yaml
 !frontend/admin/index.html
 !frontend/admin/tsconfig.json

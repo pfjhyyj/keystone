@@ -3,10 +3,11 @@ import asyncio
 import logging
 import signal
 
-from keystone.bootstrap import build_runtime, register_workflows
+from keystone.bootstrap import build_runtime
+from keystone.composition import register_workflows
 from keystone.core.asyncio import run as run_async
 from keystone.core.config import Settings
-from keystone.core.logging import configure_logging
+from keystone.core.logging import configure_logging, safe_exception
 from keystone.core.worker_health import WorkerHealth
 from keystone.platform.files.services.cleanup import cleanup
 
@@ -46,7 +47,11 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
                     await cleanup(runtime.database, runtime.storage)
                 except Exception as error:
                     healthy = False
-                    log.error("file_cleanup_failed type=%s", type(error).__name__)
+                    log.error(
+                        "file_cleanup_failed type=%s",
+                        type(error).__name__,
+                        extra={"exception": safe_exception(error)},
+                    )
             if flow_task:
                 healthy = healthy and flow_ready.is_set() and not flow_task.done()
             if healthy and not stop.is_set():
@@ -97,7 +102,11 @@ def main() -> None:
     try:
         settings = Settings()
     except Exception as error:
-        log.error("configuration_failed type=%s", type(error).__name__)
+        log.error(
+            "configuration_failed type=%s",
+            type(error).__name__,
+            extra={"exception": safe_exception(error)},
+        )
         raise SystemExit(1) from None
     configure_logging(settings.log_level)
     if args.check:

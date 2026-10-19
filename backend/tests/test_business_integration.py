@@ -93,12 +93,9 @@ def test_flow_permissions_must_be_in_application_catalog(monkeypatch):
     from keystone.businesses.document_review import contracts
 
     monkeypatch.setattr(
-        contracts,
-        "definition",
-        replace(
-            contracts.definition,
-            required_permissions=(READ,),
-        ),
+        composition,
+        "FLOW_DEFINITIONS",
+        (replace(contracts.definition, required_permissions=(READ,)),),
     )
     with pytest.raises(ValueError, match="undeclared permissions"):
         build_runtime(Settings(_env_file=None))
@@ -142,14 +139,14 @@ def test_flow_directory_isolation_in_api_execution_and_reconciliation(monkeypatc
         first_definition, name="Second application", required_permissions=(WRITE,)
     )
     install(monkeypatch)
-    monkeypatch.setattr(contracts, "definition", first_definition)
+    monkeypatch.setattr(composition, "FLOW_DEFINITIONS", (first_definition,))
     first = request.getfixturevalue("client")
     first_runtime = first.app.state.runtime
     first_runtime.settings.flow_enabled = True
     login(first)
     read_pat = bearer(token(first, ["flow:start", "flow:read", READ])["token"])
     write_pat = bearer(token(first, ["flow:start", "flow:read", WRITE])["token"])
-    monkeypatch.setattr(contracts, "definition", second_definition)
+    monkeypatch.setattr(composition, "FLOW_DEFINITIONS", (second_definition,))
     settings = first_runtime.settings.model_copy(update={"flow_enabled": False})
     with TestClient(
         create_app(settings), backend_options={"loop_factory": new_event_loop}
@@ -223,14 +220,16 @@ def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_byte
             return padding if expansion == "serializer" and value == "expand" else value
 
     monkeypatch.setattr(
-        contracts,
-        "definition",
-        replace(
-            contracts.definition,
-            input_type=Params,
-            file_fields=(),
-            model_field="model_key" if expansion == "model_selection" else None,
-            required_permissions=(),
+        composition,
+        "FLOW_DEFINITIONS",
+        (
+            replace(
+                contracts.definition,
+                input_type=Params,
+                file_fields=(),
+                model_field="model_key" if expansion == "model_selection" else None,
+                required_permissions=(),
+            ),
         ),
     )
     client = request.getfixturevalue("client")
@@ -289,14 +288,16 @@ def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, 
         files: list[str] = Field(alias="fileIds")
 
     monkeypatch.setattr(
-        contracts,
-        "definition",
-        replace(
-            contracts.definition,
-            input_type=FilesInput,
-            file_fields=("files",),
-            model_field=None,
-            required_permissions=(),
+        composition,
+        "FLOW_DEFINITIONS",
+        (
+            replace(
+                contracts.definition,
+                input_type=FilesInput,
+                file_fields=("files",),
+                model_field=None,
+                required_permissions=(),
+            ),
         ),
     )
     client = request.getfixturevalue("client")
@@ -352,16 +353,18 @@ def test_flow_reconciliation_uses_serialized_output_contract(
             return str(value)
 
     monkeypatch.setattr(
-        contracts,
-        "definition",
-        replace(
-            contracts.definition,
-            input_type=EmptyInput,
-            output_type=Output,
-            file_fields=(),
-            output_file_fields=(),
-            model_field=None,
-            required_permissions=(),
+        composition,
+        "FLOW_DEFINITIONS",
+        (
+            replace(
+                contracts.definition,
+                input_type=EmptyInput,
+                output_type=Output,
+                file_fields=(),
+                output_file_fields=(),
+                model_field=None,
+                required_permissions=(),
+            ),
         ),
     )
     client = request.getfixturevalue("client")

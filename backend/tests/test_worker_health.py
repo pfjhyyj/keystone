@@ -31,6 +31,8 @@ def test_probe_exit_code_without_runtime_or_database(tmp_path, monkeypatch, caps
     path = tmp_path / "worker.ready"
     if ready:
         path.touch()
+        timestamp = time.time() - 1
+        os.utime(path, (timestamp, timestamp))
     monkeypatch.setattr("sys.argv", ["keystone-worker", "--check"])
     monkeypatch.setattr(
         worker, "Settings", lambda: Settings(_env_file=None, worker_ready_file=path)
@@ -80,6 +82,7 @@ async def test_maintenance_marker_tracks_dependencies_failure_recovery_and_stop(
     runtime.readiness.side_effect = initial_check
     settings = Settings(
         _env_file=None,
+        flow_enabled=False,
         worker_ready_file=path,
         file_coordination_root=tmp_path,
         file_storages={"local": {"driver": "filesystem", "root": tmp_path}},
@@ -145,7 +148,7 @@ async def test_flow_marker_waits_for_initialization_and_clears_on_failure(
 
 async def test_unwritable_marker_stops_worker_and_closes_resources(tmp_path, runtime):
     path = tmp_path / "missing-parent" / "worker.ready"
-    settings = Settings(_env_file=None, worker_ready_file=path)
+    settings = Settings(_env_file=None, worker_ready_file=path, flow_enabled=False)
     with pytest.raises(OSError):
         await worker.run(settings, asyncio.Event())
     assert not path.exists()

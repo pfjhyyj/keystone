@@ -1,0 +1,81 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      deployment:
+        description: Build containers and verify deployment/recovery too
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_DB: keystone_test
+          POSTGRES_USER: keystone_test
+          POSTGRES_PASSWORD: isolated-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U keystone_test -d keystone_test"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    env:
+      KEYSTONE_TEST_DATABASE_URL: postgresql+psycopg://keystone_test:isolated-ci-only@127.0.0.1:5432/keystone_test
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.10.2'
+          python-version: '3.12.14'
+          enable-cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.21.0'
+          package-manager-cache: false
+      - name: Install backend dependencies
+        run: uv sync --locked --project backend
+      - name: Install frontend dependencies and browser
+        working-directory: frontend/admin
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+      - name: Full validation
+        env:
+          VERIFY_DEPLOYMENT: ${{ inputs.deployment }}
+        run: |
+          if [ "$VERIFY_DEPLOYMENT" = "true" ]; then
+            backend/.venv/bin/python scripts/check.py --deploy
+          else
+            backend/.venv/bin/python scripts/check.py
+          fi
+      - name: Save validation results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: validation-results
+          retention-days: 14
+          include-hidden-files: true
+          path: |
+            .artifacts/checks/**/result.json
+            .artifacts/checks/**/pytest.xml
+            .artifacts/admin-e2e/
+            .artifacts/deploy-verify/**/result.json
+            .artifacts/deploy-verify/**/build.log
+            .artifacts/deploy-verify/**/compose.log

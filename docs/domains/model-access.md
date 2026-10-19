@@ -1,7 +1,5 @@
 # Keystone 模型接入领域
 
-状态：最小实现 v1.2，2026-10-18；保持三张领域表，已实现 disabled/mock/live 和 OpenRouter live 接入。普通/流式调用、费用、余额及独立 DBOS Worker 已通过本机 HTTP 协议夹具验证；未向真实供应商发送请求，真实账户账务能力仍待联调。后台按模式展示模拟或真实调用及费用提示。
-
 [范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项) · [当前实现](#7-当前实现约定)
 
 ## 1. 范围与边界
@@ -117,7 +115,7 @@ Agent 一次运行可能发起多次模型请求，每次实际请求都独立�
 
 ### 3.1 SDK 与适配器
 
-业务通过稳定的模型配置 key 发起调用，模块解析渠道和上游模型，再交给 SDK。首版按 [技术选型](../implementation-plan.md#2-技术选择) 采用 OpenAI 兼容协议的异步 SDK，复用 Ether 的受控客户端边界，不增加 LiteLLM 或独立网关；具体版本与三渠道兼容性在实施阶段验证，不依赖 SDK 价格估算作为实际费用。
+业务通过稳定的模型配置 key 发起调用，模块解析渠道和上游模型，再交给 SDK。
 
 渠道适配代码仅处理必要差异：
 
@@ -217,7 +215,7 @@ Channel、ModelEntry 是管理配置，保留四个审计字段。ModelInvocatio
 
 Channel、ModelEntry 不论是否已被引用，首版均不提供物理删除或软删除；管理变更、启停和凭据引用变更记录审计。配置只停用的规则不改变调用记录的保留策略：ModelInvocation 不提供普通用户修改/删除接口，仍承担 Flow 恢复防重发作用的记录必须保留，确认对应运行不再有恢复或协调义务后才能按保留期清理，不在这里扩展成归档领域。
 
-不为这三个对象增加 deleted_at、deleted_by。调用记录的保留期清理由任务日志记录范围、数量和结果，不模拟用户逐条删除，也不逐条增加删除字段；已有审计独立保留。Ether 的 [模型连接删除](M:/code/ether-workspace/ether/packages/platform/src/ether/ai/connections/service.py) 会保留连接行、设置 deleted 并清除秘密和授权；Keystone 首版不搬入该删除状态或相关协调机制。
+不为这三个对象增加 deleted_at、deleted_by。调用记录的保留期清理由任务日志记录范围、数量和结果，不模拟用户逐条删除，也不逐条增加删除字段；已有审计独立保留。Ether 的 模型连接删除 会保留连接行、设置 deleted 并清除秘密和授权；Keystone 首版不搬入该删除状态或相关协调机制。
 
 管理操作的审计日志与调用记录用途不同：前者追踪谁改了配置，后者记录调用发生及费用信息。两者都不保存秘密明文，调用记录默认不保存提示词和输出正文。
 
@@ -232,14 +230,9 @@ Channel、ModelEntry 不论是否已被引用，首版均不提供物理删除�
 
 ## 6. 待确定事项
 
-SDK 已锁定 openai 3.22.1、httpx2 2.13.1，并通过实际 SDK 发送路径上的内存传输验证。余额/费用适配仍为本地契约验证，不能据此宣称已经接通真实供应商。后续工作：
+live 当前只支持 OpenRouter，DeepSeek 与阿里云提供 mock；扩展真实接入时再明确官方地址、账务权限及 SDK。依赖版本以锁文件为准。
 
-- 使用独立测试账户与有界预算确认各渠道的普通/流式 ID、用量、费用和实际余额口径；DeepSeek 与阿里云的单次费用获取仍未确认。
-- 确认阿里云站点、地域、账务权限及官方 OpenAPI SDK 的签名方式；当前未安装或启用真实账务 SDK。OpenRouter 管理凭据和推理凭据分别验证。
-- Flow 已接入可信固定选择、稳定请求 ID 和受控身份；真实 DBOS 检查点恢复及中断防重发已验证。持有单 Worker 排他锁的启动恢复只处理旧执行器遗留的 Flow 调用；普通 API 遗留调用由显式离线命令收尾。两者均不按超时推断执行已经结束。
-- live 只允许 OpenRouter 官方地址及三个固定路径，关闭重试、跳转和环境代理；部署出口须允许直接 HTTPS 访问。DeepSeek/阿里云仍只提供 mock 验证，扩展 live 时再明确目标地址及账务能力。
-
-当前方案要求发送前登记所有调用尝试、展示可查询的余额，并记录供应商提供的单次费用；无法保证每个尝试都能确认发送结果，也不能保证三个渠道都能取得每次实际扣款。这些未知保留在记录中，不通过增加本地领域对象或推算金额掩盖。
+费用采用上游报告值，无法确认的发送结果、余额或费用保留未知；不通过估价或新增本地账本掩盖。调用记录与恢复规则见下节。
 
 ## 7. 当前实现约定
 
@@ -283,20 +276,13 @@ mock 与 live 使用独立数据库和文件卷；首次接入使用空库、空
 
 余额查询外部 I/O 最长 10 秒；每进程最多 2 个余额刷新，同渠道通过 PostgreSQL 会话锁协调，协调连接退出时释放，业务事务不跨外部 I/O。写回前核对配置，旧查询结果丢弃；失败保留上次成功快照，配置修改使余额来源变化时清空。余额采集不改 Channel.updated_at/updated_by；查询发生及结果进入 AuditLog。费用补查失败保留已知费用，重复查询只替换同一次费用，不累加。
 
-### 7.4 当前验证
-
-本轮新增 20 项集成场景，完整后端 53 项通过。覆盖真实 PostgreSQL 空库与重复迁移/ORM 一致性、三服务商普通/流式模拟、发送前提交、并发稳定 ID、SDK 无重试、429/超时/断流/主动关闭、登记和补全数据库故障、精确零费用与未知费用、固定选择、撤权后收尾、权限/PAT 交集、审计回滚、余额失败/配置变化/在途旧结果及费用补查。
-
-浏览器以一次性数据库验证普通/流式调用、未知费用、补查与余额刷新；配置 CRUD 及权限边界由接口集成测试覆盖。Ruff、Python 打包、前端 TypeScript/生产构建和 Compose 配置检查通过。未调用真实供应商；后续 Flow 阶段已另行完成 DBOS/Agent 恢复验收，见下节。
-
-
-### 7.5 Flow/Agent 接入
+### 7.4 Flow/Agent 接入
 
 FlowModel 通过 ModelRuntime.invoke_sdk 内部入口，直接传入固定 Selection、稳定 invocation_id、FlowContext 和 sdk_request 回调，把 Pydantic AI 的协议适配置于受控客户端内；不构造公开 Invoke 的占位消息，普通模型调用与 Agent 每轮请求仍共享发送登记和响应后记录。公开模型 API 不因此增加工具、身份、稳定调用 ID 或固定选择参数。实际请求体超过 256 KiB 在发送前拒绝。
 
-真实 DBOS Worker 使用 workflow/step 身份派生稳定 UUID。两轮模拟 Agent 调用产生两条独立 ModelInvocation，同属一个 agent_call_id。已登记未发送、已收到响应但缺少 DBOS 检查点这两个崩溃窗口均阻止重发；已确认成功和费用保留，未知仍为 unknown。取消发生在发送后也会保存已返回的用量/费用，新请求被阻断。没有新增费用快照、账本、定价或消息表。
+真实 DBOS Worker 使用 workflow/step 身份派生稳定 UUID。Agent 的每轮模型请求保存独立 ModelInvocation，同属一次 Agent 调用的记录共享 agent_call_id。已登记未发送、已收到响应但缺少 DBOS 检查点这两个崩溃窗口均阻止重发；已确认成功和费用保留，未知仍为 unknown。取消发生在发送后也会保存已返回的用量/费用，新请求被阻断。没有新增费用快照、账本、定价或消息表。
 
-### 7.6 普通 API 调用离线收尾
+### 7.5 普通 API 调用离线收尾
 
 API 硬退出或结果写回失败后，操作者先停止连接同一数据库的全部 API 进程，并在命令执行期间保持停止，再运行：
 
@@ -310,7 +296,7 @@ keystone recover-model-calls --confirm-api-stopped
 
 命令不发起任何上游请求、不重发推理、不删除记录；已经结束的调用及 Flow 调用均不处理。Worker 可以继续处理 Flow。收尾后，具备原费用补查权限的用户可通过已有 cost 接口查询；能否确认费用仍取决于上游编号和供应商能力。保持原有三张表，不增加心跳、租约或恢复任务表。
 
-### 7.7 管理后台
+### 7.6 管理后台
 
 /admin/models 按管理、调用和历史读取权限分别加载配置、调用和记录区域。渠道与模型配置使用独立编辑弹窗和 50 条分页；渠道选择器、可用模型选择器也支持分页，不只查询前 100 条。当前所选渠道不在这一页时保留 ID，提交后由 API 校验。服务商、模型 key 及已确定的账户标识不可修改，配置只停用不删除；推理与账务秘密仍仅显示部署引用名，不收集或返回实际密钥。
 
@@ -320,9 +306,9 @@ keystone recover-model-calls --confirm-api-stopped
 
 mock/live 都支持普通和流式响应，界面显示实际模式；live 按钮明确为“发送真实请求”，提示可能计费，打开页面或保存配置不会自动调用。Flow 发起表单同样按模式提示。停止接收只中断浏览器接收，不表示上游撤销或没有费用，不自动重发；离开页面中断接收并清空输入输出。HTTP 错误和流内 error 事件共用会话失效处理。配置变化后可手动刷新模型目录，实际发送仍复查当前配置和权限。
 
-参考 Ether ModelProbe 的操作隔离和失效结果处理，复用本后台原生 dialog、分页及请求代次控制；不搬入 Ether 的通用连接授权或多模态探测功能。三家渠道的管理与模拟链路、真实 Worker 关联费用通过浏览器验证，范围见[第三批实施记录](../implementation-plan.md#411-管理后台第三批)。
+参考 Ether ModelProbe 的操作隔离和失效结果处理，复用本后台 Element Plus 弹窗/详情抽屉、分页及请求代次控制；不搬入 Ether 的通用连接授权或多模态探测功能。
 
-### 7.8 OpenRouter live 接入
+### 7.7 OpenRouter live 接入
 
 沿用现有 OpenAI SDK、受控 transport 和 OpenRouter 费用适配，不增加网关、SDK 依赖或领域表。实际发送使用 httpx2.AsyncHTTPTransport(retries=0, trust_env=False)，SDK 同样禁止重试；忽略 Retry-After，不自动重发计费请求。只允许 `https://openrouter.ai/api/v1`，发送前逐次核对完整地址、POST /chat/completions 和固定模型；账务查询只允许 GET /generation、GET /credits，拒绝跳转和自定义代理地址。
 
@@ -335,65 +321,11 @@ mock/live 都支持普通和流式响应，界面显示实际模式；live 按�
 
 账务凭据可不配置，此时余额 unavailable，不影响推理；凭据不足或查询失败不能清零旧快照。账户归属由部署者核对，当前没有自动认证两个 Key 属于同一账户的能力。后台只填写引用名，实际密钥由运行环境注入。
 
-依据 OpenRouter 官方[用量与费用](https://openrouter.ai/docs/cookbook/administration/usage-accounting)、[账户 credits](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits)、[Generation 查询](https://openrouter.ai/docs/api/api-reference/generations/get-request-&-usage-metadata-for-a-generation)及[错误处理](https://openrouter.ai/docs/api_reference/errors-and-debugging)实现协议适配。本机独立 HTTP 夹具覆盖真实 SDK/网络传输、普通和 SSE 回执、费用/余额凭据隔离、拒绝非法目标、不重试、不跳转、HTTP 200 内错误、历史事实保留以及 live DBOS/Agent 两轮执行；未使用真实密钥或请求公开供应商，不能据此声称外部账户已验收。配置步骤见[OpenRouter live 接入](../../README.md#openrouter-live-接入)。
+依据 OpenRouter 官方[用量与费用](https://openrouter.ai/docs/cookbook/administration/usage-accounting)、[账户 credits](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits)、[Generation 查询](https://openrouter.ai/docs/api/api-reference/generations/get-request-&-usage-metadata-for-a-generation)及[错误处理](https://openrouter.ai/docs/api_reference/errors-and-debugging)实现协议适配。配置步骤见[OpenRouter live 接入](../../README.md#openrouter-live-接入)。
 
-### 7.9 真实账户联调准备与最小验收
+### 代码组织
 
-状态：2026-10-18 仅整理待执行步骤，尚未配置真实密钥、查询真实账户或发起付费调用。运行配置继续保持原值；以下涉及 live 的操作在实际联调时执行，预算与发送范围先确定。沿用现有模型、API 和后台，不新增验收服务或领域字段。
-
-**准备清单**
-
-| 项目 | 最小要求 |
-|---|---|
-| 环境 | 独立空数据库、独立文件卷，完成迁移、存储及管理员初始化；不切换或导入 mock 数据 |
-| 账户 | 有可用额度；首轮使用 OpenRouter credits，不引入 BYOK，便于对账 |
-| 推理 Key | 为本次验收单独创建，设置小额消费上限；具体预算在执行前确定，参见官方 [Key 限额说明](https://openrouter.ai/blog/tutorials/team-spend-controls-setup/) |
-| 账务 Key | 同一账户的 Management Key；完整余额验收需要它，缺失时只能标记余额项未验收 |
-| 模型 | 一个明确的上游模型 ID，支持文本、流式及短输出；后续 Flow 验收还需支持工具调用 |
-| 配置与网络 | 官方地址及两个不同秘密引用名；密钥只从运行环境注入。API/Worker 模式与秘密一致，出口允许直接 HTTPS 访问 |
-
-先只验收普通 API 调用，保持 Flow 未启用；在独立环境显式配置 live 后，创建一个渠道和一个模型。配置保存和读取本地模型目录不会发起推理，不能据此判断上游 Key 有效。验收期间尽量避免同一账户的其他消费，便于核对。
-
-**第一轮：两次推理，逐项确认**
-
-以下接口均为 Keystone 接口，以 `/api/v1` 为前缀；管理、调用和历史读取仍使用原有权限。通过已登录会话及 CSRF，或相应权限的 PAT 访问，不把上游 Key 用作 Keystone 的认证凭据。
-
-| 顺序 | 操作 | 通过标准 |
-|---|---|---|
-| 1 | 查看配置与 `/models` | 显示 live，可选择指定模型，尚无调用记录 |
-| 2 | 后台刷新余额，即 POST /model-channels/{id}/balance | 状态 ok；金额、credits 单位与采集时间正确，与账户页面口径一致 |
-| 3 | POST /models/invoke，普通短文本请求一次 | 返回文本和 invocation_id；新增一条 succeeded 记录，有上游编号、用量和响应费用 |
-| 4 | 同一接口，stream=true 请求一次 | 正常接收内容并以 done 结束，无 error；新增一条 succeeded 记录，最终用量和费用已保存 |
-| 5 | 对两条记录分别 POST /model-invocations/{id}/cost | 上游编号匹配，cost_source=query，金额与响应费用核对；仍只有原来两条记录，没有重发推理 |
-| 6 | 对照 OpenRouter 调用明细，再刷新余额 | 两个上游编号均能对应；金额差异有明确解释，无解释的差异不得标记通过 |
-
-普通请求体示例如下，`acceptance-chat` 需替换为实际创建的模型 key；第二次仅将 stream 改为 true。示例不包含凭据，也不会自动执行。
-
-```json
-{
-  "model_key": "acceptance-chat",
-  "messages": [{"role": "user", "content": "请用一句简短的话打招呼。"}],
-  "max_tokens": 64,
-  "stream": false
-}
-```
-
-首轮使用 API 显式限制输出；当前后台调用框没有输出上限输入项，使用后端默认 1024。64 是输出 token 上限，不是金额预算，也不要求模型返回完全固定的文字；选择适合短输出的模型。费用以 usage.cost 和 Generation 的 total_cost 为依据，不按 token 估价，不拿 upstream_inference_cost 替代账户扣费。余额差额仅辅助核对，其他调用、充值和统计更新时间可能影响差额，主要凭证是上游编号对应的调用明细。
-
-遇到超时、断流、unknown、费用缺失或金额不一致，暂停后续发送并保留已有记录。可稍后手动补查费用，不反复补发推理；查询暂不可用记为待验收，未知不当作零。停止接收不保证停止计费。真实账户无需重复本机已覆盖的故障注入矩阵。
-
-**第二轮：一次 Flow，单独安排预算**
-
-第一轮通过后，再启用 Flow 并启动匹配配置的 Worker，用一份简短、无敏感信息的 UTF-8 文本执行一次 document.review。验收运行成功、步骤可读、报告可下载，每次调用都有对应 ModelInvocation，关联同一 Flow Run，费用汇总与记录一致。
-
-当前 Flow 最多允许 4 次模型请求、每次输出上限 1024；模拟夹具的两轮调用不保证真实模型恰好两轮。另行确定本轮预算，不为凑齐预期调用数重复执行。再次提交相同 request_key 和输入应返回原 Run，不新增运行或模型调用；不要点击“准备新的运行”测试幂等。
-
-验收记录只需一份简短结果：日期、模型 ID、预算及实际费用、两条 invocation_id 和上游编号、补查结果、余额及采集时间、可选 Flow Run ID、各项通过/待验证及原因。不记录密钥。结束后停用专用推理 Key 或关闭该验收环境发送，保留原记录供核对；通过第一轮不代表 Flow 已验收。
-
-
-### 代码组织（2026-10-19）
-
-三个实体分别位于 models/channel.py、model_entry.py、model_invocation.py。渠道、模型配置、调用记录分别由 services/channels.py、entries.py、invocations.py 处理；services/runtime.py 维持受控发送。Flow 调用 select_model(session, key, lock=True) 获取固定选择，保留共享行锁和原事务；services/recovery.py 提供共用的分批收尾，Worker 入口仍要求持有独占锁；maintenance.py 保留普通调用离线恢复的显式确认。响应在 schemas/ 中明确列出字段，不随表新增列自动扩展。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。领域字段、权限和生命周期不变。
+三个实体分别位于 models/channel.py、model_entry.py、model_invocation.py。渠道、模型配置、调用记录分别由 services/channels.py、entries.py、invocations.py 处理；services/runtime.py 维持受控发送。Flow 调用 select_model(session, key, lock=True) 获取固定选择，保留共享行锁和原事务；services/recovery.py 提供共用的分批收尾，Worker 入口仍要求持有独占锁；maintenance.py 保留普通调用离线恢复的显式确认。响应在 schemas/ 中明确列出字段，不随表新增列自动扩展。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
 调用历史与汇总和审计共用 core/time_range.py：since/until 为闭区间，未传 until 时取数据库当前时间，未传 since 时取 until 前 30 天，最多 366 天，端点必须带时区；仅传历史 until 同样有效。ModelInvocation.created_at 使用数据库时间，默认查询也使用数据库时钟，避免刚写入的记录被应用时钟偏差排除。显式边界原样执行，错误保持 invalid_time_range。
 

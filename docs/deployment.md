@@ -1,16 +1,16 @@
 # 部署、冷启动与备份恢复
 
-范围：单宿主、一个 API、一个 Worker、PostgreSQL 17 和本地共享文件卷。沿用 Ether 的独立 Compose 验收、停写发布、`pg_dump/pg_restore` 与 `tar` 联合恢复方式，不增加备份服务或领域表。整体边界见[架构](architecture.md)，验收结果统一记在[实施记录](implementation-plan.md#412-部署冷启动与备份恢复)。
+范围：单宿主、一个 API、一个 Worker、PostgreSQL 17 和本地共享协调卷。发布先停写，数据库与文件源联合备份和恢复。整体边界见[架构](architecture.md)。
 
 ## 1. 首次启动
 
-从仓库根目录复制 `deploy/.env.example` 为 `deploy/.env`，设置数据库密码和 URL。模拟验收使用 `KEYSTONE_ENV=test`、`KEYSTONE_MODEL_MODE=mock`、`KEYSTONE_FLOW_ENABLED=true`，秘密引用配置为 `{"inference":"fake","billing":"fake"}`。这些值只用于模拟，生产配置拒绝 mock。
+从仓库根目录复制 `deploy/.env.example` 为 `deploy/.env`，设置数据库密码和 URL。模拟环境使用 `KEYSTONE_ENV=test`、`KEYSTONE_MODEL_MODE=mock`、`KEYSTONE_FLOW_ENABLED=true`，秘密引用配置为 `{"inference":"fake","billing":"fake"}`。这些值只用于模拟，生产配置拒绝 mock。
 
 三层 `.env.example` 完整列出各自保留的配置，日志、安全策略、上传限制和镜像选择均已在对应示例中提供，见[配置对应](configuration.md#2-配置对应)。整套 Compose 部署只使用显式选定的部署环境文件；本机前后端 `.env` 不参与容器配置。后端参数显式传给 API、Worker 与一次性服务，admin 不接收后端秘密。浏览器保持同源 `/api`，Nginx 固定转发 `api:8000`。
 
 已有 shell 变量优先于部署文件，未填写的可选参数沿用默认值；修改文件后通过 `up -d` 重建受影响容器，单纯 `restart` 不更新容器环境。容器内部端口及路径固定，`KEYSTONE_API_PORT` 等变量仅控制宿主映射。上传上限超过默认 16 MiB 时，还需同步调整 Nginx 的 `client_max_body_size` 并重建 admin 镜像。
 
-默认模型模式仍为 disabled。OpenRouter live 已提供，配置见[接入说明](../README.md#openrouter-live-接入)：API/Worker 必须一致设置 live 和秘密映射，推理 Key 与 Management Key 分开引用，只允许官方 HTTPS 地址。首次接入使用独立空数据库和文件卷并初始化，不把已有 mock 部署切为 live，也不迁入模拟调用、余额或 DBOS 历史；运行模式属于部署，不能靠新建渠道隔离。模式与秘密不在数据库迁移中，备份恢复必须保持原模式和原账户配置。本地验收脚本继续强制使用 mock 与假秘密，不访问真实渠道。
+默认模型模式仍为 disabled。OpenRouter live 已提供，配置见[接入说明](../README.md#openrouter-live-接入)：API/Worker 必须一致设置 live 和秘密映射，推理 Key 与 Management Key 分开引用，只允许官方 HTTPS 地址。首次接入使用独立空数据库和文件卷并初始化，不把已有 mock 部署切为 live，也不迁入模拟调用、余额或 DBOS 历史；运行模式属于部署，不能靠新建渠道隔离。模式与秘密不在数据库迁移中，备份恢复必须保持原模式和原账户配置。
 
 ```powershell
 docker compose --env-file deploy/.env -f deploy/compose.yaml config -q
@@ -24,15 +24,15 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml logs --tail 30 work
 
 启动顺序：PostgreSQL 健康 → 业务迁移、DBOS 迁移与文件卷初始化全部成功 → API/Worker → API 就绪后开放 admin。API/Worker 使用相同镜像，均以 UID 10001 运行。首次挂载空卷由镜像目录提供写权限；不要手工把文件卷改成 root 独占。
 
-`/api/v1/ready` 检查数据库、业务版本及文件卷标识，返回依赖检查、各存储源状态、Flow 启用配置和模型模式；它不证明 Worker 在线，也不逐个扫描数据库中的历史文件。`/healthz` 仅证明 Nginx 在线。Worker 使用下述独立健康探针；Flow 的实际执行仍需在独立 mock 环境验收。live 环境的模型 Flow 需另行有界验收，不能为检查健康临时切换模式。
+`/api/v1/ready` 检查数据库、业务版本及文件卷标识，返回依赖检查、各存储源状态、Flow 启用配置和模型模式；它不证明 Worker 在线，也不逐个扫描数据库中的历史文件。`/healthz` 仅证明 Nginx 在线。Worker 使用下述独立健康探针；不能为检查健康临时切换模型模式。
 
 ### 1.1 本地 live 联调准备环境
 
-使用独立 Compose 项目、空数据库和文件卷，从当前 `deploy/.env.example` 创建专用环境文件。按[配置说明](configuration.md#4-同时配置本地与-s3)显式声明内容源和协调目录；后台端口改变时同步调整浏览器 Origin。先保持 `KEYSTONE_MODEL_MODE=disabled`、`KEYSTONE_MODEL_SECRETS={}`、`KEYSTONE_FLOW_ENABLED=false`。
+使用独立 Compose 项目、空数据库和文件卷，从当前 `deploy/.env.example` 创建专用环境文件。按[配置说明](configuration.md#4-同时配置本地与-s3)显式声明内容源和协调目录；后台端口改变时同步调整浏览器 Origin。先保持 `KEYSTONE_MODEL_MODE=disabled`、`KEYSTONE_MODEL_SECRETS={}`，Flow 沿用默认 `KEYSTONE_FLOW_ENABLED=true`；模型发送仍需后续显式配置。
 
 按上节首次启动流程构建当前镜像、迁移、初始化存储和管理员；每条 Compose 命令都使用同一项目名和专用环境文件。以实际 `/api/v1/ready`、Worker 探针和登录结果判断环境是否可用。数据库密码与管理员凭据由当前环境单独生成并安全保存。
 
-随后按[真实账户准备与最小验收](domains/model-access.md#79-真实账户联调准备与最小验收)配置凭据和启用 live。首次 live 使用独立空库、空卷，已有 mock 环境保留在原项目中。
+随后按[OpenRouter 接入](domains/model-access.md#77-openrouter-live-接入)配置凭据和启用 live。首次 live 使用独立空库、空卷，已有 mock 环境保留在原项目中。
 
 ### 1.2 Worker 最小健康检查
 
@@ -134,27 +134,11 @@ Invoke-Compose up -d --no-build --pull never --wait --wait-timeout 90
 Invoke-Compose logs --tail 30 worker
 ```
 
-先恢复原版本并验收，之后才按发布流程升级。没有原镜像或相关密钥时，不能声称已经可恢复。只恢复数据库而挂上一个新初始化文件卷时，API ready 仍可能成功，但旧文件读取会因卷指纹不符返回 503；这是防串卷保护，不是完整性扫描。
+先恢复原版本并核对数据，之后才按发布流程升级。没有原镜像或相关密钥时，不能声称已经可恢复。只恢复数据库而挂上一个新初始化文件卷时，API ready 仍可能成功，但旧文件读取会因卷指纹不符返回 503；这是防串卷保护，不是完整性扫描。
 
 恢复后核对：登录和权限边界、字典及审计；原文件/报告的实际字节和授权；模型调用原记录与费用；已完成 Flow 的原 ID、结果和 DBOS 步骤；待执行 Flow 在同一执行版本继续处理；新上传和新调用可以写入。会话与 PAT 数据也会回到备份时点，尚未过期且在该时点有效的凭据可能继续有效，不能把“恢复”当作全量登出。切换前按事件情况撤销相关凭据。
 
-普通 API 模型调用不随 Worker 自动收尾；备份中若有遗留 running 记录，在全部 API 保持停止时执行现有 `recover-model-calls --confirm-api-stopped`，转为 unknown 并保留账务证据。上游费用/副作用不会随数据库回滚：不能因恢复了旧备份就自动重新发送已发生的真实请求，需按原回执查证。本轮模拟验收不证明真实渠道的灾备语义。
-
-## 5. 可重复验收
-
-准备 backend 开发虚拟环境、admin 依赖与 Playwright Chromium，确认 Docker Linux 引擎可用，然后从仓库根目录执行：
-
-```powershell
-backend/.venv/Scripts/python.exe tests/deploy/verify.py
-```
-
-脚本默认构建两个实际 Dockerfile，使用随机项目名、独立卷和随机管理入口端口，不读取 `deploy/.env`，API/数据库不发布宿主端口。三个渠道均为进程内 MockTransport，使用假凭据。检查迁移失败阻断、空卷启动/重复初始化、非 root 运行、真实 Nginx/Chromium 登录与深链刷新、Cookie/CSRF、三个模拟渠道及 SSE、真实 DBOS/Harness、联合恢复和保留卷重建。
-
-恢复检查包含错误文件卷的负例、原登录/角色和文件授权、字典/审计、字节/费用/步骤历史，以及停止 Worker 后提交的 pending Flow 恢复完成；它不是任意执行位置的崩溃恢复矩阵，后者仍由既有 Flow 后端测试覆盖。
-
-日志、构建记录、恢复样本、截图及 `result.json` 保存在 `.artifacts/deploy-verify/<随机目录>/`。脚本失败也清理自己生成的两个项目及卷；只在全部检查和清理成功后输出最终 PASS。`--skip-build` 仅用于调试已构建的 `:verify` 镜像，正式验收使用默认命令。镜像缓存保留，不执行全局 prune。
-
-本地验收不覆盖生产 TLS/证书、备份加密和异地保存设施、S3/NAS、多宿主、多个 Worker 或真实渠道；这些配置在目标部署环境单独验证。
+普通 API 模型调用不随 Worker 自动收尾；备份中若有遗留 running 记录，在全部 API 保持停止时执行现有 `recover-model-calls --confirm-api-stopped`，转为 unknown 并保留账务证据。上游费用/副作用不会随数据库回滚：不能因恢复了旧备份就自动重新发送已发生的真实请求，需按原回执查证。
 
 ## 多存储源的发布与备份
 

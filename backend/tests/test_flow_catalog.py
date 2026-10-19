@@ -38,6 +38,23 @@ def test_distinct_definitions_cannot_share_an_entrypoint():
         build_definitions((definition, replace(definition, key="second")), PERMISSIONS)
 
 
+def test_platform_starts_with_an_empty_flow_directory(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from keystone import composition
+    from keystone.bootstrap import create_app
+    from keystone.core.asyncio import new_event_loop
+    from keystone.core.config import Settings
+
+    monkeypatch.setattr(composition, "FLOW_DEFINITIONS", ())
+    with TestClient(
+        create_app(Settings(_env_file=None, database_url=None)),
+        backend_options={"loop_factory": new_event_loop},
+    ) as client:
+        assert client.get("/api/v1/health").status_code == 200
+        assert not client.app.state.runtime.flow_definitions
+
+
 class Attachments(Input):
     primary: UUID | None = None
     others: list[UUID]
@@ -115,7 +132,8 @@ def test_worker_imports_register_every_declared_entrypoint(omit_registration):
         f"OMIT_REGISTRATION = {omit_registration!r}\n"
         + """
 import sys
-from keystone.bootstrap import build_runtime, register_workflows
+from keystone.bootstrap import build_runtime
+from keystone.composition import register_workflows
 from keystone.core.config import Settings
 
 runtime = build_runtime(Settings(_env_file=None, database_url=None, flow_enabled=False))

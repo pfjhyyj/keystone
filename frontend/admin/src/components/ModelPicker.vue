@@ -7,14 +7,53 @@ const props = defineProps<{ disabled?: boolean }>()
 const model = defineModel<string>({ required: true })
 const emit = defineEmits<{ mode: [value: string] }>()
 let mode = ''
-const { rows, page, loading, error, reload } = usePagedList('model:invoke', async offset => { const data = await modelApi.catalog(offset); mode = data.mode; return data.items })
-watch(rows, values => { if (!loading.value && values.length) emit('mode', mode) })
-watch(loading, value => { if (!value && !error.value) emit('mode', mode) })
+const { rows, page, loading, error, reload } = usePagedList('model:invoke', async (offset) => {
+  const data = await modelApi.catalog(offset)
+  mode = data.mode
+  return data.items
+})
+watch(rows, (values) => {
+  if (!loading.value && values.length) emit('mode', mode)
+})
+watch(loading, (value) => {
+  if (!value && !error.value) emit('mode', mode)
+})
 </script>
 <template>
-  <div class="subject-picker"><label>模型<select v-model="model" aria-label="模型" :disabled="props.disabled || loading" required><option value="">请选择模型</option><option v-if="model && !rows.some(row => row.key === model)" :value="model">{{ model }}（已选，提交时复查）</option><option v-for="row in rows" :key="row.key" :value="row.key">{{ row.key }}</option></select></label>
-    <div class="row-actions"><button type="button" class="secondary" :disabled="props.disabled || loading" @click="reload">刷新可用模型</button></div>
-    <ListPager v-if="page || rows.length >= 50" :page="page" :count="rows.length" :loading="loading || !!props.disabled" @change="page = $event" />
-    <p v-if="error" role="alert">{{ error }}</p><p v-else-if="!loading && !rows.length">本页没有可用模型。</p>
+  <div class="subject-picker">
+    <div class="form-field">
+      <span class="form-label">模型</span
+      ><AppSelect v-model="model" aria-label="模型" :disabled="props.disabled || loading" required
+        ><el-option value="" :label="'请选择模型'" /><el-option
+          v-if="model && !rows.some((row) => row.key === model)"
+          :value="model"
+          :label="model + '（已选，提交时复查）'" /><el-option
+          v-for="row in rows"
+          :key="row.key"
+          :value="row.key"
+          :label="row.key"
+      /></AppSelect>
+    </div>
+    <div class="row-actions">
+      <el-button
+        :disabled="props.disabled || loading"
+        @click="reload"
+        native-type="button"
+        type="default"
+      >
+        刷新可用模型
+      </el-button>
+    </div>
+    <ListPager
+      v-if="page || rows.length >= 50"
+      :page="page"
+      :count="rows.length"
+      :loading="loading || !!props.disabled"
+      @change="page = $event"
+    />
+    <el-alert v-if="error" role="alert" type="error" show-icon :closable="false">{{
+      error
+    }}</el-alert>
+    <p v-else-if="!loading && !rows.length">本页没有可用模型。</p>
   </div>
 </template>

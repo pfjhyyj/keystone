@@ -1,7 +1,5 @@
 # Keystone 身份与权限领域
 
-状态：最小实现 v1.1，2026-10-18；六张身份表、Cookie 会话、PAT、Casbin、管理边界、管理员初始化、账户及用户/角色管理页面已实现。FileGrant 角色删除检查及 FlowRun 对 PAT 的引用保护已接入，凭据自动清理尚未启用。
-
 [范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项)
 
 ## 1. 范围与边界
@@ -165,7 +163,7 @@ PAT.permissions 保存签发时明确选定的权限 key 集合，不使用会�
 | 重新启用用户 | 重新登录、重新签发令牌，已撤销的凭据不恢复 |
 | 调整角色权限 | 保留会话和令牌，按当前权限重新判断 |
 
-采用上述规则。其中改密/重置撤销全部会话参考 Ether 的 [认证服务](M:/code/ether-workspace/ether/packages/platform/src/ether/user/auth/service.py) 与 [用户管理](M:/code/ether-workspace/ether/packages/platform/src/ether/user/service.py)；停用时同时撤销 PAT 是 Keystone 的明确收敛，重新启用不恢复旧凭据，不增加状态或模型。改密和重置密码不是撤销所有访问凭据的同义操作：未撤销的个人令牌在用户完成强制改密后仍可使用；如果属于凭据泄露处置，需要另外撤销个人令牌。
+采用上述规则。其中改密/重置撤销全部会话参考 Ether 的 认证服务 与 用户管理；停用时同时撤销 PAT 是 Keystone 的明确收敛，重新启用不恢复旧凭据，不增加状态或模型。改密和重置密码不是撤销所有访问凭据的同义操作：未撤销的个人令牌在用户完成强制改密后仍可使用；如果属于凭据泄露处置，需要另外撤销个人令牌。
 
 本人改密仅允许有效会话并验证当前密码，成功后撤销包括当前会话在内的全部会话，清除 Cookie，重新登录；强制改密期间只开放本人状态、改密和退出等必要会话入口，PAT 不能用于改密或绕过限制。创建用户或管理员重置密码时，由管理员提供初始密码并通过线下安全方式交付，服务端只保存哈希且要求首次改密，不建邀请、邮件、重置链接或一次性密码表。初始化命令交互输入首位管理员密码，不内置默认密码。
 
@@ -177,11 +175,11 @@ PAT.permissions 保存签发时明确选定的权限 key 集合，不使用会�
 
 权限由代码声明，例如 `user:read`，管理员将已有权限分配给角色，再把角色分配给用户。
 
-Keystone 的用户角色、角色权限关系是唯一授权数据来源，Casbin 使用这些数据进行判断，不另建一套可独立编辑的策略存储。首版 API 在请求授权时、Worker 在每次新的受保护操作前从数据库加载当前用户、角色与原 PAT 状态/范围，不跨请求或跨步骤复用授权结果；同一次短操作内可以复用已加载上下文，不在外部调用期间保持长事务。内置管理员身份与 FileGrant 也使用当前关系。以此满足多进程撤权语义，不引入策略广播、权限版本字段或缓存基础设施。参考 Ether 的 [AuthorizationService.load](M:/code/ether-workspace/ether/packages/platform/src/ether/user/rbac/engine.py)。
+Keystone 的用户角色、角色权限关系是唯一授权数据来源，Casbin 使用这些数据进行判断，不另建一套可独立编辑的策略存储。首版 API 在请求授权时、Worker 在每次新的受保护操作前从数据库加载当前用户、角色与原 PAT 状态/范围，不跨请求或跨步骤复用授权结果；同一次短操作内可以复用已加载上下文，不在外部调用期间保持长事务。内置管理员身份与 FileGrant 也使用当前关系。以此满足多进程撤权语义，不引入策略广播、权限版本字段或缓存基础设施。参考 Ether 的 AuthorizationService.load。
 
 已确定：保留内置管理员角色，拥有全部已声明权限，模块新增权限自动纳入；保护最后一个可用管理员。普通角色可配置权限，但授予和修改不能超出操作者的权限范围。仍被使用的角色不能直接删除。
 
-普通角色 key 创建后固定；内置管理员 key 保留，不能通过创建或重命名普通角色取得。角色修改检查变更前后权限并集，分配/移除角色检查其有效权限集合，均不得超出操作者当前有效权限（含 PAT 范围）。重置他人密码、启停用户和撤销他人凭据也检查目标用户权限范围，不能通过账号控制绕过角色授予限制。内置管理员具有文件对象例外，因此普通角色即使拥有全部功能权限，也不能管理管理员角色成员或重置/控制内置管理员账户；这些操作还要求操作者本人是当前内置管理员，并满足相应功能权限与最后管理员保护。参考 Ether 的 [角色管理](M:/code/ether-workspace/ether/packages/platform/src/ether/user/rbac/service.py) 与 [密码控制边界](M:/code/ether-workspace/ether/packages/platform/src/ether/user/service.py)，对管理员特殊能力补充明确限制，不增加角色层级。
+普通角色 key 创建后固定；内置管理员 key 保留，不能通过创建或重命名普通角色取得。角色修改检查变更前后权限并集，分配/移除角色检查其有效权限集合，均不得超出操作者当前有效权限（含 PAT 范围）。重置他人密码、启停用户和撤销他人凭据也检查目标用户权限范围，不能通过账号控制绕过角色授予限制。内置管理员具有文件对象例外，因此普通角色即使拥有全部功能权限，也不能管理管理员角色成员或重置/控制内置管理员账户；这些操作还要求操作者本人是当前内置管理员，并满足相应功能权限与最后管理员保护。参考 Ether 的 角色管理 与 密码控制边界，对管理员特殊能力补充明确限制，不增加角色层级。
 
 内置管理员的全部权限来自固定规则，不通过普通角色编辑修改。管理员仍受用户状态、会话和令牌有效性检查约束；使用个人令牌时也不能绕过令牌权限上限。拥有全部功能权限不自动跳过业务对象的访问规则。
 
@@ -202,7 +200,7 @@ AccessContext 在认证完成后保存当前 PAT 编号供异常路径使用；�
 | LoginSession、PersonalAccessToken | created_at、expires_at、revoked_at，以及 user_id | 记录签发、到期、撤销；没有一般编辑操作 |
 | Permission | 无行级审计字段 | 由代码声明，不是数据库表 |
 
-时间由服务端生成，统一使用 UTC；操作人来自已验证身份，不能由客户端任意指定。有更新审计字段的对象，创建时 updated_at 与 created_at 相同，updated_by 与 created_by 相同。系统操作允许操作者为空，并在日志中说明来源。会话和令牌的创建者因首版仅支持本人登录/签发而与 user_id 一致；撤销者不一定是本人，必须单独记录在操作日志中。行上字段不能代替完整操作历史。
+有更新审计字段的对象，创建时 updated_at 与 created_at 相同，updated_by 与 created_by 相同。系统操作允许操作者为空，并在日志中说明来源。会话和令牌的创建者因首版仅支持本人登录/签发而与 user_id 一致；撤销者不一定是本人，必须单独记录在操作日志中。行上字段不能代替完整操作历史。
 
 用户停用、密码重置、角色分配及权限修改、令牌签发与撤销需要记录时间、操作者、操作、目标和结果，不记录密码或凭据明文。保留 revoked_at 表达撤销时间，不用 updated_at 猜测撤销事实。并发登录、撤销及最后管理员保护需要在实现时验证。
 
@@ -222,7 +220,7 @@ User 只停用、不删除，不增加 deleted_at、deleted_by。会话和令牌
 | RolePermission | 属于角色自身配置，不阻止删除；删除角色时在同一事务内一并移除 |
 | AuditLog 中的历史角色 ID | 不阻止删除；审计独立保留，不随角色清理 |
 
-角色删除仍检查操作者的管理权限与可管理范围。首版明确检查 UserRole 和 FileGrant，并用事务与数据库约束防止删除检查后并发新增关系，不引入通用 guard 注册机制或角色引用表；将来新增引用角色的领域，再补充检查。该边界参考 Ether 的 [角色删除](M:/code/ether-workspace/ether/packages/platform/src/ether/user/rbac/service.py)、[文件授权检查](M:/code/ether-workspace/ether/packages/platform/src/ether/files/integration.py) 和 [角色关系](M:/code/ether-workspace/ether/packages/platform/src/ether/user/rbac/models.py)。
+角色删除仍检查操作者的管理权限与可管理范围。首版明确检查 UserRole 和 FileGrant，并用事务与数据库约束防止删除检查后并发新增关系，不引入通用 guard 注册机制或角色引用表；将来新增引用角色的领域，再补充检查。该边界参考 Ether 的 角色删除、文件授权检查 和 角色关系。
 
 FileGrant 只在文件内容确认删除、转为 deleted 的事务中随文件生命周期清除；deleting 或清理失败时仍保留授权，因此仍会阻止角色删除。不在角色删除检查里跳过这些授权，也不增加授权失效状态，见[文件删除规则](files.md#21-文件-file)。
 
@@ -252,9 +250,7 @@ LoginSession 不被 FlowRun 引用，过期或撤销后按自己的保留策略�
 
 ## 6. 待确定事项
 
-核心生命周期与初始密码交付方式已实现，参数见下节。尚未启用会话/PAT 自动物理清理；保留期限在对应维护功能接入时确定，届时必须遵守 FlowRun 引用保留规则。FileGrant 已随文件模块落地，当前角色删除显式检查 UserRole 与 FileGrant，并由限制性外键兜底；身份事务锁协调并发新增授权，不引入 guard 注册系统。
-
-已通过真实 PostgreSQL 验证停用与登录/PAT 签发竞争、改密撤销会话、强制改密不能由 PAT 绕过、后续请求按当前权限判断，以及管理员特殊身份与最后管理员并发保护。Worker 的 Flow 场景仍在 Flow 阶段验证，不把 API 测试当作 DBOS 恢复验收。
+核心生命周期与初始密码交付方式已实现，参数见下节。会话/PAT 历史清理暂不纳入首版，不设定保留期限或维护入口；过期与撤销仍立即生效，记录继续遵守 FlowRun 引用保留规则。FileGrant 已随文件模块落地，当前角色删除显式检查 UserRole 与 FileGrant，并由限制性外键兜底；身份事务锁协调并发新增授权，不引入 guard 注册系统。
 
 ## 7. 最小实现约定
 
@@ -307,12 +303,11 @@ Cookie 使用 HttpOnly、SameSite=Lax、Path=/，生产环境使用 Secure 和 _
 
 页面刷新和受保护路由进入时通过 /auth/me 恢复或复查身份；未登录跳转登录页，必须改密时进入账户页。会话与 CSRF 仅在内存中共享。401 清除身份，403 复查权限；身份或权限变化后清空旧页面，丢弃上一身份尚未完成的请求结果。无读取权限的页面不加载列表，前端入口控制不替代后端授权。
 
-沿用 Ether 的原生 dialog、分页和请求代次处理方式，按 Keystone API 裁剪；不引入部门、角色继承配置或通用授权框架。验证范围见[后台第一批实施记录](../implementation-plan.md#49-管理后台第一批)。
+采用 Element Plus 弹窗，沿用 Ether 的分页和请求代次处理方式，按 Keystone API 裁剪；不引入部门、角色继承配置或通用授权框架。
 
+### 代码组织
 
-### 代码组织（2026-10-19）
-
-实现分为 controllers/、services/、models/、schemas/ 四层目录，六个持久化实体各自一个文件。AuthService/UserService/RoleService/TokenService 组合 access.py 的 AccessContext；其他领域仅复用上下文，不依赖账户管理服务。Password 哈希服务仅传给认证、用户管理及初始化。角色响应由 schemas/roles.py 显式投影。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。领域字段、权限和生命周期不变。
+实现分为 controllers/、services/、models/、schemas/ 四层目录，六个持久化实体各自一个文件。AuthService/UserService/RoleService/TokenService 组合 access.py 的 AccessContext；其他领域仅复用上下文，不依赖账户管理服务。Password 哈希服务仅传给认证、用户管理及初始化。角色响应由 schemas/roles.py 显式投影。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
 AccessContext.access 统一处理事务、共享/排他身份锁、权限、会话限制、失败审计和 IntegrityError → conflict。ExecutionIdentity 只覆盖 authorize(session)，按 Run 检查当前身份和执行资格；不另写事务上下文，也不接收后忽略调用参数。
 

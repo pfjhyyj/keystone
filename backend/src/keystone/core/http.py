@@ -11,6 +11,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException
 
 from keystone.core.errors import ServiceError
+from keystone.core.logging import safe_exception
 
 
 def failure(request: Request, status: int, code: str, detail: str, headers=None):
@@ -48,6 +49,10 @@ class RequestBoundary:
                 "request_failed type=%s request_id=%s",
                 type(error).__name__,
                 scope["state"]["request_id"],
+                extra={
+                    "request_id": scope["state"]["request_id"],
+                    "exception": safe_exception(error),
+                },
             )
             if started:
                 # Preserve cancellation/cleanup; do not re-raise sensitive exception text.

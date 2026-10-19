@@ -1,7 +1,5 @@
 # Keystone 审计日志
 
-状态：最小实现 v1.2，2026-10-18；AuditLog 表、统一写入入口、身份/文件/字典/模型管理留痕、授权分页查询及只读审计页面已实现。Flow 已接入同一入口，不增加审计实体。
-
 [范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项)
 
 ## 1. 范围与边界
@@ -58,7 +56,7 @@ details 由每种操作按白名单构造。例如角色删除保存角色 key�
 | 系统清理、已完成结果同步、后台确认删除 | system、空 | details 保存任务来源、run_id 等，原发起人通过关联记录追溯 |
 | 未认证的登录失败 | anonymous、空 | 输入用户名只是未确认输入，不能充当已认证身份 |
 
-“使用令牌操作”和“管理令牌本身”分别判断。运行在 Worker 中不自动意味着 system；以用户身份执行业务与平台维护、事实同步是不同来源。保留现有 actor_type、actor_id、目标字段、correlation_id 和 details 即可，不新增 operator_id、initiator_id 或操作者关系表。参考 Ether 的 [凭据管理](M:/code/ether-workspace/ether/packages/platform/src/ether/user/administration.py)，管理员撤销凭据时记录实际管理员，所属用户作为目标信息。
+“使用令牌操作”和“管理令牌本身”分别判断。运行在 Worker 中不自动意味着 system；以用户身份执行业务与平台维护、事实同步是不同来源。保留现有 actor_type、actor_id、目标字段、correlation_id 和 details 即可，不新增 operator_id、initiator_id 或操作者关系表。参考 Ether 的 凭据管理，管理员撤销凭据时记录实际管理员，所属用户作为目标信息。
 
 ## 3. 主要流程
 
@@ -78,7 +76,7 @@ details 由每种操作按白名单构造。例如角色删除保存角色 key�
 | 后台清理完成，文件进入 deleted | `file.delete.complete` / success | 内容清理完成，同事务设置 deleted_at、清除 FileGrant，记录系统执行来源与授权清理范围 |
 | 后台清理报错，文件仍为 deleting | `file.cleanup.failure` / failure | 本次清理失败，允许后续重试 |
 
-这些日志共用 file_id，以操作代码区分请求、失败和完成，各阶段数据库状态与对应日志同事务提交。首版文件不恢复，删除只有一个不可逆生命周期，因此不要求持久传递原请求 correlation_id；后台每次执行可使用自己的关联标识。Flow 同理通过 run_id 追溯，不增加关联任务表或领域字段。后台执行者使用 system，原始发起人通过请求日志追溯，不能伪装成用户仍在直接执行。重试是新的尝试，追加真实结果，不修改此前失败日志。该按目标关联的方式参考 Ether 的 [审计写入](M:/code/ether-workspace/ether/packages/platform/src/ether/user/audit/service.py)。
+这些日志共用 file_id，以操作代码区分请求、失败和完成，各阶段数据库状态与对应日志同事务提交。首版文件不恢复，删除只有一个不可逆生命周期，因此不要求持久传递原请求 correlation_id；后台每次执行可使用自己的关联标识。Flow 同理通过 run_id 追溯，不增加关联任务表或领域字段。后台执行者使用 system，原始发起人通过请求日志追溯，不能伪装成用户仍在直接执行。重试是新的尝试，追加真实结果，不修改此前失败日志。该按目标关联的方式参考 Ether 的 审计写入。
 
 确认文件删除时的授权清理可合并在完成日志中，保存清理数量、范围和必要授权标识，不要求逐条复制授权移除事件。进入 deleting 或内容清理失败时不提前清除授权；确认 deleted、授权清理与成功日志必须同事务提交。
 
@@ -104,7 +102,7 @@ details 由每种操作按白名单构造。例如角色删除保存角色 key�
 
 ## 6. 待确定事项
 
-首版暂不启用自动删除审计日志，保留期限仍待部署策略确定。details 上限为 UTF-8 JSON 8 KiB；每个 action 单独声明字段白名单，嵌套对象也检查。查询默认最近 30 天，单次范围最多 366 天，时间须带时区；默认 50 条、最多 100 条，offset 最多 100000。已测试成功变更/审计同事务、失败后的独立记录、删除目标后日志仍在、敏感字段拒绝和 user/system/anonymous 操作者。
+审计历史清理暂不纳入首版，不设定保留期限或维护入口；当前继续保留审计记录。details 上限为 UTF-8 JSON 8 KiB；每个 action 单独声明字段白名单，嵌套对象也检查。查询默认最近 30 天，单次范围最多 366 天，时间须带时区；默认 50 条、最多 100 条，offset 最多 100000。
 
 本设计覆盖身份、字典、文件、模型接入和 Flow 的操作留痕，不要求每张业务表拥有相同审计字段；新增领域按相同入口补充必要操作即可。
 
@@ -120,9 +118,9 @@ AccessContext 成功取得授权上下文后，失败或拒绝日志与成功日
 
 GET /api/v1/audit-logs 要求 audit:read，支持 since/until、actor_type/actor_id、action、target_type/target_id、outcome、offset/limit，按 occurred_at、id 倒序返回。不提供客户端写入、修改或删除 API，也不依赖目标当前行。当前身份 action 目录统一为 identity.login/logout、identity.password.change/reset、identity.user.create/update/enable/disable、identity.credentials.revoke、identity.role.create/update/delete/assign、identity.pat.issue/revoke、identity.admin.initialize。
 
-文件和字典已接入同一入口：file.upload.start/complete/failure/residue_cleanup、file.update、file.grant、file.reference、file.delete.request/complete、file.cleanup.failure，以及 dictionary.definition/item 的 create/update。上传开始、资料/授权/引用变更和删除请求记录实际用户（PAT 附 credential_id），上传事实确认与清理记录 system。删除完成日志保留 file_id、授权清理范围及数量；失败清理不移除授权。已验证文件删除/授权清除/审计同事务及字典变更审计失败回滚。Flow 事实同步已接入；审计保留期清理仍未启用。
+文件和字典已接入同一入口：file.upload.start/complete/failure/residue_cleanup、file.update、file.grant、file.reference、file.delete.request/complete、file.cleanup.failure，以及 dictionary.definition/item 的 create/update。上传开始、资料/授权/引用变更和删除请求记录实际用户（PAT 附 credential_id），上传事实确认与清理记录 system。删除完成日志保留 file_id、授权清理范围及数量；失败清理不移除授权。Flow 事实同步已接入；审计保留期清理仍未启用。
 
-模型接入使用 model.channel.create/update、model.entry.create/update、model.balance.refresh。配置及启停沿用同事务管理审计；details 只保留声明字段及引用名，不保存实际秘密、消息或响应正文。手动余额刷新记录发起用户及查询状态，PAT 附 credential_id，不因此修改渠道配置审计字段；调用完成、用量和费用补查保存在 ModelInvocation 内，不重复生成每次调用的 AuditLog。模拟与真实运行适用相同写入边界；当前只有模拟链路通过验收。
+模型接入使用 model.channel.create/update、model.entry.create/update、model.balance.refresh。配置及启停沿用同事务管理审计；details 只保留声明字段及引用名，不保存实际秘密、消息或响应正文。手动余额刷新记录发起用户及查询状态，PAT 附 credential_id，不因此修改渠道配置审计字段；调用完成、用量和费用补查保存在 ModelInvocation 内，不重复生成每次调用的 AuditLog。模拟与真实运行适用相同写入边界。
 
 Flow 新增 flow.start、flow.cancel、flow.complete；发起/取消记录实际当前用户，完成同步记录 system。发起与 Run/输入引用、完成与终态/结果/输出引用分别同事务提交。报告上传开始记录原用户，上传完成及可信引用补齐记录 system；步骤和模型调用不重复记审计。撤权或取消不阻止已确认事实留痕。
 
@@ -134,9 +132,8 @@ Flow 新增 flow.start、flow.cancel、flow.complete；发起/取消记录实际
 
 用户、系统、匿名操作者分别显示，缺少用户名称不会被推断为系统。详情中的 JSON 作为文本展示，沿用服务端脱敏结果，不补查用户资料或扩展审计字段。没有编辑、删除和导出入口。页面适配 Ether 的列表/详情方式，操作名和筛选规则以 Keystone API 为准。
 
+### 代码组织
 
-### 代码组织（2026-10-19）
-
-AuditLog 独立于 models/audit_log.py。services/writer.py 提供 Actor、白名单、成功写入和失败审计，保持调用方事务约定，不依赖 AccessContext；services/query.py 通过 AccessContext 完成授权查询。HTTP 与响应投影分别位于 controllers/logs.py、schemas/logs.py。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。领域字段、权限和生命周期不变。
+AuditLog 独立于 models/audit_log.py。services/writer.py 提供 Actor、白名单、成功写入和失败审计，保持调用方事务约定，不依赖 AccessContext；services/query.py 通过 AccessContext 完成授权查询。HTTP 与响应投影分别位于 controllers/logs.py、schemas/logs.py。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
 审计与模型调用历史共用时间窗口：since/until 均包含端点；未传 until 时取数据库当前时间，未传 since 时取 until 前 30 天，因此仅传历史 until 也可查询；最多 366 天，两个端点均须带时区。occurred_at 在写入时使用数据库时钟，避免应用与数据库时间差造成新事件被默认窗口遗漏。显式边界原样执行，查询错误继续使用 invalid_range。

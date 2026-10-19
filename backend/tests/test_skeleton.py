@@ -48,7 +48,7 @@ def test_liveness_does_not_imply_database_or_domain_readiness():
         "flow_enabled",
         "model_mode",
     }
-    assert ready.json()["flow_enabled"] is False
+    assert ready.json()["flow_enabled"] is True
     assert ready.json()["status"] == "unavailable"
     assert live.headers["cache-control"] == "no-store"
     assert ready.headers["cache-control"] == "no-store"
@@ -83,6 +83,10 @@ def test_errors_hide_input_and_exception_details_and_assign_request_id(caplog):
             assert response.headers["x-request-id"] == response.json()["request_id"]
             assert response.json()["request_id"] != "untrusted-id"
     assert "hidden-test-secret" not in caplog.text
+    event = next(record for record in caplog.records if record.message.startswith("request_failed"))
+    assert event.request_id
+    assert event.exception[0]["type"] == "ValueError"
+    assert event.exception[0]["frames"][-1]["function"] == "fail"
 
 
 def test_settings_reject_non_postgres_without_exposing_secret():
@@ -109,7 +113,7 @@ async def test_worker_stop_closes_database(monkeypatch):
             return {"status": "unavailable", "checks": {"database": "unconfigured"}}
 
     monkeypatch.setattr(worker, "build_runtime", lambda _: FakeRuntime())
-    task = asyncio.create_task(worker.run(settings(), stopped))
+    task = asyncio.create_task(worker.run(settings(flow_enabled=False), stopped))
     await asyncio.wait_for(entered.wait(), timeout=2)
     stopped.set()
     await asyncio.wait_for(task, timeout=2)

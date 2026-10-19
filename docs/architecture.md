@@ -1,6 +1,6 @@
 # Keystone 整体架构
 
-状态：架构方案 v1.17，2026-10-19；六领域最小实现、三批后台整理和单宿主部署/联合恢复验收已完成；新增 OpenRouter live 接入，通过本机 HTTP 与真实 DBOS Worker 验证，未发起真实供应商请求。核心模型、仓库结构、业务扩展与部署边界保持不变；详细字段、权限组合和生命周期以 [领域文档](README.md#按领域阅读) 为准。Ether 的已有验证作为复用基础，Keystone 的适配行为随实现验证。
+采用模块化单体，字段、权限和生命周期见[领域文档](README.md#按领域阅读)。
 
 ## 1. 整体形态
 
@@ -116,7 +116,7 @@ API 从会话或个人令牌构造可信身份。Worker 从 Run 恢复原始发�
 
 撤权阻断新模型请求、文件访问或上传以及业务写入；已发送请求的结果与费用、DBOS 已完成运行的终态与结果仍继续保存。Worker 使用受限 system 能力同步既有事实，仅对该 Run 可信结果、原输出契约及已登记使用关系的文件补齐引用；仍检查文件存在与可保留状态，不新增授权或开放任意跳过权限入口。业务采用、发布和用户查询下载继续检查当前权限，首版不增加自动业务投影机制。详细边界见[Flow 结果同步](domains/flow.md#35-结果同步与文件保留)。
 
-个人令牌失效与记录清理分开：仍被保留的 Run 引用时不能物理删除，也不能清空关联来改变运行身份。凭据、运行、DBOS 历史与模型防重发记录的清理条件须协调，具体由各领域规则约束；维护用例通过模块服务协调，不要求底层模块反向调用 Flow。
+个人令牌失效与记录清理分开：仍被保留的 Run 引用时不能物理删除，也不能清空关联来改变运行身份。历史清理暂不纳入首版，不设定保留天数或维护入口，出现实际容量或运维需求后再评估。未来清理须协调凭据、运行、DBOS 历史与模型防重发记录，由上层用例通过模块服务处理，不要求底层模块反向调用 Flow。
 
 Flow 上下文只提供需要的 files、models 和业务服务能力。Agent 提示词、工具参数和 Skill 文本不能决定身份。运行时客户端及密钥不进入输入输出或检查点；Agent 内部恢复边界沿用 [Flow 设计](domains/flow.md#34-在业务步骤中执行-agent)。
 
@@ -134,8 +134,8 @@ keystone/
 │   │   │   ├── api.py           # HTTP 服务启动与生命周期
 │   │   │   ├── worker.py        # DBOS 与维护循环启动
 │   │   │   └── cli.py           # 迁移、管理员初始化等命令
-│   │   ├── bootstrap.py        # 显式装配模块、路由与流程
-│   │   ├── composition.py      # 合并平台与业务权限、审计声明
+│   │   ├── bootstrap.py        # Runtime 与 HTTP 生命周期
+│   │   ├── composition.py      # 权限、审计与 Flow 的显式装配
 │   │   ├── model_registry.py   # 应用与迁移共用的 ORM 加载入口
 │   │   ├── use_cases.py        # 明确的跨模块用例：角色删除
 │   │   ├── core/               # 配置、数据库、日志、错误
@@ -167,11 +167,11 @@ keystone/
 
 backend/ 内维护唯一后端依赖与锁文件，frontend/ 下每个应用维护自己的依赖、锁文件、构建和测试。首版只创建 admin，不创建占位业务前端、pnpm workspace 或共享前端包。业务前端数量与后端业务模块数量不要求一致。deploy/ 负责组合部署，不容纳领域规则；docs/ 是当前设计唯一维护位置。
 
-当前已实现 platform/identity、audit、files、dictionary、model_access、flow 及 businesses/document_review。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 提供 migrate/migrate-flow/revision/check/init-admin/init-storage；admin 提供账户、文件、字典、模型及 Flow 基本操作。初始迁移按 identity、audit、dictionary、files、model_access、flow 分为六份，保持一条链，当前 head 为 0006_flow，文件多源字段包含在 0004_files 初始结构中；keystone schema 共十六张领域表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与容器验收限制见[仓库说明](../README.md)。
+当前已实现 platform/identity、audit、files、dictionary、model_access、flow 及 businesses/document_review。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 提供 migrate/migrate-flow/revision/check/init-admin/init-storage；admin 提供账户、文件、字典、模型及 Flow 基本操作。初始迁移按 identity、audit、dictionary、files、model_access、flow 分为六份，保持一条链，当前 head 为 0006_flow，文件多源字段包含在 0004_files 初始结构中；keystone schema 共十六张领域表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
 
-CLI 另提供 recover-model-calls --confirm-api-stopped：操作者停止全部 API/普通调用进程后，显式将普通遗留 running 调用收尾为 unknown，保留费用与编号并记录系统审计。确认标志不代替进程检测；恢复期间保持 API 停止。Flow 调用继续由持有单 Worker 排他锁的启动恢复处理，不新增后台超时扫描器。详细边界见[模型离线收尾](domains/model-access.md#76-普通-api-调用离线收尾)。
+CLI 另提供 recover-model-calls --confirm-api-stopped：操作者停止全部 API/普通调用进程后，显式将普通遗留 running 调用收尾为 unknown，保留费用与编号并记录系统审计。确认标志不代替进程检测；恢复期间保持 API 停止。Flow 调用继续由持有单 Worker 排他锁的启动恢复处理，不新增后台超时扫描器。详细边界见[模型离线收尾](domains/model-access.md#75-普通-api-调用离线收尾)。
 
-model_access 复用 Ether 的受控 SDK 传输思路：发送边界重新认证，原子登记 ModelInvocation 并提交后才发送，关闭 SDK 重试。模型响应与费用在独立短事务补全，不保存提示词和输出；配置变更与审计同事务。手动余额刷新在 API 内完成，同渠道用数据库会话锁串行协调，外部 I/O 不占用业务事务；费用补查直接更新原调用记录。运行模式为 disabled/mock/live，默认 disabled，生产禁用 mock；live 当前只支持 OpenRouter 官方地址、固定推理/账务路径，关闭网络层重试、跳转和环境代理。推理与账户余额使用独立凭据引用，不增加表或网关服务。API/Worker 使用一致模式，mock/live 分开数据库和文件卷，避免混用模拟事实和 DBOS 检查点。Agent 每轮请求共享发送边界，DBOS 持久步骤派生稳定调用 ID；未知响应或成功记录缺少检查点时均拒绝重发。协议和本机 HTTP/Worker 测试已完成，真实供应商账户仍待联调，见[模型接入](domains/model-access.md#78-openrouter-live-接入)。
+model_access 复用 Ether 的受控 SDK 传输思路：发送边界重新认证，原子登记 ModelInvocation 并提交后才发送，关闭 SDK 重试。模型响应与费用在独立短事务补全，不保存提示词和输出；配置变更与审计同事务。手动余额刷新在 API 内完成，同渠道用数据库会话锁串行协调，外部 I/O 不占用业务事务；费用补查直接更新原调用记录。运行模式为 disabled/mock/live，默认 disabled，生产禁用 mock；live 当前只支持 OpenRouter 官方地址、固定推理/账务路径，关闭网络层重试、跳转和环境代理。推理与账户余额使用独立凭据引用，不增加表或网关服务。API/Worker 使用一致模式，mock/live 分开数据库和文件卷，避免混用模拟事实和 DBOS 检查点。Agent 每轮请求共享发送边界，DBOS 持久步骤派生稳定调用 ID；未知响应或成功记录缺少检查点时均拒绝重发。配置与能力见[模型接入](domains/model-access.md#77-openrouter-live-接入)。
 
 文件通过 OpenDAL 访问 FILE_STORAGES 中显式声明的 filesystem/S3 源，FILE_COORDINATION_ROOT 独立指定协调目录；两者不互相推导。File.storage_key 由上传服务写入并按源路由，fingerprint 固定原位置身份。每个 File 对应一份内容，业务维护两个 File 的备份关系，不增加 FileReplica 或源管理表。API 与 Worker 使用同宿主共享协调卷及独立 LocalLeases 文件锁。存储 I/O 在短数据库事务之外，上传重试保留 File 与现有授权；删除受理由 API 写 deleting，Worker 确认内容移除后同事务写 deleted、清授权和审计。失败/中断上传保留元数据供恢复；不自动删除所有无引用文件。文件行锁协调引用与删除，角色删除和授权新增继续由身份事务锁及外键保护。初始化卷是一次性 CLI/Compose storage-init 操作，不由 API 启动隐式完成；就绪检查包含卷标识校验。S3 支持同内容幂等重写及 deleted tombstone 定期复核清理，远端物理删除为最终清理语义；详细边界见文件领域第 7 节。仍只支持可靠本地协调锁，不支持 NFS 或多宿主部署。
 
@@ -202,7 +202,7 @@ businesses/media_selection/
         └── resources/          # 提示词、Skills 等
 ```
 
-platform/flow 管运行记录、权限、补投、取消和同步；业务 flows 管步骤、Agent、工具、分支与业务结果。新增流程在 bootstrap 显式注册契约和执行导入，不修改平台执行器，也不扫描任意 Python 路径或动态安装插件。简单流程仅保留定义、契约和 workflow，复杂后再拆目录。
+platform/flow 管运行记录、权限、补投、取消和同步；业务 flows 管步骤、Agent、工具、分支与业务结果。新增流程在 composition.py 显式注册契约和执行导入，不修改平台执行器，也不扫描任意 Python 路径或动态安装插件。简单流程仅保留定义、契约和 workflow，复杂后再拆目录。
 
 bootstrap 按进程职责显式装配：API 加载模块路由和轻量 Definition/契约；Worker 加载匹配版本的 workflow、Agent、资源和维护任务。平台不反向导入具体业务，业务通过公开服务或受控 Flow 上下文使用平台能力，不能直接修改平台表。简单业务直接传递明确服务对象；未来确有独立交付需求时再提取业务包，不预建插件容器或独立 SDK。
 
@@ -212,11 +212,15 @@ admin 提供用户、角色、字典、文件、模型渠道/费用、审计和 
 
 各应用独立构建与部署，共用后端身份与权限。独立代码工程不要求使用不同域名：首版可以通过同一反向代理分别提供 /admin/、业务路径和 /api/，沿用同源 Cookie 认证，浏览器路由与资源 base 按挂载路径配置；如以后分离域名，再明确 Cookie、CSRF 和跨域部署规则，不因此默认引入 SSO。
 
-admin 当前使用 Vue Router 按页面懒加载；App 负责账户区、导航和路由内容，共享 access 状态负责身份/权限与会话恢复，auth 请求层统一处理 Cookie、CSRF、HTTP/流内 401/403 和过期请求结果。各领域页面共用原生 dialog、分页及请求代次处理，直接读取共享身份，不再逐页传入权限副本。不引入 Pinia、共享前端包或新的后端聚合接口。
+admin 使用 Vue Router 按页面懒加载，Element Plus 提供表格、输入、选择、弹窗、抽屉和反馈组件。App 维护可折叠侧栏、移动导航、面包屑和账户菜单；登录、个人中心为独立路由。共享 access 状态负责身份/权限与会话恢复，auth 请求层统一处理 Cookie、CSRF、HTTP/流内 401/403 和过期请求结果。页面共用分页及请求代次处理，直接读取共享身份。不引入 Pinia、共享前端包或新的后端聚合接口。
+
+`ui.ts` 集中注册 Element Plus 基础组件，`style.css` 定义主题与布局；编辑使用 `AppDialog`，运行、调用和引用详情使用抽屉。`AppSelect` 保留原生 form 必选校验，分页保持接口支持的上一页/下一页。领域表单直接维护字段，不增加 schema 表单或通用 CRUD 框架。概览只展示健康/就绪接口提供的实际状态，不推断 Worker 在线状态。个人中心在切换页签或身份变化时清理密码、权限选择和令牌明文。
+
+表格使用自动布局、原生滚动条和 `fit=false`，表体通过 CSS 至少填满容器。避免组件在 ResizeObserver 回调中同步调整列宽；手机缩放和侧栏切换由浏览器布局处理。
 
 文件授权使用文件专用组件，目录可读时选择用户/角色，不可读时输入已知 ID；授权管理与内容读取继续独立校验，引用界面仅展示 owner/slot，解除由所属业务负责。字典采用目录加选项区域和独立编辑弹窗，完整保存允许编辑的字段，区分父字典停用与选项自身停用。两者继续直接调用现有 API，不增加通用资源授权层、前端聚合接口或实体状态字段。
 
-模型接入按配置、模拟调用和历史权限分别加载；选择器支持分页，历史列表与汇总共享时间/渠道/运行筛选，费用组件与 Flow 共用，始终按渠道和单位展示。Flow 采用独立发起和详情弹窗，保留本页幂等请求，未完成运行有界轮询；步骤或费用查询失败单独展示，不更改 Run 状态。停止接收不等于取消模型执行，Flow 取消则等待 Worker 确认；页面不提供重发未知调用或绕过文件授权的入口。
+模型接入按配置、模拟调用和历史权限分别加载；选择器支持分页，历史列表与汇总共享时间/渠道/运行筛选，费用组件与 Flow 共用，始终按渠道和单位展示。Flow 采用独立发起和详情抽屉，保留本页幂等请求，未完成运行有界轮询；步骤或费用查询失败单独展示，不更改 Run 状态。停止接收不等于取消模型执行，Flow 取消则等待 Worker 确认；页面不提供重发未知调用或绕过文件授权的入口。
 
 导航按读取权限显示，写操作按具体权限显示；无读取权限时不挂载对应页面。强制改密先进入账户页，身份变化后清理旧表单和数据。前端控制只改善交互，API 继续执行功能权限、对象范围和并发保护。后台补齐不改变六领域边界、十六张表、API/Worker 进程组织或审计操作名。
 
@@ -297,13 +301,11 @@ Identity 通过 role_grants 一次联表读取当前角色权限，执行授权�
 | Flow | runs；catalog、engine、reconcile、host 保留清晰的执行职责 |
 | Audit | writer / query，写入不反向依赖身份服务 |
 
-tests/test_module_structure.py 固定六领域清单，递归检查所有源文件并解析相对导入；检查单实体文件、HTTP/业务依赖方向、Schema 不访问 ORM，以及 Flow 不直接操作文件/模型接入实体。test_response_contracts.py 锁定响应字段并检查新增内部属性不会泄露。事务、权限、取消、恢复和接口行为由 PostgreSQL/Worker 及浏览器回归验证。参考 Ether 的独立 UserAccess、认证和 RBAC 职责，但按 Keystone 的领域边界与统一目录落地。
-
 ### 5.5 业务权限、审计与模型接入
 
 接入声明校验在启动时完成：权限资源名每个点分段必须非空；审计字段须传集合，不能把字符串误当作字段列表。Catalog 保留不可变目录，不增加配置解析框架。
 
-Flow 的轻量目录同样按应用隔离：bootstrap 把显式定义列表交给 build_definitions，一次检查全部定义的重复键、权限声明、非空且唯一的执行入口、模型字段存在性及输入输出文件路径，再保存到 Runtime.flow_definitions。FlowService、ExecutionIdentity 和 reconcile 显式使用该目录，不再调用全局注册表；Worker 的 workflow 导入仍由 register_workflows 单独负责。工作流装饰器引用 definition.entrypoint，装配测试通过真实 DBOS 装饰器检查全部定义均有注册入口，不启动执行器或读取 DBOS 私有注册表。API 测试可在同一进程创建不同目录的应用；生产仍保持同一发布制品与单 Worker，不因此承诺多个独立项目共用 DBOS 数据库调度。
+Flow 的轻量目录同样按应用隔离：bootstrap 把显式定义列表交给 build_definitions，一次检查全部定义的重复键、权限声明、非空且唯一的执行入口、模型字段存在性及输入输出文件路径，再保存到 Runtime.flow_definitions。FlowService、ExecutionIdentity 和 reconcile 显式使用该目录，不再调用全局注册表；Worker 的 workflow 导入仍由 register_workflows 单独负责。工作流装饰器引用 definition.entrypoint；生产保持同一发布制品与单 Worker。
 
 业务拥有自己的声明、实体和用例，由应用入口显式组合。参考 Ether 的 Module 权限声明与应用权限快照，但保持一个后端工程和一条迁移链，不引入 Project/Module 框架、插件发现或独立业务迁移装载器。当前只补齐接入点，未增加具体业务或领域表。
 
@@ -347,38 +349,12 @@ Flow 输出契约由 Definition.output_schema() 统一生成序列化 Schema，�
 
 Flow 输入统一限制为 64 KiB 的紧凑 UTF-8 JSON，原始请求和默认值填充、序列化、模型选择解析后的最终输入都检查；最终检查在创建 Run 前完成。FlowRun 保存执行参数和 ID，大内容通过文件或业务实体引用，不增加逐流程大小配置。
 
-业务模型检查在独立测试进程中先调用 load_models 并捕获已注册实体，再扫描 businesses/*/models 下的文件，检查漏注册、models/__init__.py 漏导出、每文件一个实体、共享 Base/keystone schema、业务表名前缀，以及模型反向依赖 Service/Controller/执行代码。扫描只在测试中使用，生产不动态发现模型。测试临时目录中的假模型验证这些检查会失败，不在生产目录增加占位业务。
+### 5.6 示例流程装配与停用
 
-## 6. 如何参考 Ether Flow
+应用级 `composition.py` 集中维护 `FLOW_DEFINITIONS` 与 Worker 的 `register_workflows()`。bootstrap 只加载该目录，不直接导入示例业务；API 不导入 workflow、Agent 或 Skills。前端 `flow-forms.ts` 只负责显式映射输入表单，文本审查的文件和模型选择位于 `src/businesses/document-review/FlowInput.vue`。未映射的定义继续使用 JSON 输入，不增加动态插件系统。
 
-**Ether Flow 已经是有运行机制、平台接入和测试代码的实现，应该作为 Keystone Flow 的主要参考。** 当前判断基于源码与测试阅读，不是本轮运行验收。Keystone 的工作重点是适配已确定的简化领域，优先保留现有实现处理故障与边界的经验。
+停用文本审查示例时，从 composition.py 删除契约导入和 FLOW_DEFINITIONS 中的对应项，并移除 register_workflows 中的 workflow 导入；无流程时保留空元组和空函数。在 flow-forms.ts 删除对应导入和映射即可回到通用 JSON 表单。示例目录可按需移除。
 
-| 内容 | Ether 中的依据 | Keystone 的处理 |
-|---|---|---|
-| Run 先落库，Worker 补投 | [FlowService](M:/code/ether-workspace/ether/packages/platform/src/ether/flow/service.py)、[reconcile](M:/code/ether-workspace/ether/packages/platform/src/ether/flow/reconcile.py) | 保留顺序、稳定 ID 与状态核对，去掉 Task 和 Sandbox 分支 |
-| 小范围 DBOS 客户端封装 | [engine.py](M:/code/ether-workspace/ether/packages/flow/src/ether_flow/engine.py) | 参考发起、查询、取消的封装；首版一个队列，不设计多引擎接口 |
-| 流程契约与宿主能力分离 | [runtime.py](M:/code/ether-workspace/ether/packages/flow/src/ether_flow/runtime.py)、[host.py](M:/code/ether-workspace/ether/packages/platform/src/ether/flow/host.py) | 保留受控文件/模型能力和原身份复查，适配 Keystone 服务 |
-| 结果契约、执行版本与执行导入 | [catalog.py](M:/code/ether-workspace/ether/packages/platform/src/ether/flow/catalog.py)、[Worker 入口](M:/code/ether-workspace/ether/apps/worker/src/ether_worker/main.py) | 保留稳定执行身份、单一构建版本及最小结果契约快照，使用显式注册 |
-| Worker 生命周期 | [runtime.py](M:/code/ether-workspace/ether/apps/worker/src/ether_worker/runtime.py) | 参考启动、同一事件循环内装配和有序停止，暂不搬入多 Worker 协调选举 |
-| 恢复与权限测试 | [恢复测试](M:/code/ether-workspace/ether/tests/flow/test_recovery.py)、[授权测试](M:/code/ether-workspace/ether/tests/flow/test_authorization.py)、[Worker 测试](M:/code/ether-workspace/ether/tests/flow/test_worker.py) | 迁移适用的行为用例，验证补投、终态保护、重启和撤权；不只复制实现 |
+Flow 默认启用，模型发送默认关闭，权限判断使用 Casbin。示例和业务代码变更遵守执行版本及同版本发布约束。
 
-不会把整个 ether-flow 包直接当成无需改动的依赖：它的宿主契约包含 Tasks、Sandbox、应用数据事务和外部操作等能力，平台实现也关联 Ether 的身份、模型连接和文件规则。先沿用结构和适用代码，再按 Keystone 契约调整；未来出现独立复用需求时再提取公共包。
-
-人工任务、多 Worker 身份租约与协调选举、Sandbox、共享配额池、通用外部操作协议和插件交付暂缓。简化时仍保留幂等、授权复查、取消竞争和未知收费结果的处理要求。普通模型调用并不会因为 Ether 有外部操作协议就自动获得远端只执行一次的保证。
-
-## 7. 首条验证链路
-
-以“上传文件 → 发起 Flow → Agent 读取文件并调用模型 → 保存结果文件 → 查询结果与调用费用”为首条链路。先用模拟模型验证模块衔接和恢复，再接真实渠道；这一阶段不增加新底座领域。
-
-重点检查 API 提交后退出仍可执行、同请求不重复建 Run、Worker 重启沿用检查点、撤权阻断新操作但允许既有事实同步、业务采用与引用清理竞争、跨模块查询权限，以及每次实际上游调用独立留痕。费用未知时保留未知，无权限则明确不可查看，不用零值、模拟数据或估价充当真实账单。
-
-核心领域模型与仓库结构已确定。这条链路用于贯穿实现验收；技术选择、Ether 复用清单与分阶段完成条件统一见 [技术选型与实现计划](implementation-plan.md)。以 Ether 已有验证为基础，直接从工程骨架开始，适配测试随对应模块迁移进行，不单独建立验证工程。首版为一个 API、一个 Worker；增加 API 进程前需先解决统一登录限流。依赖在工程建立和相关模块接入时按需锁定。
-
-
-### 7.1 当前验收边界
-
-文件审查链路已通过真实独立 API/Worker 与模拟模型验证。代码版本由后端源码、打包资源和 uv.lock 计算；固定 executor、一个队列、并发 2，共享文件卷上的 OS 锁拒绝重复 Worker。每轮协调最多 25 条；当前不自动清理 Run/检查点/模型记录，既有事实同步不依赖仍有效的用户权限，但新访问继续复查。详细预算、接口与三处崩溃恢复见 [Flow 当前实现](domains/flow.md#7-当前实现)。
-
-示例生成报告和 Flow 引用即结束，业务显式采用仍按具体业务实现，并在其事务新增自己的 FileReference；尚无业务采用表或自动投影。六领域管理页面的三批整理已完成，模型/Flow 通过真实 API、DBOS Worker 和模拟渠道浏览器验证。单宿主 Docker 冷启动、Nginx/Chromium、联合备份恢复与保留卷重建已验收；真实渠道和生产环境配置另行验证，当前结果见[实施记录](implementation-plan.md#412-部署冷启动与备份恢复)。
-
-后续新增 OpenRouter live 传输，经本机 HTTP 协议夹具、真实 SDK 和独立 DBOS Worker 验证，已有浏览器场景保持通过；没有真实账户调用，不代表外部服务已验收。领域表和部署进程不变，详见[live 实施记录](implementation-plan.md#413-live-基础能力与-openrouter)。
+未处理 HTTP 异常记录 request_id、异常类型与调用文件/函数/行号；Worker、CLI 与 Flow 协调失败也保留安全位置。日志不输出异常正文、源码行或局部变量，异常链和帧数量有界；错误响应继续保持原脱敏契约。前端使用 Prettier，格式检查与后端 Ruff 一起纳入统一入口和 CI。

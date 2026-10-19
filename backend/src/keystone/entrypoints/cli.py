@@ -10,7 +10,7 @@ from keystone.core.asyncio import run as run_async
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.errors import ServiceError
-from keystone.core.logging import configure_logging
+from keystone.core.logging import configure_logging, safe_exception
 from keystone.core.migrations import expected_heads, migration_config
 from keystone.platform.files.storage import StorageRegistry
 from keystone.platform.identity.schemas import UserCreate
@@ -128,5 +128,6 @@ def main() -> None:
             "command_failed type=%s code=%s",
             type(error).__name__,
             error.code if isinstance(error, ServiceError) else "invalid_configuration_or_database",
+            extra={"exception": safe_exception(error)},
         )
         raise SystemExit(1) from None

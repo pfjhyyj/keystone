@@ -1,7 +1,5 @@
 # Keystone 文件领域
 
-状态：已实现多存储源，2026-10-19。保留三表，支持同时配置本地与 S3；上传下载、授权、业务引用接口、删除及 Worker 清理已完成；后台已补齐授权编辑和只读引用查看，Flow 的原子产物引用与受限结果同步已接入。实现边界和参数见第 7 节。
-
 [范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项)
 
 ## 1. 范围与边界
@@ -78,7 +76,7 @@ erDiagram
 
 文件确认删除时，按文件生命周期一并清除其授权，不需要再逐条人工撤销；这不同于删除角色时级联移除授权。处于 deleting 或清理失败的文件仍保留授权，因此仍可能阻止角色删除；真正删除完成后不再由该文件的授权阻挡角色删除。
 
-默认私有，在创建 uploading File 的同一事务中，为所属用户建立 inspect、content_read、manage 三项普通 FileGrant，并记录上传开始及初始授权范围。上传者仍需对应功能权限才能查询状态或管理失败文件；只有 active 可以读取内容。上传完成、失败重试或重新启用都不自动补回被撤销的授权，owner 不提供隐式访问权。这沿用 Ether 的 [上传时建立默认授权](M:/code/ether-workspace/ether/packages/platform/src/ether/files/service.py)。共享可以面向指定用户、角色或所有登录用户；authenticated 主体只允许元数据和内容读取，不开放管理权，也不等于匿名公开。
+默认私有，在创建 uploading File 的同一事务中，为所属用户建立 inspect、content_read、manage 三项普通 FileGrant，并记录上传开始及初始授权范围。上传者仍需对应功能权限才能查询状态或管理失败文件；只有 active 可以读取内容。上传完成、失败重试或重新启用都不自动补回被撤销的授权，owner 不提供隐式访问权。这沿用 Ether 的 上传时建立默认授权。共享可以面向指定用户、角色或所有登录用户；authenticated 主体只允许元数据和内容读取，不开放管理权，也不等于匿名公开。
 
 普通用户访问同时检查对应文件功能权限与 FileGrant，PAT 还受自身范围限制。**内置管理员有明确的 inspect/manage 对象权限例外，content_read 没有例外：**
 
@@ -92,7 +90,7 @@ erDiagram
 
 具有有效管理权的人可以授予或撤销文件授权，包括给自己增加 content_read；每次变更写 AuditLog。manage 因此包含分发访问权的能力，不表示管理者永远不能获得内容。显式自授权不授予缺失的功能权限，实际下载仍需 file:content_read、显式文件授权和 active 状态。既有管理授权全部被撤销时，内置管理员仍可处理；首版不增加“最后一个文件管理者”保护或单独恢复机制。
 
-这沿用 Ether 的 [文件权限例外](M:/code/ether-workspace/ether/packages/platform/src/ether/files/policy.py) 与 [授权入口](M:/code/ether-workspace/ether/packages/platform/src/ether/files/grants.py)。例外只属于文件领域的元数据与管理操作，不扩展成管理员绕过所有领域对象授权的通用规则。
+这沿用 Ether 的 文件权限例外 与 授权入口。例外只属于文件领域的元数据与管理操作，不扩展成管理员绕过所有领域对象授权的通用规则。
 
 文件上传使用 file:create；读取、元数据查看和管理仍使用上表独立权限，不相互隐含。客户端列表、详情和按 ID 查询使用相同的对象范围；列表先过滤再分页。uploading、failed 允许已授权用户查看状态；除创建时的默认授权外，授权增补、资料修改与启停仅限 active/disabled。deleting 仅允许查看处理状态和幂等删除请求，不接受修改或重新上传。deleted 的授权已清除，普通用户按不可访问处理，内置管理员可查看保留元数据；不为原 owner 恢复特殊权限。文件管理者查看引用仅返回必要 owner/slot 标识，不返回被引用业务的名称或内容，不因此取得该业务访问权。
 
@@ -108,7 +106,7 @@ erDiagram
 
 **存在引用就不能删除；解除引用不等于立即删除；引用不自动授予读取权限。** 普通业务登记新引用前检查文件为 active 且调用者有权使用；已完成 Flow 的内部结果同步有下文限定的保留规则，不作为通用免授权入口。关系建立和解除的时间、操作者通过 AuditLog 保留，不在 FileReference 重复保存创建审计字段。
 
-“有权使用”明确为当前 file:content_read 与该文件 content_read 授权，同时通过业务写入及对象权限检查。业务只改其他字段或保留已有引用时，不要求重新读取文件，也不强迫移除已停用或已撤权文件；新增、更换的目标逐一校验。解除引用只检查引用所属业务的修改/删除权限，不要求仍有文件读取权。owner 与 slot 由可信业务代码限定；文件 manage（包括内置管理员例外）不能直接解除其他业务的引用来绕过删除保护，不开放任意 owner/slot 的引用写接口。业务删除在同一事务中释放自己的引用。参考 Ether 的 [引用读取与解除](M:/code/ether-workspace/ether/packages/platform/src/ether/files/references.py)；Keystone 明确保留未变化关系，不机械地删除并重建全部引用。
+“有权使用”明确为当前 file:content_read 与该文件 content_read 授权，同时通过业务写入及对象权限检查。业务只改其他字段或保留已有引用时，不要求重新读取文件，也不强迫移除已停用或已撤权文件；新增、更换的目标逐一校验。解除引用只检查引用所属业务的修改/删除权限，不要求仍有文件读取权。owner 与 slot 由可信业务代码限定；文件 manage（包括内置管理员例外）不能直接解除其他业务的引用来绕过删除保护，不开放任意 owner/slot 的引用写接口。业务删除在同一事务中释放自己的引用。参考 Ether 的 引用读取与解除；Keystone 明确保留未变化关系，不机械地删除并重建全部引用。
 
 保留这张统一引用表，是为了让文件模块知道文件是否被任意业务使用，而不逐个查询合同、报销、流程等业务表。FileGrant 管访问资格，FileReference 管使用关系，两者记录不同事实。
 
@@ -154,7 +152,7 @@ Flow 受理时登记输入引用；产物上传成功时，在确认 File 为 ac
 
 操作日志采用 [AuditLog](audit.md)，文件删除的请求和清理结果按阶段关联记录。
 
-时间由服务端生成，统一使用 UTC；操作者来自已验证的请求身份，不能接受客户端任意指定。创建时 updated_at 与 created_at 相同，updated_by 与 created_by 相同；系统初始化或系统任务允许操作者为空，具体来源在审计日志中说明。所属用户和实际操作人含义不同，不能相互替代。基础审计字段只说明创建与最近修改情况，不能代替完整操作历史。
+创建时 updated_at 与 created_at 相同，updated_by 与 created_by 相同；系统初始化或系统任务允许操作者为空，具体来源在审计日志中说明。所属用户和实际操作人含义不同，不能相互替代。基础审计字段只说明创建与最近修改情况，不能代替完整操作历史。
 
 File 保留四个审计字段，FileGrant 保留创建审计字段，均直接列在各自字段表中。FileReference 仅保存 owner、slot、file_id。授权与引用通过添加/移除维护，关系建立、移除以及文件重要变更的时间、操作者、目标、操作和结果写入审计日志。owner_id 是文件所属用户，不能由 created_by 或 updated_by 替代。
 
@@ -164,7 +162,7 @@ File 已有删除状态并保留元数据，增加 deleted_at 方便查询清理
 
 FileGrant、FileReference 物理移除，审计日志保留 file_id、授权主体/动作或业务引用键、操作者、时间及结果。关系建立、移除、进入 deleting、确认 deleted 等数据库状态变更与对应成功审计在同一事务内提交；外部内容清理另行执行，失败记录真实结果。日志不随目标或关系级联删除。
 
-文件删除完成时的授权清理可以合并在该次完成审计中，保存清理范围、数量和必要授权标识，不要求逐授权复制日志。存储清理后数据库事务未成功时，不能宣称 deleted 或授权清理已提交；后续核实存储状态并重试确认。参考 Ether 的 [普通删除](M:/code/ether-workspace/ether/packages/platform/src/ether/files/catalog.py) 与 [后台清理](M:/code/ether-workspace/ether/packages/platform/src/ether/files/cleanup.py)，均在确认删除时清除 FileGrant。
+文件删除完成时的授权清理可以合并在该次完成审计中，保存清理范围、数量和必要授权标识，不要求逐授权复制日志。存储清理后数据库事务未成功时，不能宣称 deleted 或授权清理已提交；后续核实存储状态并重试确认。参考 Ether 的 普通删除 与 后台清理，均在确认删除时清除 FileGrant。
 
 本领域复用身份模块的角色功能权限和个人令牌范围；普通用户同时检查 FileGrant，内置管理员仅在 inspect/manage 上使用上述对象权限例外。内容读取一律要求显式 content_read 授权；FileReference 和 owner_id 都不替代访问授权。默认私有，不允许匿名公开。管理者自授权等授权变更必须留审计，日志不保存凭据或文件内容。
 
@@ -186,12 +184,6 @@ FileGrant、FileReference 物理移除，审计日志保留 file_id、授权主�
 - 具体业务附件如何接入业务对象权限，在设计对应业务时确定。
 - 普通上传交互、幂等重试、共享本地卷协调和失败残留清理已实现；多源本地与 S3 已接入；仍只支持单宿主共享可靠本地协调卷，S3 迟到写入按第 7 节复核。
 - 实现时验证产物上传与引用登记的事务边界、撤权后的受限结果同步、业务采用与 Run 清理/文件删除的竞争，以及角色删除与授权新增的互斥。
-- 已验证删除失败保留授权、确认删除与授权清理及审计同事务提交，以及 deleting/deleted 禁止新增授权。
-- 已验证 owner 无隐式访问权、初始授权撤销后不自动补回、普通管理者与内置管理员的对象权限差异，以及管理员/PAT 的显式内容授权与自授权审计。
-
-### 参考
-
-参考 Ether 的 [文件说明](M:/code/ether-workspace/ether/docs/files.md)、[模型](M:/code/ether-workspace/ether/packages/platform/src/ether/files/models.py)、[授权判断](M:/code/ether-workspace/ether/packages/platform/src/ether/files/policy.py)、[引用实现](M:/code/ether-workspace/ether/packages/platform/src/ether/files/references.py) 和 storage/backend.py。复用其行为与存储身份校验思路，按 Keystone 规则改写；未运行 Ether 原测试，Keystone 适配另有集成测试。
 
 ## 7. 当前实现约定
 
@@ -211,7 +203,7 @@ filesystem 的身份来自 `.keystone-storage`，目录搬迁或恢复须连同�
 
 S3 超时、断线或进程崩溃可能出现迟到 PUT。文件删除仍先阻止读取与重试，确认当前 DELETE 后转为 deleted、清除授权；远端物理删除采用最终清理语义。Worker 对已配置 S3 源的 deleted 记录每小时检查精确 object_key，存在时重新删除并记录残留清理审计，保留 tombstone、deleted_at 和删除完成审计，不恢复文件或授权；failed 记录也保留并重试残留清理。数据库必须保留这些记录和原源配置，才能继续追踪迟到写入。没有 bucket 扫描、版本清除或 multipart 清理权限；S3 版本与未完成 multipart 的保留/清理由桶策略管理。
 
-就绪检查报告各源状态，默认源与协调卷影响整体 ready；辅助源故障作为 storage_sources 中的 unavailable 展示，不使本地源停止服务。S3 探针使用有界 list 检查（须允许相应前缀的 ListBucket），不代表完整读写验收。Worker 在数据库可用时继续逐源清理，单源失败轮转重试，不能因默认源故障阻断其他源清理。
+就绪检查报告各源状态，默认源与协调卷影响整体 ready；辅助源故障作为 storage_sources 中的 unavailable 展示，不使本地源停止服务。S3 探针使用有界 list 检查（须允许相应前缀的 ListBucket），不代表所有历史文件均可读写。Worker 在数据库可用时继续逐源清理，单源失败轮转重试，不能因默认源故障阻断其他源清理。
 
 普通上传从当前用户确定 owner。创建 uploading 与三个默认授权同事务；开始记录 user 审计。已经受理的存储写入由受限 system 确认成功/失败，不恢复授权；完成响应再次校验当前身份、file:create 和元数据对象范围。有 file:inspect 时返回元数据，仅有 file:create 时只返回新文件 ID 回执，后续查询仍需 inspect。重试要求 create 与原文件 manage，返回已有 active 的元数据还需 inspect。内容下载始终要求有效 content_read 并再次检查状态，统一按 attachment/octet-stream 输出，附 nosniff，不将 HTML 等内容内联执行。
 
@@ -236,11 +228,11 @@ S3 超时、断线或进程崩溃可能出现迟到 PUT。文件删除仍先阻�
 
 Worker 每轮最多处理 20 个候选：deleting，以及一小时没有更新的 uploading/failed。先取得文件锁，重新检查状态和引用；仍在写入的文件跳过。过期 uploading 标记 failed 并清理残留，failed 保留元数据/授权以便原请求重试，残留维护至多每小时重试。不会自动删除所有无引用 active/disabled 文件。删除完成将 deleted、deleted_at、授权清除及完成审计同事务提交；存储删除后数据库失败则保持 deleting，后续幂等重试确认。维护使用 system，删除请求使用实际用户。
 
-当前管理页面提供上传、分页、下载、改名、启停、删除确认、授权编辑与引用查看。Flow 的原子产物引用与受限结果同步已验证。可信业务调用 FileService.upload_referenced 并传入固定 owner/slot；Files 自己校验上传者、上传键和 active 状态，在上传完成事务内登记引用，不向 Flow 暴露 ORM 或完成回调。已受理写入在撤权或取消后仍保存完成事实与引用，返回前再次授权。终态同步只保留该 Run 已有引用且 active/disabled 的文件，不增加授权，也不暴露客户端跳过权限参数。报告上传后崩溃恢复使用相同请求键和原文件，不重复创建。当前没有 Run 自动清理，业务采用与清理竞争在相应用例接入时验证。
+当前管理页面提供上传、分页、下载、改名、启停、删除确认、授权编辑与引用查看。可信业务调用 FileService.upload_referenced 并传入固定 owner/slot；Files 自己校验上传者、上传键和 active 状态，在上传完成事务内登记引用，不向 Flow 暴露 ORM 或完成回调。已受理写入在撤权或取消后仍保存完成事实与引用，返回前再次授权。终态同步只保留该 Run 已有引用且 active/disabled 的文件，不增加授权，也不暴露客户端跳过权限参数。报告上传后崩溃恢复使用相同请求键和原文件，不重复创建。当前没有 Run 自动清理，业务采用与清理竞争在相应用例接入时验证。
 
 ### 7.3 管理后台
 
-/admin/files 复用统一会话、分页和原生 dialog。可见文件、授权和引用各按 50 条分页，异步查询按请求代次丢弃过期结果；文件编辑及删除仍只读取 ID 回执，再通过列表刷新状态。列表可展开文件 ID、所属人和时间。未取得 inspect 的管理者也可填写已知文件 ID 打开授权或引用；此入口不请求或显示完整文件资料。
+/admin/files 复用统一会话、分页及 Element Plus 弹窗/详情抽屉。可见文件、授权和引用各按 50 条分页，异步查询按请求代次丢弃过期结果；文件编辑及删除仍只读取 ID 回执，再通过列表刷新状态。列表可展开文件 ID、所属人和时间。未取得 inspect 的管理者也可填写已知文件 ID 打开授权或引用；此入口不请求或显示完整文件资料。
 
 授权界面参考 Ether 的 GrantPanel、SubjectPicker 和 FileReferencesDialog，裁剪为文件专用组件。用户目录有 user:read 时支持搜索分页，角色目录有 role:read 时支持分页选择；没有对应目录权限时填写已知对象 UUID，不额外读取身份资料。授权列表保留主体类型和 ID，避免将未加载的名称误认为已删除对象。新增逐条提交，重复授权由后端去重；撤销需确认，撤销后重新查询，失去对象管理权时清空列表并显示拒绝原因。
 
@@ -248,9 +240,8 @@ authenticated 仅能选择 inspect/content_read，不能选择 manage。可用�
 
 引用查看要求 file:manage 及对象管理权，仅显示 owner/slot，支持分页刷新。没有解除引用、跳转任意业务 URL 或修改业务对象的入口；删除遇到引用冲突时保留弹窗并展示原因。原业务或流程负责引用生命周期，不增加引用管理接口或新表。
 
+### 代码组织
 
-### 代码组织（2026-10-19）
-
-三个实体各自位于 models/ 下的独立文件。services/files.py 管生命周期，grants.py 管授权，references.py 管引用及受控产物保留，cleanup.py 管 Worker 清理。Flow 通过 references 内部入口写引用，调用方保留原事务与锁，不能绕过有效使用记录检查；目录与字段响应遵循整体架构规范。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。领域字段、权限和生命周期不变。
+三个实体各自位于 models/ 下的独立文件。services/files.py 管生命周期，grants.py 管授权，references.py 管引用及受控产物保留，cleanup.py 管 Worker 清理。Flow 通过 references 内部入口写引用，调用方保留原事务与锁，不能绕过有效使用记录检查；目录与字段响应遵循整体架构规范。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
 内部 content 接口可指定 max_bytes，授权后在读取存储前检查文件大小，仍执行完整性和读取后授权检查。超限返回 file_too_large，引用资格错误返回 file_reference_invalid；具体业务自行转换为业务错误，Files 不声明 Flow 错误码。公开 HTTP 上传新增可选 storage_key，详情新增 storage_key；内容下载契约不变。

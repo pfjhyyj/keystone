@@ -2,12 +2,24 @@
 
 import re
 
+from keystone.businesses.document_review.contracts import definition as document_review
 from keystone.core.catalog import Catalog
 from keystone.platform.audit.services.writer import ACTIONS
+from keystone.platform.flow.catalog import build_definitions
 from keystone.platform.identity.policy import PERMISSIONS
 
 # Import each business's lightweight CATALOG here and add (namespace, CATALOG).
 BUSINESS_CATALOGS: tuple[tuple[str, Catalog], ...] = ()
+FLOW_DEFINITIONS = (document_review,)
+
+
+def build_flow_definitions(catalog):
+    return build_definitions(FLOW_DEFINITIONS, catalog.permissions)
+
+
+def register_workflows():
+    # Worker-only imports. Remove this import and its definition to retire the example.
+    from keystone.businesses.document_review import workflow  # noqa: F401
 
 
 def build_catalog():

@@ -1,20 +1,46 @@
 import json
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
+from traceback import walk_tb
+
+SOURCE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def safe_exception(error: BaseException) -> list[dict]:
+    """Code locations only: never inspect messages, source lines or local variables."""
+    result, seen = [], set()
+    while error is not None and id(error) not in seen and len(result) < 8:
+        seen.add(id(error))
+        frames = []
+        for frame, line in walk_tb(error.__traceback__):
+            path = Path(frame.f_code.co_filename)
+            try:
+                filename = "keystone/" + path.relative_to(SOURCE_ROOT).as_posix()
+            except ValueError:
+                filename = path.name
+            frames.append({"file": filename, "function": frame.f_code.co_name, "line": line})
+        result.append({"type": type(error).__name__, "frames": frames[-32:]})
+        error = error.__cause__ or (None if error.__suppress_context__ else error.__context__)
+    return result
 
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         # Callers log safe event names, not request bodies, DSNs or exception text.
-        return json.dumps(
-            {
-                "time": datetime.now(UTC).isoformat(),
-                "level": record.levelname,
-                "logger": record.name,
-                "message": record.getMessage(),
-            },
-            ensure_ascii=False,
-        )
+        value = {
+            "time": datetime.now(UTC).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if getattr(record, "request_id", None):
+            value["request_id"] = record.request_id
+        if getattr(record, "exception", None):
+            value["exception"] = record.exception
+        elif record.exc_info and record.exc_info[1]:
+            value["exception"] = safe_exception(record.exc_info[1])
+        return json.dumps(value, ensure_ascii=False)
 
 
 def configure_logging(level: str) -> None:

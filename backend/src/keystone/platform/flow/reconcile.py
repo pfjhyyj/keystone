@@ -5,6 +5,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
+from keystone.core.logging import safe_exception
 from keystone.core.time import utcnow
 from keystone.platform.audit.services.writer import Actor, record
 from keystone.platform.flow.catalog import execution_version, small_json
@@ -124,5 +125,10 @@ async def reconcile(runtime, engine, cursor=None):
             async with asyncio.timeout(15):
                 await reconcile_one(runtime, engine, identifier)
         except Exception as error:
-            log.warning("flow_sync_deferred run_id=%s type=%s", identifier, type(error).__name__)
+            log.warning(
+                "flow_sync_deferred run_id=%s type=%s",
+                identifier,
+                type(error).__name__,
+                extra={"exception": safe_exception(error)},
+            )
     return ids[-1] if len(ids) == 25 else None
