@@ -102,7 +102,6 @@ class Deployment:
                 "KEYSTONE_FILE_STORAGES": json.dumps(
                     {"local": {"driver": "filesystem", "root": "/data/files"}}
                 ),
-                "KEYSTONE_MODEL_SECRETS": json.dumps({"inference": "fake", "billing": "fake"}),
                 "KEYSTONE_BROWSER_ORIGINS": json.dumps([self.origin]),
             }
         )
@@ -461,8 +460,8 @@ def exercise(source, restored, checks):
                     "provider": provider,
                     "name": provider,
                     "api_base": "https://openrouter.ai/api/v1",
-                    "credential_ref": "inference",
-                    "billing_credential_ref": "billing",
+                    "api_key": "fake-inference",
+                    "billing_api_key": "fake-billing",
                 },
             )
             request(

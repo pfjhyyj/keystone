@@ -18,8 +18,8 @@ const channel = {
   name: '模拟渠道',
   provider: 'openrouter',
   api_base: 'https://mock.invalid/v1',
-  credential_ref: 'inference',
-  billing_credential_ref: 'billing',
+  has_api_key: true,
+  has_billing_api_key: true,
   upstream_account_ref: 'account',
   is_active: true,
   balance_snapshot: { items: [{ kind: 'remaining', amount: '2.00', unit: 'credits' }] },
@@ -105,7 +105,7 @@ it('preserves channel fields and labels stale balance; provider and account are 
       writes.push(JSON.parse(String(init.body)))
       return channel
     }
-    if (path === '/model-access/options') return { credential_refs: ['inference', 'billing'] }
+    if (path === '/model-access/options') return { providers: ['openrouter'] }
     return path.startsWith('/model-channels') ? [channel] : [entry]
   })
   const wrapper = mount(ModelManager)
@@ -114,19 +114,46 @@ it('preserves channel fields and labels stale balance; provider and account are 
   await button(wrapper, '编辑渠道').trigger('click')
   expect(selectControl(wrapper, '服务商').props('disabled')).toBe(true)
   expect(wrapper.findAll('[role=dialog] input').at(-2)!.attributes('disabled')).toBeDefined()
-  await wrapper.get('[role=dialog] input[type=checkbox]').setValue(false)
+  await wrapper.findAll('[role=dialog] input[type=checkbox]').at(-1)!.setValue(false)
   await wrapper.get('[role=dialog] form').trigger('submit')
   await flushPromises()
   expect(writes).toEqual([
     {
       name: '模拟渠道',
       api_base: 'https://mock.invalid/v1',
-      credential_ref: 'inference',
-      billing_credential_ref: 'billing',
+      clear_billing_api_key: false,
       upstream_account_ref: 'account',
       is_active: false,
     },
   ])
+})
+it('updates write-only API keys and clears optional billing keys without retaining the input', async () => {
+  authorize(['model:manage'])
+  const writes: Record<string, unknown>[] = []
+  fakeApi((path, init) => {
+    if (init.method === 'PATCH') {
+      writes.push(JSON.parse(String(init.body)))
+      return channel
+    }
+    if (path === '/model-access/options') return { providers: ['openrouter'] }
+    return path.startsWith('/model-channels') ? [channel] : []
+  })
+  const wrapper = mount(ModelManager)
+  await flushPromises()
+  await button(wrapper, '编辑渠道').trigger('click')
+  expect(
+    wrapper
+      .findAll('input[type=password]')
+      .every((input) => (input.element as HTMLInputElement).value === ''),
+  ).toBe(true)
+  await wrapper.get('input[type=password]').setValue('replacement-api-key')
+  await wrapper.get('[role=dialog] input[type=checkbox]').setValue(true)
+  await wrapper.get('[role=dialog] form').trigger('submit')
+  await flushPromises()
+  expect(writes[0]).toMatchObject({ api_key: 'replacement-api-key', clear_billing_api_key: true })
+  expect(writes[0]).not.toHaveProperty('billing_api_key')
+  await button(wrapper, '编辑渠道').trigger('click')
+  expect((wrapper.get('input[type=password]').element as HTMLInputElement).value).toBe('')
 })
 it('preserves an off-page channel and never sends model key in PATCH', async () => {
   authorize(['model:manage'])
@@ -136,7 +163,7 @@ it('preserves an off-page channel and never sends model key in PATCH', async () 
       writes.push(JSON.parse(String(init.body)))
       return entry
     }
-    if (path === '/model-access/options') return { credential_refs: [] }
+    if (path === '/model-access/options') return { providers: ['openrouter'] }
     return path.startsWith('/model-entries') ? [entry] : []
   })
   const wrapper = mount(ModelManager)
@@ -245,11 +272,7 @@ it('labels live calls and sends only after an explicit submission', async () => 
 })
 it('uses the official address and no fake upstream model when configuring live mode', async () => {
   authorize(['model:manage'])
-  fakeApi((path) =>
-    path === '/model-access/options'
-      ? { credential_refs: ['inference', 'billing'], providers: ['openrouter'] }
-      : [],
-  )
+  fakeApi((path) => (path === '/model-access/options' ? { providers: ['openrouter'] } : []))
   const wrapper = mount(ModelManager)
   await flushPromises()
   expect(wrapper.text()).toContain('真实发送（仅 OpenRouter）')

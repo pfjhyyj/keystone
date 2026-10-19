@@ -25,8 +25,8 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
       '服务商',
       { openrouter: 'OpenRouter', deepseek: 'DeepSeek', aliyun_bailian: '阿里云百炼' }[provider]!,
     )
-    await choose(dialog, '推理秘密引用', 'inference')
-    await choose(dialog, '账务秘密引用', 'billing')
+    await dialog.getByLabel('推理 API Key', { exact: true }).fill('fake-inference')
+    await dialog.getByLabel('账务 API Key', { exact: true }).fill('fake-billing')
     await dialog.getByRole('button', { name: '保存渠道', exact: true }).click()
     await expect(dialog).toBeHidden()
     const row = channels.getByRole('row').filter({ hasText: `${provider} 模拟` })

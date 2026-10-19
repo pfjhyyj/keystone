@@ -8,7 +8,7 @@
 - `frontend/console/.env`：仅在更改 API 地址时需要，可设置 `KEYSTONE_API_PROXY`；默认代理 `http://127.0.0.1:8000`。
 - `deploy/.env`：可选，仅用于覆盖 PostgreSQL 密码、宿主端口或镜像。例如复制示例后使用 `docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --wait`；改密码或端口时同步修改后端数据库 URL。
 
-`keystone init` 一次完成业务迁移、Flow 迁移、存储和管理员初始化。`KEYSTONE_INITIAL_ADMIN_PASSWORD` 仅供非交互初始化使用，本机默认交互输入；已有用户时不重置密码。模型表初始为空，`init` 不创建渠道、模型或调用记录。
+`keystone init` 一次完成业务迁移、Flow 迁移、存储和管理员初始化。`KEYSTONE_INITIAL_ADMIN_PASSWORD` 仅供非交互初始化使用，本机默认交互输入；已有用户时不重置密码。模型表初始为空，`init` 不创建渠道、模型或调用记录。渠道 API Key 在控制台手动录入并加密保存，保存立即生效，无需模型秘密环境变量或重启。
 
 ## 前端目录约定
 
@@ -45,7 +45,7 @@ src/
 完成 README 的依赖安装后，从仓库根目录执行：
 
 ```bash
-(cd frontend/console && corepack pnpm exec playwright install chromium)
+(cd frontend/console && pnpm exec playwright install chromium)
 # 专用入口库只需建立一次，不能指向开发或业务数据库。
 docker compose -f deploy/compose.yaml exec postgres createdb -U keystone keystone_test
 export KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone:keystone_local_only@127.0.0.1:55432/keystone_test'

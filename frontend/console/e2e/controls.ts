@@ -12,7 +12,9 @@ export async function watchWindowErrors(page: Page, errors: string[]) {
 
 export async function choose(scope: Page | Locator, label: string, option: string) {
   const control = scope.getByRole('combobox', { name: label, exact: true })
+  await expect(control).toBeEnabled()
   await control.locator('..').locator('..').locator('..').click()
+  await expect(control).toHaveAttribute('aria-expanded', 'true')
   const listbox = scope.getByRole('listbox', { name: label, exact: true })
   await listbox.getByRole('option', { name: option, exact: true }).click()
   await expect(control).toHaveAttribute('aria-expanded', 'false')

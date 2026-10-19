@@ -9,7 +9,6 @@ from uuid import UUID
 
 import pytest
 from dbos import DBOS
-from pydantic import SecretStr
 from sqlalchemy import select, update
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
@@ -37,7 +36,6 @@ def configuration(client, monkeypatch):
     runtime = client.app.state.runtime
     settings = runtime.settings
     settings.flow_enabled = True
-    settings.model_secrets = {k: SecretStr("fake-only") for k in ("inference", "billing")}
     DBOS.migrate(settings.database_url.get_secret_value())
     runtime.flow_engine = Engine(settings)
     entry(client, channel(client))
@@ -82,9 +80,6 @@ def worker(client, tmp_path, *, code=None, stub=True):
             }
         ),
         "KEYSTONE_FILE_DEFAULT_STORAGE": settings.file_default_storage,
-        "KEYSTONE_MODEL_SECRETS": json.dumps(
-            {k: v.get_secret_value() for k, v in settings.model_secrets.items()}
-        ),
     }
     log = tmp_path / f"worker-{time.time_ns()}.log"
     env["KEYSTONE_WORKER_READY_FILE"] = str(log.with_suffix(".ready"))

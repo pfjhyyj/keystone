@@ -10,9 +10,9 @@
 
 ## 1. 读取方式
 
-**后端**：从 `backend/` 启动，读取该目录的 `.env`；优先级为进程环境、`.env`、代码默认值。API、Worker 和 CLI 使用相同数据库、文件存储及凭据配置，修改后重启相关应用进程。
+**后端**：从 `backend/` 启动，读取该目录的 `.env`；优先级为进程环境、`.env`、代码默认值。API、Worker 和 CLI 使用相同数据库和文件存储配置，修改这些环境参数后重启相关应用进程。
 
-**前端**：`corepack pnpm dev` 使用默认 API 代理 `http://127.0.0.1:8000`。需要改变时设置 `KEYSTONE_API_PROXY`，Vite 按进程环境、`.env.[mode].local`、`.env.[mode]`、`.env.local`、`.env`、默认值读取。浏览器请求同源 `/api`，前端不存放模型或数据库秘密。
+**前端**：`pnpm dev` 使用默认 API 代理 `http://127.0.0.1:8000`。需要改变时设置 `KEYSTONE_API_PROXY`，Vite 按进程环境、`.env.[mode].local`、`.env.[mode]`、`.env.local`、`.env`、默认值读取。浏览器请求同源 `/api`，前端不存放模型或数据库秘密。
 
 **依赖 Compose**：`docker compose -f deploy/compose.yaml up -d --wait` 只启动 PostgreSQL。默认数据库和用户均为 `keystone`，本地密码 `keystone_local_only`，端口 `127.0.0.1:55432`；这些值与后端示例匹配。需要覆盖时使用：
 
@@ -37,7 +37,6 @@ Compose 中已有 shell 变量优先于环境文件，再使用代码默认值�
 | `KEYSTONE_FILE_COORDINATION_ROOT` | 必须是本地共享协调目录；后端示例为 `.data/files` |
 | `KEYSTONE_FILE_DEFAULT_STORAGE` | `local`，必须指向已配置的源 |
 | `KEYSTONE_FILE_MAX_BYTES` | 16 MiB，最大 64 MiB；使用 Nginx 镜像时同步调整代理限制 |
-| `KEYSTONE_MODEL_SECRETS` | 默认 `{}`；需要模型时手动注入引用名到真实秘密的映射 |
 | `KEYSTONE_FLOW_ENABLED` | 默认 `true`；Worker 执行流程，不另需消息队列服务 |
 | `KEYSTONE_INITIAL_ADMIN_PASSWORD` | 可选，仅供非交互 `keystone init`；本机首次默认交互输入，已有用户时忽略 |
 | `KEYSTONE_WORKER_READY_FILE` | 默认未设置；独立健康探针按需配置，见[开发说明](development.md#worker-健康检查排障) |
@@ -46,7 +45,7 @@ Compose 中已有 shell 变量优先于环境文件，再使用代码默认值�
 
 ## 3. 配置变更
 
-模型配置是手动操作，步骤见 [README](../README.md#模型配置手动)。实际密钥留在服务端环境中，后台只保存引用名；`keystone init` 不读取模型来创建渠道或模型记录。修改凭据后同时重启 API 与 Worker。
+模型配置是手动操作，步骤见 [README](../README.md#模型配置手动)。在控制台渠道表单中填写 API Key，服务端加密保存到数据库，仅返回是否已设置；编辑时不填写 Key 即保留原值。加密密钥在首次保存时自动写入已有共享协调目录，API 与 Worker 共用该目录，无需额外环境变量。保存后直接生效，无需重启。`keystone init` 不创建渠道、模型记录或模型加密密钥。
 
 JSON 值用单引号包裹，保留内部双引号。后端 dotenv 会展开 `${...}`，包含这类内容的秘密应通过进程环境注入。
 
@@ -62,7 +61,7 @@ KEYSTONE_FILE_DEFAULT_STORAGE=local
 KEYSTONE_FILE_STORAGES='{"local":{"driver":"filesystem","root":"../.data/files"},"cloud":{"driver":"s3","endpoint":"https://s3.example.com","bucket":"keystone-backups","region":"us-east-1","prefix":"documents","access_key":"example-access","secret_key":"example-secret"}}'
 ```
 
-打包后的 API/Worker 使用相同 JSON，但 local.root 须填写实际挂载的容器路径。参数由应用部署环境注入；控制台不接收配置或凭据。初始化执行 `keystone init-storage`，创建/校验协调目录及各 filesystem 源；S3 bucket 须预先创建。
+打包后的 API/Worker 使用相同 JSON，但 local.root 须填写实际挂载的容器路径。参数由应用部署环境注入；控制台不接收数据库或存储凭据。初始化执行 `keystone init-storage`，创建/校验协调目录及各 filesystem 源；S3 bucket 须预先创建。
 
 S3 必须显式填写 endpoint、bucket、region（默认 us-east-1）、access_key、secret_key；prefix 可选，不能含路径穿越。使用 path-style 请求，不读取主机默认 AWS 凭据或 EC2 metadata。需要对应前缀的对象读写删除权限及就绪探针的 ListBucket 权限；不需要应用创建或删除 bucket。filesystem 和 S3 配置都必须显式提供 FILE_COORDINATION_ROOT，协调目录可以与某个本地内容源共用同一路径，但两者分别配置，不互相推导。
 

@@ -17,7 +17,7 @@
 - 身份：登录成功/失败、退出与会话撤销、用户创建/停用/启用、资料修改、密码变更/重置、角色和权限关系变更、个人令牌签发/撤销。
 - 字典：字典与选项的创建、名称及说明修改、排序调整和启停；普通查询与选项校验不逐次记录。
 - 文件：上传开始/完成/失败、资料修改、启停、授权与引用的建立/移除、删除请求及清理完成/失败；创建默认授权可以并入上传开始日志。
-- 模型接入：渠道和模型配置的创建、修改、启停及凭据引用变更；首版配置只停用、不删除。手动余额刷新记录 model.balance.refresh，保存实际操作者及查询结果状态；余额快照和采集状态保存在 Channel，不复制到审计详情。每次推理及费用补全保存在 ModelInvocation，不额外生成调用审计。
+- 模型接入：渠道和模型配置的创建、修改、启停及密钥变更；只记录密钥是否设置或更新，不保存密钥明文或密文。首版配置只停用、不删除。手动余额刷新记录 model.balance.refresh，保存实际操作者及查询结果状态；余额快照和采集状态保存在 Channel，不复制到审计详情。每次推理及费用补全保存在 ModelInvocation，不额外生成调用审计。
 - Flow：运行发起、首次取消请求；目标为 Run。自动步骤进度和恢复诊断留在引擎与运行日志，不逐步骤复制审计；人工待办不在首版范围内。
 
 上述管理操作的成功、业务失败和权限拒绝都可记录；登录失败也记录，但未认证的输入不能被当成已确认的用户身份。批量撤销等操作可用一条日志保存目标用户、范围及实际数量，无需给每条受影响记录再生成相同事件。
@@ -120,7 +120,7 @@ GET /api/v1/audit-logs 要求 audit:read，支持 since/until、actor_type/actor
 
 文件和字典已接入同一入口：file.upload.start/complete/failure/residue_cleanup、file.update、file.grant、file.reference、file.delete.request/complete、file.cleanup.failure，以及 dictionary.definition/item 的 create/update。上传开始、资料/授权/引用变更和删除请求记录实际用户（PAT 附 credential_id），上传事实确认与清理记录 system。删除完成日志保留 file_id、授权清理范围及数量；失败清理不移除授权。Flow 事实同步已接入；审计保留期清理仍未启用。
 
-模型接入使用 model.channel.create/update、model.entry.create/update、model.balance.refresh。配置及启停沿用同事务管理审计；details 只保留声明字段及引用名，不保存实际秘密、消息或响应正文。手动余额刷新记录发起用户及查询状态，PAT 附 credential_id，不因此修改渠道配置审计字段；调用完成、用量和费用补查保存在 ModelInvocation 内，不重复生成每次调用的 AuditLog。测试传输替身同样遵守这些写入边界。
+模型接入使用 model.channel.create/update、model.entry.create/update、model.balance.refresh。配置及启停沿用同事务管理审计；details 只保留声明的非秘密字段和密钥是否设置、是否更新的状态，不保存密钥明文或密文、消息或响应正文。手动余额刷新记录发起用户及查询状态，PAT 附 credential_id，不因此修改渠道配置审计字段；调用完成、用量和费用补查保存在 ModelInvocation 内，不重复生成每次调用的 AuditLog。测试传输替身同样遵守这些写入边界。
 
 Flow 新增 flow.start、flow.cancel、flow.complete；发起/取消记录实际当前用户，完成同步记录 system。发起与 Run/输入引用、完成与终态/结果/输出引用分别同事务提交。报告上传开始记录原用户，上传完成及可信引用补齐记录 system；步骤和模型调用不重复记审计。撤权或取消不阻止已确认事实留痕。
 

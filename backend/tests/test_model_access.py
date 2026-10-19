@@ -9,7 +9,6 @@ from uuid import UUID, uuid4
 import httpx2
 import model_stub as mock
 import pytest
-from pydantic import SecretStr
 from sqlalchemy import event, update
 from test_files_dictionary import client as client
 from test_identity import PASSWORD, assign, bearer, create_user, login, query, role, token
@@ -185,12 +184,6 @@ def test_offline_recovery_audit_failure_rolls_back_batch(client, monkeypatch):
 @pytest.fixture(autouse=True)
 def model_configuration(client, monkeypatch):
     mock.install(monkeypatch)
-    settings = client.app.state.runtime.settings
-    settings.model_secrets = {
-        "inference": SecretStr(SECRET),
-        "billing": SecretStr(BILLING),
-        "rotated": SecretStr("rotated-test-secret"),
-    }
 
 
 def channel(client, provider="openrouter", **overrides):
@@ -200,8 +193,8 @@ def channel(client, provider="openrouter", **overrides):
             "name": provider,
             "provider": provider,
             "api_base": "https://openrouter.ai/api/v1",
-            "credential_ref": "inference",
-            "billing_credential_ref": "billing",
+            "api_key": SECRET,
+            "billing_api_key": BILLING,
             **overrides,
         },
     )
@@ -234,8 +227,6 @@ def edit_channel(client, row, **changes):
     fields = (
         "name",
         "api_base",
-        "credential_ref",
-        "billing_credential_ref",
         "upstream_account_ref",
         "is_active",
     )
@@ -288,7 +279,7 @@ def test_sdk_nonstream_and_stream_receipts_no_messages_persist(client, provider,
         assert row["usage"] == {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20}
         assert (Decimal(row["cost_amount"]) if row["cost_amount"] else None) == cost
         assert row["cost_unit"] == unit
-        assert not {"messages", "content", "credential_ref", "api_base"} & row.keys()
+        assert not {"messages", "content", "api_key", "api_key_encrypted", "api_base"} & row.keys()
     assert "private-prompt" not in json.dumps(records)
     summary = client.get("/api/v1/model-invocations/summary").json()
     assert summary["attempts_by_status"] == {"succeeded": 2}
@@ -495,9 +486,9 @@ def test_balance_refresh_capabilities_secret_selection_and_failed_snapshot(clien
     assert failed["balance_checked_at"] == first["balance_checked_at"]
     renamed = edit_channel(client, c, name="renamed", is_active=False).json()
     assert renamed["balance_snapshot"] == first["balance_snapshot"]
-    reset = edit_channel(client, renamed, billing_credential_ref="rotated").json()
+    reset = edit_channel(client, renamed, billing_api_key="rotated-test-secret").json()
     assert reset["balance_snapshot"] is None and reset["balance_check_status"] == "never"
-    no_billing = channel(client, "aliyun_bailian", billing_credential_ref=None)
+    no_billing = channel(client, "aliyun_bailian", billing_api_key=None)
     r = client.post(f"/api/v1/model-channels/{no_billing['id']}/balance").json()
     assert r["balance_check_status"] == "unavailable" and r["balance_snapshot"] is None
 
@@ -520,7 +511,7 @@ def test_balance_config_change_discards_inflight_result_and_serializes_refresh(c
         try:
             assert entered.wait(5)
             assert client.post(path, headers=headers).status_code == 409
-            assert edit_channel(client, c, billing_credential_ref="rotated").status_code == 200
+            assert edit_channel(client, c, billing_api_key="rotated-test-secret").status_code == 200
         finally:
             release.set()
         assert future.result().json()["code"] == "model_configuration_changed"
@@ -551,11 +542,11 @@ def test_cost_lookup_replaces_never_adds_and_preserves_known_on_failure(client, 
     assert len(client.get("/api/v1/model-invocations").json()) == 1
 
 
-def test_config_audit_rollback_secret_refs_and_immutable_identity(client, monkeypatch):
+def test_config_audit_rollback_and_immutable_identity(client, monkeypatch):
     c = channel(client, upstream_account_ref="account-one")
     assert edit_channel(client, c, upstream_account_ref="other").status_code == 409
     assert edit_channel(client, c, api_base="https://name:secret@example.com/v1").status_code == 422
-    assert edit_channel(client, c, credential_ref="unknown").status_code == 422
+    assert edit_channel(client, c, api_key="").status_code == 422
     assert edit_channel(client, c, provider="deepseek").status_code == 422
     original = audit.record
 
@@ -637,11 +628,41 @@ def test_inflight_completion_after_user_revocation_and_channel_disable(client, m
     )
 
 
-def test_missing_secret_never_sends(client):
+def test_missing_key_file_never_sends(client):
     entry(client, channel(client))
-    client.app.state.runtime.settings.model_secrets = {}
+    from keystone.platform.model_access.credentials import KEY_FILE
+
+    (client.app.state.runtime.settings.file_coordination_root / KEY_FILE).unlink()
     assert invoke(client).json()["code"] == "model_credential_unavailable"
     assert client.get("/api/v1/model-invocations").json() == []
+
+
+def test_channel_credentials_are_write_only_and_missing_master_key_is_not_replaced(client):
+    from keystone.platform.model_access.credentials import KEY_FILE
+    from keystone.platform.model_access.models import Channel
+
+    row = channel(client)
+    assert row["has_api_key"] and row["has_billing_api_key"]
+    assert (
+        not {"api_key", "billing_api_key", "api_key_encrypted", "billing_api_key_encrypted"}
+        & row.keys()
+    )
+    stored = query(client, lambda session: session.get(Channel, UUID(row["id"])))
+    assert stored.api_key_encrypted and SECRET not in stored.api_key_encrypted
+    original = stored.api_key_encrypted
+    assert edit_channel(client, row, name="renamed").status_code == 200
+    stored = query(client, lambda session: session.get(Channel, UUID(row["id"])))
+    assert stored.api_key_encrypted == original
+    assert edit_channel(client, row, api_key="replacement-key").status_code == 200
+    assert (
+        edit_channel(client, row, clear_billing_api_key=True).json()["has_billing_api_key"] is False
+    )
+    audits = client.get("/api/v1/audit-logs").text
+    assert SECRET not in audits and BILLING not in audits and "replacement-key" not in audits
+    key_file = client.app.state.runtime.settings.file_coordination_root / KEY_FILE
+    key_file.unlink()
+    response = edit_channel(client, row, api_key="another-key")
+    assert response.status_code == 503 and not key_file.exists()
 
 
 @pytest.mark.parametrize("failure_phase", ["register", "complete"])

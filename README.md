@@ -4,7 +4,7 @@
 
 ## 本机启动（Linux/macOS）
 
-需要 Python 3.12、uv、Node 24（至少 24.15）、Corepack 和 Docker Compose。以下各个终端均从仓库根目录开始。
+需要 Python 3.12、uv、Node 24（至少 24.15）、pnpm 11.19.0 和 Docker Compose。pnpm 版本与 `frontend/console/package.json` 的 `packageManager` 一致。以下各个终端均从仓库根目录开始。
 
 ### 1. 启动第三方依赖
 
@@ -37,21 +37,17 @@ uv run --locked keystone-worker
 
 ```bash
 cd frontend/console
-corepack pnpm install --frozen-lockfile
-corepack pnpm dev
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
 访问 <http://127.0.0.1:5173/console/>，以 `admin` 和初始化时设置的密码登录。前端通过 Vite 代理请求本机 API。API、Worker、前端各自在终端运行，用 Ctrl+C 停止。
 
 ## 模型配置（手动）
 
-平台可以先启动，模型在需要时单独配置。手动在 `backend/.env` 的 `KEYSTONE_MODEL_SECRETS` 中注入真实 Key，例如：
+平台可以先启动，模型在需要时单独配置。在控制台“模型接入”手动新建 OpenRouter 渠道，填写普通 API Key；再新建模型 key（如 `chat`），上游模型填写实际可用的模型 ID。需要查询账户余额时，可另外填写同一账户的 Management Key。
 
-```dotenv
-KEYSTONE_MODEL_SECRETS='{"inference":"你的 OpenRouter API Key"}'
-```
-
-重启 API 和 Worker 后，在后台“模型接入”手动新建 OpenRouter 渠道，推理秘密引用选择 `inference`；再新建模型 key（如 `chat`），上游模型填写实际可用的模型 ID。账务引用可留空，需要查余额时再配置 Management Key。密钥仅由服务端环境注入，后台只保存引用名。
+密钥保存后不回显；编辑时留空保留原值，填写新值即可更新。保存立即生效，API 与 Worker 无需重启，也不需要模型凭据环境变量。
 
 所有模型调用使用真实服务，启动、初始化和保存配置都不会自动发起调用。Flow 默认启用；配置好模型后，可在 Flow 页面发起文本审查。
 

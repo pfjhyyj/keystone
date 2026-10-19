@@ -12,6 +12,7 @@ from keystone.core.errors import ServiceError
 from keystone.entrypoints.cli import initialize
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.identity.models import User
+from keystone.platform.model_access.credentials import KEY_FILE
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 
 pytestmark = pytest.mark.postgres
@@ -26,7 +27,6 @@ def configuration(empty_database_url, tmp_path):
         file_coordination_root=tmp_path,
         file_storages={"local": {"driver": "filesystem", "root": str(tmp_path)}},
         initial_admin_password=PASSWORD,
-        model_secrets={},
         browser_origins=["http://127.0.0.1:5173"],
     )
 
@@ -43,6 +43,7 @@ def test_init_prepares_all_dependencies_and_preserves_existing_accounts(
     settings.initial_admin_password = None
     initialize(settings, non_interactive=True)
     assert (tmp_path / ".keystone-storage").read_bytes() == marker
+    assert not (tmp_path / KEY_FILE).exists()
 
     with TestClient(
         create_app(settings), backend_options={"loop_factory": new_event_loop}

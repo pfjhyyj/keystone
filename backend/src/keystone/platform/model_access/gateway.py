@@ -7,6 +7,7 @@ import httpx2
 from sqlalchemy import text
 
 from keystone.core.errors import ServiceError
+from keystone.platform.model_access.credentials import ChannelCredentials
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 SUPPORTED_TARGETS = {
@@ -20,6 +21,7 @@ SUPPORTED_TARGETS = {
 class Gateway:
     def __init__(self, settings):
         self.settings = settings
+        self.credentials = ChannelCredentials(settings.file_coordination_root)
         self.slots = asyncio.Semaphore(4)
         # A refresh holds a coordinator connection and needs another for short writes.
         self.balance_slots = asyncio.Semaphore(2)
@@ -41,11 +43,10 @@ class Gateway:
                 409, "model_target_not_allowed", "渠道须使用受支持的官方地址、路径和方法"
             )
 
-    def secret(self, reference):
-        value = self.settings.model_secrets.get(reference)
-        if value is None or not value.get_secret_value():
-            raise ServiceError(503, "model_credential_unavailable", "渠道凭据未配置或已撤销")
-        return value.get_secret_value()
+    def secret(self, encrypted, channel_id, *, billing=False):
+        return self.credentials.decrypt(
+            encrypted, channel_id, "billing" if billing else "inference"
+        )
 
     async def query(self, provider, base, path, secret, *, params=None):
         self.check_target(provider, base, path, method="GET")

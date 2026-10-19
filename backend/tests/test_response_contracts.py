@@ -24,7 +24,7 @@ CASES = [
     ),
     (
         channel_view,
-        """id name provider api_base credential_ref billing_credential_ref
+        """id name provider api_base has_api_key has_billing_api_key
                      upstream_account_ref is_active balance_snapshot balance_checked_at
                      balance_last_attempt_at balance_check_status created_at created_by
                      updated_at updated_by""",

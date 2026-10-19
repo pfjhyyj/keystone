@@ -116,6 +116,7 @@ def test_domain_migrations_upgrade_and_downgrade_in_order(empty_database_url):
         ("0004_files", {"files", "file_grants", "file_references"}),
         ("0005_model_access", {"model_channels", "model_entries", "model_invocations"}),
         ("0006_flow", {"flow_runs"}),
+        ("0007_channel_credentials", set()),
     ]
     config = migration_config(Settings(_env_file=None, database_url=empty_database_url))
     config.attributes["create_schema"] = True

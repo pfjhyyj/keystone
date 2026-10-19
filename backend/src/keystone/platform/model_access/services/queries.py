@@ -11,7 +11,9 @@ def balance_config(channel):
     return (
         channel.provider,
         channel.api_base,
-        channel.billing_credential_ref if adapter.uses_billing_key else channel.credential_ref,
+        channel.billing_api_key_encrypted
+        if adapter.uses_billing_key
+        else channel.api_key_encrypted,
         channel.upstream_account_ref,
     )
 

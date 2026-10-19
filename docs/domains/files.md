@@ -193,7 +193,7 @@ FileGrant、FileReference 物理移除，审计日志保留 file_id、授权主�
 
 使用 OpenDAL 0.47.10，可同时配置多个 filesystem / S3 源。File.storage_key 选源，storage_fingerprint 核对身份，object_key 定位该源中的唯一对象；每个 File 仍只有一份不可变内容。不增加 FileReplica、源管理表、复制任务或平台备份策略。业务需要本地与云端两份内容时，分别上传，保存两个 file_id 并维护各自 FileReference、授权、备份状态、重试和恢复；平台不自动复制、切换读取源或同步删除。
 
-KEYSTONE_FILE_STORAGES 为具名配置映射，KEYSTONE_FILE_DEFAULT_STORAGE 指定新上传默认源；完整例子见[存储配置](../configuration.md#4-同时配置本地与-s3)。所有内容源都在映射中显式配置，单本地源也不例外；空映射表示未配置。storage_key 是 0004_files 初始结构中的非空字段，由上传服务根据选定源写入，无隐式 local 默认值；head 为 0006_flow。切换默认源只影响新请求，已有幂等请求省略源时继续使用原 File 的源；使用中的源键及身份须保留。
+KEYSTONE_FILE_STORAGES 为具名配置映射，KEYSTONE_FILE_DEFAULT_STORAGE 指定新上传默认源；完整例子见[存储配置](../configuration.md#4-同时配置本地与-s3)。所有内容源都在映射中显式配置，单本地源也不例外；空映射表示未配置。storage_key 是 0004_files 初始结构中的非空字段，由上传服务根据选定源写入，无隐式 local 默认值；head 为 0007_channel_credentials。切换默认源只影响新请求，已有幂等请求省略源时继续使用原 File 的源；使用中的源键及身份须保留。
 
 filesystem 的身份来自 `.keystone-storage`，目录搬迁或恢复须连同标记保存；S3 身份来自 driver、endpoint、bucket、region、prefix，不包含凭据。配置目标改变或源被移除时，旧文件访问失败，不回退到默认源。凭据轮换不改变身份。应用不自动创建 S3 bucket；init-storage 仅显式初始化本地协调卷及已配置的本地源。对外只暴露源键，不暴露路径、对象 key、指纹、端点和凭据。源键选择使用现有 file:create 权限，首版没有按源授权；部署只应配置允许平台用户上传的源。
 

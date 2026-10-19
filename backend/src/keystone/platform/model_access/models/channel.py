@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, String, func
+from sqlalchemy import CheckConstraint, DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,8 +23,8 @@ class Channel(Base):
     name: Mapped[str] = mapped_column(String(128))
     provider: Mapped[str] = mapped_column(String(32))
     api_base: Mapped[str] = mapped_column(String(512))
-    credential_ref: Mapped[str] = mapped_column(String(64))
-    billing_credential_ref: Mapped[str | None] = mapped_column(String(64))
+    api_key_encrypted: Mapped[str | None] = mapped_column(Text)
+    billing_api_key_encrypted: Mapped[str | None] = mapped_column(Text)
     upstream_account_ref: Mapped[str | None] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(default=True)
     balance_snapshot: Mapped[dict | None] = mapped_column(JSONB)

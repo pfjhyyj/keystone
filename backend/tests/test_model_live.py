@@ -14,7 +14,6 @@ from uuid import uuid4
 import httpx2
 import pytest
 from dbos import DBOS
-from pydantic import SecretStr
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
 from test_flow import start, wait_run, worker
@@ -175,8 +174,6 @@ def live(client, monkeypatch):
     monkeypatch.setattr(httpx2, "AsyncHTTPTransport", local_transport(server.server_port))
     # Even an inherited environment proxy must not be used by the live transport.
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
-    settings = client.app.state.runtime.settings
-    settings.model_secrets = {"inference": SecretStr(SECRET), "billing": SecretStr(BILLING)}
     try:
         yield calls, overrides, server.server_port
         assert not server_errors, server_errors
@@ -348,7 +345,10 @@ def test_live_query_failures_preserve_receipts_and_missing_billing_key_allows_in
     )
     result = client.post(f"/api/v1/model-invocations/{identifier}/cost").json()
     assert result["cost_amount"] == "0.001200000000000000" and result["cost_source"] == "response"
-    client.app.state.runtime.settings.model_secrets.pop("billing")
+    row = client.get("/api/v1/model-channels").json()[0]
+    from test_model_access import edit_channel
+
+    assert edit_channel(client, row, clear_billing_api_key=True).status_code == 200
     before = len(calls)
     assert client.post(path).json()["balance_check_status"] == "unavailable"
     assert len(calls) == before

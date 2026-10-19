@@ -92,9 +92,9 @@ class InvocationService:
             if row.status == "running":
                 raise ServiceError(409, "model_call_running", "请等待当前调用结束")
             channel = await session.get(Channel, row.channel_id)
-            config = (channel.provider, channel.api_base, channel.credential_ref)
+            config = (channel.provider, channel.api_base, channel.api_key_encrypted, channel.id)
             upstream_id = row.upstream_request_id
-        provider, base, reference = config
+        provider, base, encrypted, channel_id = config
         adapter, cost, note = PROVIDERS[provider], None, "cost_query_unavailable"
         if adapter.supports_cost_query and upstream_id:
             try:
@@ -103,7 +103,7 @@ class InvocationService:
                     provider,
                     base,
                     path,
-                    self.gateway.secret(reference),
+                    self.gateway.secret(encrypted, channel_id),
                     params=params,
                 )
                 cost = adapter.queried_cost(payload, upstream_id)
@@ -113,7 +113,12 @@ class InvocationService:
         async with self.identity.database.transaction() as session:
             row = await locked(session, ModelInvocation, identifier)
             channel = await locked(session, Channel, row.channel_id)
-            if (channel.provider, channel.api_base, channel.credential_ref) != config:
+            if (
+                channel.provider,
+                channel.api_base,
+                channel.api_key_encrypted,
+                channel.id,
+            ) != config:
                 raise ServiceError(
                     409, "model_configuration_changed", "渠道配置已改变，旧费用结果已丢弃"
                 )

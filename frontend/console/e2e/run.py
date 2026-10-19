@@ -119,9 +119,6 @@ def main():
                         ),
                         "KEYSTONE_BROWSER_ORIGINS": json.dumps(["http://127.0.0.1:5175"]),
                         "PYTHONPATH": str(console.parents[1] / "backend/tests"),
-                        "KEYSTONE_MODEL_SECRETS": json.dumps(
-                            {"inference": "fake-inference", "billing": "fake-billing"}
-                        ),
                         "KEYSTONE_FLOW_ENABLED": "true",
                         "KEYSTONE_E2E": "1",
                         "KEYSTONE_API_PROXY": f"http://127.0.0.1:{port}",

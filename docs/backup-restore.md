@@ -6,7 +6,7 @@
 
 ## 1. 联合备份
 
-先在各终端停止 API、Worker 和其他写入进程，保持 PostgreSQL 在线。数据库与文件必须来自同一个停写窗口；完整数据库包含业务、认证、审计、Alembic 和 DBOS 检查点，文件备份包含 `.keystone-storage` 和永久锁文件。
+先在各终端停止 API、Worker 和其他写入进程，保持 PostgreSQL 在线。数据库与文件必须来自同一个停写窗口；完整数据库包含业务、认证、审计、Alembic 和 DBOS 检查点，文件备份包含 `.keystone-storage`、永久锁文件和已自动生成的 `.model-credentials.key`。该密钥用于解密数据库中的渠道 API Key，数据库与协调目录必须一起恢复；缺少密钥时不会生成替代密钥。
 
 以下为 Linux/macOS 的 Bash 命令，从仓库根目录执行；`shasum` 用于校验：
 

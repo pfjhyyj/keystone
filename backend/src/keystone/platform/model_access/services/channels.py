@@ -1,4 +1,6 @@
-from sqlalchemy import select
+from uuid import uuid4
+
+from sqlalchemy import or_, select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
@@ -19,14 +21,40 @@ class ChannelService:
     async def options(self):
         async with self.identity.access("model:manage"):
             return {
-                "credential_refs": sorted(self.gateway.settings.model_secrets),
                 "providers": list(gateway.SUPPORTED_TARGETS),
             }
 
-    def validate_refs(self, data):
-        for reference in (data.credential_ref, data.billing_credential_ref):
-            if reference is not None and reference not in self.gateway.settings.model_secrets:
-                raise ServiceError(422, "unknown_secret_reference", "请选择已配置的秘密引用")
+    async def update_keys(self, session, row, data):
+        if data.api_key is None and not row.api_key_encrypted:
+            raise ServiceError(422, "model_api_key_required", "请填写渠道 API Key")
+        if data.api_key is not None or data.billing_api_key is not None:
+            existing = await session.scalar(
+                select(Channel.id)
+                .where(
+                    or_(
+                        Channel.api_key_encrypted.is_not(None),
+                        Channel.billing_api_key_encrypted.is_not(None),
+                    )
+                )
+                .limit(1)
+            )
+            for field, purpose in (("api_key", "inference"), ("billing_api_key", "billing")):
+                value = getattr(data, field)
+                if value is not None:
+                    encrypted = self.gateway.credentials.encrypt(
+                        value, row.id, purpose, create=existing is None
+                    )
+                    setattr(row, field + "_encrypted", encrypted)
+        if data.clear_billing_api_key:
+            row.billing_api_key_encrypted = None
+
+    @staticmethod
+    def snapshot(row, fields):
+        return {
+            **{key: getattr(row, key) for key in fields},
+            "has_api_key": bool(row.api_key_encrypted),
+            "has_billing_api_key": bool(row.billing_api_key_encrypted),
+        }
 
     async def channels(self, offset, limit):
         async with self.identity.access("model:manage") as (session, _):
@@ -45,7 +73,9 @@ class ChannelService:
         async with self.identity.access(
             "model:manage", action=action, target="model.channel", target_id=identifier
         ) as (session, auth):
-            self.validate_refs(data)
+            values = data.model_dump(
+                exclude={"api_key", "billing_api_key", "clear_billing_api_key"}
+            )
             if identifier:
                 row = await locked(session, Channel, identifier)
                 if (
@@ -55,9 +85,10 @@ class ChannelService:
                     raise ServiceError(
                         409, "channel_account_fixed", "账户归属创建后固定；换账户请新建渠道"
                     )
-                before = {key: getattr(row, key) for key in data.model_dump()}
+                before = self.snapshot(row, values)
                 previous_config = balance_config(row)
-                for key, value in data.model_dump().items():
+                await self.update_keys(session, row, data)
+                for key, value in values.items():
                     setattr(row, key, value)
                 if balance_config(row) != previous_config:
                     row.balance_snapshot = row.balance_checked_at = row.balance_last_attempt_at = (
@@ -67,7 +98,10 @@ class ChannelService:
                 self.identity.touch(row, auth)
             else:
                 before = None
-                row = Channel(**data.model_dump(), created_by=auth.user.id, updated_by=auth.user.id)
+                row = Channel(
+                    id=uuid4(), **values, created_by=auth.user.id, updated_by=auth.user.id
+                )
+                await self.update_keys(session, row, data)
                 session.add(row)
             await session.flush()
             await self.identity.log(
@@ -76,7 +110,13 @@ class ChannelService:
                 action,
                 "model.channel",
                 row.id,
-                {"before": before, "after": data.model_dump()},
+                {
+                    "before": before,
+                    "after": self.snapshot(row, values),
+                    "api_key_changed": data.api_key is not None,
+                    "billing_api_key_changed": data.billing_api_key is not None
+                    or data.clear_billing_api_key,
+                },
             )
             return schemas.channel_view(row)
 
@@ -113,14 +153,16 @@ class ChannelService:
             async with self.identity.access("model:manage") as (session, _):
                 channel = await session.get(Channel, identifier)
                 config = balance_config(channel)
-            provider, base, reference, _ = config
+            provider, base, encrypted, _ = config
             adapter = PROVIDERS[provider]
             attempted = utcnow()
             snapshot = None
             status = "unavailable"
             try:
-                if reference:
-                    secret = self.gateway.secret(reference)
+                if encrypted:
+                    secret = self.gateway.secret(
+                        encrypted, identifier, billing=adapter.uses_billing_key
+                    )
                     payload = await self.gateway.query(provider, base, adapter.balance_path, secret)
                     snapshot, status = adapter.balance(payload), "ok"
             except Exception as error:

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { can } from '../../stores/session'
 import { request } from '../../api/client'
 import {
@@ -31,6 +31,7 @@ const name = ref(''),
   apiBase = ref(''),
   credential = ref(''),
   billing = ref(''),
+  clearBilling = ref(false),
   account = ref(''),
   active = ref(true)
 const key = ref(''),
@@ -50,8 +51,9 @@ function channel(row: Channel | null) {
   name.value = row?.name ?? ''
   provider.value = row?.provider ?? 'openrouter'
   apiBase.value = row?.api_base ?? 'https://openrouter.ai/api/v1'
-  credential.value = row?.credential_ref ?? ''
-  billing.value = row?.billing_credential_ref ?? ''
+  credential.value = ''
+  billing.value = ''
+  clearBilling.value = false
   account.value = row?.upstream_account_ref ?? ''
   active.value = row?.is_active ?? true
   error.value = ''
@@ -73,8 +75,9 @@ async function save() {
       const body = {
         name: name.value,
         api_base: apiBase.value,
-        credential_ref: credential.value,
-        billing_credential_ref: billing.value || null,
+        ...(credential.value ? { api_key: credential.value } : {}),
+        ...(billing.value && !clearBilling.value ? { billing_api_key: billing.value } : {}),
+        clear_billing_api_key: clearBilling.value,
         upstream_account_ref: account.value || null,
         is_active: active.value,
       }
@@ -104,6 +107,13 @@ async function balance(row: Channel) {
     await channels.reload()
   })
 }
+watch(form, (value) => {
+  if (value !== 'channel') {
+    credential.value = ''
+    billing.value = ''
+    clearBilling.value = false
+  }
+})
 onMounted(() => {
   if (can('model:manage')) void loadOptions()
 })
@@ -113,7 +123,7 @@ onMounted(() => {
     <div class="heading">
       <div>
         <h1>模型接入</h1>
-        <p>管理渠道、模型与每次调用的费用。发送模式由部署配置决定，未知费用不代表零费用。</p>
+        <p>管理渠道、模型与每次调用的费用。模型调用使用真实服务，未知费用不代表零费用。</p>
       </div>
     </div>
     <el-alert v-if="error && !form" role="alert" type="error" show-icon :closable="false">{{
@@ -129,7 +139,7 @@ onMounted(() => {
       <div class="row-actions">
         <span>真实发送（仅 OpenRouter）</span
         ><el-button :disabled="busy" @click="run(loadOptions)" native-type="button" type="default"
-          >刷新部署选项</el-button
+          >刷新服务商</el-button
         >
       </div>
       <section aria-label="渠道账户">
@@ -356,36 +366,33 @@ onMounted(() => {
             /></AppSelect>
           </div>
           <label>服务地址<el-input v-model="apiBase" type="url" required maxlength="512" /></label>
-          <div class="form-field">
-            <span class="form-label">推理秘密引用</span
-            ><AppSelect v-model="credential" aria-label="推理秘密引用" required
-              ><el-option value="" :label="'请选择'" /><el-option
-                v-if="credential && !options?.credential_refs.includes(credential)"
-                :value="credential"
-                :label="credential + '（部署中缺失）'" /><el-option
-                v-for="r in options?.credential_refs"
-                :key="r"
-                :value="r"
-                :label="r"
-            /></AppSelect>
-          </div>
+          <label
+            >推理 API Key<el-input
+              v-model="credential"
+              type="password"
+              autocomplete="new-password"
+              :required="!editingChannel?.has_api_key"
+              maxlength="4096"
+              :placeholder="editingChannel?.has_api_key ? '已设置，留空保留' : '请输入 API Key'"
+          /></label>
           <p>
             OpenRouter 地址固定为 https://openrouter.ai/api/v1。推理使用普通 API
-            Key，账户余额查询使用同一账户的 Management Key；账务未配置不影响推理。
+            Key；可选的账户余额查询使用同一账户的 Management Key。
           </p>
-          <div class="form-field">
-            <span class="form-label">账务秘密引用</span
-            ><AppSelect v-model="billing" aria-label="账务秘密引用"
-              ><el-option value="" :label="'未配置'" /><el-option
-                v-if="billing && !options?.credential_refs.includes(billing)"
-                :value="billing"
-                :label="billing + '（部署中缺失）'" /><el-option
-                v-for="r in options?.credential_refs"
-                :key="r"
-                :value="r"
-                :label="r"
-            /></AppSelect>
-          </div>
+          <label
+            >账务 API Key<el-input
+              v-model="billing"
+              type="password"
+              autocomplete="new-password"
+              maxlength="4096"
+              :disabled="clearBilling"
+              :placeholder="
+                editingChannel?.has_billing_api_key ? '已设置，留空保留' : '可选 Management Key'
+              "
+          /></label>
+          <el-checkbox v-if="editingChannel?.has_billing_api_key" v-model="clearBilling"
+            >清除已保存的账务 Key</el-checkbox
+          >
           <label
             >账户标识（非秘密）<el-input
               v-model="account"
@@ -393,7 +400,7 @@ onMounted(() => {
               :disabled="!!editingChannel?.upstream_account_ref"
           /></label>
           <p>
-            这里只保存引用名，实际密钥由部署配置提供，不在浏览器中录入或显示。已确定的账户标识不能更换，换账户须新建渠道。
+            密钥保存后不回显；编辑时留空保留原值，填写新值即可更新。已确定的账户标识不能更换，换账户须新建渠道。
           </p>
         </template>
         <template v-else

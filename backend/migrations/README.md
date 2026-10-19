@@ -10,8 +10,9 @@ Keystone 保留一条 Alembic 迁移链，初始迁移按领域划分。编号�
 | `0004_files` | 文件 | files、file_grants、file_references |
 | `0005_model_access` | 模型接入 | model_channels、model_entries、model_invocations |
 | `0006_flow` | Flow | flow_runs |
+| `0007_channel_credentials` | 模型凭据 | model_channels 改为保存加密 API Key |
 
-文件均在 versions/ 下，名称为 `<revision>.py`，从 identity 连到 flow，只有一个 head。每份初始迁移完整列出本领域的字段、约束、索引及逆序回滚；不导入运行时 ORM 模型或调用 create_all，避免模型后续修改影响历史迁移。审计字段在各表中显式声明，不用公共字段函数或动态建表循环隐藏结构。
+文件均在 versions/ 下，名称为 `<revision>.py`，六份初始迁移从 identity 连到 flow，随后追加增量迁移，只有一个 head。每份初始迁移完整列出本领域的字段、约束、索引及逆序回滚；不导入运行时 ORM 模型或调用 create_all，避免模型后续修改影响历史迁移。审计字段在各表中显式声明，不用公共字段函数或动态建表循环隐藏结构。
 
 所有业务表位于 keystone schema。`keystone migrate` 显式创建命名空间并升级到 head；API/Worker 只检查版本，不自动迁移。DBOS 使用独立 dbos schema，仍由 `keystone migrate-flow` 管理，业务迁移及回滚不修改 DBOS 表。
 
@@ -25,10 +26,14 @@ Keystone 保留一条 Alembic 迁移链，初始迁移按领域划分。编号�
 
 Alembic 连接固定 search_path=public，所有领域表仍显式位于 keystone。这样即使登录角色也叫 keystone，元数据反射仍保留表和外键的 schema，避免自动比较把已有结构误判为变化；schema 过滤仍只包含 keystone，不管理 public 或 dbos 的表。接入测试用临时实体验证 Alembic 识别新增表、建表后差异归零；这不新增生产实体或迁移。
 
-当前项目尚未正式使用，结构整理直接并入对应领域的初始迁移。正式发布后，已发布或共享环境已使用的迁移保持不变；模型调整应追加编号递增的迁移，revision 与文件名一致，down_revision 指向当前 head。不重新生成整套初始迁移，也不为每个领域维护分支 head。确需跨领域原子调整时，在同一份增量迁移中写明涉及领域与依赖，不强行拆开事务。
+初始领域迁移保持现有布局，已经初始化的环境通过追加增量迁移保留已有数据。正式发布后，已发布或共享环境已使用的迁移保持不变；模型调整应追加编号递增的迁移，revision 与文件名一致，down_revision 指向当前 head。不重新生成整套初始迁移，也不为每个领域维护分支 head。确需跨领域原子调整时，在同一份增量迁移中写明涉及领域与依赖，不强行拆开事务。
 
 新增迁移需核对对应[领域模型](../../docs/README.md)、外键顺序和回滚行为。测试使用随机隔离 PostgreSQL 库，验证迁移结果与 ORM 一致、重复升级、逐领域回滚与重新升级，以及 DBOS 数据保持不变。回滚测试只在测试库执行。
 
 ## 文件多源初始结构
 
-文件多源直接包含在 `0004_files`：创建 files 时同时定义非空的 storage_key，并保留 storage_fingerprint、object_key。storage_key 由上传服务根据显式的源配置填写，ORM 和数据库都没有默认源值。共六份初始迁移、单条链、head=0006_flow；新库运行 keystone migrate 即可建立完整初始结构。
+文件多源直接包含在 `0004_files`：创建 files 时同时定义非空的 storage_key，并保留 storage_fingerprint、object_key。storage_key 由上传服务根据显式的源配置填写，ORM 和数据库都没有默认源值。共六份初始迁移和后续增量迁移、单条链、head=0007_channel_credentials；新库运行 keystone migrate 即可建立完整初始结构。
+
+## 渠道凭据升级
+
+`0007_channel_credentials` 保留渠道和模型记录，替换旧凭据引用字段为可空密文字段。旧引用名不包含可恢复的 Key，升级后在控制台手动重新填写渠道 API Key；不读取或导入旧环境变量。新建渠道必须填写推理 Key，账务 Key 可选。回滚该迁移会移除密文列，凭据需重新配置；真实数据恢复应使用对应版本的联合备份。

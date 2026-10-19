@@ -156,7 +156,7 @@ class ModelRuntime:
                     raise ServiceError(
                         409, "model_configuration_changed", "渠道地址已改变，请重新选择模型"
                     )
-                secret = self.gateway.secret(channel.credential_ref)
+                secret = self.gateway.secret(channel.api_key_encrypted, channel.id)
                 created = await session.scalar(
                     insert(ModelInvocation)
                     .values(

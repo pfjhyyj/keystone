@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
+from test_files_dictionary import client as client
 from test_identity import (
     NEW_PASSWORD,
     PASSWORD,
@@ -20,7 +21,6 @@ from test_identity import (
     role,
     token,
 )
-from test_identity import client as client
 
 from keystone import composition
 from keystone.bootstrap import create_app
@@ -199,7 +199,7 @@ def test_flow_directory_isolation_in_api_execution_and_reconciliation(monkeypatc
 @pytest.mark.parametrize("expansion", ["default", "serializer", "model_selection"])
 @pytest.mark.parametrize("extra_bytes", [0, 1])
 def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_bytes):
-    from pydantic import Field, SecretStr, field_serializer
+    from pydantic import Field, field_serializer
     from test_model_access import channel, entry
 
     from keystone.businesses.document_review import contracts
@@ -238,7 +238,6 @@ def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_byte
     login(client)
     final_input = {"text": "", "model_key": "chat"}
     if expansion == "model_selection":
-        settings.model_secrets = {key: SecretStr("fake-only") for key in ("inference", "billing")}
         entry(client, channel(client))
         selection = query(client, lambda session: select_model(session, "chat"))
         final_input["model_key"] = selection.model_dump(mode="json")

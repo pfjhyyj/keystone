@@ -4,8 +4,8 @@ export interface Channel {
   name: string
   provider: string
   api_base: string
-  credential_ref: string
-  billing_credential_ref: string | null
+  has_api_key: boolean
+  has_billing_api_key: boolean
   upstream_account_ref: string | null
   is_active: boolean
   balance_snapshot: {
@@ -47,7 +47,6 @@ export interface Costs {
   known_costs: { channel_id: string; unit: string; amount: string; attempts: number }[]
 }
 export interface ModelOptions {
-  credential_refs: string[]
   providers: string[]
 }
 export const modelApi = {

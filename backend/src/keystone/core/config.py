@@ -23,7 +23,6 @@ class Settings(BaseSettings):
     file_storages: dict[StorageKey, StorageConfig] = Field(default_factory=dict, repr=False)
     file_default_storage: StorageKey = "local"
     file_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1, le=64 * 1024 * 1024)
-    model_secrets: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
     initial_admin_password: SecretStr | None = Field(default=None, repr=False)
     flow_enabled: bool = True
     session_hours: int = Field(default=8, ge=1, le=168)
