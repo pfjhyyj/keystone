@@ -21,7 +21,6 @@ ERRORS = {
     "model_interrupted",
     "model_timeout",
     "model_response_unknown",
-    "model_transport_disabled",
     "model_provider_unavailable",
     "model_target_not_allowed",
     "model_credential_unavailable",

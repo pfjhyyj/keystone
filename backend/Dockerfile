@@ -5,10 +5,10 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:$PATH" \
     KEYSTONE_HOST=0.0.0.0
-COPY backend/pyproject.toml backend/uv.lock ./
+COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
-COPY backend/src ./src
-COPY backend/migrations ./migrations
+COPY src ./src
+COPY migrations ./migrations
 RUN uv sync --locked --no-dev --no-editable \
     && useradd --create-home --uid 10001 keystone \
     && mkdir -p /data/files && chown 10001:10001 /data/files

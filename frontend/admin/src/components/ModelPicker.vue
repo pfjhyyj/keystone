@@ -1,22 +1,12 @@
 <script setup lang="ts">
-import { watch } from 'vue'
 import { modelApi } from '../model-api'
 import { usePagedList } from '../composables/usePagedList'
 import ListPager from './ListPager.vue'
 const props = defineProps<{ disabled?: boolean }>()
 const model = defineModel<string>({ required: true })
-const emit = defineEmits<{ mode: [value: string] }>()
-let mode = ''
 const { rows, page, loading, error, reload } = usePagedList('model:invoke', async (offset) => {
   const data = await modelApi.catalog(offset)
-  mode = data.mode
   return data.items
-})
-watch(rows, (values) => {
-  if (!loading.value && values.length) emit('mode', mode)
-})
-watch(loading, (value) => {
-  if (!value && !error.value) emit('mode', mode)
 })
 </script>
 <template>

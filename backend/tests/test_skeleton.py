@@ -46,7 +46,6 @@ def test_liveness_does_not_imply_database_or_domain_readiness():
         "checks",
         "storage_sources",
         "flow_enabled",
-        "model_mode",
     }
     assert ready.json()["flow_enabled"] is True
     assert ready.json()["status"] == "unavailable"

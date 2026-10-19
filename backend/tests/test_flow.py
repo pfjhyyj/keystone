@@ -30,10 +30,13 @@ pytestmark = pytest.mark.postgres
 
 
 @pytest.fixture(autouse=True)
-def configuration(client):
+def configuration(client, monkeypatch):
+    from model_stub import install
+
+    install(monkeypatch)
     runtime = client.app.state.runtime
     settings = runtime.settings
-    settings.model_mode, settings.flow_enabled = "mock", True
+    settings.flow_enabled = True
     settings.model_secrets = {k: SecretStr("fake-only") for k in ("inference", "billing")}
     DBOS.migrate(settings.database_url.get_secret_value())
     runtime.flow_engine = Engine(settings)
@@ -53,10 +56,11 @@ def start(client, file_id, key="review", **overrides):
 
 
 @contextmanager
-def worker(client, tmp_path, *, code=None):
+def worker(client, tmp_path, *, code=None, stub=True):
     settings = client.app.state.runtime.settings
     env = {
         **os.environ,
+        "PYTHONPATH": str(__import__("pathlib").Path(__file__).parent),
         "KEYSTONE_ENV": "test",
         "KEYSTONE_FLOW_ENABLED": "true",
         "KEYSTONE_DATABASE_URL": settings.database_url.get_secret_value(),
@@ -78,7 +82,6 @@ def worker(client, tmp_path, *, code=None):
             }
         ),
         "KEYSTONE_FILE_DEFAULT_STORAGE": settings.file_default_storage,
-        "KEYSTONE_MODEL_MODE": "mock",
         "KEYSTONE_MODEL_SECRETS": json.dumps(
             {k: v.get_secret_value() for k, v in settings.model_secrets.items()}
         ),
@@ -87,7 +90,12 @@ def worker(client, tmp_path, *, code=None):
     env["KEYSTONE_WORKER_READY_FILE"] = str(log.with_suffix(".ready"))
     with log.open("w", encoding="utf8") as output:
         process = subprocess.Popen(
-            [sys.executable, "-c", code or "from keystone.entrypoints.worker import main; main()"],
+            [
+                sys.executable,
+                "-c",
+                ("from model_stub import install; install(); " if stub else "")
+                + (code or "from keystone.entrypoints.worker import main; main()"),
+            ],
             env=env,
             stdout=output,
             stderr=output,
@@ -469,7 +477,7 @@ def test_cancel_during_model_send_preserves_inflight_receipt(client, tmp_path):
 import asyncio
 import httpx2
 from keystone.platform.model_access.gateway import Gateway
-from keystone.platform.model_access import mock
+import model_stub as mock
 def transport(self, provider):
     async def respond(request):
         await asyncio.sleep(4)

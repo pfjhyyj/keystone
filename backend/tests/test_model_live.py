@@ -14,7 +14,7 @@ from uuid import uuid4
 import httpx2
 import pytest
 from dbos import DBOS
-from pydantic import SecretStr, ValidationError
+from pydantic import SecretStr
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
 from test_flow import start, wait_run, worker
@@ -36,7 +36,7 @@ def test_live_catalog_and_sender_share_capability_declaration(client, live, monk
     configure(client)
     assert client.get("/api/v1/models").json()["items"]
     monkeypatch.setitem(
-        gateway.LIVE_TARGETS, "openrouter", (gateway.OPENROUTER_BASE, {"/credits": "GET"})
+        gateway.SUPPORTED_TARGETS, "openrouter", (gateway.OPENROUTER_BASE, {"/credits": "GET"})
     )
     assert client.get("/api/v1/models").json()["items"] == []
     response = invoke(client)
@@ -176,7 +176,6 @@ def live(client, monkeypatch):
     # Even an inherited environment proxy must not be used by the live transport.
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
     settings = client.app.state.runtime.settings
-    settings.model_mode = "live"
     settings.model_secrets = {"inference": SecretStr(SECRET), "billing": SecretStr(BILLING)}
     try:
         yield calls, overrides, server.server_port
@@ -193,26 +192,13 @@ def configure(client, **changes):
     return row
 
 
-def test_live_configuration_is_explicit_and_production_mock_still_forbidden():
-    assert Settings(_env_file=None).model_mode == "disabled"
-    assert (
-        Settings(
-            _env_file=None,
-            env="production",
-            model_mode="live",
-            browser_origins=["https://keystone.example"],
-        ).model_mode
-        == "live"
-    )
-    with pytest.raises(ValidationError):
-        Settings(
-            _env_file=None,
-            env="production",
-            model_mode="mock",
-            browser_origins=["https://keystone.example"],
-        )
-    with pytest.raises(ServiceError):
-        gateway.Gateway(Settings(_env_file=None)).transport("openrouter")
+def test_real_transport_is_the_default_without_mode_configuration():
+    settings = Settings(_env_file=None)
+    assert "model_mode" not in Settings.model_fields
+    transport = gateway.Gateway(settings).transport("openrouter")
+    assert isinstance(transport, httpx2.AsyncHTTPTransport)
+    with pytest.raises(ServiceError, match="OpenRouter"):
+        gateway.Gateway(settings).transport("deepseek")
 
 
 @pytest.mark.postgres
@@ -220,14 +206,14 @@ def test_live_sdk_stream_cost_query_balance_and_credential_separation(client, li
     calls, _, _ = live
     channel_row = configure(client)
     result = invoke(client)
-    assert result.status_code == 200 and result.json()["mode"] == "live", result.text
+    assert result.status_code == 200 and "mode" not in result.json(), result.text
     events = [
         json.loads(line[6:])
         for line in invoke(client, stream=True).text.splitlines()
         if line.startswith("data: ")
     ]
     assert [e["type"] for e in events] == ["start", "delta", "done"]
-    assert events[0]["mode"] == events[-1]["mode"] == "live"
+    assert "mode" not in events[0] and "mode" not in events[-1]
     identifier = result.json()["invocation_id"]
     detail = client.get(f"/api/v1/model-invocations/{identifier}").json()
     assert detail["cost_amount"] == "0.001200000000000000" and detail["cost_source"] == "response"
@@ -267,7 +253,7 @@ def test_live_rejects_untrusted_targets_and_unsupported_providers_before_send(cl
         assert (
             response.status_code == 503 and response.json()["code"] == "model_provider_unavailable"
         )
-    assert client.get("/api/v1/models").json() == {"mode": "live", "items": []}
+    assert client.get("/api/v1/models").json() == {"items": []}
     assert client.get("/api/v1/model-invocations").json() == []
 
     async def invalid_query():
@@ -413,10 +399,9 @@ def test_live_mode_real_dbos_worker_uses_same_send_boundary(
         f"import sys, os; sys.path.insert(0, {str(Path(__file__).parent)!r}); "
         "import httpx2; from test_model_live import local_transport; "
         f"httpx2.AsyncHTTPTransport = local_transport({port}); "
-        "os.environ['KEYSTONE_MODEL_MODE']='live'; "
         "from keystone.entrypoints.worker import main; main()"
     )
-    with worker(client, tmp_path, code=code) as (process, log):
+    with worker(client, tmp_path, code=code, stub=False) as (process, log):
         done = wait_run(client, run["id"], process, log)
         assert done["status"] == ("failed" if upstream_status else "succeeded"), (
             done,

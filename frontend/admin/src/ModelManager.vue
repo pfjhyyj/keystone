@@ -49,9 +49,7 @@ function channel(row: Channel | null) {
   editingChannel.value = row
   name.value = row?.name ?? ''
   provider.value = row?.provider ?? 'openrouter'
-  apiBase.value =
-    row?.api_base ??
-    (options.value?.mode === 'mock' ? 'https://mock.invalid/v1' : 'https://openrouter.ai/api/v1')
+  apiBase.value = row?.api_base ?? 'https://openrouter.ai/api/v1'
   credential.value = row?.credential_ref ?? ''
   billing.value = row?.billing_credential_ref ?? ''
   account.value = row?.upstream_account_ref ?? ''
@@ -63,7 +61,7 @@ function entry(row: ModelEntry | null) {
   editingEntry.value = row
   key.value = row?.key ?? ''
   channelId.value = row?.channel_id ?? ''
-  upstream.value = row?.provider_model ?? (options.value?.mode === 'mock' ? 'mock-chat' : '')
+  upstream.value = row?.provider_model ?? ''
   active.value = row?.is_active ?? true
   error.value = ''
   form.value = 'entry'
@@ -129,16 +127,7 @@ onMounted(() => {
         optionsError
       }}</el-alert>
       <div class="row-actions">
-        <span
-          >发送模式：{{
-            options?.mode === 'live'
-              ? '真实发送（仅 OpenRouter）'
-              : options?.mode === 'mock'
-                ? '模拟'
-                : options?.mode === 'disabled'
-                  ? '停用'
-                  : '尚未确认'
-          }}</span
+        <span>真实发送（仅 OpenRouter）</span
         ><el-button :disabled="busy" @click="run(loadOptions)" native-type="button" type="default"
           >刷新部署选项</el-button
         >
@@ -357,10 +346,13 @@ onMounted(() => {
             <span class="form-label">服务商</span
             ><AppSelect v-model="provider" aria-label="服务商" :disabled="!!editingChannel"
               ><el-option
-                v-for="(label, value) in providers"
+                v-if="editingChannel && !options?.providers?.includes(provider)"
+                :value="provider"
+                :label="providers[provider as keyof typeof providers] ?? provider" /><el-option
+                v-for="value in options?.providers ?? ['openrouter']"
                 :key="value"
                 :value="value"
-                :label="label"
+                :label="providers[value as keyof typeof providers] ?? value"
             /></AppSelect>
           </div>
           <label>服务地址<el-input v-model="apiBase" type="url" required maxlength="512" /></label>
@@ -377,7 +369,7 @@ onMounted(() => {
                 :label="r"
             /></AppSelect>
           </div>
-          <p v-if="options?.mode === 'live'">
+          <p>
             OpenRouter 地址固定为 https://openrouter.ai/api/v1。推理使用普通 API
             Key，账户余额查询使用同一账户的 Management Key；账务未配置不影响推理。
           </p>

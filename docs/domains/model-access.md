@@ -230,7 +230,7 @@ Channel、ModelEntry 不论是否已被引用，首版均不提供物理删除�
 
 ## 6. 待确定事项
 
-live 当前只支持 OpenRouter，DeepSeek 与阿里云提供 mock；扩展真实接入时再明确官方地址、账务权限及 SDK。依赖版本以锁文件为准。
+当前只支持 OpenRouter，DeepSeek 与阿里云尚未开放发送；扩展接入时再明确官方地址、账务权限及 SDK。依赖版本以锁文件为准。
 
 费用采用上游报告值，无法确认的发送结果、余额或费用保留未知；不通过估价或新增本地账本掩盖。调用记录与恢复规则见下节。
 
@@ -238,13 +238,13 @@ live 当前只支持 OpenRouter，DeepSeek 与阿里云提供 mock；扩展真�
 
 代码位于 backend/src/keystone/platform/model_access/，迁移 0005_model_access 建立 model_channels、model_entries、model_invocations。复用 Ether ai/runtime.py、dispatch.py、invocations.py 的受控发送、运行时凭据注入、响应观测和安全错误分类思路，按 Keystone 的发送前登记规则改写；没有复制路由池、配额、聊天会话或其他领域实体。
 
-### 7.1 配置与运行模式
+### 7.1 配置
 
-KEYSTONE_MODEL_MODE 默认为 disabled，可显式切换为 mock 或 live；production 拒绝 mock。API 与 Worker 必须使用相同模式和秘密映射，修改后同时重启。KEYSTONE_MODEL_SECRETS 为引用名到秘密值的部署环境 JSON 映射，Pydantic SecretStr 隐藏配置表示，接口只返回引用名。开发验证使用命名的假秘密，示例见[仓库说明](../../README.md#模拟模型接入)。库内 provider 仍为 deepseek/openrouter/aliyun_bailian，不增加 mock 服务商或领域字段。
+模型始终使用真实服务，不提供 disabled/mock/live 模式和发送开关。API 与 Worker 使用相同的秘密映射，修改后同时重启。KEYSTONE_MODEL_SECRETS 为引用名到秘密值的部署环境 JSON 映射，Pydantic SecretStr 隐藏配置表示，接口只返回引用名。配置步骤见[模型接入](../../README.md#模型配置手动)。
 
-MockTransport 在 HTTP 层提供固定响应，SDK、发送登记、解码、落库与权限服务均走实际代码；不创建网络传输。OpenRouter 模拟报告 usage.cost=0.0012 credits，按 ID 补查更新同一记录；DeepSeek/阿里云模拟不报告单次费用。余额分别模拟 DeepSeek 按币种的总额/赠送/充值、OpenRouter credits 剩余值、阿里云账户可用额/现金。模拟金额不代表实际扣费。
+当前支持 OpenRouter 官方地址，普通目录只返回启用且支持发送的渠道模型；DeepSeek/阿里云既有配置仍可管理，但不能发送。缺少或撤销凭据时在发送前拒绝。启动或保存配置不会自动发起模型调用。
 
-mock 与 live 使用独立数据库和文件卷；首次接入使用空库、空卷并重新初始化，不把已有 mock 环境直接切为 live，也不迁入模拟 Run、调用和余额记录。运行模式属于整个部署，不是渠道属性，不能靠新建渠道隔离既有 DBOS 检查点和模拟历史。沿用三张表，不新增模式或费用快照字段。live 可用模型目录只返回启用的 OpenRouter 官方地址配置，其他配置仍能管理，但不能发送。
+确定性响应只通过测试目录中的 HTTP 传输替身注入，不随应用包或部署镜像发布。旧开发模拟数据不得用作真实调用的费用或恢复依据，应使用独立数据库和文件卷。
 
 ### 7.2 接口与权限
 
@@ -252,7 +252,7 @@ mock 与 live 使用独立数据库和文件卷；首次接入使用空库、空
 
 | 接口 | 要求与用途 |
 |---|---|
-| GET /model-access/options | model:manage；返回运行模式、服务商和可用秘密引用名，不返回秘密值 |
+| GET /model-access/options | model:manage；返回服务商和可用秘密引用名，不返回秘密值 |
 | GET/POST /model-channels；PATCH /model-channels/{id} | model:manage；查询、创建、编辑和启停渠道 |
 | POST /model-channels/{id}/balance | model:manage；同步刷新，失败保留旧快照，返回查询状态 |
 | GET/POST /model-entries；PATCH /model-entries/{id} | model:manage；查询、创建、编辑和启停模型选择 |
@@ -304,11 +304,11 @@ keystone recover-model-calls --confirm-api-stopped
 
 历史列表与费用汇总共享渠道 ID、Flow Run ID、开始/结束时间筛选，默认最近 30 天、最多 366 天；应用筛选时固定同一组时刻。首版不新增用户筛选或状态汇总接口；本人/全部可见范围由当前权限决定。分页只影响列表，汇总覆盖筛选范围；两者分别显示加载失败，避免误把汇总失败当作没有调用。
 
-mock/live 都支持普通和流式响应，界面显示实际模式；live 按钮明确为“发送真实请求”，提示可能计费，打开页面或保存配置不会自动调用。Flow 发起表单同样按模式提示。停止接收只中断浏览器接收，不表示上游撤销或没有费用，不自动重发；离开页面中断接收并清空输入输出。HTTP 错误和流内 error 事件共用会话失效处理。配置变化后可手动刷新模型目录，实际发送仍复查当前配置和权限。
+普通和流式响应的按钮统一为“发送真实请求”，提示可能计费，打开页面或保存配置不会自动调用。Flow 发起表单同样提示真实调用。停止接收只中断浏览器接收，不表示上游撤销或没有费用，不自动重发；离开页面中断接收并清空输入输出。HTTP 错误和流内 error 事件共用会话失效处理。配置变化后可手动刷新模型目录，实际发送仍复查当前配置和权限。
 
 参考 Ether ModelProbe 的操作隔离和失效结果处理，复用本后台 Element Plus 弹窗/详情抽屉、分页及请求代次控制；不搬入 Ether 的通用连接授权或多模态探测功能。
 
-### 7.7 OpenRouter live 接入
+### 7.7 OpenRouter 接入
 
 沿用现有 OpenAI SDK、受控 transport 和 OpenRouter 费用适配，不增加网关、SDK 依赖或领域表。实际发送使用 httpx2.AsyncHTTPTransport(retries=0, trust_env=False)，SDK 同样禁止重试；忽略 Retry-After，不自动重发计费请求。只允许 `https://openrouter.ai/api/v1`，发送前逐次核对完整地址、POST /chat/completions 和固定模型；账务查询只允许 GET /generation、GET /credits，拒绝跳转和自定义代理地址。
 
@@ -321,7 +321,7 @@ mock/live 都支持普通和流式响应，界面显示实际模式；live 按�
 
 账务凭据可不配置，此时余额 unavailable，不影响推理；凭据不足或查询失败不能清零旧快照。账户归属由部署者核对，当前没有自动认证两个 Key 属于同一账户的能力。后台只填写引用名，实际密钥由运行环境注入。
 
-依据 OpenRouter 官方[用量与费用](https://openrouter.ai/docs/cookbook/administration/usage-accounting)、[账户 credits](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits)、[Generation 查询](https://openrouter.ai/docs/api/api-reference/generations/get-request-&-usage-metadata-for-a-generation)及[错误处理](https://openrouter.ai/docs/api_reference/errors-and-debugging)实现协议适配。配置步骤见[OpenRouter live 接入](../../README.md#openrouter-live-接入)。
+依据 OpenRouter 官方[用量与费用](https://openrouter.ai/docs/cookbook/administration/usage-accounting)、[账户 credits](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits)、[Generation 查询](https://openrouter.ai/docs/api/api-reference/generations/get-request-&-usage-metadata-for-a-generation)及[错误处理](https://openrouter.ai/docs/api_reference/errors-and-debugging)实现协议适配。配置步骤见[OpenRouter 接入](../../README.md#模型配置手动)。
 
 ### 代码组织
 
@@ -329,10 +329,10 @@ mock/live 都支持普通和流式响应，界面显示实际模式；live 按�
 
 调用历史与汇总和审计共用 core/time_range.py：since/until 为闭区间，未传 until 时取数据库当前时间，未传 since 时取 until 前 30 天，最多 366 天，端点必须带时区；仅传历史 until 同样有效。ModelInvocation.created_at 使用数据库时间，默认查询也使用数据库时钟，避免刚写入的记录被应用时钟偏差排除。显式边界原样执行，错误保持 invalid_time_range。
 
-live 能力只在 gateway.LIVE_TARGETS 声明渠道、官方地址和路径对应的 HTTP 方法。模型目录按可推理渠道过滤，实际发送与账务查询仍再次校验；当前仍只开放 OpenRouter，不增加动态插件注册。
+接入能力只在 gateway.SUPPORTED_TARGETS 声明渠道、官方地址和路径对应的 HTTP 方法。模型目录按可推理渠道过滤，实际发送与账务查询仍再次校验；当前仍只开放 OpenRouter，不增加动态插件注册。
 
 两种恢复入口共用每批 100 条的锁定、unknown/model_interrupted 更新及逐条系统审计；保留费用、编号和归属，不重发模型请求。普通入口只处理没有 flow_run_id 的 running 记录，要求操作者确认全部 API 已停；Worker 入口只处理有 flow_run_id 的 running 记录，要求先持有 Worker 独占锁。审计统一 model.invocation.recover，以 source=offline_api_recovery / flow_worker_recovery 区分；更新与日志同事务，失败回滚该批，重复执行不重复审计。
 
 错误分类统一由 services/runtime.py 的 classify_error 沿异常因果链处理；显式 ServiceError 优先，SDK APIStatusError 和 Pydantic AI ModelHTTPError 使用同一 HTTP 错误码映射。HTTP 402/429 在普通调用与 Agent 中均为 failed，并分别保留 model_insufficient_credits / model_rate_limited；上游 5xx、超时、取消及无法确认结果仍为 unknown。分类同时提供安全响应和调用状态，不从原始异常文本推断、不透传上游内容；费用未知仍为未知，失败不代表免费。参考 Ether ai/runtime.py 的安全包装，保留 Keystone 的发送前登记和拒绝重发规则。
 
-OpenRouter 的 cost_query / queried_cost 声明费用补查路径、参数、请求编号匹配和金额解析；InvocationService 只判断是否支持、调用 Gateway、复查渠道配置并保存事实。DeepSeek/阿里云仍不补算调用价格，不扩大 live 支持范围。UTC 应用时间统一使用 core/time.py，数据库生成的 created_at 和历史窗口规则不变。
+OpenRouter 的 cost_query / queried_cost 声明费用补查路径、参数、请求编号匹配和金额解析；InvocationService 只判断是否支持、调用 Gateway、复查渠道配置并保存事实。DeepSeek/阿里云仍不补算调用价格，不扩大真实接入范围。UTC 应用时间统一使用 core/time.py，数据库生成的 created_at 和历史窗口规则不变。

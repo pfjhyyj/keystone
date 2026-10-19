@@ -1,15 +1,17 @@
 # Keystone 文档
 
-Keystone 是模块化单体平台。API、单 Worker 与 CLI 共用一个 Python 工程和镜像，管理后台使用 Vue 与 Element Plus。Flow 默认启用，模型发送默认关闭，权限判断使用 Casbin。
+Keystone 是模块化单体平台。API、单 Worker 与 CLI 共用一个 Python 工程和镜像，管理后台使用 Vue 与 Element Plus。Flow 默认启用，真实模型接入默认可用，权限判断使用 Casbin。
 
 ## 阅读入口
 
 | 用途 | 文档 |
 |---|---|
-| 启动、本地开发与常用命令 | [仓库说明](../README.md) |
+| 首次启动 | [仓库说明](../README.md) |
+| 源码开发与测试 | [开发说明](development.md) |
 | 模块边界、代码规范与业务接入 | [整体架构](architecture.md) |
 | 后端、前端和部署环境变量 | [配置说明](configuration.md) |
-| 发布、健康检查和联合备份恢复 | [部署手册](deployment.md) |
+| Dockerfile 打包与发布 | [打包说明](deployment.md) |
+| 联合备份与恢复 | [操作手册](backup-restore.md) |
 | 数据库迁移 | [迁移说明](../backend/migrations/README.md) |
 
 ## 按领域阅读

@@ -136,3 +136,34 @@ def transport(provider):
         return httpx2.Response(404, json={"error": {"message": "Mock route unavailable"}})
 
     return httpx2.MockTransport(respond)
+
+
+def install(monkeypatch=None):
+    """Inject deterministic HTTP responses in tests, including isolated child processes."""
+    from keystone.platform.model_access import gateway
+
+    def set_value(obj, name, value):
+        if monkeypatch is None:
+            setattr(obj, name, value)
+        else:
+            monkeypatch.setattr(obj, name, value)
+
+    from keystone.platform.model_access.providers import PROVIDERS
+
+    set_value(PROVIDERS["aliyun_bailian"], "balance_path", "/mock/QueryAccountBalance")
+    targets = dict(gateway.SUPPORTED_TARGETS)
+    for provider in ("deepseek", "aliyun_bailian"):
+        targets[provider] = (
+            gateway.OPENROUTER_BASE,
+            {
+                "/chat/completions": "POST",
+                "/user/balance": "GET",
+                "/mock/QueryAccountBalance": "GET",
+            },
+        )
+    set_value(gateway, "SUPPORTED_TARGETS", targets)
+    # entries imports this mapping directly.
+    from keystone.platform.model_access.services import entries
+
+    set_value(entries, "SUPPORTED_TARGETS", targets)
+    set_value(gateway.Gateway, "transport", lambda self, provider: transport(provider))

@@ -118,7 +118,7 @@ def main():
                             {"local": {"driver": "filesystem", "root": str(root)}}
                         ),
                         "KEYSTONE_BROWSER_ORIGINS": json.dumps(["http://127.0.0.1:5175"]),
-                        "KEYSTONE_MODEL_MODE": "mock",
+                        "PYTHONPATH": str(admin.parents[1] / "backend/tests"),
                         "KEYSTONE_MODEL_SECRETS": json.dumps(
                             {"inference": "fake-inference", "billing": "fake-billing"}
                         ),
@@ -136,6 +136,7 @@ def main():
                         [
                             sys.executable,
                             "-c",
+                            "from model_stub import install; install(); "
                             "from keystone.entrypoints.api import main; main()",
                         ],
                         cwd=directory,
@@ -149,6 +150,7 @@ def main():
                             [
                                 sys.executable,
                                 "-c",
+                                "from model_stub import install; install(); "
                                 "from keystone.entrypoints.worker import main; main()",
                             ],
                             cwd=directory,

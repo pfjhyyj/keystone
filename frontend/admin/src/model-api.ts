@@ -47,14 +47,14 @@ export interface Costs {
   known_costs: { channel_id: string; unit: string; amount: string; attempts: number }[]
 }
 export interface ModelOptions {
-  mode: string
   credential_refs: string[]
+  providers: string[]
 }
 export const modelApi = {
   channels: (offset: number) => request<Channel[]>(`/model-channels?offset=${offset}&limit=50`),
   entries: (offset: number) => request<ModelEntry[]>(`/model-entries?offset=${offset}&limit=50`),
   catalog: (offset: number) =>
-    request<{ mode: string; items: { key: string }[] }>(`/models?offset=${offset}&limit=50`),
+    request<{ items: { key: string }[] }>(`/models?offset=${offset}&limit=50`),
   calls: (offset: number, filters: Record<string, string>) =>
     request<Invocation[]>(
       `/model-invocations?${new URLSearchParams({ ...filters, offset: String(offset), limit: '50' })}`,

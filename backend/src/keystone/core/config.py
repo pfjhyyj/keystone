@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     file_storages: dict[StorageKey, StorageConfig] = Field(default_factory=dict, repr=False)
     file_default_storage: StorageKey = "local"
     file_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1, le=64 * 1024 * 1024)
-    model_mode: Literal["disabled", "mock", "live"] = "disabled"
     model_secrets: dict[str, SecretStr] = Field(default_factory=dict, repr=False)
+    initial_admin_password: SecretStr | None = Field(default=None, repr=False)
     flow_enabled: bool = True
     session_hours: int = Field(default=8, ge=1, le=168)
     pat_max_days: int = Field(default=90, ge=1, le=365)
@@ -47,9 +47,6 @@ class Settings(BaseSettings):
     def secure_production_origins(self):
         from urllib.parse import urlsplit
 
-        if self.env == "production" and self.model_mode == "mock":
-            raise ValueError("Mock model transport is only available in development/test")
-
         for origin in self.browser_origins:
             parsed = urlsplit(origin)
             if (
@@ -65,6 +62,11 @@ class Settings(BaseSettings):
         if not self.browser_origins:
             raise ValueError("Configure at least one browser origin")
         return self
+
+    @field_validator("initial_admin_password", mode="before")
+    @classmethod
+    def empty_initial_password(cls, value):
+        return None if value == "" else value
 
     @field_validator("database_url")
     @classmethod

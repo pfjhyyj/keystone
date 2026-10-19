@@ -5,7 +5,7 @@ from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
 from keystone.platform.identity.access import AccessContext
-from keystone.platform.model_access import schemas
+from keystone.platform.model_access import gateway, schemas
 from keystone.platform.model_access.gateway import refresh_lock
 from keystone.platform.model_access.models import Channel
 from keystone.platform.model_access.providers import PROVIDERS
@@ -19,9 +19,8 @@ class ChannelService:
     async def options(self):
         async with self.identity.access("model:manage"):
             return {
-                "mode": self.gateway.settings.model_mode,
                 "credential_refs": sorted(self.gateway.settings.model_secrets),
-                "providers": list(PROVIDERS),
+                "providers": list(gateway.SUPPORTED_TARGETS),
             }
 
     def validate_refs(self, data):
@@ -131,7 +130,6 @@ class ChannelService:
                     and error.code
                     in {
                         "model_credential_unavailable",
-                        "model_transport_disabled",
                         "model_provider_unavailable",
                         "model_target_not_allowed",
                     }

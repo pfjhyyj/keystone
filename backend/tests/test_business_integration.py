@@ -238,7 +238,6 @@ def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_byte
     login(client)
     final_input = {"text": "", "model_key": "chat"}
     if expansion == "model_selection":
-        settings.model_mode = "mock"
         settings.model_secrets = {key: SecretStr("fake-only") for key in ("inference", "billing")}
         entry(client, channel(client))
         selection = query(client, lambda session: select_model(session, "chat"))

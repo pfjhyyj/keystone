@@ -120,7 +120,7 @@ GET /api/v1/audit-logs 要求 audit:read，支持 since/until、actor_type/actor
 
 文件和字典已接入同一入口：file.upload.start/complete/failure/residue_cleanup、file.update、file.grant、file.reference、file.delete.request/complete、file.cleanup.failure，以及 dictionary.definition/item 的 create/update。上传开始、资料/授权/引用变更和删除请求记录实际用户（PAT 附 credential_id），上传事实确认与清理记录 system。删除完成日志保留 file_id、授权清理范围及数量；失败清理不移除授权。Flow 事实同步已接入；审计保留期清理仍未启用。
 
-模型接入使用 model.channel.create/update、model.entry.create/update、model.balance.refresh。配置及启停沿用同事务管理审计；details 只保留声明字段及引用名，不保存实际秘密、消息或响应正文。手动余额刷新记录发起用户及查询状态，PAT 附 credential_id，不因此修改渠道配置审计字段；调用完成、用量和费用补查保存在 ModelInvocation 内，不重复生成每次调用的 AuditLog。模拟与真实运行适用相同写入边界。
+模型接入使用 model.channel.create/update、model.entry.create/update、model.balance.refresh。配置及启停沿用同事务管理审计；details 只保留声明字段及引用名，不保存实际秘密、消息或响应正文。手动余额刷新记录发起用户及查询状态，PAT 附 credential_id，不因此修改渠道配置审计字段；调用完成、用量和费用补查保存在 ModelInvocation 内，不重复生成每次调用的 AuditLog。测试传输替身同样遵守这些写入边界。
 
 Flow 新增 flow.start、flow.cancel、flow.complete；发起/取消记录实际当前用户，完成同步记录 system。发起与 Run/输入引用、完成与终态/结果/输出引用分别同事务提交。报告上传开始记录原用户，上传完成及可信引用补齐记录 system；步骤和模型调用不重复记审计。撤权或取消不阻止已确认事实留痕。
 

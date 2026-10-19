@@ -132,7 +132,6 @@ class ModelRuntime:
         observation = Observation(provider)
         registered = finished = False
         self.gateway.check_target(provider, selected.api_base, "/chat/completions")
-        mode = self.gateway.settings.model_mode
         source = self.gateway.transport(provider)
 
         async def before_send(request):
@@ -250,7 +249,7 @@ class ModelRuntime:
                     stream = await sdk.chat.completions.create(
                         **args, stream=True, stream_options={"include_usage": True}
                     )
-                    yield {"type": "start", "invocation_id": str(identifier), "mode": mode}
+                    yield {"type": "start", "invocation_id": str(identifier)}
                     async with stream:
                         async for chunk in stream:
                             for choice in chunk.choices:
@@ -274,7 +273,6 @@ class ModelRuntime:
                 yield {
                     "type": "done",
                     "invocation_id": str(identifier),
-                    "mode": mode,
                     "content": content,
                 }
         except BaseException as error:

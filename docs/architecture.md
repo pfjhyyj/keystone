@@ -84,11 +84,11 @@ API 与 Worker 使用一致的配置定义和构建版本，但连接池、SDK �
 
 首版 Worker 使用固定 executor ID，由进程管理器保证单实例并在故障后重启。部署禁止同身份新旧 Worker 重叠运行；停止时先停止领取新任务，有限等待在途任务，再关闭客户端和连接。未完成运行保留恢复依据，不能在退出时全部标记失败。
 
-迁移作为部署步骤执行，API 与 Worker 启动时检查数据库版本，不各自争抢迁移。代码发布前处理不兼容的未完成运行；首版不做多版本并行 Worker。Compose 依次等待数据库健康、迁移/文件初始化成功、API 就绪，再开放 admin；Worker 的 Flow 可用性仍通过日志及运行验证。
+迁移作为部署步骤执行，API 与 Worker 启动时检查数据库版本，不各自争抢迁移。代码发布前处理不兼容的未完成运行；首版不做多版本并行 Worker。默认开发中 Compose 只启动 PostgreSQL；在本机手动执行 keystone init 后，分别启动 API、Worker 和前端。初始化不创建模型配置。Worker 的 Flow 可用性通过日志及运行验证。
 
-首版采用停写联合备份：完整数据库同时包含业务、版本和 DBOS 数据，与同一窗口的文件卷（内容、卷标识和永久锁文件）、原镜像和运行配置成套保存。恢复到新项目，先恢复原版本，再按发布流程升级；不增加备份领域或服务。ready 不扫描历史文件，不能替代恢复后字节/授权/Flow 核对；会话/PAT 也回到备份时点，真实上游副作用不会随数据库回滚。具体操作与边界见[部署与恢复](deployment.md)。
+首版采用停写联合备份：完整数据库同时包含业务、版本和 DBOS 数据，与同一窗口的文件卷（内容、卷标识和永久锁文件）、原镜像和运行配置成套保存。恢复到新项目，先恢复原版本，再按发布流程升级；不增加备份领域或服务。ready 不扫描历史文件，不能替代恢复后字节/授权/Flow 核对；会话/PAT 也回到备份时点，真实上游副作用不会随数据库回滚。具体操作与边界见[联合备份与恢复](backup-restore.md)。
 
-Worker 的进程健康由入口维护本地就绪文件，core/worker_health.py 提供只读探针；Flow 执行器仅通过进程内 Event 通知初始化/退出状态。Compose 使用 `keystone-worker --check`，不增加领域表、跨进程心跳服务或后台聚合接口。API ready 保持原有依赖检查含义，具体新鲜度和故障语义见[部署手册](deployment.md#12-worker-最小健康检查)。
+Worker 的进程健康由入口维护本地就绪文件，core/worker_health.py 提供只读探针；Flow 执行器仅通过进程内 Event 通知初始化/退出状态。本机探针使用 `keystone-worker --check`（按需配置健康文件），不增加领域表、跨进程心跳服务或后台聚合接口。API ready 保持原有依赖检查含义，具体新鲜度和故障语义见[开发说明](development.md#worker-健康检查排障)。
 
 ## 4. 事务、身份与外部调用
 
@@ -127,6 +127,8 @@ keystone/ 是独立仓库根目录。一个 Python 后端工程，多个按需�
 ```text
 keystone/
 ├── backend/
+│   ├── Dockerfile             # API、Worker、CLI 共用镜像
+│   ├── .dockerignore
 │   ├── pyproject.toml
 │   ├── uv.lock
 │   ├── src/keystone/
@@ -151,29 +153,29 @@ keystone/
 │   └── tests/                  # 按模块和跨模块场景组织
 ├── frontend/
 │   ├── admin/                  # 首版平台管理后台
+│   │   ├── Dockerfile          # 管理后台构建与 Nginx 入口
+│   │   ├── .dockerignore
+│   │   ├── nginx.conf          # 静态资源与 API 入口配置
 │   │   ├── package.json
 │   │   ├── pnpm-lock.yaml
 │   │   └── src/
 │   └── <business-app>/         # 按需新增的独立业务前端
 ├── deploy/
-│   ├── backend.Dockerfile      # API、Worker、CLI 共用镜像
-│   ├── admin.Dockerfile        # 管理后台构建与 Nginx 入口
-│   ├── compose.yaml
-│   └── proxy/                  # 静态资源与 API 入口配置
+│   └── compose.yaml            # 第三方依赖
 ├── docs/
 ├── .gitignore
 └── README.md
 ```
 
-backend/ 内维护唯一后端依赖与锁文件，frontend/ 下每个应用维护自己的依赖、锁文件、构建和测试。首版只创建 admin，不创建占位业务前端、pnpm workspace 或共享前端包。业务前端数量与后端业务模块数量不要求一致。deploy/ 负责组合部署，不容纳领域规则；docs/ 是当前设计唯一维护位置。
+backend/ 内维护唯一后端依赖与锁文件，frontend/ 下每个应用维护自己的依赖、锁文件、构建和测试。Dockerfile、.dockerignore 和镜像入口配置随各自工程维护，使用工程目录作为构建上下文。首版只创建 admin，不创建占位业务前端、pnpm workspace 或共享前端包。业务前端数量与后端业务模块数量不要求一致。deploy/ 负责第三方依赖编排，不容纳领域规则；docs/ 是当前设计唯一维护位置。
 
-当前已实现 platform/identity、audit、files、dictionary、model_access、flow 及 businesses/document_review。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 提供 migrate/migrate-flow/revision/check/init-admin/init-storage；admin 提供账户、文件、字典、模型及 Flow 基本操作。初始迁移按 identity、audit、dictionary、files、model_access、flow 分为六份，保持一条链，当前 head 为 0006_flow，文件多源字段包含在 0004_files 初始结构中；keystone schema 共十六张领域表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
+当前已实现 platform/identity、audit、files、dictionary、model_access、flow 及 businesses/document_review。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 提供 init/migrate/migrate-flow/revision/check/init-admin/init-storage；admin 提供账户、文件、字典、模型及 Flow 基本操作。初始迁移按 identity、audit、dictionary、files、model_access、flow 分为六份，保持一条链，当前 head 为 0006_flow，文件多源字段包含在 0004_files 初始结构中；keystone schema 共十六张领域表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
 
 CLI 另提供 recover-model-calls --confirm-api-stopped：操作者停止全部 API/普通调用进程后，显式将普通遗留 running 调用收尾为 unknown，保留费用与编号并记录系统审计。确认标志不代替进程检测；恢复期间保持 API 停止。Flow 调用继续由持有单 Worker 排他锁的启动恢复处理，不新增后台超时扫描器。详细边界见[模型离线收尾](domains/model-access.md#75-普通-api-调用离线收尾)。
 
-model_access 复用 Ether 的受控 SDK 传输思路：发送边界重新认证，原子登记 ModelInvocation 并提交后才发送，关闭 SDK 重试。模型响应与费用在独立短事务补全，不保存提示词和输出；配置变更与审计同事务。手动余额刷新在 API 内完成，同渠道用数据库会话锁串行协调，外部 I/O 不占用业务事务；费用补查直接更新原调用记录。运行模式为 disabled/mock/live，默认 disabled，生产禁用 mock；live 当前只支持 OpenRouter 官方地址、固定推理/账务路径，关闭网络层重试、跳转和环境代理。推理与账户余额使用独立凭据引用，不增加表或网关服务。API/Worker 使用一致模式，mock/live 分开数据库和文件卷，避免混用模拟事实和 DBOS 检查点。Agent 每轮请求共享发送边界，DBOS 持久步骤派生稳定调用 ID；未知响应或成功记录缺少检查点时均拒绝重发。配置与能力见[模型接入](domains/model-access.md#77-openrouter-live-接入)。
+model_access 复用 Ether 的受控 SDK 传输思路：发送边界重新认证，原子登记 ModelInvocation 并提交后才发送，关闭 SDK 重试。模型响应与费用在独立短事务补全，不保存提示词和输出；配置变更与审计同事务。手动余额刷新在 API 内完成，同渠道用数据库会话锁串行协调，外部 I/O 不占用业务事务；费用补查直接更新原调用记录。模型始终使用真实服务，当前只支持 OpenRouter 官方地址、固定推理/账务路径，关闭网络层重试、跳转和环境代理。推理与账户余额使用独立凭据引用，不增加表或网关服务。API/Worker 使用一致凭据配置；测试传输仅在测试进程注入，不随应用发布。Agent 每轮请求共享发送边界，DBOS 持久步骤派生稳定调用 ID；未知响应或成功记录缺少检查点时均拒绝重发。配置与能力见[模型接入](domains/model-access.md#77-openrouter-接入)。
 
-文件通过 OpenDAL 访问 FILE_STORAGES 中显式声明的 filesystem/S3 源，FILE_COORDINATION_ROOT 独立指定协调目录；两者不互相推导。File.storage_key 由上传服务写入并按源路由，fingerprint 固定原位置身份。每个 File 对应一份内容，业务维护两个 File 的备份关系，不增加 FileReplica 或源管理表。API 与 Worker 使用同宿主共享协调卷及独立 LocalLeases 文件锁。存储 I/O 在短数据库事务之外，上传重试保留 File 与现有授权；删除受理由 API 写 deleting，Worker 确认内容移除后同事务写 deleted、清授权和审计。失败/中断上传保留元数据供恢复；不自动删除所有无引用文件。文件行锁协调引用与删除，角色删除和授权新增继续由身份事务锁及外键保护。初始化卷是一次性 CLI/Compose storage-init 操作，不由 API 启动隐式完成；就绪检查包含卷标识校验。S3 支持同内容幂等重写及 deleted tombstone 定期复核清理，远端物理删除为最终清理语义；详细边界见文件领域第 7 节。仍只支持可靠本地协调锁，不支持 NFS 或多宿主部署。
+文件通过 OpenDAL 访问 FILE_STORAGES 中显式声明的 filesystem/S3 源，FILE_COORDINATION_ROOT 独立指定协调目录；两者不互相推导。File.storage_key 由上传服务写入并按源路由，fingerprint 固定原位置身份。每个 File 对应一份内容，业务维护两个 File 的备份关系，不增加 FileReplica 或源管理表。API 与 Worker 使用同宿主共享协调卷及独立 LocalLeases 文件锁。存储 I/O 在短数据库事务之外，上传重试保留 File 与现有授权；删除受理由 API 写 deleting，Worker 确认内容移除后同事务写 deleted、清授权和审计。失败/中断上传保留元数据供恢复；不自动删除所有无引用文件。文件行锁协调引用与删除，角色删除和授权新增继续由身份事务锁及外键保护。初始化卷由一次性 CLI `keystone init` 完成，不由 API 启动隐式完成；就绪检查包含卷标识校验。S3 支持同内容幂等重写及 deleted tombstone 定期复核清理，远端物理删除为最终清理语义；详细边界见文件领域第 7 节。仍只支持可靠本地协调锁，不支持 NFS 或多宿主部署。
 
 字典是进程内普通服务，不依赖 Worker。业务在已有授权与保存事务内调用选项校验，字典与选项编辑统一先锁父字典行，使启停与选择按事务顺序生效。通用查询要求 dictionary:read，业务限定范围内调用不增加字典读取权限要求；不开放客户端跳过授权参数或动态代理层。
 
@@ -220,7 +222,7 @@ admin 使用 Vue Router 按页面懒加载，Element Plus 提供表格、输入�
 
 文件授权使用文件专用组件，目录可读时选择用户/角色，不可读时输入已知 ID；授权管理与内容读取继续独立校验，引用界面仅展示 owner/slot，解除由所属业务负责。字典采用目录加选项区域和独立编辑弹窗，完整保存允许编辑的字段，区分父字典停用与选项自身停用。两者继续直接调用现有 API，不增加通用资源授权层、前端聚合接口或实体状态字段。
 
-模型接入按配置、模拟调用和历史权限分别加载；选择器支持分页，历史列表与汇总共享时间/渠道/运行筛选，费用组件与 Flow 共用，始终按渠道和单位展示。Flow 采用独立发起和详情抽屉，保留本页幂等请求，未完成运行有界轮询；步骤或费用查询失败单独展示，不更改 Run 状态。停止接收不等于取消模型执行，Flow 取消则等待 Worker 确认；页面不提供重发未知调用或绕过文件授权的入口。
+模型接入按配置、模型调用和历史权限分别加载；选择器支持分页，历史列表与汇总共享时间/渠道/运行筛选，费用组件与 Flow 共用，始终按渠道和单位展示。Flow 采用独立发起和详情抽屉，保留本页幂等请求，未完成运行有界轮询；步骤或费用查询失败单独展示，不更改 Run 状态。停止接收不等于取消模型执行，Flow 取消则等待 Worker 确认；页面不提供重发未知调用或绕过文件授权的入口。
 
 导航按读取权限显示，写操作按具体权限显示；无读取权限时不挂载对应页面。强制改密先进入账户页，身份变化后清理旧表单和数据。前端控制只改善交互，API 继续执行功能权限、对象范围和并发保护。后台补齐不改变六领域边界、十六张表、API/Worker 进程组织或审计操作名。
 
@@ -280,7 +282,7 @@ platform/identity/
 - 存储、渠道和 DBOS 继续由 storage.py、gateway.py、engine.py 等明确适配文件负责；模型发送位于 model_access/services/runtime.py，文件清理位于 files/services/cleanup.py。不增加 BaseService、通用 CRUD、Repository 或动态模块扫描。
 - 文件和函数使用 snake_case，类型使用 PascalCase，公共边界优先标注类型；遵循 Python 3.12、Ruff 100 列和导入排序，异步服务不直接执行阻塞 I/O。
 
-共用规则只保留小函数或静态声明：审计与模型历史通过 core/time_range.py 解析带时区的闭区间，默认截止为数据库当前时间，默认起点为截止前 30 天，最多 366 天；审计事件时间也由数据库生成。模型 live 渠道、官方地址、路径与 HTTP 方法由 gateway.LIVE_TARGETS 统一声明，目录过滤和临发送校验共用，查询目录不能替代发送校验。普通 API 离线恢复与 Worker 启动恢复保留不同前提和记录范围，共用每批 100 条的状态更新及逐条系统审计，不重发调用。
+共用规则只保留小函数或静态声明：审计与模型历史通过 core/time_range.py 解析带时区的闭区间，默认截止为数据库当前时间，默认起点为截止前 30 天，最多 366 天；审计事件时间也由数据库生成。模型渠道、官方地址、路径与 HTTP 方法由 gateway.SUPPORTED_TARGETS 统一声明，目录过滤和临发送校验共用，查询目录不能替代发送校验。普通 API 离线恢复与 Worker 启动恢复保留不同前提和记录范围，共用每批 100 条的状态更新及逐条系统审计，不重发调用。
 
 Flow host 文件读取返回 bytes，由调用方指定 max_bytes；上传显式传入 content_type，可选 storage_key 指定产物源；读取仍按 File 的源路由。UTF-8 和 16 KiB 限制属于 document_review 示例。FileService.upload_referenced 只供可信业务调用，owner/slot 由服务端固定；Files 自己校验上传归属、幂等键与状态，在完成事务内保存引用，不把 ORM 实体通过回调交给 Flow。撤权或取消后的既有写入仍完成事实保存，返回结果前重新授权；文件域错误由 Flow 在输出协调边界转换为既有 flow_invalid_output。
 
@@ -355,6 +357,6 @@ Flow 输入统一限制为 64 KiB 的紧凑 UTF-8 JSON，原始请求和默认�
 
 停用文本审查示例时，从 composition.py 删除契约导入和 FLOW_DEFINITIONS 中的对应项，并移除 register_workflows 中的 workflow 导入；无流程时保留空元组和空函数。在 flow-forms.ts 删除对应导入和映射即可回到通用 JSON 表单。示例目录可按需移除。
 
-Flow 默认启用，模型发送默认关闭，权限判断使用 Casbin。示例和业务代码变更遵守执行版本及同版本发布约束。
+Flow 默认启用，真实模型接入默认可用，权限判断使用 Casbin。示例和业务代码变更遵守执行版本及同版本发布约束。
 
 未处理 HTTP 异常记录 request_id、异常类型与调用文件/函数/行号；Worker、CLI 与 Flow 协调失败也保留安全位置。日志不输出异常正文、源码行或局部变量，异常链和帧数量有界；错误响应继续保持原脱敏契约。前端使用 Prettier，格式检查与后端 Ruff 一起纳入统一入口和 CI。

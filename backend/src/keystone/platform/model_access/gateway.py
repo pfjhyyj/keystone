@@ -7,10 +7,9 @@ import httpx2
 from sqlalchemy import text
 
 from keystone.core.errors import ServiceError
-from keystone.platform.model_access import mock
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-LIVE_TARGETS = {
+SUPPORTED_TARGETS = {
     "openrouter": (
         OPENROUTER_BASE,
         {"/chat/completions": "POST", "/credits": "GET", "/generation": "GET"},
@@ -26,26 +25,21 @@ class Gateway:
         self.balance_slots = asyncio.Semaphore(2)
 
     def transport(self, provider):
-        self.check_mode(provider)
-        if self.settings.model_mode == "mock":
-            return mock.transport(provider)
+        self.check_provider(provider)
         # Same explicit network boundary as Ether: no transport retries or env proxy.
         return httpx2.AsyncHTTPTransport(retries=0, trust_env=False)
 
-    def check_mode(self, provider):
-        if self.settings.model_mode == "disabled":
-            raise ServiceError(503, "model_transport_disabled", "模型发送已停用")
-        if self.settings.model_mode == "live" and provider not in LIVE_TARGETS:
+    def check_provider(self, provider):
+        if provider not in SUPPORTED_TARGETS:
             raise ServiceError(503, "model_provider_unavailable", "当前真实发送仅支持 OpenRouter")
 
     def check_target(self, provider, base, path, *, method="POST"):
-        self.check_mode(provider)
-        if self.settings.model_mode == "live":
-            allowed_base, paths = LIVE_TARGETS[provider]
-            if base != allowed_base or paths.get(path) != method:
-                raise ServiceError(
-                    409, "model_target_not_allowed", "真实渠道须使用受支持的官方地址、路径和方法"
-                )
+        self.check_provider(provider)
+        allowed_base, paths = SUPPORTED_TARGETS[provider]
+        if base != allowed_base or paths.get(path) != method:
+            raise ServiceError(
+                409, "model_target_not_allowed", "渠道须使用受支持的官方地址、路径和方法"
+            )
 
     def secret(self, reference):
         value = self.settings.model_secrets.get(reference)

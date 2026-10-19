@@ -1,6 +1,6 @@
 # Keystone Flow 领域
 
-模型接入已增加 OpenRouter live，Flow/Agent 直接复用相同 ModelRuntime，不新增执行分支或 FlowRun 字段。API/Worker 的运行模式和秘密配置必须一致，mock/live 分开数据库和文件卷；发起表单提示实际模式，live 流程可能计费，取消不撤销已发生的调用。边界见[OpenRouter 接入](model-access.md#77-openrouter-live-接入)。
+模型接入使用真实 OpenRouter 服务，Flow/Agent 直接复用相同 ModelRuntime，不新增执行分支或 FlowRun 字段。API/Worker 的秘密配置必须一致；发起表单提示真实调用可能计费，取消不撤销已发生的调用。边界见[OpenRouter 接入](model-access.md#77-openrouter-接入)。
 
 [范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项) · [当前实现](#7-当前实现)
 
@@ -334,7 +334,7 @@ SDK 请求体上限 256 KiB。当前文件审查示例只读 16 KiB 以内 UTF-8
 
 Worker 全生命周期持有共享本地卷上的 OS 文件锁，第二个同卷 Worker 拒绝启动。此锁用于支持范围内的单实例约束，不是分布式选主。只在持锁后的启动阶段，将旧执行器遗留的 Flow 模型 running 记录转为 unknown；不处理仍可能由 API 执行的普通调用，也不按时间猜测请求已终止。停止先关闭领取、有限等待 5 秒，再取消剩余协程并释放客户端/数据库/文件锁；未完成运行保留恢复依据。DBOS 关闭其采用的线程池后，为剩余资源清理提供独立线程池。
 
-Worker 入口维护[本地健康文件](../deployment.md#12-worker-最小健康检查)。Flow 在 DBOS 队列注册完成后置位进程内就绪事件，退出时清除；未初始化或任务退出时不能刷新健康文件。该机制不修改 FlowRun 字段和业务状态，也不把单个 Run 长期 pending 自动改判为失败。
+Worker 入口维护[本地健康文件](../development.md#worker-健康检查排障)。Flow 在 DBOS 队列注册完成后置位进程内就绪事件，退出时清除；未初始化或任务退出时不能刷新健康文件。该机制不修改 FlowRun 字段和业务状态，也不把单个 Run 长期 pending 自动改判为失败。
 
 ### 7.3 普通步骤与 Harness Agent
 

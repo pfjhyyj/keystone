@@ -17,7 +17,6 @@ it.each([
     checks: { database, schema, storage },
     storage_sources: {},
     flow_enabled: false,
-    model_mode: 'disabled',
   }
   fakeApi(() => new Response(JSON.stringify(value), { status: http }))
   expect(await getReadiness()).toEqual(value)

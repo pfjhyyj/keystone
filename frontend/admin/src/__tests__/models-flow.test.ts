@@ -92,7 +92,7 @@ it('keeps history readers out of configuration and invocation APIs', async () =>
   const wrapper = mount(ModelManager)
   await flushPromises()
   expect(wrapper.text()).not.toContain('新建渠道')
-  expect(wrapper.text()).not.toContain('开始模拟调用')
+  expect(wrapper.text()).not.toContain('发送真实请求')
   expect(wrapper.text()).toContain('费用未知：1')
   expect(wrapper.text()).toContain('0.0012 credits')
   expect(paths.every((path) => path.startsWith('/model-invocations'))).toBe(true)
@@ -105,8 +105,7 @@ it('preserves channel fields and labels stale balance; provider and account are 
       writes.push(JSON.parse(String(init.body)))
       return channel
     }
-    if (path === '/model-access/options')
-      return { mode: 'mock', credential_refs: ['inference', 'billing'] }
+    if (path === '/model-access/options') return { credential_refs: ['inference', 'billing'] }
     return path.startsWith('/model-channels') ? [channel] : [entry]
   })
   const wrapper = mount(ModelManager)
@@ -137,7 +136,7 @@ it('preserves an off-page channel and never sends model key in PATCH', async () 
       writes.push(JSON.parse(String(init.body)))
       return entry
     }
-    if (path === '/model-access/options') return { mode: 'mock', credential_refs: [] }
+    if (path === '/model-access/options') return { credential_refs: [] }
     return path.startsWith('/model-entries') ? [entry] : []
   })
   const wrapper = mount(ModelManager)
@@ -178,7 +177,7 @@ it('paginates the model catalog while retaining selection', async () => {
   const paths: string[] = []
   fakeApi((path) => {
     paths.push(path)
-    return { mode: 'mock', items: Array.from({ length: 50 }, (_, i) => ({ key: `model${i}` })) }
+    return { items: Array.from({ length: 50 }, (_, i) => ({ key: `model${i}` })) }
   })
   const wrapper = mount(ModelPicker, { props: { modelValue: 'chosen-off-page' } })
   await flushPromises()
@@ -189,7 +188,7 @@ it('paginates the model catalog while retaining selection', async () => {
 })
 it('stops receiving without resending and aborts on disposal', async () => {
   authorize(['model:invoke'])
-  fakeApi(() => ({ mode: 'mock', items: [{ key: 'chat' }] }))
+  fakeApi(() => ({ items: [{ key: 'chat' }] }))
   let signal: AbortSignal | undefined
   const spy = vi
     .spyOn(transport, 'invokeModel')
@@ -217,20 +216,19 @@ it('stops receiving without resending and aborts on disposal', async () => {
   expect(signal?.aborted).toBe(true)
   expect(completed).toHaveBeenCalledTimes(1)
 })
-it('disables probe submission when model sending is disabled', async () => {
+it('requires a model and message before submitting a real request', async () => {
   authorize(['model:invoke'])
-  fakeApi(() => ({ mode: 'disabled', items: [{ key: 'chat' }] }))
+  fakeApi(() => ({ items: [] }))
   const spy = vi.spyOn(transport, 'invokeModel')
   const wrapper = mount(ModelProbe)
   await flushPromises()
-  await chooseSelect(wrapper, 'chat')
   await wrapper.get('form').trigger('submit')
   expect(spy).not.toHaveBeenCalled()
-  expect(button(wrapper, '开始模拟调用').attributes('disabled')).toBeDefined()
+  expect(button(wrapper, '发送真实请求').attributes('disabled')).toBeDefined()
 })
 it('labels live calls and sends only after an explicit submission', async () => {
   authorize(['model:invoke'])
-  fakeApi(() => ({ mode: 'live', items: [{ key: 'chat' }] }))
+  fakeApi(() => ({ items: [{ key: 'chat' }] }))
   const spy = vi.spyOn(transport, 'invokeModel').mockResolvedValue(undefined)
   const wrapper = mount(ModelProbe)
   await flushPromises()
@@ -249,7 +247,7 @@ it('uses the official address and no fake upstream model when configuring live m
   authorize(['model:manage'])
   fakeApi((path) =>
     path === '/model-access/options'
-      ? { mode: 'live', credential_refs: ['inference', 'billing'] }
+      ? { credential_refs: ['inference', 'billing'], providers: ['openrouter'] }
       : [],
   )
   const wrapper = mount(ModelManager)
@@ -257,6 +255,7 @@ it('uses the official address and no fake upstream model when configuring live m
   expect(wrapper.text()).toContain('真实发送（仅 OpenRouter）')
   await button(wrapper, '新建渠道').trigger('click')
   await flushPromises()
+  expect(selectControl(wrapper, '服务商').text()).not.toContain('DeepSeek')
   expect((wrapper.get('input[type="url"]').element as HTMLInputElement).value).toBe(
     'https://openrouter.ai/api/v1',
   )
@@ -408,7 +407,7 @@ it('retains a composed Flow input across reopen and clears it when switching def
       bodies.push(JSON.parse(String(init.body)))
       return new Response(JSON.stringify({ detail: '暂不可用' }), { status: 503 })
     }
-    return path.startsWith('/models') ? { mode: 'mock', items: [{ key: 'chat' }] } : []
+    return path.startsWith('/models') ? { items: [{ key: 'chat' }] } : []
   })
   const wrapper = mount(FlowStartDialog, {
     props: {

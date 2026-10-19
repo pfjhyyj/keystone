@@ -54,7 +54,6 @@ class Runtime:
             "checks": checks,
             "storage_sources": sources,
             "flow_enabled": self.settings.flow_enabled,
-            "model_mode": self.settings.model_mode,
         }
 
 

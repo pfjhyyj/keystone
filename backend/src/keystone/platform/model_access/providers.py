@@ -115,8 +115,8 @@ class AliyunBailian:
     cost_unit = None
     supports_cost_query = False
     uses_billing_key = True
-    # Mock contract only. Real Alibaba OpenAPI signing/region selection is not enabled.
-    balance_path = "/mock/QueryAccountBalance"
+    # Alibaba OpenAPI signing/region selection is not enabled.
+    balance_path = None
 
     def cost(self, usage_data):
         return None

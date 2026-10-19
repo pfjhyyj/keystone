@@ -83,7 +83,7 @@ onMounted(refresh)
       >
       <div class="overview-note">
         <el-tag disable-transitions type="info" effect="plain">就绪检查</el-tag>
-        <p>API 就绪不代表 Worker 已在线；模型发送模式与渠道配置可在模型接入页查看。</p>
+        <p>API 就绪不代表 Worker 已在线；模型渠道配置可在模型接入页查看。</p>
       </div></el-card
     >
   </section>

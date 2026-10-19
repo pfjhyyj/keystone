@@ -1,6 +1,7 @@
-"""Real images + disposable Compose projects; mock channels only.
+"""Real images + disposable Compose projects; test-only HTTP transport injection.
 
-Run from the repository root with backend/.venv/Scripts/python.exe tests/deploy/verify.py.
+Run from the repository root with backend/.venv/bin/python tests/deploy/verify.py.
+The complete stack is a test fixture, separate from development dependency Compose.
 Like Ether's deployment check, use PostgreSQL and tar directly, not a backup framework.
 """
 
@@ -19,8 +20,8 @@ from uuid import uuid4
 import httpx
 
 ROOT = Path(__file__).resolve().parents[2]
-COMPOSE = ROOT / "deploy/compose.yaml"
-BACKEND_SERVICES = ("api", "worker", "migrate", "flow-migrate", "storage-init")
+COMPOSE = ROOT / "tests/deploy/compose.yaml"
+BACKEND_SERVICES = ("api", "worker", "init")
 PASSWORD = "deploy-test-password-only"
 SOURCE = b"A document for isolated deployment recovery verification.\n"
 
@@ -96,7 +97,7 @@ class Deployment:
                 "POSTGRES_PASSWORD": password,
                 "KEYSTONE_DATABASE_URL": f"postgresql+psycopg://keystone:{password}@postgres:5432/keystone",
                 "KEYSTONE_ENV": "test",
-                "KEYSTONE_MODEL_MODE": "mock",
+                "KEYSTONE_INITIAL_ADMIN_PASSWORD": PASSWORD,
                 "KEYSTONE_FLOW_ENABLED": "true",
                 "KEYSTONE_FILE_STORAGES": json.dumps(
                     {"local": {"driver": "filesystem", "root": "/data/files"}}
@@ -111,6 +112,21 @@ class Deployment:
         lines = ["services:"]
         for service in BACKEND_SERVICES:
             lines += [f"  {service}:", f"    image: {images['backend']}"]
+            if service in {"api", "worker"}:
+                entrypoint = "api" if service == "api" else "worker"
+                script = (
+                    "import sys; sys.path.insert(0, '/test-support'); "
+                    "from model_stub import install; install(); "
+                    f"from keystone.entrypoints.{entrypoint} import main; main()"
+                )
+                lines += [
+                    "    command: " + json.dumps(["python", "-c", script]),
+                    "    volumes:",
+                    "      - type: bind",
+                    "        source: " + json.dumps(str(ROOT / "backend/tests/model_stub.py")),
+                    "        target: /test-support/model_stub.py",
+                    "        read_only: true",
+                ]
             if service == "api":
                 lines += ["    ports: !override []"]
         lines += [
@@ -240,17 +256,90 @@ class Deployment:
         self.compose("down", "--volumes", "--remove-orphans")
 
 
+def verify_api_recreation(deployment):
+    """Keep admin running while the API moves to a different Docker address."""
+    admin = deployment.container("admin")
+    api = deployment.container("api")
+    address = command(
+        [
+            "docker",
+            "inspect",
+            "-f",
+            "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+            api,
+        ],
+        deployment.log,
+    ).stdout.strip()
+    holder = deployment.project + "-api-address-holder"
+    with deployment.client() as client:
+        request(client, "GET", "/ready")
+        deployment.compose("stop", "api")
+        deployment.compose("rm", "-f", "api")
+        try:
+            # Occupy the old address so this cannot accidentally pass through IP reuse.
+            command(
+                [
+                    "docker",
+                    "run",
+                    "-d",
+                    "--name",
+                    holder,
+                    "--network",
+                    deployment.project + "_default",
+                    "--ip",
+                    address,
+                    "--entrypoint",
+                    "sleep",
+                    deployment.images["backend"],
+                    "180",
+                ],
+                deployment.log,
+            )
+            deployment.compose(
+                "up", "-d", "--no-build", "--pull", "never", "--no-deps", "--wait", "api"
+            )
+            assert deployment.container("admin") == admin
+            assert deployment.container("api") != api
+            request(client, "GET", "/ready")
+            login(client)
+        finally:
+            command(["docker", "rm", "-f", holder], deployment.log, check=False)
+
+
 def exercise(source, restored, checks):
     def passed(message):
         checks.append(message)
         print("PASS " + message, flush=True)
 
+    dependencies = json.loads(
+        command(
+            [
+                "docker",
+                "compose",
+                "--env-file",
+                str(source.directory / "empty.env"),
+                "-f",
+                str(ROOT / "deploy/compose.yaml"),
+                "config",
+                "--format",
+                "json",
+            ],
+            source.log,
+            env={
+                key: value
+                for key, value in source.environment.items()
+                if not key.startswith(("KEYSTONE_", "POSTGRES_", "COMPOSE_"))
+            },
+        ).stdout
+    )
+    assert set(dependencies["services"]) == {"postgres"}
+    assert "build" not in dependencies["services"]["postgres"]
+    passed("development Compose contains only PostgreSQL and needs no application configuration")
+
     source.compose("up", "-d", "--wait", "postgres")
     failure = source.directory / "failure.json"
     failure.write_text(
-        json.dumps(
-            {"services": {"migrate": {"command": ["python", "-c", "raise SystemExit(23)"]}}}
-        ),
+        json.dumps({"services": {"init": {"command": ["python", "-c", "raise SystemExit(23)"]}}}),
         encoding="utf-8",
     )
     result = source.compose(
@@ -271,21 +360,8 @@ def exercise(source, restored, checks):
         & set(source.compose("ps", "--status", "running", "--services").stdout.split())
     )
     passed("failed migration blocks API, Worker and admin")
-    for service in ("migrate", "flow-migrate", "storage-init"):
-        source.compose("run", "--rm", "--no-deps", service)
     source.up()
-    source.compose(
-        "run",
-        "--rm",
-        "-T",
-        "--no-deps",
-        "api",
-        "keystone",
-        "init-admin",
-        "--username",
-        "admin",
-        input=PASSWORD + "\n" + PASSWORD + "\n",
-    )
+    source.compose("run", "--rm", "--no-deps", "init")
     for service in ("api", "worker"):
         assert source.compose("exec", "-T", service, "id", "-u").stdout.strip() == "10001"
     assert (
@@ -296,6 +372,8 @@ def exercise(source, restored, checks):
         == "16"
     )
     passed("empty-volume cold start, repeatable migrations/storage init, non-root processes")
+    verify_api_recreation(source)
+    passed("Nginx follows a recreated API at a different address without restarting admin")
 
     with source.client() as client:
         assert client.get("/admin/flows").status_code == 200
@@ -378,7 +456,7 @@ def exercise(source, restored, checks):
                 json={
                     "provider": provider,
                     "name": provider,
-                    "api_base": "https://mock.invalid/v1",
+                    "api_base": "https://openrouter.ai/api/v1",
                     "credential_ref": "inference",
                     "billing_credential_ref": "billing",
                 },
@@ -511,7 +589,7 @@ def exercise(source, restored, checks):
             "/tmp/database.dump",
         )
         # A fresh but unrelated marker must not make old files readable.
-        restored.compose("run", "--rm", "--no-deps", "storage-init")
+        restored.compose("run", "--rm", "--no-deps", "init", "keystone", "init-storage")
         restored.compose("up", "-d", "--no-deps", "--wait", "api", "admin")
         with restored.client() as recovered:
             recovered.cookies.update(client.cookies)
@@ -584,12 +662,12 @@ def main():
     directory.mkdir(parents=True)
     print(f"Deployment artifacts: {directory}", flush=True)
     images = {}
-    for name in ("backend", "admin"):
+    for name, context in (("backend", "backend"), ("admin", "frontend/admin")):
         tag = f"keystone-{name}:verify"
         if not args.skip_build:
             print(f"Building {name} image", flush=True)
             command(
-                ["docker", "build", "-f", f"deploy/{name}.Dockerfile", "-t", tag, "."],
+                ["docker", "build", "-t", tag, context],
                 directory / "build.log",
                 timeout=900,
             )

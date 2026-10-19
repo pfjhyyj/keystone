@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { can } from '../../access'
 import { fileApi, uuidPattern } from '../../file-api'
 import { usePagedList } from '../../composables/usePagedList'
@@ -20,7 +20,6 @@ const modelKey = computed({
     input.value = { ...input.value, model_key: value }
   },
 })
-const modelMode = ref('')
 const files = usePagedList('file:inspect', fileApi.list)
 </script>
 
@@ -70,7 +69,6 @@ const files = usePagedList('file:inspect', fileApi.list)
       placeholder="已知文件 UUID"
   /></label>
   <p>文件须可读取且为不超过 16 KiB 的 UTF-8 文本；可见文件不自动代表有内容读取权。</p>
-  <ModelPicker v-model="modelKey" :disabled="disabled" @mode="modelMode = $event" />
-  <p v-if="modelMode === 'live'">本流程将调用真实模型，可能产生费用；取消不撤销已发生的调用。</p>
-  <p v-else-if="modelMode === 'mock'">本流程使用模拟渠道，费用仅用于验证。</p>
+  <ModelPicker v-model="modelKey" :disabled="disabled" />
+  <p>本流程将调用真实模型，可能产生费用；取消不撤销已发生的调用。</p>
 </template>

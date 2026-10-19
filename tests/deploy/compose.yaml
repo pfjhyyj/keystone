@@ -1,0 +1,105 @@
+# Internal image and recovery verification fixture; development dependencies use deploy/compose.yaml.
+name: keystone-package-verification
+
+x-backend: &backend
+  image: ${KEYSTONE_BACKEND_IMAGE:-keystone-backend:local}
+  build:
+    context: ../../backend
+  environment: &backend-environment
+    KEYSTONE_ENV: ${KEYSTONE_ENV:-development}
+    KEYSTONE_LOG_LEVEL: ${KEYSTONE_LOG_LEVEL:-INFO}
+    KEYSTONE_WORKER_READY_FILE: /tmp/keystone-worker.ready
+    KEYSTONE_BROWSER_ORIGINS: '${KEYSTONE_BROWSER_ORIGINS:-["http://127.0.0.1:8080","http://localhost:8080"]}'
+    KEYSTONE_SESSION_HOURS: ${KEYSTONE_SESSION_HOURS:-8}
+    KEYSTONE_PAT_MAX_DAYS: ${KEYSTONE_PAT_MAX_DAYS:-90}
+    KEYSTONE_DATABASE_URL: ${KEYSTONE_DATABASE_URL:?Set KEYSTONE_DATABASE_URL for the test fixture}
+    KEYSTONE_HOST: 0.0.0.0
+    KEYSTONE_PORT: 8000
+    KEYSTONE_FILE_COORDINATION_ROOT: /data/files
+    KEYSTONE_FILE_STORAGES: '${KEYSTONE_FILE_STORAGES:-{"local":{"driver":"filesystem","root":"/data/files"}}}'
+    KEYSTONE_FILE_DEFAULT_STORAGE: ${KEYSTONE_FILE_DEFAULT_STORAGE:-local}
+    KEYSTONE_FILE_MAX_BYTES: ${KEYSTONE_FILE_MAX_BYTES:-16777216}
+    KEYSTONE_FLOW_ENABLED: ${KEYSTONE_FLOW_ENABLED:-true}
+    KEYSTONE_MODEL_SECRETS: '${KEYSTONE_MODEL_SECRETS:-{}}'
+  volumes:
+    - file_data:/data/files
+  init: true
+
+services:
+  postgres:
+    image: ${KEYSTONE_POSTGRES_IMAGE:-postgres:17.11-alpine}
+    environment:
+      POSTGRES_DB: keystone
+      POSTGRES_USER: keystone
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/.env}
+    ports:
+      - "127.0.0.1:${KEYSTONE_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keystone -d keystone"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  init:
+    <<: *backend
+    environment:
+      <<: *backend-environment
+      KEYSTONE_INITIAL_ADMIN_PASSWORD: ${KEYSTONE_INITIAL_ADMIN_PASSWORD:-}
+    command: ["keystone", "init", "--non-interactive"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *backend
+    command: ["keystone-api"]
+    ports:
+      - "127.0.0.1:${KEYSTONE_API_PORT:-8000}:8000"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 3
+    restart: unless-stopped
+
+  worker:
+    <<: *backend
+    command: ["keystone-worker"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "keystone-worker", "--check"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  admin:
+    image: ${KEYSTONE_ADMIN_IMAGE:-keystone-admin:local}
+    build:
+      context: ../../frontend/admin
+    ports:
+      - "127.0.0.1:${KEYSTONE_ADMIN_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  file_data:

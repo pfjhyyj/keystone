@@ -1,0 +1,9 @@
+**
+!pyproject.toml
+!uv.lock
+!src/
+!src/**
+!migrations/
+!migrations/**
+**/__pycache__/
+**/*.pyc

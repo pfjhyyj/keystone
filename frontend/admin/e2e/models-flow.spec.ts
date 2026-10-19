@@ -36,14 +36,15 @@ test('three simulated providers and a real DBOS Flow through the admin UI', asyn
     dialog = page.getByRole('dialog')
     await dialog.getByLabel('模型 key', { exact: true }).fill(`${provider}_chat`)
     await choose(dialog, '模型渠道', `${provider} 模拟`)
+    await dialog.getByLabel('上游模型', { exact: true }).fill('mock-chat')
     await dialog.getByRole('button', { name: '保存模型', exact: true }).click()
     await expect(dialog).toBeHidden()
-    const probe = page.getByRole('region', { name: '模拟调用', exact: true })
+    const probe = page.getByRole('region', { name: '真实调用', exact: true })
     await probe.getByRole('button', { name: '刷新可用模型' }).click()
     await choose(probe, '模型', `${provider}_chat`)
     await probe.getByLabel('测试消息', { exact: true }).fill('验证渠道，不调用真实模型。')
     await check(probe.getByLabel('流式响应', { exact: true }), provider === 'openrouter')
-    await probe.getByRole('button', { name: '开始模拟调用', exact: true }).click()
+    await probe.getByRole('button', { name: '发送真实请求', exact: true }).click()
     await expect(probe.locator('pre')).toContainText('模拟渠道响应')
     await expect(
       page.getByRole('region', { name: '调用记录与费用', exact: true }).locator('tbody tr'),

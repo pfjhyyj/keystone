@@ -3,7 +3,7 @@ from sqlalchemy import and_, false, or_, select
 from keystone.core.errors import ServiceError
 from keystone.platform.identity.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.gateway import LIVE_TARGETS
+from keystone.platform.model_access.gateway import SUPPORTED_TARGETS
 from keystone.platform.model_access.models import Channel, ModelEntry
 from keystone.platform.model_access.services.queries import locked
 
@@ -14,15 +14,11 @@ class ModelEntryService:
 
     async def catalog(self, offset, limit):
         return {
-            "mode": self.gateway.settings.model_mode,
             "items": await self.entries(offset, limit, catalog=True),
         }
 
     async def prepare_invoke(self, model_key):
-        selected = await self.selection(model_key)
-        if self.gateway.settings.model_mode == "disabled":
-            raise ServiceError(503, "model_transport_disabled", "模型发送已停用")
-        return selected
+        return await self.selection(model_key)
 
     async def entries(self, offset, limit, *, catalog=False):
         async with self.identity.access("model:invoke" if catalog else "model:manage") as (
@@ -34,17 +30,16 @@ class ModelEntryService:
                 statement = statement.join(Channel).where(
                     ModelEntry.is_active.is_(True), Channel.is_active.is_(True)
                 )
-                if self.gateway.settings.model_mode == "live":
-                    statement = statement.where(
-                        or_(
-                            false(),
-                            *(
-                                and_(Channel.provider == provider, Channel.api_base == base)
-                                for provider, (base, paths) in LIVE_TARGETS.items()
-                                if paths.get("/chat/completions") == "POST"
-                            ),
-                        )
+                statement = statement.where(
+                    or_(
+                        false(),
+                        *(
+                            and_(Channel.provider == provider, Channel.api_base == base)
+                            for provider, (base, paths) in SUPPORTED_TARGETS.items()
+                            if paths.get("/chat/completions") == "POST"
+                        ),
                     )
+                )
             rows = await session.scalars(
                 statement.order_by(ModelEntry.key).offset(offset).limit(limit)
             )

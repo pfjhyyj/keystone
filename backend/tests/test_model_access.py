@@ -7,19 +7,19 @@ from threading import Event
 from uuid import UUID, uuid4
 
 import httpx2
+import model_stub as mock
 import pytest
-from pydantic import SecretStr, ValidationError
+from pydantic import SecretStr
 from sqlalchemy import event, update
 from test_files_dictionary import client as client
 from test_identity import PASSWORD, assign, bearer, create_user, login, query, role, token
 
-from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
 from keystone.entrypoints import cli
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.identity.access import AccessContext
 from keystone.platform.identity.policy import Credential
-from keystone.platform.model_access import mock, schemas
+from keystone.platform.model_access import schemas
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.services.entries import ModelEntryService
 from keystone.platform.model_access.services.maintenance import recover_api_calls
@@ -183,9 +183,9 @@ def test_offline_recovery_audit_failure_rolls_back_batch(client, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def mock_configuration(client):
+def model_configuration(client, monkeypatch):
+    mock.install(monkeypatch)
     settings = client.app.state.runtime.settings
-    settings.model_mode = "mock"
     settings.model_secrets = {
         "inference": SecretStr(SECRET),
         "billing": SecretStr(BILLING),
@@ -199,7 +199,7 @@ def channel(client, provider="openrouter", **overrides):
         json={
             "name": provider,
             "provider": provider,
-            "api_base": "https://mock.invalid/v1",
+            "api_base": "https://openrouter.ai/api/v1",
             "credential_ref": "inference",
             "billing_credential_ref": "billing",
             **overrides,
@@ -276,7 +276,7 @@ def test_sdk_nonstream_and_stream_receipts_no_messages_persist(client, provider,
     entry(client, channel(client, provider))
     a = invoke(client)
     assert a.status_code == 200, a.text
-    assert a.json()["mode"] == "mock"
+    assert "mode" not in a.json()
     b = invoke(client, stream=True)
     assert b.status_code == 200
     events = [json.loads(line[6:]) for line in b.text.splitlines() if line.startswith("data: ")]
@@ -637,21 +637,11 @@ def test_inflight_completion_after_user_revocation_and_channel_disable(client, m
     )
 
 
-def test_transport_disabled_and_missing_secret_never_send(client):
+def test_missing_secret_never_sends(client):
     entry(client, channel(client))
-    client.app.state.runtime.settings.model_mode = "disabled"
-    assert invoke(client).status_code == 503
-    client.app.state.runtime.settings.model_mode = "mock"
     client.app.state.runtime.settings.model_secrets = {}
     assert invoke(client).json()["code"] == "model_credential_unavailable"
     assert client.get("/api/v1/model-invocations").json() == []
-    with pytest.raises(ValidationError):
-        Settings(
-            _env_file=None,
-            env="production",
-            model_mode="mock",
-            browser_origins=["https://example.com"],
-        )
 
 
 @pytest.mark.parametrize("failure_phase", ["register", "complete"])
