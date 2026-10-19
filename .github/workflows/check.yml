@@ -55,7 +55,7 @@ jobs:
       - name: Install backend dependencies
         run: uv sync --locked --project backend
       - name: Install frontend dependencies and browser
-        working-directory: frontend/admin
+        working-directory: frontend/console
         run: |
           corepack enable
           pnpm install --frozen-lockfile
@@ -79,7 +79,7 @@ jobs:
           path: |
             .artifacts/checks/**/result.json
             .artifacts/checks/**/pytest.xml
-            .artifacts/admin-e2e/
+            .artifacts/console-e2e/
             .artifacts/deploy-verify/**/result.json
             .artifacts/deploy-verify/**/build.log
             .artifacts/deploy-verify/**/compose.log

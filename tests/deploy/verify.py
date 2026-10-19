@@ -133,8 +133,8 @@ class Deployment:
             "  postgres:",
             f"    image: {images['postgres']}",
             "    ports: !override []",
-            "  admin:",
-            f"    image: {images['admin']}",
+            "  console:",
+            f"    image: {images['console']}",
             f'    ports: !override ["127.0.0.1:{port}:80"]',
         ]
         self.override.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -257,8 +257,8 @@ class Deployment:
 
 
 def verify_api_recreation(deployment):
-    """Keep admin running while the API moves to a different Docker address."""
-    admin = deployment.container("admin")
+    """Keep console running while the API moves to a different Docker address."""
+    console = deployment.container("console")
     api = deployment.container("api")
     address = command(
         [
@@ -298,7 +298,7 @@ def verify_api_recreation(deployment):
             deployment.compose(
                 "up", "-d", "--no-build", "--pull", "never", "--no-deps", "--wait", "api"
             )
-            assert deployment.container("admin") == admin
+            assert deployment.container("console") == console
             assert deployment.container("api") != api
             request(client, "GET", "/ready")
             login(client)
@@ -350,16 +350,16 @@ def exercise(source, restored, checks):
         "never",
         "api",
         "worker",
-        "admin",
+        "console",
         extra=failure,
         check=False,
     )
     assert result.returncode != 0
     assert not (
-        {"api", "worker", "admin"}
+        {"api", "worker", "console"}
         & set(source.compose("ps", "--status", "running", "--services").stdout.split())
     )
-    passed("failed migration blocks API, Worker and admin")
+    passed("failed migration blocks API, Worker and console")
     source.up()
     source.compose("run", "--rm", "--no-deps", "init")
     for service in ("api", "worker"):
@@ -373,12 +373,16 @@ def exercise(source, restored, checks):
     )
     passed("empty-volume cold start, repeatable migrations/storage init, non-root processes")
     verify_api_recreation(source)
-    passed("Nginx follows a recreated API at a different address without restarting admin")
+    passed("Nginx follows a recreated API at a different address without restarting console")
 
     with source.client() as client:
-        assert client.get("/admin/flows").status_code == 200
-        html = client.get("/admin/").text
-        assets = re.findall(r'(?:src|href)="(/admin/assets/[^\"]+)"', html)
+        for path, status in (("/", 302), ("/console", 301)):
+            response = client.get(path)
+            assert response.status_code == status
+            assert response.headers["location"] == "/console/"
+        assert client.get("/console/flows").status_code == 200
+        html = client.get("/console/").text
+        assets = re.findall(r'(?:src|href)="(/console/assets/[^\"]+)"', html)
         assert assets and all(client.get(asset).status_code == 200 for asset in assets)
         request(client, "GET", "/ready")
         login(client)
@@ -530,7 +534,7 @@ def exercise(source, restored, checks):
         assert pending["status"] == "pending"
         passed("real DBOS/Harness completion and durable pending Flow")
 
-        source.compose("stop", "admin", "api", "worker")
+        source.compose("stop", "console", "api", "worker")
         backup = source.directory / "backup"
         backup.mkdir()
         source.compose(
@@ -590,13 +594,13 @@ def exercise(source, restored, checks):
         )
         # A fresh but unrelated marker must not make old files readable.
         restored.compose("run", "--rm", "--no-deps", "init", "keystone", "init-storage")
-        restored.compose("up", "-d", "--no-deps", "--wait", "api", "admin")
+        restored.compose("up", "-d", "--no-deps", "--wait", "api", "console")
         with restored.client() as recovered:
             recovered.cookies.update(client.cookies)
             me = request(recovered, "GET", "/auth/me")
             recovered.headers["X-CSRF-Token"] = me["csrf_token"]
             assert recovered.get(f"/api/v1/files/{file['id']}/content").status_code == 503
-            restored.compose("stop", "admin", "api")
+            restored.compose("stop", "console", "api")
             restored.archive_files(backup, restore=True)
             passed("database-only restore refuses file reads with an unrelated storage fingerprint")
             restored.up()
@@ -662,7 +666,7 @@ def main():
     directory.mkdir(parents=True)
     print(f"Deployment artifacts: {directory}", flush=True)
     images = {}
-    for name, context in (("backend", "backend"), ("admin", "frontend/admin")):
+    for name, context in (("backend", "backend"), ("console", "frontend/console")):
         tag = f"keystone-{name}:verify"
         if not args.skip_build:
             print(f"Building {name} image", flush=True)

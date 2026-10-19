@@ -152,10 +152,10 @@ keystone/
 │   ├── migrations/             # 一条 Keystone 业务迁移链
 │   └── tests/                  # 按模块和跨模块场景组织
 ├── frontend/
-│   ├── admin/                  # 首版平台管理后台
-│   │   ├── Dockerfile          # 管理后台构建与 Nginx 入口
+│   ├── console/                # 首版平台控制台
+│   │   ├── Dockerfile          # 控制台构建与 Nginx 入口
 │   │   ├── .dockerignore
-│   │   ├── nginx.conf          # 静态资源与 API 入口配置
+│   │   ├── docker/nginx.conf   # 镜像内的静态资源与 API 入口配置
 │   │   ├── package.json
 │   │   ├── pnpm-lock.yaml
 │   │   └── src/
@@ -167,9 +167,9 @@ keystone/
 └── README.md
 ```
 
-backend/ 内维护唯一后端依赖与锁文件，frontend/ 下每个应用维护自己的依赖、锁文件、构建和测试。Dockerfile、.dockerignore 和镜像入口配置随各自工程维护，使用工程目录作为构建上下文。首版只创建 admin，不创建占位业务前端、pnpm workspace 或共享前端包。业务前端数量与后端业务模块数量不要求一致。deploy/ 负责第三方依赖编排，不容纳领域规则；docs/ 是当前设计唯一维护位置。
+backend/ 内维护唯一后端依赖与锁文件，frontend/ 下每个应用维护自己的依赖、锁文件、构建和测试。Dockerfile、.dockerignore 和镜像入口配置随各自工程维护，使用工程目录作为构建上下文。首版只创建 console，不创建占位业务前端、pnpm workspace 或共享前端包。业务前端数量与后端业务模块数量不要求一致。deploy/ 负责第三方依赖编排，不容纳领域规则；docs/ 是当前设计唯一维护位置。
 
-当前已实现 platform/identity、audit、files、dictionary、model_access、flow 及 businesses/document_review。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 提供 init/migrate/migrate-flow/revision/check/init-admin/init-storage；admin 提供账户、文件、字典、模型及 Flow 基本操作。初始迁移按 identity、audit、dictionary、files、model_access、flow 分为六份，保持一条链，当前 head 为 0006_flow，文件多源字段包含在 0004_files 初始结构中；keystone schema 共十六张领域表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
+当前已实现 platform/identity、audit、files、dictionary、model_access、flow 及 businesses/document_review。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 提供 init/migrate/migrate-flow/revision/check/init-admin/init-storage；console 提供账户、文件、字典、模型及 Flow 基本操作。初始迁移按 identity、audit、dictionary、files、model_access、flow 分为六份，保持一条链，当前 head 为 0006_flow，文件多源字段包含在 0004_files 初始结构中；keystone schema 共十六张领域表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
 
 CLI 另提供 recover-model-calls --confirm-api-stopped：操作者停止全部 API/普通调用进程后，显式将普通遗留 running 调用收尾为 unknown，保留费用与编号并记录系统审计。确认标志不代替进程检测；恢复期间保持 API 停止。Flow 调用继续由持有单 Worker 排他锁的启动恢复处理，不新增后台超时扫描器。详细边界见[模型离线收尾](domains/model-access.md#75-普通-api-调用离线收尾)。
 
@@ -210,11 +210,11 @@ bootstrap 按进程职责显式装配：API 加载模块路由和轻量 Definiti
 
 ### 5.2 独立前端应用
 
-admin 提供用户、角色、字典、文件、模型渠道/费用、审计和 Flow 运维页面，也可按需加入业务管理页面；business-app 提供实际用户的业务操作、流程提交和结果展示。一个业务前端可以覆盖多个业务，不要求与后端模块一一对应。
+console 提供用户、角色、字典、文件、模型渠道/费用、审计和 Flow 运维页面，也可按需加入业务管理页面；business-app 提供实际用户的业务操作、流程提交和结果展示。一个业务前端可以覆盖多个业务，不要求与后端模块一一对应。
 
-各应用独立构建与部署，共用后端身份与权限。独立代码工程不要求使用不同域名：首版可以通过同一反向代理分别提供 /admin/、业务路径和 /api/，沿用同源 Cookie 认证，浏览器路由与资源 base 按挂载路径配置；如以后分离域名，再明确 Cookie、CSRF 和跨域部署规则，不因此默认引入 SSO。
+各应用独立构建与部署，共用后端身份与权限。独立代码工程不要求使用不同域名：首版可以通过同一反向代理分别提供 /console/、业务路径和 /api/，沿用同源 Cookie 认证，浏览器路由与资源 base 按挂载路径配置；如以后分离域名，再明确 Cookie、CSRF 和跨域部署规则，不因此默认引入 SSO。
 
-admin 使用 `router/index.ts` 集中定义路由、导航与会话守卫，按页面懒加载。`App.vue` 提供全局 UI 配置，`layouts/AdminLayout.vue` 维护可折叠侧栏、移动导航、面包屑和账户菜单；登录、个人中心为独立路由。`stores/session.ts` 负责身份/权限与会话恢复，`api/client.ts` 统一处理 Cookie、CSRF、HTTP/流内 401/403 和过期请求结果，其余 `api/` 文件按领域维护请求及类型。页面共用 `composables/` 中的分页及请求代次处理，直接读取共享身份。不引入 Pinia、共享前端包或新的后端聚合接口。
+console 使用 `router/index.ts` 集中定义路由、导航与会话守卫，按页面懒加载。`App.vue` 提供全局 UI 配置，`layouts/ConsoleLayout.vue` 维护可折叠侧栏、移动导航、面包屑和账户菜单；登录、个人中心为独立路由。`stores/session.ts` 负责身份/权限与会话恢复，`api/client.ts` 统一处理 Cookie、CSRF、HTTP/流内 401/403 和过期请求结果，其余 `api/` 文件按领域维护请求及类型。页面共用 `composables/` 中的分页及请求代次处理，直接读取共享身份。不引入 Pinia、共享前端包或新的后端聚合接口。
 
 `views/<页面>/` 保存路由页面（如 `UsersView.vue`），页面私有组件放在同目录的 `components/`，页面专用配置也就近维护；没有私有组件时不建空目录。顶层 `components/` 仅保留共用的弹窗、选择、分页、状态等基础组件，以及 `components/models/` 中被模型页面和 Flow 业务表单复用的选择器、费用展示。页面之间不导入其他页面的私有组件，按实际复用提取共享组件，保持目录层级简洁及组件名明确。
 
@@ -235,7 +235,7 @@ admin 使用 `router/index.ts` 集中定义路由、导航与会话守卫，按�
 | API | backend，entrypoints/api.py | 一个常驻进程，受理 HTTP、管理与业务请求 |
 | Worker | 同一 backend，entrypoints/worker.py | 一个常驻进程，执行 Flow/Agent 与有界维护循环 |
 | CLI | 同一 backend，entrypoints/cli.py | 一次性迁移、初始化命令，不是第三个常驻服务 |
-| 管理后台与业务前端 | frontend 下各自工程 | 分别构建静态资源，由入口服务器提供；业务应用按需增加 |
+| 控制台与业务前端 | frontend 下各自工程 | 分别构建静态资源，由入口服务器提供；业务应用按需增加 |
 | PostgreSQL 与文件存储 | 部署设施 | API/Worker 共享；文件内容支持本地/S3 多源，协调卷仍限同宿主 |
 
 API、Worker、CLI 共用镜像与后端依赖，通过不同命令启动；不因进程分离建立内部 HTTP 调用。API 受理 Flow 后提交业务记录，Worker 通过已有记录协调执行。维护循环与 DBOS 同处 Worker，不单独部署调度器。以后扩容 API 或 Worker 分别处理统一限流、执行器恢复和版本协调，不需要因进程数变化重排领域目录。

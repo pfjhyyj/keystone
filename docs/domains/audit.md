@@ -126,9 +126,9 @@ Flow 新增 flow.start、flow.cancel、flow.complete；发起/取消记录实际
 
 模型调用的中断收尾统一使用 model.invocation.recover，操作者为 system，target_type 为 model.invocation，target_id 为原调用 ID，普通 API 离线收尾的 details.source 为 offline_api_recovery，持有独占锁的 Worker 启动收尾为 flow_worker_recovery。这是维护操作审计，区别于普通调用完成；每批状态更新与逐条审计同事务，写日志失败则回滚该批，重跑不重复记录已收尾项。命令失败写脱敏运行日志，不递归补写失败审计。平台操作名以代码 ACTIONS 目录为准，业务动作来自显式合并的 Catalog，不另设 files.* 别名。
 
-### 7.1 管理后台查询
+### 7.1 控制台查询
 
-/admin/audit 要求 audit:read，提供每页 50 条的查询和只读详情。支持操作名、操作者类型/ID、目标类型/ID、结果及起止时间过滤；默认最近 30 天，单次最多 366 天。操作者 ID 按 UUID 校验，目标 ID 接受字符串，不把字典 key 等目标错误限制为 UUID。
+/console/audit 要求 audit:read，提供每页 50 条的查询和只读详情。支持操作名、操作者类型/ID、目标类型/ID、结果及起止时间过滤；默认最近 30 天，单次最多 366 天。操作者 ID 按 UUID 校验，目标 ID 接受字符串，不把字典 key 等目标错误限制为 UUID。
 
 用户、系统、匿名操作者分别显示，缺少用户名称不会被推断为系统。详情中的 JSON 作为文本展示，沿用服务端脱敏结果，不补查用户资料或扩展审计字段。没有编辑、删除和导出入口。页面适配 Ether 的列表/详情方式，操作名和筛选规则以 Keystone API 为准。
 

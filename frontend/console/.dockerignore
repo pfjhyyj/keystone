@@ -6,4 +6,5 @@
 !vite.config.ts
 !src/
 !src/**
-!nginx.conf
+!docker/
+!docker/nginx.conf

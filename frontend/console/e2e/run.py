@@ -1,4 +1,4 @@
-"""Run the admin browser suite with an isolated PostgreSQL database and local API."""
+"""Run the console browser suite with an isolated PostgreSQL database and local API."""
 
 import json
 import os
@@ -40,7 +40,7 @@ def main():
     url = make_url(os.environ["KEYSTONE_TEST_DATABASE_URL"])
     if url.database != "keystone_test":
         raise RuntimeError("Only the dedicated keystone_test database is accepted")
-    admin = Path(__file__).resolve().parents[1]
+    console = Path(__file__).resolve().parents[1]
     name = "keystone_test_" + uuid4().hex
     database_url = url.set(database=name).render_as_string(hide_password=False)
     with socket.socket() as listener:
@@ -58,7 +58,7 @@ def main():
         process = None
         worker_process = None
         try:
-            with tempfile.TemporaryDirectory(prefix="keystone_admin_") as directory:
+            with tempfile.TemporaryDirectory(prefix="keystone_console_") as directory:
                 root = Path(directory) / "storage"
                 initialize(root)
                 settings = Settings(
@@ -118,7 +118,7 @@ def main():
                             {"local": {"driver": "filesystem", "root": str(root)}}
                         ),
                         "KEYSTONE_BROWSER_ORIGINS": json.dumps(["http://127.0.0.1:5175"]),
-                        "PYTHONPATH": str(admin.parents[1] / "backend/tests"),
+                        "PYTHONPATH": str(console.parents[1] / "backend/tests"),
                         "KEYSTONE_MODEL_SECRETS": json.dumps(
                             {"inference": "fake-inference", "billing": "fake-billing"}
                         ),
@@ -181,7 +181,7 @@ def main():
                             raise RuntimeError("Test Worker readiness timeout")
                         result = subprocess.run(
                             [node, "node_modules/@playwright/test/cli.js", "test"],
-                            cwd=admin,
+                            cwd=console,
                             env=env,
                             check=False,
                         )

@@ -5,32 +5,34 @@
 ## 开发配置
 
 - `backend/.env`：本机 API、Worker 和 CLI 共用。默认使用本机 55432 端口与 `.data/files` 目录。
-- `frontend/admin/.env`：仅在更改 API 地址时需要，可设置 `KEYSTONE_API_PROXY`；默认代理 `http://127.0.0.1:8000`。
+- `frontend/console/.env`：仅在更改 API 地址时需要，可设置 `KEYSTONE_API_PROXY`；默认代理 `http://127.0.0.1:8000`。
 - `deploy/.env`：可选，仅用于覆盖 PostgreSQL 密码、宿主端口或镜像。例如复制示例后使用 `docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --wait`；改密码或端口时同步修改后端数据库 URL。
 
 `keystone init` 一次完成业务迁移、Flow 迁移、存储和管理员初始化。`KEYSTONE_INITIAL_ADMIN_PASSWORD` 仅供非交互初始化使用，本机默认交互输入；已有用户时不重置密码。模型表初始为空，`init` 不创建渠道、模型或调用记录。
 
 ## 前端目录约定
 
-管理后台源码按页面归属组织：
+控制台源码按页面归属组织：
+
+工程根目录保留 Dockerfile 和 Vite、TypeScript 等工具配置；镜像运行配置放在 `frontend/console/docker/`，当前包含 `nginx.conf`，本机开发使用 Vite，无需启动 Nginx。
 
 ```text
 src/
-├── App.vue                  # 全局 UI 配置
-├── main.ts                  # 应用入口
-├── router/index.ts          # 路由、导航与会话守卫
-├── layouts/AdminLayout.vue  # 侧栏、页头与页面容器
-├── api/                     # 请求层和领域接口、类型
-├── stores/session.ts        # 共享身份与权限状态
-├── plugins/                 # Element Plus 注册
-├── styles/                  # 全局主题和布局
-├── composables/             # 跨页面复用的组合逻辑
-├── components/              # 共用基础组件及跨页面领域组件
+├── App.vue                    # 全局 UI 配置
+├── main.ts                    # 应用入口
+├── router/index.ts            # 路由、导航与会话守卫
+├── layouts/ConsoleLayout.vue  # 侧栏、页头与页面容器
+├── api/                       # 请求层和领域接口、类型
+├── stores/session.ts          # 共享身份与权限状态
+├── plugins/                   # Element Plus 注册
+├── styles/                    # 全局主题和布局
+├── composables/               # 跨页面复用的组合逻辑
+├── components/                # 共用基础组件及跨页面领域组件
 ├── views/
 │   └── users/
 │       ├── UsersView.vue
 │       └── components/UserRolesDialog.vue
-├── businesses/              # 具体业务表单
+├── businesses/                # 具体业务表单
 └── __tests__/
 ```
 
@@ -43,7 +45,7 @@ src/
 完成 README 的依赖安装后，从仓库根目录执行：
 
 ```bash
-(cd frontend/admin && corepack pnpm exec playwright install chromium)
+(cd frontend/console && corepack pnpm exec playwright install chromium)
 # 专用入口库只需建立一次，不能指向开发或业务数据库。
 docker compose -f deploy/compose.yaml exec postgres createdb -U keystone keystone_test
 export KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone:keystone_local_only@127.0.0.1:55432/keystone_test'

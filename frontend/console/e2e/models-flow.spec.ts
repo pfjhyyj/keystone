@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { choose, check, watchWindowErrors } from './controls'
 
-test('three simulated providers and a real DBOS Flow through the admin UI', async ({ page }) => {
+test('three simulated providers and a real DBOS Flow through the console UI', async ({ page }) => {
   test.setTimeout(90000)
   const errors: string[] = []
   await watchWindowErrors(page, errors)
@@ -61,13 +61,13 @@ test('three simulated providers and a real DBOS Flow through the admin UI', asyn
   await expect(dialog).toContainText('来源 query')
   await dialog.getByRole('button', { name: '关闭对话框' }).click()
   await page.screenshot({
-    path: '../../.artifacts/admin-models.png',
+    path: '../../.artifacts/console-models.png',
     fullPage: true,
     animations: 'disabled',
   })
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({
-    path: '../../.artifacts/admin-models-mobile.png',
+    path: '../../.artifacts/console-models-mobile.png',
     fullPage: true,
     animations: 'disabled',
   })
@@ -92,13 +92,13 @@ test('three simulated providers and a real DBOS Flow through the admin UI', asyn
   await dialog.getByRole('button', { name: '下载报告' }).click()
   expect((await download).suggestedFilename()).toBe('review-report.txt')
   await page.screenshot({
-    path: '../../.artifacts/admin-flow-detail.png',
+    path: '../../.artifacts/console-flow-detail.png',
     fullPage: true,
     animations: 'disabled',
   })
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({
-    path: '../../.artifacts/admin-flow-detail-mobile.png',
+    path: '../../.artifacts/console-flow-detail-mobile.png',
     fullPage: true,
     animations: 'disabled',
   })

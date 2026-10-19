@@ -1,6 +1,6 @@
 # Keystone 文档
 
-Keystone 是模块化单体平台。API、单 Worker 与 CLI 共用一个 Python 工程和镜像，管理后台使用 Vue 与 Element Plus。Flow 默认启用，真实模型接入默认可用，权限判断使用 Casbin。
+Keystone 是模块化单体平台。API、单 Worker 与 CLI 共用一个 Python 工程和镜像，控制台使用 Vue 与 Element Plus。Flow 默认启用，真实模型接入默认可用，权限判断使用 Casbin。
 
 ## 阅读入口
 

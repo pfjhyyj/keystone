@@ -116,7 +116,7 @@ async function command(value: string) {
   <RouterView v-else-if="!identity" />
   <div
     v-else
-    class="admin-shell"
+    class="console-shell"
     :class="{
       'is-collapsed': collapsed,
       'mobile-open': mobileOpen,
@@ -133,7 +133,7 @@ async function command(value: string) {
     <aside v-if="!identity.user.password_change_required" class="sidebar">
       <RouterLink class="brand" to="/" aria-label="Keystone 首页"
         ><span class="brand-mark">K</span
-        ><span class="brand-name">keystone<small>管理工作台</small></span></RouterLink
+        ><span class="brand-name">keystone<small>控制台</small></span></RouterLink
       >
       <nav aria-label="平台模块">
         <section v-for="menu in menus" :key="menu.title" class="nav-group">
@@ -216,7 +216,7 @@ async function command(value: string) {
           ><div class="page-view">
             <component :is="Component" :key="`${route.path}:${sessionVersion}`" /></div
         ></RouterView>
-        <footer class="app-footer">Keystone · 统一管理工作台</footer>
+        <footer class="app-footer">Keystone · 统一控制台</footer>
       </main>
     </div>
   </div>

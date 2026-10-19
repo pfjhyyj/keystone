@@ -5,7 +5,7 @@
 | 配置文件 | 使用方 | 默认是否需要 |
 |---|---|---|
 | [backend/.env.example](../backend/.env.example) → `backend/.env` | 本机 API、Worker、CLI | 需要，示例与开发数据库默认值一致 |
-| [frontend/admin/.env.example](../frontend/admin/.env.example) → `frontend/admin/.env` | Vite 的 `KEYSTONE_API_PROXY` | 可选，默认代理本机 8000 端口 |
+| [frontend/console/.env.example](../frontend/console/.env.example) → `frontend/console/.env` | Vite 的 `KEYSTONE_API_PROXY` | 可选，默认代理本机 8000 端口 |
 | [deploy/.env.example](../deploy/.env.example) → `deploy/.env` | PostgreSQL 密码、宿主端口等覆盖 | 可选，默认启动不需要复制 |
 
 ## 1. 读取方式
@@ -62,7 +62,7 @@ KEYSTONE_FILE_DEFAULT_STORAGE=local
 KEYSTONE_FILE_STORAGES='{"local":{"driver":"filesystem","root":"../.data/files"},"cloud":{"driver":"s3","endpoint":"https://s3.example.com","bucket":"keystone-backups","region":"us-east-1","prefix":"documents","access_key":"example-access","secret_key":"example-secret"}}'
 ```
 
-打包后的 API/Worker 使用相同 JSON，但 local.root 须填写实际挂载的容器路径。参数由应用部署环境注入；管理后台不接收配置或凭据。初始化执行 `keystone init-storage`，创建/校验协调目录及各 filesystem 源；S3 bucket 须预先创建。
+打包后的 API/Worker 使用相同 JSON，但 local.root 须填写实际挂载的容器路径。参数由应用部署环境注入；控制台不接收配置或凭据。初始化执行 `keystone init-storage`，创建/校验协调目录及各 filesystem 源；S3 bucket 须预先创建。
 
 S3 必须显式填写 endpoint、bucket、region（默认 us-east-1）、access_key、secret_key；prefix 可选，不能含路径穿越。使用 path-style 请求，不读取主机默认 AWS 凭据或 EC2 metadata。需要对应前缀的对象读写删除权限及就绪探针的 ListBucket 权限；不需要应用创建或删除 bucket。filesystem 和 S3 配置都必须显式提供 FILE_COORDINATION_ROOT，协调目录可以与某个本地内容源共用同一路径，但两者分别配置，不互相推导。
 

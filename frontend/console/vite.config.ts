@@ -5,7 +5,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), 'KEYSTONE_')
   return {
     plugins: [vue()],
-    base: '/admin/',
+    base: '/console/',
     server: {
       port: 5173,
       strictPort: true,

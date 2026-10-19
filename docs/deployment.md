@@ -8,20 +8,20 @@
 
 ```bash
 docker build -t keystone-backend:local ./backend
-docker build -t keystone-admin:local ./frontend/admin
+docker build -t keystone-console:local ./frontend/console
 ```
 
 | 镜像 | Dockerfile | 运行命令 |
 |---|---|---|
 | 后端 API | `backend/Dockerfile` | `keystone-api`（镜像默认命令） |
 | 后端 Worker | 同一个后端镜像 | `keystone-worker` |
-| 管理后台 | `frontend/admin/Dockerfile` | Nginx（镜像默认命令） |
+| 控制台 | `frontend/console/Dockerfile` | Nginx（镜像默认命令） |
 
 API 与 Worker 使用同一份代码、锁文件和镜像，分别启动进程。后台镜像包含编译后的 Vue 静态文件及 `/api` 反向代理。每个工程的 `.dockerignore` 仅允许构建所需源码和配置进入上下文，不读取或打包实际 `.env`；构建不执行初始化、不创建模型配置。
 
 ## 2. 运行配置与初始化
 
-由实际部署环境配置应用进程、数据库连接、文件卷、精确的浏览器 Origin 和入口代理；后端参数见[配置说明](configuration.md)。API/Worker 镜像以 UID 10001 运行，挂载的协调目录和本地文件目录须可写。管理后台镜像默认通过 Docker 内部 DNS 转发到同网络中名为 `api` 的服务、端口 8000；其他部署拓扑需调整 `frontend/admin/nginx.conf` 后构建。
+由实际部署环境配置应用进程、数据库连接、文件卷、精确的浏览器 Origin 和入口代理；后端参数见[配置说明](configuration.md)。API/Worker 镜像以 UID 10001 运行，挂载的协调目录和本地文件目录须可写。控制台镜像默认通过 Docker 内部 DNS 转发到同网络中名为 `api` 的服务、端口 8000；其他部署拓扑需调整 `frontend/console/docker/nginx.conf` 后构建。
 
 在应用的实际运行环境中手动执行一次 `keystone init`，然后分别运行 API 与 Worker。初始化仅负责业务迁移、Flow 迁移、文件存储与初始管理员；重复执行保留已有数据、密码和卷标识。API/Worker 自身启动只检查依赖，不迁移数据库。
 

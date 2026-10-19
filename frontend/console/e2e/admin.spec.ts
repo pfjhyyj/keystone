@@ -12,7 +12,7 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await page.goto('users')
   await expect(page).toHaveURL(/login/)
   await page.screenshot({
-    path: '../../.artifacts/admin-login.png',
+    path: '../../.artifacts/console-login.png',
     fullPage: true,
     animations: 'disabled',
   })
@@ -23,7 +23,7 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await page.reload()
   await expect(page.getByRole('heading', { name: '用户管理', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '折叠侧栏' }).click()
-  await expect(page.locator('.admin-shell')).toHaveClass(/is-collapsed/)
+  await expect(page.locator('.console-shell')).toHaveClass(/is-collapsed/)
   await page.getByRole('button', { name: '展开侧栏' }).click()
 
   await page.getByRole('button', { name: '新建用户', exact: true }).click()
@@ -77,14 +77,14 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   ).toHaveText('解除角色')
   await dialog.getByRole('button', { name: '关闭对话框' }).click()
   await page.screenshot({
-    path: '../../.artifacts/admin-users.png',
+    path: '../../.artifacts/console-users.png',
     fullPage: true,
     animations: 'disabled',
   })
 
   const context = await browser.newContext()
   const reader = await context.newPage()
-  await reader.goto('http://127.0.0.1:5175/admin/users')
+  await reader.goto('http://127.0.0.1:5175/console/users')
   await reader.getByLabel('登录名', { exact: true }).fill('alice')
   await reader.getByLabel('密码', { exact: true }).fill('test-password-123')
   await reader.getByRole('button', { name: '登录', exact: true }).click()
@@ -99,7 +99,7 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await reader.getByRole('link', { name: '用户管理', exact: true }).click()
   await expect(reader.getByRole('heading', { name: '用户管理', exact: true })).toBeVisible()
   await expect(reader.getByRole('button', { name: '新建用户', exact: true })).toHaveCount(0)
-  await reader.goto('http://127.0.0.1:5175/admin/audit')
+  await reader.goto('http://127.0.0.1:5175/console/audit')
   await expect(reader.getByRole('heading', { name: '没有此页面的访问权限' })).toBeVisible()
 
   // Referenced roles cannot be removed; the dialog retains the server's reason.
@@ -119,8 +119,8 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await alice.getByRole('button', { name: '撤销凭据' }).click()
   await page.getByRole('dialog').getByRole('button', { name: '确认保存' }).click()
   await expect(page.getByRole('dialog')).toBeHidden()
-  await reader.goto('http://127.0.0.1:5175/admin/users')
-  await expect(reader.getByRole('heading', { name: '登录管理后台' })).toBeVisible()
+  await reader.goto('http://127.0.0.1:5175/console/users')
+  await expect(reader.getByRole('heading', { name: '登录控制台' })).toBeVisible()
   await context.close()
 
   await page.getByRole('link', { name: '操作审计', exact: true }).click()
@@ -132,14 +132,14 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await expect(page.getByRole('dialog')).toContainText('tokens_revoked')
   await page.getByRole('dialog').getByRole('button', { name: '关闭对话框' }).click()
   await page.screenshot({
-    path: '../../.artifacts/admin-batch-one.png',
+    path: '../../.artifacts/console-batch-one.png',
     fullPage: true,
     animations: 'disabled',
   })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('heading', { name: '操作审计', exact: true })).toBeVisible()
   await page.screenshot({
-    path: '../../.artifacts/admin-batch-one-mobile.png',
+    path: '../../.artifacts/console-batch-one-mobile.png',
     fullPage: true,
     animations: 'disabled',
   })
@@ -149,10 +149,10 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await page.getByRole('button', { name: '展开导航' }).click()
   await expect(page.getByRole('navigation', { name: '平台模块' })).toBeInViewport()
   await page.getByRole('link', { name: '用户管理', exact: true }).click()
-  await expect(page.locator('.admin-shell')).not.toHaveClass(/mobile-open/)
+  await expect(page.locator('.console-shell')).not.toHaveClass(/mobile-open/)
   await expect(page.getByRole('heading', { name: '用户管理', exact: true })).toBeVisible()
   await page.screenshot({
-    path: '../../.artifacts/admin-users-mobile.png',
+    path: '../../.artifacts/console-users-mobile.png',
     fullPage: true,
     animations: 'disabled',
   })
@@ -170,19 +170,19 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await token.getByRole('button', { name: '撤销', exact: true }).click()
   await expect(token).toContainText('已撤销')
   await page.screenshot({
-    path: '../../.artifacts/admin-account.png',
+    path: '../../.artifacts/console-account.png',
     fullPage: true,
     animations: 'disabled',
   })
   await page.getByRole('link', { name: '平台状态', exact: true }).click()
   await expect(page.getByText('数据库版本', { exact: true })).toBeVisible()
   await page.screenshot({
-    path: '../../.artifacts/admin-overview.png',
+    path: '../../.artifacts/console-overview.png',
     fullPage: true,
     animations: 'disabled',
   })
   await page.getByRole('button', { name: '账户菜单' }).click()
   await page.getByRole('menuitem', { name: '退出登录', exact: true }).click()
-  await expect(page.getByRole('heading', { name: '登录管理后台' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '登录控制台' })).toBeVisible()
   expect(errors).toEqual([])
 })

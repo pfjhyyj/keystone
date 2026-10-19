@@ -1,6 +1,6 @@
 # Keystone
 
-从 Ether 整理的模块化单体平台，提供身份与审计、文件、字典、模型接入和 Flow。API、Worker 与 CLI 共用一个 Python 工程，管理后台使用 Vue。
+从 Ether 整理的模块化单体平台，提供身份与审计、文件、字典、模型接入和 Flow。API、Worker 与 CLI 共用一个 Python 工程，控制台使用 Vue。
 
 ## 本机启动（Linux/macOS）
 
@@ -36,12 +36,12 @@ uv run --locked keystone-worker
 ### 4. 另开终端启动前端
 
 ```bash
-cd frontend/admin
+cd frontend/console
 corepack pnpm install --frozen-lockfile
 corepack pnpm dev
 ```
 
-访问 <http://127.0.0.1:5173/admin/>，以 `admin` 和初始化时设置的密码登录。前端通过 Vite 代理请求本机 API。API、Worker、前端各自在终端运行，用 Ctrl+C 停止。
+访问 <http://127.0.0.1:5173/console/>，以 `admin` 和初始化时设置的密码登录。前端通过 Vite 代理请求本机 API。API、Worker、前端各自在终端运行，用 Ctrl+C 停止。
 
 ## 模型配置（手动）
 
@@ -57,7 +57,7 @@ KEYSTONE_MODEL_SECRETS='{"inference":"你的 OpenRouter API Key"}'
 
 ## 服务打包
 
-后端的 [Dockerfile](backend/Dockerfile) 和管理后台的 [Dockerfile](frontend/admin/Dockerfile) 各自随工程维护，用于构建发布镜像。API、Worker 共用后端镜像，以 `keystone-api`、`keystone-worker` 命令分别运行。构建命令见[打包与发布](docs/deployment.md)。
+后端的 [Dockerfile](backend/Dockerfile) 和控制台的 [Dockerfile](frontend/console/Dockerfile) 各自随工程维护，用于构建发布镜像。API、Worker 共用后端镜像，以 `keystone-api`、`keystone-worker` 命令分别运行。构建命令见[打包与发布](docs/deployment.md)。
 
 ## 文档
 
@@ -70,4 +70,4 @@ KEYSTONE_MODEL_SECRETS='{"inference":"你的 OpenRouter API Key"}'
 | 模块边界、代码规范与业务接入 | [架构说明](docs/architecture.md) |
 | 身份、文件、模型和 Flow 规则 | [领域索引](docs/README.md#按领域阅读) |
 
-后端位于 `backend/`，管理后台位于 `frontend/admin/`，各自维护 Dockerfile 与构建上下文；`deploy/compose.yaml` 只编排第三方依赖。
+后端位于 `backend/`，控制台位于 `frontend/console/`，各自维护 Dockerfile 与构建上下文；`deploy/compose.yaml` 只编排第三方依赖。

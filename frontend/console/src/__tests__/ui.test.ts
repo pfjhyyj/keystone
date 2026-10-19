@@ -53,7 +53,7 @@ it('sends only selected PAT permissions and clears the revealed secret when leav
     }
     return []
   })
-  const router = makeRouter(createMemoryHistory('/admin/'))
+  const router = makeRouter(createMemoryHistory('/console/'))
   await router.push('/account?tab=tokens')
   const wrapper = mount(AccountView, { global: { plugins: [router] } })
   await flushPromises()
@@ -75,7 +75,7 @@ it('clears all password inputs after a rejected password change', async () => {
   authorize([])
   const result = deferred<Response>()
   fakeApi((path) => (path === '/auth/me' ? identity.value : result.promise))
-  const router = makeRouter(createMemoryHistory('/admin/'))
+  const router = makeRouter(createMemoryHistory('/console/'))
   await router.push('/account?tab=password')
   const wrapper = mount(AccountView, { global: { plugins: [router] } })
   await flushPromises()

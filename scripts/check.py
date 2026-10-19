@@ -12,7 +12,7 @@ from time import monotonic
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
-ADMIN = ROOT / "frontend/admin"
+CONSOLE = ROOT / "frontend/console"
 
 
 def main():
@@ -103,18 +103,18 @@ def main():
         run(
             "frontend format",
             [node, "node_modules/prettier/bin/prettier.cjs", "--check", "."],
-            ADMIN,
+            CONSOLE,
         )
-        run("frontend tests", [node, "node_modules/vitest/vitest.mjs", "run"], ADMIN)
-        run("frontend types", [node, "node_modules/vue-tsc/bin/vue-tsc.js", "--noEmit"], ADMIN)
-        run("frontend build", [node, "node_modules/vite/bin/vite.js", "build"], ADMIN)
+        run("frontend tests", [node, "node_modules/vitest/vitest.mjs", "run"], CONSOLE)
+        run("frontend types", [node, "node_modules/vue-tsc/bin/vue-tsc.js", "--noEmit"], CONSOLE)
+        run("frontend build", [node, "node_modules/vite/bin/vite.js", "build"], CONSOLE)
         run(
             "backend package",
             [uv, "build", "--out-dir", str(directory / "packages")],
             ROOT / "backend",
         )
         if not args.unit:
-            run("admin browser", [sys.executable, str(ADMIN / "e2e/run.py")])
+            run("console browser", [sys.executable, str(CONSOLE / "e2e/run.py")])
         if args.deploy:
             run("deployment and recovery", [sys.executable, "tests/deploy/verify.py"])
         results["status"] = "passed"

@@ -37,7 +37,7 @@ it('protects direct routes and safe login destinations', async () => {
   expect(loginDestination('https://evil.example')).toBe('/')
   initialized.value = false
   fakeApi(() => new Response('{}', { status: 401 }))
-  const router = makeRouter(createMemoryHistory('/admin/'))
+  const router = makeRouter(createMemoryHistory('/console/'))
   await router.push('/users')
   expect(router.currentRoute.value.path).toBe('/login')
   expect(router.currentRoute.value.query.next).toBe('/users')
@@ -57,7 +57,7 @@ it('does not mount a forbidden page or fetch its data', async () => {
     paths.push(path)
     return identity.value
   })
-  const router = makeRouter(createMemoryHistory('/admin/'))
+  const router = makeRouter(createMemoryHistory('/console/'))
   await router.push('/users')
   const wrapper = mount(App, { global: { plugins: [router] } })
   await flushPromises()
@@ -94,7 +94,7 @@ it('finishes the post-login navigation without restarting it on each identity re
     }
     return []
   })
-  const router = makeRouter(createMemoryHistory('/admin/'))
+  const router = makeRouter(createMemoryHistory('/console/'))
   await router.push('/users')
   const wrapper = mount(App, { global: { plugins: [router] } })
   await wrapper.get('input[name=username]').setValue('admin')

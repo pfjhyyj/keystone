@@ -295,9 +295,9 @@ Cookie 使用 HttpOnly、SameSite=Lax、Path=/，生产环境使用 Secure 和 _
 
 新增模块只声明实际已实现的权限。当前共 25 项：user:read/create/update/reset_password/credentials、role:read/create/update/delete/assign、audit:read、file:create/inspect/content_read/manage、dictionary:read/manage、model:invoke/manage、model_invocation:read/read_all、flow:start/read/cancel/manage。普通角色全功能权限仍不等于内置管理员身份；未实现模块不预发空权限。前端提供登录、强制/主动改密、退出、本人 PAT 签发/列表/撤销、健康状态及下述管理页面。
 
-### 7.2 管理后台
+### 7.2 控制台
 
-后台在 /admin/ 下使用独立路由。用户页 /users 要求 user:read，提供搜索、创建、修改展示名、启停、重置密码、撤销全部凭据和逐角色分配；操作按钮按各自权限显示。分配界面还需 role:read 与 role:assign，逐项提交 assigned，避免整组覆盖。用户不提供删除、部门或导入功能。密码不写入浏览器存储，提交尝试结束和关闭表单时清空。
+后台在 /console/ 下使用独立路由。用户页 /users 要求 user:read，提供搜索、创建、修改展示名、启停、重置密码、撤销全部凭据和逐角色分配；操作按钮按各自权限显示。分配界面还需 role:read 与 role:assign，逐项提交 assigned，避免整组覆盖。用户不提供删除、部门或导入功能。密码不写入浏览器存储，提交尝试结束和关闭表单时清空。
 
 角色页 /roles 要求 role:read，提供普通角色创建、修改、删除和可筛选的权限目录。内置 admin 不可编辑/删除；普通操作者只能选择自己可授予的权限，超出范围的角色不可修改或分配。目标用户管理范围、最后管理员保护和角色引用保护仍由 API 在事务中判断；前端展示服务端拒绝原因，不另建一套领域判断或新增管理员状态字段。
 

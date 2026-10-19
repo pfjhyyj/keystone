@@ -94,7 +94,7 @@ test('file grants, reference protection and dictionaries against the real API', 
     data: { username: 'file_viewer', password: 'changed-password-123' },
   })
   expect(login.ok()).toBe(true)
-  await viewer.goto('http://127.0.0.1:5175/admin/files')
+  await viewer.goto('http://127.0.0.1:5175/console/files')
   const visibleFile = viewer.getByRole('row').filter({ hasText: 'sharing.txt' })
   await visibleFile.getByRole('button', { name: '下载', exact: true }).click()
   await expect(viewer.getByRole('alert')).toContainText('文件不存在或不可访问')
@@ -149,13 +149,13 @@ test('file grants, reference protection and dictionaries against the real API', 
   await dialog.getByRole('button', { name: '添加授权', exact: true }).click()
   await expect(dialog.locator('.grant-list li').filter({ hasText: '所有登录用户' })).toHaveCount(1)
   await page.screenshot({
-    path: '../../.artifacts/admin-file-grants.png',
+    path: '../../.artifacts/console-file-grants.png',
     fullPage: true,
     animations: 'disabled',
   })
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({
-    path: '../../.artifacts/admin-file-grants-mobile.png',
+    path: '../../.artifacts/console-file-grants-mobile.png',
     fullPage: true,
     animations: 'disabled',
   })
@@ -232,13 +232,13 @@ test('file grants, reference protection and dictionaries against the real API', 
   await expect(priority).toContainText('已停用')
   await expect(items.getByRole('row').filter({ hasText: '较后' })).toContainText('可选')
   await page.screenshot({
-    path: '../../.artifacts/admin-dictionaries.png',
+    path: '../../.artifacts/console-dictionaries.png',
     fullPage: true,
     animations: 'disabled',
   })
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({
-    path: '../../.artifacts/admin-dictionaries-mobile.png',
+    path: '../../.artifacts/console-dictionaries-mobile.png',
     fullPage: true,
     animations: 'disabled',
   })

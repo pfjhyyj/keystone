@@ -22,11 +22,11 @@ tar -C .data/files -cpf "$BACKUP/files.tar" .
 cp backend/.env "$BACKUP/backend.env"
 tar -cpf "$BACKUP/source.tar" backend/src backend/migrations \
     backend/pyproject.toml backend/uv.lock backend/Dockerfile \
-    backend/.dockerignore frontend/admin/src \
-    frontend/admin/package.json frontend/admin/pnpm-lock.yaml \
-    frontend/admin/index.html frontend/admin/tsconfig.json \
-    frontend/admin/vite.config.ts frontend/admin/Dockerfile \
-    frontend/admin/.dockerignore frontend/admin/nginx.conf deploy
+    backend/.dockerignore frontend/console/src \
+    frontend/console/package.json frontend/console/pnpm-lock.yaml \
+    frontend/console/index.html frontend/console/tsconfig.json \
+    frontend/console/vite.config.ts frontend/console/Dockerfile \
+    frontend/console/.dockerignore frontend/console/docker/nginx.conf deploy
 (cd "$BACKUP" && shasum -a 256 database.dump files.tar source.tar > SHA256SUMS)
 ```
 

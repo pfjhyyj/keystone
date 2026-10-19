@@ -87,7 +87,7 @@ code {
   overflow-wrap: anywhere;
   font-family: 'Cascadia Code', Consolas, monospace;
 }
-.admin-shell {
+.console-shell {
   min-height: 100vh;
   display: flex;
 }
@@ -876,7 +876,7 @@ dd {
   }
 }
 @media (max-width: 800px) {
-  .admin-shell {
+  .console-shell {
     --sidebar-width: 0px;
   }
   .sidebar,
