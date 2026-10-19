@@ -1,6 +1,6 @@
 // Ether's request generation and disposal rules, using Keystone's 50-row pagination.
 import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
-import { can } from '../access'
+import { can } from '../stores/session'
 export function usePagedList<T>(permission: string, loader: (offset: number) => Promise<T[]>) {
   const rows = shallowRef<T[]>([]),
     page = ref(0),

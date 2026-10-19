@@ -10,6 +10,34 @@
 
 `keystone init` 一次完成业务迁移、Flow 迁移、存储和管理员初始化。`KEYSTONE_INITIAL_ADMIN_PASSWORD` 仅供非交互初始化使用，本机默认交互输入；已有用户时不重置密码。模型表初始为空，`init` 不创建渠道、模型或调用记录。
 
+## 前端目录约定
+
+管理后台源码按页面归属组织：
+
+```text
+src/
+├── App.vue                  # 全局 UI 配置
+├── main.ts                  # 应用入口
+├── router/index.ts          # 路由、导航与会话守卫
+├── layouts/AdminLayout.vue  # 侧栏、页头与页面容器
+├── api/                     # 请求层和领域接口、类型
+├── stores/session.ts        # 共享身份与权限状态
+├── plugins/                 # Element Plus 注册
+├── styles/                  # 全局主题和布局
+├── composables/             # 跨页面复用的组合逻辑
+├── components/              # 共用基础组件及跨页面领域组件
+├── views/
+│   └── users/
+│       ├── UsersView.vue
+│       └── components/UserRolesDialog.vue
+├── businesses/              # 具体业务表单
+└── __tests__/
+```
+
+其他页面按 `views/<页面>/<页面名>View.vue` 组织，私有组件放在该页面的 `components/`，没有私有组件就不建空目录。跨页面共用的组件才放到顶层 `components/`；例如 `components/models/` 中的模型选择器和费用展示同时服务模型页面与 Flow。页面不依赖其他页面的私有组件。Flow 的表单映射就近放在 `views/flows/forms.ts`，实际业务表单仍由 `businesses/` 维护。
+
+路由保留[Vue Router 懒加载](https://router.vuejs.org/guide/advanced/lazy-loading.html)，组件使用含义明确的 PascalCase 文件名。目录是本项目按页面归属制定的约定；参考 [Vue 风格指南](https://vuejs.org/style-guide/rules-strongly-recommended.html)，避免继续嵌套通用 `index.vue`、`Item.vue` 等难以区分的文件。公共组合逻辑遵循 [Vue Composables](https://vuejs.org/guide/reusability/composables.html) 的使用方式。
+
 ## 开发检查
 
 完成 README 的依赖安装后，从仓库根目录执行：

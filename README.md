@@ -66,7 +66,7 @@ KEYSTONE_MODEL_SECRETS='{"inference":"你的 OpenRouter API Key"}'
 | 开发依赖、测试和 Worker 排障 | [开发说明](docs/development.md) |
 | Dockerfile 打包与发布 | [打包与发布](docs/deployment.md) |
 | 数据库、端口、密钥和存储配置 | [配置说明](docs/configuration.md) |
-| 备份与恢复 | [操作手册](docs/backup-restore.md) |
+| 保存重要数据或升级前备份（可选） | [备份与恢复](docs/backup-restore.md) |
 | 模块边界、代码规范与业务接入 | [架构说明](docs/architecture.md) |
 | 身份、文件、模型和 Flow 规则 | [领域索引](docs/README.md#按领域阅读) |
 

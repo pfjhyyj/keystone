@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, vi } from 'vitest'
 import { config, enableAutoUnmount } from '@vue/test-utils'
-import { ui } from '../ui'
+import { ui } from '../plugins/element-plus'
 config.global.plugins = [ui]
 globalThis.ResizeObserver = class {
   observe() {}
@@ -15,7 +15,7 @@ window.matchMedia =
       addEventListener() {},
       removeEventListener() {},
     }) as unknown as MediaQueryList)
-import { clearSession, initialized, checking, sessionError } from '../access'
+import { clearSession, initialized, checking, sessionError } from '../stores/session'
 beforeEach(() => {
   clearSession()
   initialized.value = true

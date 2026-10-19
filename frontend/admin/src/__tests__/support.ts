@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import { identity } from '../access'
+import { identity } from '../stores/session'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { ElOption } from 'element-plus'
 import AppSelect from '../components/AppSelect.vue'

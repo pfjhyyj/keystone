@@ -1,10 +1,10 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
-import UsersView from '../views/UsersView.vue'
-import RolesView from '../views/RolesView.vue'
-import AuditView from '../views/AuditView.vue'
-import UserRolesDialog from '../components/UserRolesDialog.vue'
-import { identity } from '../access'
+import UsersView from '../views/users/UsersView.vue'
+import RolesView from '../views/roles/RolesView.vue'
+import AuditView from '../views/audit/AuditView.vue'
+import UserRolesDialog from '../views/users/components/UserRolesDialog.vue'
+import { identity } from '../stores/session'
 import { authorize, deferred, fakeApi, role, user } from './support'
 
 describe('user administration', () => {

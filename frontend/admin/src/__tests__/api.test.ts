@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { getReadiness } from '../api'
+import { getReadiness } from '../api/system'
 import { fakeApi } from './support'
 
 it.each([

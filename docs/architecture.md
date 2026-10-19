@@ -214,9 +214,11 @@ admin 提供用户、角色、字典、文件、模型渠道/费用、审计和 
 
 各应用独立构建与部署，共用后端身份与权限。独立代码工程不要求使用不同域名：首版可以通过同一反向代理分别提供 /admin/、业务路径和 /api/，沿用同源 Cookie 认证，浏览器路由与资源 base 按挂载路径配置；如以后分离域名，再明确 Cookie、CSRF 和跨域部署规则，不因此默认引入 SSO。
 
-admin 使用 Vue Router 按页面懒加载，Element Plus 提供表格、输入、选择、弹窗、抽屉和反馈组件。App 维护可折叠侧栏、移动导航、面包屑和账户菜单；登录、个人中心为独立路由。共享 access 状态负责身份/权限与会话恢复，auth 请求层统一处理 Cookie、CSRF、HTTP/流内 401/403 和过期请求结果。页面共用分页及请求代次处理，直接读取共享身份。不引入 Pinia、共享前端包或新的后端聚合接口。
+admin 使用 `router/index.ts` 集中定义路由、导航与会话守卫，按页面懒加载。`App.vue` 提供全局 UI 配置，`layouts/AdminLayout.vue` 维护可折叠侧栏、移动导航、面包屑和账户菜单；登录、个人中心为独立路由。`stores/session.ts` 负责身份/权限与会话恢复，`api/client.ts` 统一处理 Cookie、CSRF、HTTP/流内 401/403 和过期请求结果，其余 `api/` 文件按领域维护请求及类型。页面共用 `composables/` 中的分页及请求代次处理，直接读取共享身份。不引入 Pinia、共享前端包或新的后端聚合接口。
 
-`ui.ts` 集中注册 Element Plus 基础组件，`style.css` 定义主题与布局；编辑使用 `AppDialog`，运行、调用和引用详情使用抽屉。`AppSelect` 保留原生 form 必选校验，分页保持接口支持的上一页/下一页。领域表单直接维护字段，不增加 schema 表单或通用 CRUD 框架。概览只展示健康/就绪接口提供的实际状态，不推断 Worker 在线状态。个人中心在切换页签或身份变化时清理密码、权限选择和令牌明文。
+`views/<页面>/` 保存路由页面（如 `UsersView.vue`），页面私有组件放在同目录的 `components/`，页面专用配置也就近维护；没有私有组件时不建空目录。顶层 `components/` 仅保留共用的弹窗、选择、分页、状态等基础组件，以及 `components/models/` 中被模型页面和 Flow 业务表单复用的选择器、费用展示。页面之间不导入其他页面的私有组件，按实际复用提取共享组件，保持目录层级简洁及组件名明确。
+
+`plugins/element-plus.ts` 集中注册 Element Plus 基础组件，`styles/index.css` 定义主题与布局；编辑使用 `AppDialog`，运行、调用和引用详情使用抽屉。`AppSelect` 保留原生 form 必选校验，分页保持接口支持的上一页/下一页。领域表单直接维护字段，不增加 schema 表单或通用 CRUD 框架。概览只展示健康/就绪接口提供的实际状态，不推断 Worker 在线状态。个人中心在切换页签或身份变化时清理密码、权限选择和令牌明文。
 
 表格使用自动布局、原生滚动条和 `fit=false`，表体通过 CSS 至少填满容器。避免组件在 ResizeObserver 回调中同步调整列宽；手机缩放和侧栏切换由浏览器布局处理。
 
@@ -353,9 +355,9 @@ Flow 输入统一限制为 64 KiB 的紧凑 UTF-8 JSON，原始请求和默认�
 
 ### 5.6 示例流程装配与停用
 
-应用级 `composition.py` 集中维护 `FLOW_DEFINITIONS` 与 Worker 的 `register_workflows()`。bootstrap 只加载该目录，不直接导入示例业务；API 不导入 workflow、Agent 或 Skills。前端 `flow-forms.ts` 只负责显式映射输入表单，文本审查的文件和模型选择位于 `src/businesses/document-review/FlowInput.vue`。未映射的定义继续使用 JSON 输入，不增加动态插件系统。
+应用级 `composition.py` 集中维护 `FLOW_DEFINITIONS` 与 Worker 的 `register_workflows()`。bootstrap 只加载该目录，不直接导入示例业务；API 不导入 workflow、Agent 或 Skills。前端 `views/flows/forms.ts` 只负责显式映射输入表单，文本审查的文件和模型选择位于 `src/businesses/document-review/FlowInput.vue`。未映射的定义继续使用 JSON 输入，不增加动态插件系统。
 
-停用文本审查示例时，从 composition.py 删除契约导入和 FLOW_DEFINITIONS 中的对应项，并移除 register_workflows 中的 workflow 导入；无流程时保留空元组和空函数。在 flow-forms.ts 删除对应导入和映射即可回到通用 JSON 表单。示例目录可按需移除。
+停用文本审查示例时，从 composition.py 删除契约导入和 FLOW_DEFINITIONS 中的对应项，并移除 register_workflows 中的 workflow 导入；无流程时保留空元组和空函数。在 views/flows/forms.ts 删除对应导入和映射即可回到通用 JSON 表单。示例目录可按需移除。
 
 Flow 默认启用，真实模型接入默认可用，权限判断使用 Casbin。示例和业务代码变更遵守执行版本及同版本发布约束。
 

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { can } from '../../access'
-import { fileApi, uuidPattern } from '../../file-api'
+import { can } from '../../stores/session'
+import { fileApi, uuidPattern } from '../../api/files'
 import { usePagedList } from '../../composables/usePagedList'
 import ListPager from '../../components/ListPager.vue'
-import ModelPicker from '../../components/ModelPicker.vue'
+import ModelPicker from '../../components/models/ModelPicker.vue'
 
 defineProps<{ disabled: boolean }>()
 const input = defineModel<Record<string, unknown>>({ required: true })
