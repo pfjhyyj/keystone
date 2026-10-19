@@ -191,9 +191,10 @@ def main() -> None:
     except Exception as error:
         # Do not print raw settings/driver exceptions, which can contain secrets.
         logging.getLogger(__name__).error(
-            "command_failed type=%s code=%s",
+            "command_failed type=%s code=%s detail=%s",
             type(error).__name__,
             error.code if isinstance(error, ServiceError) else "invalid_configuration_or_database",
+            error.detail if isinstance(error, ServiceError) else "请检查配置及数据库连接",
             extra={"exception": safe_exception(error)},
         )
         raise SystemExit(1) from None

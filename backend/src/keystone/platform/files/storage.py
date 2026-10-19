@@ -131,7 +131,11 @@ class StorageRegistry:
 
     def initialize(self):
         if not self.sources:
-            raise leases.unavailable()
+            raise ServiceError(
+                503,
+                "storage_unavailable",
+                "文件存储未配置；请检查 KEYSTONE_FILE_STORAGES 和当前工作目录的 .env",
+            )
         roots = {self.coordination.root}
         roots.update(source.root for source in self.sources.values() if source.root is not None)
         for root in sorted(roots, key=lambda path: len(path.parts)):

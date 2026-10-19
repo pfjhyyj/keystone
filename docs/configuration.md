@@ -70,3 +70,19 @@ POST /api/v1/files 可传 storage_key=cloud；省略使用默认源，新 File �
 单本地源使用 FILE_STORAGES 显式声明 driver 与 root，后端示例已配置开发目录；依赖 Compose 不管理应用文件。空映射表示文件存储未配置，协调目录不会自动变成内容源。多源字段直接包含在初始文件结构中，File 的 storage_key 必须由上传服务写入，数据库没有隐式 local 默认值；已有文件的源键及原存储身份须保留，删除源配置会使该源历史文件不可读、不可清理，不会回退到其他源。更换 bucket/endpoint/prefix/region 属于目标变化；使用原源身份的文件会拒绝访问，应使用新源键及业务迁移。密钥轮换不改变存储身份。各进程仍须共享同一宿主协调卷，不提供多宿主锁。
 
 Flow 默认启用，`KEYSTONE_FLOW_ENABLED=false` 只用于明确不执行流程的环境；模型始终使用真实服务，无需发送模式开关。已有实际 `.env` 的显式值优先；旧环境若仍显式设为 false，需同步改为 true。Casbin 权限判断保留。
+
+## 5. 初始化时文件存储未配置
+
+`keystone init` 报 `storage_unavailable` 且提示 `KEYSTONE_FILE_STORAGES` 时，表示读取到的文件存储映射为空，尚未进入目录创建。先确认从 `backend/` 执行命令；`.env` 按当前工作目录读取。README 的复制命令保留已有 `.env`，不会自动补齐旧文件中的缺项。
+
+需要恢复默认开发配置并重新测试时，按 [README 的旧环境重置步骤](../README.md#已有旧环境重新测试可选) 操作；仅重置 `.env` 与清空测试数据是两种独立操作。
+
+默认本机开发在 `backend/.env` 中应有以下配置；已有同名项直接修改，不要重复追加，也不要覆盖现有数据库连接或密码：
+
+```dotenv
+KEYSTONE_FILE_COORDINATION_ROOT=../.data/files
+KEYSTONE_FILE_STORAGES='{"local":{"driver":"filesystem","root":"../.data/files"}}'
+KEYSTONE_FILE_DEFAULT_STORAGE=local
+```
+
+已有文件数据时保留原存储目录和卷标识；上面的路径适用于默认本机开发目录。进程环境中的文件存储配置也应与 `.env` 一致。补齐后在 `backend/` 重新执行 `uv run --locked keystone init`，已有迁移、数据和管理员不会被重置。

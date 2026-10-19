@@ -85,8 +85,9 @@ async def test_coordination_directory_does_not_create_a_storage_source(tmp_path)
     assert await registry.readiness() == ("unconfigured", {})
     with pytest.raises(ServiceError):
         registry.get()
-    with pytest.raises(ServiceError):
+    with pytest.raises(ServiceError, match="KEYSTONE_FILE_STORAGES") as missing:
         registry.initialize()
+    assert missing.value.code == "storage_unavailable"
     assert not list(tmp_path.iterdir())
 
 

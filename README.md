@@ -6,6 +6,27 @@
 
 需要 Python 3.12、uv、Node 24（至少 24.15）、pnpm 11.19.0 和 Docker Compose。pnpm 版本与 `frontend/console/package.json` 的 `packageManager` 一致。以下各个终端均从仓库根目录开始。
 
+### 已有旧环境：重新测试（可选）
+
+首次使用可直接跳到第 1 步。已有旧 `.env`、希望恢复默认本机配置时，先用 Ctrl+C 停止 API、Worker 和前端，再从仓库根目录执行：
+
+```bash
+cp backend/.env.example backend/.env
+cp frontend/console/.env.example frontend/console/.env
+cp deploy/.env.example deploy/.env
+```
+
+这些命令覆盖旧配置，补齐本地文件存储并移除旧的模型、应用容器参数。默认启动不需要传入 `deploy/.env`。若当前终端设置过 `KEYSTONE_*`、`POSTGRES_*` 或 `COMPOSE_*` 环境变量，先取消相应覆盖，避免它们优先于 `.env` 生效。
+
+要连测试数据一起清空，再执行下面两条命令；仅用于默认本机开发环境，会删除数据库中的用户、模型配置、Flow 记录及 `.data/files` 中的文件和模型加密密钥：
+
+```bash
+docker compose -f deploy/compose.yaml down --volumes --remove-orphans
+rm -rf -- .data/files
+```
+
+数据库和文件需一起清空；保留原数据时跳过这两条命令。随后按第 1～4 步启动，空数据库会重新提示设置管理员密码。
+
 ### 1. 启动第三方依赖
 
 ```bash
@@ -24,7 +45,7 @@ uv run --locked keystone init
 uv run --locked keystone-api
 ```
 
-已有 `.env` 直接使用。`init` 首次交互设置管理员密码（用户名 `admin`），完成数据库迁移、Flow 迁移和文件存储初始化；重复执行保留已有数据及密码。它不配置模型，不要求模型 Key。API 默认监听 `127.0.0.1:8000`。
+已有 `.env` 会保留，旧文件缺少存储配置时见[初始化排障](docs/configuration.md#5-初始化时文件存储未配置)。`init` 首次交互设置管理员密码（用户名 `admin`），完成数据库迁移、Flow 迁移和文件存储初始化；重复执行保留已有数据及密码。它不配置模型，不要求模型 Key。API 默认监听 `127.0.0.1:8000`。
 
 ### 3. 另开终端启动 Worker
 
