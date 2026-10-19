@@ -1,0 +1,138 @@
+"""Deterministic upstream simulation, exercised through the real SDK HTTP transport.
+
+This module never constructs a network transport. Mock amounts are test receipts only.
+"""
+
+import json
+
+import httpx2
+
+
+class MockStream(httpx2.AsyncByteStream):
+    def __init__(self, chunks):
+        self.chunks = chunks
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            yield chunk
+
+
+def transport(provider):
+    async def respond(request):
+        if request.method == "POST" and request.url.path.endswith("/chat/completions"):
+            body = json.loads(request.content)
+            identifier = "mock-" + request.headers["x-keystone-invocation-id"]
+            usage = {"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20}
+            if provider == "openrouter":
+                usage["cost"] = "0.0012"
+            text = "模拟渠道响应：Keystone 模型调用链路已连通。"
+            envelope = {"id": identifier, "created": 0, "model": body["model"]}
+            names = {t.get("function", {}).get("name") for t in body.get("tools", [])}
+            if {"inspect_document", "submit_review"} <= names:
+                inspected = any(m.get("role") == "tool" for m in body["messages"])
+                tool = "submit_review" if inspected else "inspect_document"
+                args = (
+                    {"verdict": "reviewed", "summary": "模拟审查已完成；此结果仅验证流程链路。"}
+                    if inspected
+                    else {}
+                )
+                return httpx2.Response(
+                    200,
+                    json={
+                        **envelope,
+                        "object": "chat.completion",
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "tool_calls",
+                                "message": {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "tool_calls": [
+                                        {
+                                            "id": "call-" + tool,
+                                            "type": "function",
+                                            "function": {
+                                                "name": tool,
+                                                "arguments": json.dumps(args, ensure_ascii=False),
+                                            },
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                        "usage": usage,
+                    },
+                )
+            if body.get("stream"):
+                events = [
+                    {
+                        **envelope,
+                        "object": "chat.completion.chunk",
+                        "choices": [
+                            {"index": 0, "delta": {"content": text}, "finish_reason": None}
+                        ],
+                    },
+                    {
+                        **envelope,
+                        "object": "chat.completion.chunk",
+                        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    },
+                    {**envelope, "object": "chat.completion.chunk", "choices": [], "usage": usage},
+                ]
+                chunks = [("data: " + json.dumps(event) + "\n\n").encode() for event in events]
+                chunks.append(b"data: [DONE]\n\n")
+                return httpx2.Response(
+                    200, headers={"content-type": "text/event-stream"}, stream=MockStream(chunks)
+                )
+            return httpx2.Response(
+                200,
+                json={
+                    **envelope,
+                    "object": "chat.completion",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": text},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": usage,
+                },
+            )
+        if request.method == "GET" and request.url.path.endswith("/generation"):
+            return httpx2.Response(
+                200, json={"data": {"id": request.url.params["id"], "total_cost": "0.0012"}}
+            )
+        if request.method == "GET" and request.url.path.endswith("/credits"):
+            return httpx2.Response(
+                200, json={"data": {"total_credits": "100.00", "total_usage": "12.50"}}
+            )
+        if request.method == "GET" and request.url.path.endswith("/user/balance"):
+            return httpx2.Response(
+                200,
+                json={
+                    "balance_infos": [
+                        {
+                            "currency": "CNY",
+                            "total_balance": "100.00",
+                            "granted_balance": "10.00",
+                            "topped_up_balance": "90.00",
+                        }
+                    ]
+                },
+            )
+        if request.method == "GET" and request.url.path.endswith("/mock/QueryAccountBalance"):
+            return httpx2.Response(
+                200,
+                json={
+                    "Data": {
+                        "Currency": "CNY",
+                        "AvailableAmount": "100.00",
+                        "AvailableCashAmount": "80.00",
+                    }
+                },
+            )
+        return httpx2.Response(404, json={"error": {"message": "Mock route unavailable"}})
+
+    return httpx2.MockTransport(respond)

@@ -1,0 +1,170 @@
+import { afterEach, expect, it, vi } from 'vitest'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import ModelManager from '../ModelManager.vue'
+import ModelProbe from '../components/ModelProbe.vue'
+import ModelPicker from '../components/ModelPicker.vue'
+import InvocationHistory from '../components/InvocationHistory.vue'
+import FlowManager from '../FlowManager.vue'
+import FlowRunDialog from '../components/FlowRunDialog.vue'
+import FlowStartDialog from '../components/FlowStartDialog.vue'
+import * as transport from '../auth'
+import { identity } from '../access'
+import { authorize, deferred, fakeApi } from './support'
+const id = '11111111-1111-4111-8111-111111111111', channelId = '22222222-2222-4222-8222-222222222222'
+const stamp = '2026-01-01T00:00:00Z'
+const channel = { id: channelId, name: '模拟渠道', provider: 'openrouter', api_base: 'https://mock.invalid/v1', credential_ref: 'inference', billing_credential_ref: 'billing', upstream_account_ref: 'account', is_active: true, balance_snapshot: { items: [{ kind: 'remaining', amount: '2.00', unit: 'credits' }] }, balance_check_status: 'error', balance_checked_at: stamp, balance_last_attempt_at: stamp }
+const entry = { id, key: 'chat', channel_id: channelId, provider_model: 'mock-chat', is_active: true }
+const costs = { attempts_by_status: { succeeded: 1 }, unknown_cost_attempts: 1, known_costs: [{ channel_id: channelId, unit: 'credits', amount: '0.001200', attempts: 1 }] }
+const flow = { id, definition_key: 'document.review', actor_id: 'admin', status: 'running', input: {}, result: null, created_at: stamp, finished_at: null, observed_at: stamp, cancel_requested_at: null, error_code: null }
+const definition = { key: 'custom.flow', name: '自定义流程', description: '', input_schema: { type: 'object' } }
+const button = (wrapper: VueWrapper, label: string) => wrapper.findAll('button').find(node => node.text() === label)!
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
+
+it('applies session invalidation to errors carried inside a successful HTTP stream', async () => {
+  authorize(['model:invoke'])
+  fakeApi(() => new Response('data: {"type":"error","http_status":401,"code":"authentication_required","detail":"请重新登录"}\n\n', { headers: { 'Content-Type': 'text/event-stream' } }))
+  const event = vi.fn()
+  await expect(transport.invokeModel({}, event, new AbortController().signal)).rejects.toMatchObject({ status: 401 })
+  expect(identity.value).toBeNull(); expect(event).not.toHaveBeenCalled()
+})
+
+it('keeps history readers out of configuration and invocation APIs', async () => {
+  authorize(['model_invocation:read']); const paths: string[] = []
+  fakeApi(path => { paths.push(path); return path.includes('/summary') ? costs : [] })
+  const wrapper = mount(ModelManager); await flushPromises()
+  expect(wrapper.text()).not.toContain('新建渠道'); expect(wrapper.text()).not.toContain('开始模拟调用')
+  expect(wrapper.text()).toContain('费用未知：1'); expect(wrapper.text()).toContain('0.0012 credits')
+  expect(paths.every(path => path.startsWith('/model-invocations'))).toBe(true)
+})
+it('preserves channel fields and labels stale balance; provider and account are immutable', async () => {
+  authorize(['model:manage']); const writes: unknown[] = []
+  fakeApi((path, init) => { if (init.method === 'PATCH') { writes.push(JSON.parse(String(init.body))); return channel } if (path === '/model-access/options') return { mode: 'mock', credential_refs: ['inference', 'billing'] }; return path.startsWith('/model-channels') ? [channel] : [entry] })
+  const wrapper = mount(ModelManager); await flushPromises()
+  expect(wrapper.text()).toContain('这是上次成功结果，不代表当前余额')
+  await button(wrapper, '编辑渠道').trigger('click')
+  expect(wrapper.get('dialog select[aria-label=服务商]').attributes('disabled')).toBeDefined()
+  expect(wrapper.findAll('dialog input').at(-2)!.attributes('disabled')).toBeDefined()
+  await wrapper.get('dialog input[type=checkbox]').setValue(false)
+  await wrapper.get('dialog form').trigger('submit'); await flushPromises()
+  expect(writes).toEqual([{ name: '模拟渠道', api_base: 'https://mock.invalid/v1', credential_ref: 'inference', billing_credential_ref: 'billing', upstream_account_ref: 'account', is_active: false }])
+})
+it('preserves an off-page channel and never sends model key in PATCH', async () => {
+  authorize(['model:manage']); const writes: unknown[] = []
+  fakeApi((path, init) => { if (init.method === 'PATCH') { writes.push(JSON.parse(String(init.body))); return entry }; if (path === '/model-access/options') return { mode: 'mock', credential_refs: [] }; return path.startsWith('/model-entries') ? [entry] : [] })
+  const wrapper = mount(ModelManager); await flushPromises(); await button(wrapper, '编辑模型').trigger('click'); await flushPromises()
+  expect(wrapper.get('dialog input').attributes('disabled')).toBeDefined()
+  expect(wrapper.get('select[aria-label=模型渠道]').text()).toContain(channelId)
+  await wrapper.get('dialog form').trigger('submit'); await flushPromises()
+  expect(writes).toEqual([{ channel_id: channelId, provider_model: 'mock-chat', is_active: true }])
+})
+it('uses identical bounded filters for history and summary and rejects invalid IDs', async () => {
+  authorize(['model_invocation:read']); const paths: string[] = []
+  fakeApi(path => { paths.push(path); return path.includes('/summary') ? costs : [] })
+  const wrapper = mount(InvocationHistory, { props: { version: 0 } }); await flushPromises(); paths.length = 0
+  await wrapper.findAll('input')[0]!.setValue(channelId); await wrapper.get('form').trigger('submit'); await flushPromises()
+  const params = paths.map(path => new URLSearchParams(path.split('?')[1]))
+  for (const key of ['channel_id', 'since', 'until']) expect(params[0]!.get(key)).toBe(params[1]!.get(key))
+  paths.length = 0; await wrapper.findAll('input')[0]!.setValue('invalid'); await wrapper.get('form').trigger('submit'); await flushPromises()
+  expect(paths).toEqual([]); expect(wrapper.text()).toContain('完整 UUID')
+})
+it('paginates the model catalog while retaining selection', async () => {
+  authorize(['model:invoke']); const paths: string[] = []
+  fakeApi(path => { paths.push(path); return { mode: 'mock', items: Array.from({ length: 50 }, (_, i) => ({ key: `model${i}` })) } })
+  const wrapper = mount(ModelPicker, { props: { modelValue: 'chosen-off-page' } }); await flushPromises()
+  await button(wrapper, '下一页').trigger('click'); await flushPromises()
+  expect(paths[1]).toContain('offset=50'); expect(wrapper.get('select').text()).toContain('chosen-off-page')
+})
+it('stops receiving without resending and aborts on disposal', async () => {
+  authorize(['model:invoke']); fakeApi(() => ({ mode: 'mock', items: [{ key: 'chat' }] }))
+  let signal: AbortSignal | undefined
+  const spy = vi.spyOn(transport, 'invokeModel').mockImplementation(async (_body, _event, incoming) => { signal = incoming; await new Promise((_done, reject) => incoming.addEventListener('abort', () => reject(new Error('aborted')))) })
+  const completed = vi.fn()
+  const wrapper = mount(ModelProbe, { props: { onCompleted: completed } }); await flushPromises(); await wrapper.get('select').setValue('chat'); await wrapper.get('textarea').setValue('hello')
+  await wrapper.get('form').trigger('submit'); await wrapper.get('form').trigger('submit'); expect(spy).toHaveBeenCalledTimes(1)
+  await button(wrapper, '停止接收').trigger('click'); await flushPromises()
+  expect(signal?.aborted).toBe(true); expect(wrapper.text()).toContain('上游可能已经执行')
+  await wrapper.get('form').trigger('submit'); wrapper.unmount(); await flushPromises(); expect(signal?.aborted).toBe(true)
+  expect(completed).toHaveBeenCalledTimes(1)
+})
+it('disables probe submission when model sending is disabled', async () => {
+  authorize(['model:invoke']); fakeApi(() => ({ mode: 'disabled', items: [{ key: 'chat' }] }))
+  const spy = vi.spyOn(transport, 'invokeModel')
+  const wrapper = mount(ModelProbe); await flushPromises(); await wrapper.get('select').setValue('chat'); await wrapper.get('form').trigger('submit')
+  expect(spy).not.toHaveBeenCalled(); expect(button(wrapper, '开始模拟调用').attributes('disabled')).toBeDefined()
+})
+it('labels live calls and sends only after an explicit submission', async () => {
+  authorize(['model:invoke']); fakeApi(() => ({ mode: 'live', items: [{ key: 'chat' }] }))
+  const spy = vi.spyOn(transport, 'invokeModel').mockResolvedValue(undefined)
+  const wrapper = mount(ModelProbe); await flushPromises()
+  expect(wrapper.text()).toContain('可能产生真实费用')
+  expect(wrapper.find('section').attributes('aria-label')).toBe('真实调用')
+  expect(spy).not.toHaveBeenCalled()
+  await wrapper.get('select').setValue('chat'); await wrapper.get('textarea').setValue('hello')
+  expect(button(wrapper, '发送真实请求').attributes('disabled')).toBeUndefined()
+  await wrapper.get('form').trigger('submit'); await flushPromises()
+  expect(spy).toHaveBeenCalledTimes(1)
+  expect(spy.mock.calls[0]![0]).toMatchObject({ model_key: 'chat', stream: true })
+})
+it('uses the official address and no fake upstream model when configuring live mode', async () => {
+  authorize(['model:manage'])
+  fakeApi(path => path === '/model-access/options' ? { mode: 'live', credential_refs: ['inference', 'billing'] } : [])
+  const wrapper = mount(ModelManager); await flushPromises()
+  expect(wrapper.text()).toContain('真实发送（仅 OpenRouter）')
+  await button(wrapper, '新建渠道').trigger('click'); await flushPromises()
+  expect((wrapper.get('input[type="url"]').element as HTMLInputElement).value).toBe('https://openrouter.ai/api/v1')
+  expect(wrapper.text()).toContain('Management Key')
+  await wrapper.get('button[aria-label="关闭对话框"]').trigger('click'); await flushPromises()
+  await button(wrapper, '新建模型').trigger('click'); await flushPromises()
+  expect(wrapper.findAll('input').some(input => (input.element as HTMLInputElement).value === 'mock-chat')).toBe(false)
+})
+it('keeps a Flow request key after failure and dialog reopen; a new request changes it', async () => {
+  authorize(['flow:start']); const bodies: { request_key: string }[] = []
+  fakeApi((_path, init) => { if (init.method === 'POST') { bodies.push(JSON.parse(String(init.body))); return new Response(JSON.stringify({ detail: '暂不可用' }), { status: 503 }) } return [] })
+  const wrapper = mount(FlowStartDialog, { props: { open: true, definitions: [definition], enabled: true, idempotencyDays: 7 } }); await flushPromises()
+  await wrapper.get('textarea').setValue('{"count":2}'); await wrapper.get('form').trigger('submit'); await flushPromises()
+  await wrapper.setProps({ open: false }); await wrapper.setProps({ open: true }); await wrapper.get('form').trigger('submit'); await flushPromises()
+  expect(bodies[0]!.request_key).toBe(bodies[1]!.request_key)
+  await button(wrapper, '准备新的运行').trigger('click'); await wrapper.get('form').trigger('submit'); await flushPromises()
+  expect(bodies[2]!.request_key).not.toBe(bodies[1]!.request_key)
+})
+it('rejects non-object Flow JSON without sending', async () => {
+  authorize(['flow:start']); const paths: string[] = []; fakeApi(path => { paths.push(path); return [] })
+  const wrapper = mount(FlowStartDialog, { props: { open: true, definitions: [definition], enabled: true, idempotencyDays: 7 } }); await flushPromises()
+  await wrapper.get('textarea').setValue('[]'); await wrapper.get('form').trigger('submit'); await flushPromises()
+  expect(paths).toEqual([]); expect(wrapper.text()).toContain('JSON 对象')
+})
+it('keeps run state when steps fail and never fetches unauthorized costs', async () => {
+  authorize(['flow:read']); const paths: string[] = []
+  fakeApi(path => { paths.push(path); return path.endsWith('/steps') ? new Response(JSON.stringify({ detail: '执行历史暂不可用' }), { status: 503 }) : flow })
+  const wrapper = mount(FlowRunDialog, { props: { id } }); await flushPromises()
+  expect(wrapper.text()).toContain('执行中'); expect(wrapper.text()).toContain('不代表运行失败'); expect(wrapper.text()).toContain('无查看费用权限')
+  expect(paths.some(path => path.endsWith('/costs'))).toBe(false); expect(wrapper.text()).not.toContain('取消流程')
+})
+it('requires explicit cancel confirmation and waits for execution-side cancellation', async () => {
+  authorize(['flow:read', 'flow:cancel']); const writes: string[] = []
+  fakeApi((path, init) => { if (init.method === 'POST') { writes.push(path); return { ...flow, cancel_requested_at: stamp } } return path.endsWith('/steps') ? { items: [], available: false, truncated: false } : flow })
+  const wrapper = mount(FlowRunDialog, { props: { id } }); await flushPromises()
+  await button(wrapper, '取消流程').trigger('click'); expect(writes).toEqual([])
+  await wrapper.get('.confirmation').trigger('submit'); await flushPromises()
+  expect(writes).toEqual([`/flow-runs/${id}/cancel`]); expect(wrapper.text()).toContain('取消处理中'); expect(wrapper.text()).not.toContain('已取消')
+})
+it('discards old run details and stops polling after unmount', async () => {
+  vi.useFakeTimers(); authorize(['flow:read']); const pending = deferred<unknown>(), paths: string[] = []
+  fakeApi(path => { paths.push(path); return pending.promise })
+  const wrapper = mount(FlowRunDialog, { props: { id } }); await flushPromises(); wrapper.unmount()
+  pending.resolve(flow); await flushPromises(); await vi.advanceTimersByTimeAsync(9000)
+  expect(paths).toEqual([`/flow-runs/${id}`])
+})
+it('clears run data after object access is lost', async () => {
+  authorize(['flow:read']); let lost = false
+  fakeApi(path => lost ? new Response(JSON.stringify({ detail: '流程不存在或不可访问' }), { status: 404 }) : path.endsWith('/steps') ? { items: [], available: false, truncated: false } : flow)
+  const wrapper = mount(FlowRunDialog, { props: { id } }); await flushPromises(); lost = true
+  await button(wrapper, '刷新运行详情').trigger('click'); await flushPromises()
+  expect(wrapper.text()).not.toContain(id); expect(wrapper.text()).toContain('流程不存在或不可访问')
+})
+it('does not fetch start catalogs, files or models for a Flow reader', async () => {
+  authorize(['flow:read']); const paths: string[] = []
+  fakeApi(path => { paths.push(path); return [] })
+  const wrapper = mount(FlowManager); await flushPromises()
+  expect(paths).toEqual(['/flow-runs?offset=0&limit=50']); expect(wrapper.text()).not.toContain('发起流程')
+})

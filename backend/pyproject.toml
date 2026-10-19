@@ -1,0 +1,52 @@
+[project]
+name = "keystone"
+version = "0.1.0"
+description = "Keystone modular application platform"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic==1.20.0",
+    "argon2-cffi==25.1.0",
+    "dbos==3.2.0",
+    "fastapi==0.141.1",
+    "httpx2==2.13.1",
+    "jsonschema>=4.26,<5",
+    "openai==3.22.1",
+    "opendal==0.47.10",
+    "portalocker>=3.2,<4",
+    "psycopg[binary]==3.3.6",
+    "pycasbin>=2.6,<3",
+    "pydantic==2.13.5",
+    "pydantic-ai-harness==0.36.0",
+    "pydantic-ai-slim[dbos]==2.51.0",
+    "pydantic-settings==2.15.0",
+    "sqlalchemy[asyncio]==2.0.54",
+    "uvicorn==0.54.0",
+]
+
+[project.scripts]
+keystone-api = "keystone.entrypoints.api:main"
+keystone-worker = "keystone.entrypoints.worker:main"
+keystone = "keystone.entrypoints.cli:main"
+
+[dependency-groups]
+dev = ["httpx==0.28.1", "pytest>=8,<10", "pytest-asyncio>=1.4,<2", "ruff>=0.12,<1"]
+
+[build-system]
+requires = ["uv_build>=0.10.2,<0.11"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["keystone"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--strict-markers"
+markers = ["postgres: requires a dedicated Keystone test PostgreSQL database"]
