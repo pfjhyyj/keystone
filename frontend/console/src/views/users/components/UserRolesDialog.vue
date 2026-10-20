@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { adminApi, type ManagedUser } from '../../../api/admin'
+import { onScopeDispose, ref } from 'vue'
+import { adminApi, type ManagedUser, type Role } from '../../../api/admin'
 import { can, identity, refreshSession } from '../../../stores/session'
 import { request } from '../../../api/client'
 import { usePagedList } from '../../../composables/usePagedList'
@@ -10,21 +10,45 @@ import ListPager from '../../../components/ListPager.vue'
 const props = defineProps<{ user: ManagedUser }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 const assigned = ref([...props.user.role_ids])
-const { rows, page, loading, error: listError } = usePagedList('role:read', adminApi.roles)
+const { rows, page, loading, error: listError, reload } = usePagedList('role:read', adminApi.roles)
 const { busy, error, run } = useAction()
-async function toggle(id: string) {
+let alive = true
+onScopeDispose(() => {
+  alive = false
+})
+function blockedReason(role: Role) {
+  if (!can('role:read') || !can('role:assign')) return '当前账号没有角色分配权限'
+  if (role.key === 'admin' && !identity.value?.is_administrator)
+    return '只有管理员可分配或解除管理员角色'
+  if (role.permissions.some((permission) => !can(permission))) return '超出当前账号可授予的权限范围'
+  return ''
+}
+async function toggle(role: Role) {
+  if (busy.value || loading.value || blockedReason(role)) return
   await run(async () => {
+    const id = role.id
+    const user = props.user
     const value = !assigned.value.includes(id)
-    await request(`/users/${props.user.id}/roles/${id}`, 'PUT', { assigned: value })
+    await request(`/users/${user.id}/roles/${id}`, 'PUT', { assigned: value })
+    if (identity.value?.user.id === user.id) await refreshSession()
+    if (!alive) return
     assigned.value = value ? [...assigned.value, id] : assigned.value.filter((item) => item !== id)
     emit('changed')
-    if (identity.value?.user.id === props.user.id) await refreshSession()
   })
 }
 </script>
 <template>
   <AppDialog :title="`分配角色 · ${user.display_name}`" :busy="busy" @close="emit('close')">
-    <p>逐项保存。角色授予范围、目标用户及最后管理员保护由服务端校验。</p>
+    <p>分配或解除后立即保存，用户的可用功能会随角色权限更新。</p>
+    <div class="assignment-toolbar">
+      <el-button
+        :disabled="busy || loading || !can('role:read')"
+        @click="reload"
+        native-type="button"
+      >
+        {{ listError ? '重试角色目录' : '刷新角色目录' }}</el-button
+      >
+    </div>
     <el-alert v-if="!can('role:read')" role="alert" type="error" show-icon :closable="false"
       >需要角色目录读取权限才能选择角色。</el-alert
     >
@@ -32,18 +56,27 @@ async function toggle(id: string) {
       listError || error
     }}</el-alert>
     <p v-if="loading" role="status">正在加载角色…</p>
-    <ul class="selection-list">
+    <el-empty
+      v-if="!loading && !listError && can('role:read') && !rows.length"
+      :image-size="64"
+      description="暂无角色，可先在角色管理中新建。"
+    />
+    <ul v-if="!loading && rows.length" class="selection-list">
       <li v-for="role in rows" :key="role.id">
-        <span
-          >{{ role.name }} <small>{{ role.key }}</small></span
+        <span class="assignment-summary"
+          ><strong>{{ role.name }}</strong
+          ><small>{{ role.key }} · {{ role.permissions.length }} 项权限</small>
+          <el-tag
+            disable-transitions
+            :type="assigned.includes(role.id) ? 'success' : 'info'"
+            size="small"
+            effect="plain"
+            >{{ assigned.includes(role.id) ? '已分配' : '未分配' }}</el-tag
+          >
+          <small v-if="blockedReason(role)">{{ blockedReason(role) }}</small></span
         ><el-button
-          :disabled="
-            busy ||
-            !can('role:assign') ||
-            (role.key === 'admin' && !identity?.is_administrator) ||
-            role.permissions.some((p) => !can(p))
-          "
-          @click="toggle(role.id)"
+          :disabled="busy || loading || !!blockedReason(role)"
+          @click="toggle(role)"
           native-type="button"
           type="primary"
           >{{ assigned.includes(role.id) ? '解除角色' : '分配角色' }}</el-button
@@ -58,3 +91,17 @@ async function toggle(id: string) {
     />
   </AppDialog>
 </template>
+
+<style scoped>
+.assignment-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+.assignment-summary {
+  min-width: 0;
+}
+.assignment-summary .el-tag {
+  margin-top: 6px;
+}
+</style>

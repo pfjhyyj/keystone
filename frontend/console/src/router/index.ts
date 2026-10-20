@@ -5,7 +5,7 @@ import { ensureSession, identity, refreshSession } from '../stores/session'
 export const navigation = [
   { path: '/', label: '平台状态', permissions: [] },
   { path: '/users', label: '用户管理', permissions: ['user:read'] },
-  { path: '/roles', label: '角色与权限', permissions: ['role:read'] },
+  { path: '/roles', label: '角色管理', permissions: ['role:read'] },
   { path: '/audit', label: '操作审计', permissions: ['audit:read'] },
   {
     path: '/files',

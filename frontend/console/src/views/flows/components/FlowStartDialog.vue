@@ -9,6 +9,7 @@ import AppDialog from '../../../components/AppDialog.vue'
 
 const props = defineProps<{
   open: boolean
+  definitionKey?: string
   definitions: FlowDefinition[]
   enabled: boolean
   idempotencyDays: number
@@ -36,6 +37,14 @@ watch(definitionKey, () => {
   input.value = {}
   json.value = '{}'
 })
+watch(
+  () => [props.open, props.definitionKey] as const,
+  ([open, key]) => {
+    if (open && key && props.definitions.some((definition) => definition.key === key))
+      definitionKey.value = key
+  },
+  { immediate: true },
+)
 watch(
   [definitionKey, input, json],
   () => {

@@ -77,6 +77,16 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
   await page.setViewportSize({ width: 1440, height: 1000 })
 
   await page.getByRole('link', { name: 'Flow 流程', exact: true }).click()
+  const catalog = page.getByRole('region', { name: '流程目录', exact: true })
+  await expect(catalog.getByRole('row').filter({ hasText: 'document.review' })).toBeVisible()
+  await page.getByLabel('搜索流程', { exact: true }).fill('不存在的流程')
+  await expect(catalog).toContainText('没有匹配的流程')
+  await page.getByLabel('搜索流程', { exact: true }).fill('document.review')
+  await page.screenshot({
+    path: '../../.artifacts/console-flow-catalog.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
   await page.getByRole('button', { name: '发起流程', exact: true }).click()
   dialog = page.getByRole('dialog')
   await choose(dialog, '可见源文件', 'referenced.txt')
@@ -122,5 +132,8 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
   await choose(page, '运行状态', '失败')
   await page.getByRole('button', { name: '查询流程', exact: true }).click()
   await expect(page.getByRole('region', { name: '运行记录' })).toContainText('暂无符合条件的运行')
+  await page.getByRole('button', { name: '重置筛选', exact: true }).click()
+  await expect(runRows).toHaveCount(1)
+  await expect(runRows.first()).toContainText(original!)
   expect(errors).toEqual([])
 })

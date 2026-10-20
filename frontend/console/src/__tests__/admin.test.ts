@@ -71,9 +71,121 @@ describe('user administration', () => {
     expect(wrapper.text()).toContain('请保留管理员')
     expect(wrapper.get('.selection-list button').text()).toBe('分配角色')
   })
+  it('explains assignment scope, shows assigned roles and changes only the selected assignment', async () => {
+    authorize(['role:read', 'role:assign', 'user:read'])
+    identity.value = { ...identity.value!, is_administrator: false }
+    const writes: unknown[] = []
+    fakeApi((path, init) => {
+      if (init.method === 'PUT') {
+        writes.push([path, JSON.parse(String(init.body))])
+        return {}
+      }
+      return [
+        { ...role, id: 'administrator', key: 'admin', name: '管理员' },
+        { ...role, id: 'auditor', name: '审计员', permissions: ['audit:read'] },
+        role,
+      ]
+    })
+    const wrapper = mount(UserRolesDialog, { props: { user: { ...user, role_ids: [role.id] } } })
+    await flushPromises()
+    const items = wrapper.findAll('.selection-list li')
+    expect(items[0]!.text()).toContain('只有管理员可分配或解除管理员角色')
+    expect(items[0]!.get('button').attributes('disabled')).toBeDefined()
+    expect(items[1]!.text()).toContain('超出当前账号可授予的权限范围')
+    expect(items[1]!.get('button').attributes('disabled')).toBeDefined()
+    expect(items[2]!.text()).toContain('1 项权限')
+    expect(items[2]!.text()).toContain('已分配')
+    await items[2]!.get('button').trigger('click')
+    await flushPromises()
+    expect(writes).toEqual([[`/users/${user.id}/roles/${role.id}`, { assigned: false }]])
+    expect(items[2]!.text()).toContain('未分配')
+  })
+  it('allows retrying a failed role directory and distinguishes an empty directory', async () => {
+    authorize(['role:read', 'role:assign'])
+    let attempts = 0
+    fakeApi(() =>
+      ++attempts === 1
+        ? new Response(JSON.stringify({ detail: '角色目录暂不可用' }), { status: 500 })
+        : [],
+    )
+    const wrapper = mount(UserRolesDialog, { props: { user } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('角色目录暂不可用')
+    await wrapper
+      .findAll('button')
+      .find((node) => node.text() === '重试角色目录')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('暂无角色，可先在角色管理中新建。')
+    expect(wrapper.text()).not.toContain('角色目录暂不可用')
+    expect(attempts).toBe(2)
+  })
 })
 
 describe('roles and audit', () => {
+  it.each(['default', 'since', 'until'])(
+    'keeps the %s audit time range fixed across paging and refresh',
+    async (boundary) => {
+      authorize(['audit:read'])
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-20T00:00:00Z'))
+      try {
+        const paths: string[] = []
+        fakeApi((path) => {
+          paths.push(path)
+          return Array.from({ length: 50 }, (_, index) => ({
+            id: `audit-${index}`,
+            occurred_at: '2026-10-19T00:00:00Z',
+            actor_type: 'system',
+            actor_id: null,
+            action: 'identity.role.update',
+            target_type: 'role',
+            target_id: null,
+            outcome: 'success',
+            correlation_id: null,
+            details: {},
+          }))
+        })
+        const wrapper = mount(AuditView)
+        await flushPromises()
+        if (boundary !== 'default') {
+          await wrapper
+            .findAll('input[type=datetime-local]')
+            [boundary === 'since' ? 0 : 1]!.setValue('2026-10-01T00:00')
+          await wrapper.get('form').trigger('submit')
+          await flushPromises()
+        }
+        const first = new URLSearchParams(paths.at(-1)!.split('?')[1])
+        expect(first.get('since')).toBeTruthy()
+        expect(first.get('until')).toBeTruthy()
+        clock.mockReturnValue(Date.parse('2026-10-27T00:00:00Z'))
+        await wrapper
+          .findAll('label')
+          .find((node) => node.text() === '操作代码')!
+          .get('input')
+          .setValue('not-applied')
+        await wrapper
+          .findAll('button')
+          .find((node) => node.text() === '下一页')!
+          .trigger('click')
+        await flushPromises()
+        const next = new URLSearchParams(paths.at(-1)!.split('?')[1])
+        expect(next.get('offset')).toBe('50')
+        expect(next.get('since')).toBe(first.get('since'))
+        expect(next.get('until')).toBe(first.get('until'))
+        expect(next.get('action')).toBeNull()
+        await wrapper
+          .findAll('button')
+          .find((node) => node.text() === '刷新')!
+          .trigger('click')
+        await flushPromises()
+        expect(new URLSearchParams(paths.at(-1)!.split('?')[1]).get('until')).toBe(
+          first.get('until'),
+        )
+      } finally {
+        clock.mockRestore()
+      }
+    },
+  )
   it('locks built-in role and prevents granting absent permissions', async () => {
     authorize(['role:read', 'role:create', 'role:update', 'role:delete', 'user:read'])
     fakeApi((path) =>
@@ -89,11 +201,11 @@ describe('roles and audit', () => {
     expect(
       wrapper
         .findAll('tbody tr')[0]!
-        .findAll('button')
+        .findAll('.row-actions button')
         .every((button) => button.attributes('disabled') !== undefined),
     ).toBe(true)
     await wrapper.get('.heading button').trigger('click')
-    const checks = wrapper.findAll('input[type=checkbox]')
+    const checks = wrapper.findAll('.permission-table input[type=checkbox]')
     expect(checks[0]!.attributes('disabled')).toBeUndefined()
     expect(checks[1]!.attributes('disabled')).toBeDefined()
   })
@@ -110,7 +222,10 @@ describe('roles and audit', () => {
     )
     const wrapper = mount(RolesView)
     await flushPromises()
-    await wrapper.get('tbody button').trigger('click')
+    await wrapper
+      .findAll('tbody button')
+      .find((button) => button.text() === '删除角色')!
+      .trigger('click')
     await wrapper
       .findAll('[role=dialog] button')
       .find((button) => button.text() === '确认删除')!

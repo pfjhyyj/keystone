@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { check, watchWindowErrors } from './controls'
+import { check, choose, watchWindowErrors } from './controls'
 
 test('user, role, audit and session lifecycle against the real API', async ({ page, browser }) => {
   const errors: string[] = []
@@ -53,15 +53,64 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await page.getByRole('dialog').getByRole('button', { name: '确认保存' }).click()
   await expect(page.getByRole('dialog')).toBeHidden()
 
-  await page.getByRole('link', { name: '角色与权限', exact: true }).click()
+  await page.getByRole('link', { name: '角色管理', exact: true }).click()
+  const builtIn = page.getByRole('row').filter({ hasText: '内置角色' })
+  await expect(builtIn.getByRole('button', { name: '配置权限', exact: true })).toBeDisabled()
+  await builtIn.getByRole('button', { name: /查看.*的权限/ }).click()
+  dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('button', { name: '保存角色', exact: true })).toHaveCount(0)
+  await choose(dialog, '角色权限模块', '模型接入')
+  await expect(dialog.getByRole('checkbox', { name: /model:invoke/ })).toBeDisabled()
+  await dialog.getByRole('button', { name: '关闭对话框', exact: true }).click()
   await page.getByRole('button', { name: '新建角色', exact: true }).click()
   dialog = page.getByRole('dialog')
   await dialog.getByLabel('角色标识', { exact: true }).fill('reader')
   await dialog.getByLabel('角色名称', { exact: true }).fill('用户只读')
+  await choose(dialog, '角色权限模块', '身份与访问')
+  await expect(dialog.locator('.permission-module').first()).toHaveText('身份与访问')
   await check(dialog.getByRole('checkbox', { name: /user:read/ }), true)
+  await choose(dialog, '角色权限模块', '文件管理')
+  await dialog.getByRole('button', { name: '全选当前筛选', exact: true }).click()
+  await dialog.getByRole('button', { name: '清除当前筛选', exact: true }).click()
+  await dialog.getByRole('button', { name: '清除筛选', exact: true }).click()
+  await expect(dialog.getByRole('checkbox', { name: /user:read/ })).toBeChecked()
+  await expect(dialog.getByRole('checkbox', { name: /file:inspect/ })).not.toBeChecked()
+  await page.screenshot({
+    path: '../../.artifacts/console-role-permission-picker.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
   await dialog.getByRole('button', { name: '保存角色' }).click()
   await expect(dialog).toBeHidden()
   await expect(page.getByRole('row').filter({ hasText: 'reader' })).toBeVisible()
+  await page
+    .getByRole('row')
+    .filter({ hasText: 'reader' })
+    .getByRole('button', { name: '配置权限', exact: true })
+    .click()
+  dialog = page.getByRole('dialog')
+  await check(dialog.getByRole('checkbox', { name: '仅看已选', exact: true }), true)
+  await expect(
+    dialog.getByRole('table', { name: '权限列表', exact: true }).locator('tbody tr'),
+  ).toHaveCount(1)
+  await expect(dialog.getByRole('checkbox', { name: /user:read/ })).toBeChecked()
+  await page.screenshot({
+    path: '../../.artifacts/console-role-permissions.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(dialog.getByRole('combobox', { name: '角色权限模块', exact: true })).toBeVisible()
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true)
+  await page.screenshot({
+    path: '../../.artifacts/console-role-permissions-mobile.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await dialog.getByRole('button', { name: '关闭对话框', exact: true }).click()
 
   await page.getByRole('link', { name: '用户管理', exact: true }).click()
   let alice = page.getByRole('row').filter({ hasText: 'alice' })
@@ -103,7 +152,7 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await expect(reader.getByRole('heading', { name: '没有此页面的访问权限' })).toBeVisible()
 
   // Referenced roles cannot be removed; the dialog retains the server's reason.
-  await page.getByRole('link', { name: '角色与权限', exact: true }).click()
+  await page.getByRole('link', { name: '角色管理', exact: true }).click()
   await page
     .getByRole('row')
     .filter({ hasText: 'reader' })

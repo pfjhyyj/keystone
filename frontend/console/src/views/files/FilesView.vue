@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onScopeDispose, ref } from 'vue'
 import { can } from '../../stores/session'
 import { downloadFile, request, uploadFile } from '../../api/client'
 import { fileApi, fileStatus, uuidPattern, type StoredFile } from '../../api/files'
@@ -22,7 +22,13 @@ const chosen = ref<File | null>(null),
   maxBytes = ref(0),
   requestKey = ref('')
 const storageKeys = ref<string[]>([]),
-  storageKey = ref('')
+  storageKey = ref(''),
+  optionsLoading = ref(false),
+  optionsError = ref('')
+let alive = true
+onScopeDispose(() => {
+  alive = false
+})
 const selected = ref<StoredFile | null>(null),
   mode = ref<'edit' | 'delete'>('edit'),
   name = ref(''),
@@ -39,6 +45,7 @@ function changeStorage() {
   requestKey.value = crypto.randomUUID()
 }
 async function upload() {
+  if (optionsLoading.value || optionsError.value || !maxBytes.value || !storageKey.value) return
   await run(async () => {
     if (!chosen.value || !can('file:create')) return
     if (chosen.value.size > maxBytes.value) throw new Error('文件超过上传上限')
@@ -83,19 +90,30 @@ function openKnown(kind: 'grants' | 'references') {
   if (kind === 'grants') sharing.value = { id }
   else references.value = { id }
 }
-onMounted(() => {
-  if (can('file:create'))
-    void run(async () => {
-      const options = await request<{
-        max_file_bytes: number
-        storage_keys: string[]
-        default_storage: string
-      }>('/files/options')
-      maxBytes.value = options.max_file_bytes
-      storageKeys.value = options.storage_keys
+async function loadOptions() {
+  if (!can('file:create') || optionsLoading.value || busy.value) return
+  optionsLoading.value = true
+  optionsError.value = ''
+  try {
+    const options = await request<{
+      max_file_bytes: number
+      storage_keys: string[]
+      default_storage: string
+    }>('/files/options')
+    if (!alive) return
+    maxBytes.value = options.max_file_bytes
+    storageKeys.value = options.storage_keys
+    if (!options.storage_keys.includes(storageKey.value)) {
       storageKey.value = options.default_storage
-    })
-})
+      changeStorage()
+    }
+  } catch (reason) {
+    if (alive) optionsError.value = reason instanceof Error ? reason.message : '上传配置不可用'
+  } finally {
+    if (alive) optionsLoading.value = false
+  }
+}
+onMounted(() => void loadOptions())
 </script>
 
 <template>
@@ -126,26 +144,43 @@ onMounted(() => {
     <el-alert v-if="notice" role="status" type="success" show-icon :closable="false">{{
       notice
     }}</el-alert>
-    <form v-if="can('file:create')" class="module-form" @submit.prevent="upload">
-      <label>选择文件<input ref="input" type="file" :disabled="busy" @change="choose" /></label
-      ><span>上限 {{ Math.round((maxBytes / 1024 / 1024) * 10) / 10 }} MB</span>
-      <div class="form-field">
-        <span class="form-label">存储源</span
-        ><AppSelect
-          v-model="storageKey"
-          aria-label="存储源"
-          :disabled="busy"
-          @change="changeStorage"
-          ><el-option v-for="key in storageKeys" :key="key" :value="key" :label="key"
-        /></AppSelect>
-      </div>
-      <el-button
-        :disabled="busy || !chosen || !maxBytes || !storageKey"
-        native-type="submit"
-        type="primary"
-        >上传文件</el-button
+    <template v-if="can('file:create')">
+      <el-alert v-if="optionsError" role="alert" type="error" show-icon :closable="false"
+        >上传配置加载失败：{{ optionsError }}</el-alert
       >
-    </form>
+      <p v-if="optionsLoading" role="status">正在加载上传配置…</p>
+      <form class="module-form" @submit.prevent="upload">
+        <label>选择文件<input ref="input" type="file" :disabled="busy" @change="choose" /></label
+        ><span v-if="maxBytes && !optionsError"
+          >上限 {{ Math.round((maxBytes / 1024 / 1024) * 10) / 10 }} MB</span
+        >
+        <div class="form-field">
+          <span class="form-label">存储源</span
+          ><AppSelect
+            v-model="storageKey"
+            aria-label="存储源"
+            :disabled="busy || optionsLoading || !!optionsError"
+            @change="changeStorage"
+            ><el-option v-for="key in storageKeys" :key="key" :value="key" :label="key"
+          /></AppSelect>
+        </div>
+        <el-button
+          :disabled="
+            busy || optionsLoading || !!optionsError || !chosen || !maxBytes || !storageKey
+          "
+          native-type="submit"
+          type="primary"
+          >上传文件</el-button
+        >
+        <el-button
+          :disabled="busy || optionsLoading"
+          @click="loadOptions"
+          native-type="button"
+          type="default"
+          >{{ optionsError ? '重试上传配置' : '刷新上传配置' }}</el-button
+        >
+      </form>
+    </template>
     <p v-if="!can('file:inspect')">当前账户没有查看文件库的权限。</p>
     <template v-else>
       <p v-if="loading" role="status">正在加载文件…</p>

@@ -7,6 +7,17 @@ test('file grants, reference protection and dictionaries against the real API', 
 }) => {
   const errors: string[] = []
   await watchWindowErrors(page, errors)
+  let optionsAttempts = 0
+  await page.route('**/api/v1/files/options', async (route) => {
+    optionsAttempts++
+    if (optionsAttempts === 1)
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: '上传配置暂不可用' }),
+      })
+    else await route.continue()
+  })
   page.on('pageerror', (error) => errors.push(error.message))
   page.on('console', (message) => {
     if (message.type() === 'warning' && message.text().includes('[Vue warn]'))
@@ -17,11 +28,14 @@ test('file grants, reference protection and dictionaries against the real API', 
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByRole('heading', { name: '文件库', exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toContainText('上传配置加载失败')
+  await page.getByRole('button', { name: '重试上传配置', exact: true }).click()
   await expect(
     page
       .locator('.app-select')
       .filter({ has: page.getByRole('combobox', { name: '存储源', exact: true }) }),
   ).toContainText('local')
+  expect(optionsAttempts).toBe(2)
   const identity = await (await page.request.get('/api/v1/auth/me')).json()
   const headers = {
     Origin: 'http://127.0.0.1:5175',

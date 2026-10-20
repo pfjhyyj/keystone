@@ -599,8 +599,7 @@ fieldset .el-checkbox {
   color: #a16c34;
   margin-bottom: 12px;
 }
-.known-file,
-.permission-catalog {
+.known-file {
   padding: 12px 16px;
   background: #f8fafc;
   border-radius: 6px;

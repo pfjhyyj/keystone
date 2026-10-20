@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { flushPromises, mount, RouterLinkStub, type VueWrapper } from '@vue/test-utils'
 import ModelManager from '../views/models/ModelsView.vue'
 import ModelProbe from '../views/models/components/ModelProbe.vue'
 import ModelPicker from '../components/models/ModelPicker.vue'
@@ -185,6 +185,11 @@ it('uses identical bounded filters for history and summary and rejects invalid I
   })
   const wrapper = mount(InvocationHistory, { props: { version: 0 } })
   await flushPromises()
+  const initial = paths.map((path) => new URLSearchParams(path.split('?')[1]))
+  expect(initial[0]!.get('since')).toBeTruthy()
+  expect(initial[0]!.get('until')).toBeTruthy()
+  expect(initial[0]!.get('since')).toBe(initial[1]!.get('since'))
+  expect(initial[0]!.get('until')).toBe(initial[1]!.get('until'))
   paths.length = 0
   await wrapper.findAll('input')[0]!.setValue(channelId)
   await wrapper.get('form').trigger('submit')
@@ -198,6 +203,62 @@ it('uses identical bounded filters for history and summary and rejects invalid I
   await flushPromises()
   expect(paths).toEqual([])
   expect(wrapper.text()).toContain('完整 UUID')
+})
+it('keeps the model history window on paging and updates it for a completed invocation without applying drafts', async () => {
+  authorize(['model_invocation:read'])
+  let now = Date.parse('2026-10-20T10:00:00Z')
+  vi.spyOn(Date, 'now').mockImplementation(() => now)
+  const paths: string[] = []
+  fakeApi((path) => {
+    paths.push(path)
+    return path.includes('/summary')
+      ? costs
+      : Array.from({ length: 50 }, (_, i) => ({
+          id: `call-${i}`,
+          channel_id: channelId,
+          provider_model: 'chat',
+          status: 'succeeded',
+          created_at: stamp,
+          cost_amount: null,
+          cost_source: 'unknown',
+        }))
+  })
+  const wrapper = mount(InvocationHistory, { props: { version: 0 } })
+  await flushPromises()
+  const original = new URLSearchParams(paths[0]!.split('?')[1])
+  now += 60000
+  await button(wrapper, '下一页').trigger('click')
+  await flushPromises()
+  expect(new URLSearchParams(paths.at(-1)!.split('?')[1]).get('until')).toBe(original.get('until'))
+  await wrapper.findAll('input')[0]!.setValue('unapplied-draft')
+  paths.length = 0
+  await wrapper.setProps({ version: 1 })
+  await flushPromises()
+  expect(paths).toHaveLength(2)
+  for (const path of paths) {
+    const params = new URLSearchParams(path.split('?')[1])
+    expect(params.get('until')).toBe(new Date(now).toISOString())
+    expect(params.get('since')).toBe(new Date(now - 30 * 86400000).toISOString())
+    expect(params.has('channel_id')).toBe(false)
+  }
+  expect(paths.some((path) => path.includes('offset=50'))).toBe(false)
+  await wrapper.findAll('input')[0]!.setValue(channelId)
+  const dates = wrapper.findAll('input[type=datetime-local]')
+  await dates[0]!.setValue('2026-10-01T00:00')
+  await dates[1]!.setValue('2026-10-19T00:00')
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  const bounded = new URLSearchParams(paths.at(-1)!.split('?')[1])
+  paths.length = 0
+  now += 60000
+  await wrapper.setProps({ version: 2 })
+  await flushPromises()
+  for (const path of paths) {
+    const params = new URLSearchParams(path.split('?')[1])
+    expect(params.get('channel_id')).toBe(channelId)
+    expect(params.get('since')).toBe(bounded.get('since'))
+    expect(params.get('until')).toBe(bounded.get('until'))
+  }
 })
 it('paginates the model catalog while retaining selection', async () => {
   authorize(['model:invoke'])
@@ -420,6 +481,53 @@ it('does not fetch start catalogs, files or models for a Flow reader', async () 
   await flushPromises()
   expect(paths).toEqual(['/flow-runs?offset=0&limit=50'])
   expect(wrapper.text()).not.toContain('发起流程')
+})
+it('distinguishes catalog loading and failure, retries and opens the selected Flow definition', async () => {
+  authorize(['flow:start', 'flow:read'])
+  const pending = deferred<unknown>()
+  let attempts = 0
+  const paths: string[] = []
+  fakeApi((path) => {
+    paths.push(path)
+    if (path === '/flow-definitions') {
+      attempts++
+      return attempts === 1
+        ? pending.promise
+        : {
+            enabled: true,
+            idempotency_days: 7,
+            items: [
+              definition,
+              { ...definition, key: 'custom.other', name: '第二个流程', description: '批量处理' },
+            ],
+          }
+    }
+    return []
+  })
+  const wrapper = mount(FlowManager, { global: { stubs: { RouterLink: RouterLinkStub } } })
+  await flushPromises()
+  expect(wrapper.text()).toContain('正在加载流程目录')
+  expect(wrapper.text()).not.toContain('尚未启用')
+  pending.resolve(new Response(JSON.stringify({ detail: '流程目录暂不可用' }), { status: 503 }))
+  await flushPromises()
+  expect(wrapper.text()).toContain('流程目录暂不可用')
+  await button(wrapper, '刷新流程目录').trigger('click')
+  await flushPromises()
+  expect(wrapper.getComponent(RouterLinkStub).props('to')).toBe('/')
+  await wrapper.get('input[placeholder="搜索名称、标识或说明"]').setValue(' 批量处理 ')
+  expect(wrapper.text()).toContain('显示 1 / 2 个流程')
+  await button(wrapper, '发起流程').trigger('click')
+  await flushPromises()
+  expect(selectControl(wrapper, '流程').props('modelValue')).toBe('custom.other')
+  await wrapper.get('button[aria-label="关闭对话框"]').trigger('click')
+  await chooseSelect(wrapper, 'failed', '运行状态')
+  const runs = wrapper.get('section[aria-label="运行记录"]')
+  await runs.get('form').trigger('submit')
+  await flushPromises()
+  expect(paths.at(-1)).toContain('status=failed')
+  await button(wrapper, '重置筛选').trigger('click')
+  await flushPromises()
+  expect(paths.at(-1)).not.toContain('status=')
 })
 it('retains a composed Flow input across reopen and clears it when switching definitions', async () => {
   authorize(['flow:start', 'file:inspect', 'model:invoke'])

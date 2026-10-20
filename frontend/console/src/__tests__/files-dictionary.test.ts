@@ -53,6 +53,40 @@ const failure = (detail: string) =>
   new Response(JSON.stringify({ code: 'denied', detail }), { status: 404 })
 
 describe('file grants and references', () => {
+  it('retries failed upload options without showing a zero limit or losing the chosen file', async () => {
+    authorize(['file:create'])
+    let attempts = 0
+    const uploads: string[] = []
+    fakeApi((path) => {
+      if (path === '/files/options') {
+        attempts++
+        return attempts === 1
+          ? new Response(JSON.stringify({ detail: '暂不可用' }), { status: 503 })
+          : { max_file_bytes: 1024, storage_keys: ['local'], default_storage: 'local' }
+      }
+      uploads.push(path)
+      return file
+    })
+    const wrapper = mount(FileLibrary)
+    await flushPromises()
+    expect(wrapper.text()).toContain('上传配置加载失败')
+    expect(wrapper.text()).not.toContain('上限 0 MB')
+    expect(button(wrapper, '上传文件').attributes('disabled')).toBeDefined()
+    const chosen = new File(['hello'], 'report.txt', { type: 'text/plain' })
+    Object.defineProperty(chosen, 'arrayBuffer', { value: async () => new ArrayBuffer(5) })
+    Object.defineProperty(wrapper.get('input[type=file]').element, 'files', { value: [chosen] })
+    await wrapper.get('input[type=file]').trigger('change')
+    await wrapper.get('form').trigger('submit')
+    expect(uploads).toEqual([])
+    await button(wrapper, '重试上传配置').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('上传配置加载失败')
+    expect(button(wrapper, '上传文件').attributes('disabled')).toBeUndefined()
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(uploads).toHaveLength(1)
+    expect(uploads[0]).toContain('storage_key=local')
+  })
   it('uploads to the selected source and preserves the request key on retry', async () => {
     authorize(['file:create'])
     const writes: URLSearchParams[] = []

@@ -267,6 +267,7 @@ function submit() {
     >
     <UserRolesDialog
       v-if="roleTarget"
+      :key="roleTarget.id"
       :user="roleTarget"
       @close="roleTarget = null"
       @changed="reload"

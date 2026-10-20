@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { onMounted, onScopeDispose, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import { can } from '../../stores/session'
 import { flowApi, flowStates, ongoing, type FlowDefinition, type FlowRun } from '../../api/flows'
 import { usePagedList } from '../../composables/usePagedList'
 import FlowStartDialog from './components/FlowStartDialog.vue'
 import FlowRunDialog from './components/FlowRunDialog.vue'
+import FlowCatalog from './components/FlowCatalog.vue'
 import ListPager from '../../components/ListPager.vue'
 const status = ref(''),
   applied = ref(''),
   starting = ref(false),
+  startingKey = ref(''),
   selected = ref(''),
   notice = ref('')
 const enabled = ref(false),
@@ -49,6 +52,16 @@ function accepted(run: FlowRun) {
   search()
   if (can('flow:read')) selected.value = run.id
 }
+function start(key: string) {
+  if (!can('flow:start') || !enabled.value || catalogLoading.value) return
+  startingKey.value = key
+  starting.value = true
+}
+function filter(value = status.value) {
+  status.value = value
+  applied.value = value
+  search()
+}
 onMounted(() => {
   void catalog()
   timer = setInterval(() => {
@@ -65,7 +78,7 @@ onScopeDispose(() => {
     <div class="heading">
       <div>
         <h1>Flow 流程</h1>
-        <p>发起任务，查看执行过程与结果。调用方式由部署配置决定，真实模型可能产生费用。</p>
+        <p>选择流程发起任务，跟踪执行步骤、结果与费用。使用模型的流程可能产生费用。</p>
       </div>
     </div>
     <el-alert v-if="notice" role="status" type="success" show-icon :closable="false">{{
@@ -76,13 +89,6 @@ onScopeDispose(() => {
         <h2>流程目录</h2>
         <div class="row-actions">
           <el-button
-            :disabled="!enabled || !definitions.length || catalogLoading"
-            @click="starting = true"
-            native-type="button"
-            type="primary"
-          >
-            发起流程</el-button
-          ><el-button
             :disabled="catalogLoading"
             @click="catalog"
             native-type="button"
@@ -95,14 +101,21 @@ onScopeDispose(() => {
       <el-alert v-if="catalogError" role="alert" type="error" show-icon :closable="false">{{
         catalogError
       }}</el-alert>
+      <p v-else-if="catalogLoading" role="status">正在加载流程目录…</p>
       <p v-else-if="!enabled">Flow 尚未启用；完成执行服务配置后刷新目录。</p>
-      <p v-else>Flow 已启用，此配置不表示 Worker 已在线。等待执行时可检查 Worker。</p>
-      <ul>
-        <li v-for="definition in definitions" :key="definition.key">
-          {{ definition.name }} · {{ definition.description }}
-        </li>
-      </ul>
-      <p v-if="enabled && !definitions.length">没有符合当前权限的流程定义。</p>
+      <p v-else>
+        Flow 已启用。任务由 Worker 执行，长时间等待时可到
+        <RouterLink to="/">平台状态</RouterLink>查看 Worker 就绪状态和最近心跳。
+      </p>
+      <FlowCatalog
+        :definitions="definitions"
+        :loading="catalogLoading"
+        :enabled="enabled"
+        @start="start"
+      />
+      <p v-if="!catalogLoading && !catalogError && enabled && !definitions.length">
+        没有符合当前权限的流程定义。
+      </p>
     </section>
     <section v-if="can('flow:read')" aria-label="运行记录">
       <h2>运行记录</h2>
@@ -110,18 +123,10 @@ onScopeDispose(() => {
         {{ can('flow:manage') ? '可见全部运行' : '仅显示本人运行' }}。未完成的可见运行每 3
         秒刷新，离开页面后停止。
       </p>
-      <form
-        class="module-form"
-        @submit.prevent="
-          () => {
-            applied = status
-            search()
-          }
-        "
-      >
+      <form class="module-form" @submit.prevent="filter()">
         <div class="form-field">
           <span class="form-label">运行状态</span
-          ><AppSelect v-model="status" aria-label="运行状态"
+          ><AppSelect v-model="status" aria-label="运行状态" placeholder="全部状态"
             ><el-option value="" :label="'全部'" /><el-option
               v-for="(label, key) in flowStates"
               :key="key"
@@ -130,6 +135,8 @@ onScopeDispose(() => {
           /></AppSelect>
         </div>
         <el-button :disabled="loading" native-type="submit" type="default">查询流程</el-button
+        ><el-button :disabled="loading" @click="filter('')" native-type="button" type="default"
+          >重置筛选</el-button
         ><el-button :disabled="loading" @click="reload" native-type="button" type="default">
           刷新流程
         </el-button>
@@ -181,6 +188,7 @@ onScopeDispose(() => {
     <FlowStartDialog
       v-if="starting || (can('flow:start') && definitions.length)"
       :open="starting"
+      :definition-key="startingKey"
       :definitions="definitions"
       :enabled="enabled"
       :idempotency-days="idempotencyDays"

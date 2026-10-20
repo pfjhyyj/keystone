@@ -8,10 +8,16 @@ import ListPager from '../../../components/ListPager.vue'
 import CostSummary from '../../../components/models/CostSummary.vue'
 import InvocationDialog from './InvocationDialog.vue'
 const props = defineProps<{ version: number }>()
+const initialUntil = Date.now()
 const filters = reactive({ channel_id: '', flow_run_id: '', since: '', until: '' }),
-  applied = ref<Record<string, string>>({}),
+  applied = ref<Record<string, string>>({
+    since: new Date(initialUntil - 30 * 86400000).toISOString(),
+    until: new Date(initialUntil).toISOString(),
+  }),
   validation = ref(''),
   selected = ref('')
+let relativeUntil = true,
+  relativeSince = true
 const list = usePagedList('model_invocation:read', (offset) =>
   modelApi.calls(offset, applied.value),
 )
@@ -19,8 +25,19 @@ const totals = usePagedList('model_invocation:read', async () => [
   await modelApi.summary(applied.value),
 ])
 function refresh() {
-  void list.reload()
-  void totals.reload()
+  if (relativeUntil) {
+    const until = Date.now()
+    applied.value = {
+      ...applied.value,
+      until: new Date(until).toISOString(),
+      ...(relativeSince ? { since: new Date(until - 30 * 86400000).toISOString() } : {}),
+    }
+    list.search()
+    totals.search()
+  } else {
+    void list.reload()
+    void totals.reload()
+  }
 }
 function apply() {
   validation.value = ''
@@ -50,6 +67,8 @@ function apply() {
   )
   applied.value.since = new Date(since).toISOString()
   applied.value.until = new Date(until).toISOString()
+  relativeUntil = !filters.until
+  relativeSince = !filters.since
   selected.value = ''
   list.search()
   totals.search()

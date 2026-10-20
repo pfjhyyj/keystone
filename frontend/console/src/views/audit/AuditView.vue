@@ -14,7 +14,11 @@ const filters = reactive({
   since: '',
   until: '',
 })
-const applied = ref<Record<string, string>>({}),
+const initialUntil = Date.now()
+const applied = ref<Record<string, string>>({
+    since: new Date(initialUntil - 30 * 86400000).toISOString(),
+    until: new Date(initialUntil).toISOString(),
+  }),
   validation = ref(''),
   selected = ref<AuditLog | null>(null)
 const { rows, page, loading, error, reload, search } = usePagedList('audit:read', (offset) =>
@@ -50,6 +54,8 @@ function apply() {
         ['since', 'until'].includes(key) ? new Date(value).toISOString() : value.trim(),
       ]),
   )
+  applied.value.since = new Date(since).toISOString()
+  applied.value.until = new Date(until).toISOString()
   selected.value = null
   search()
 }
@@ -118,6 +124,10 @@ function reset() {
         >刷新</el-button
       >
     </form>
+    <p>
+      当前查询范围：{{ new Date(applied.since!).toLocaleString() }} —
+      {{ new Date(applied.until!).toLocaleString() }}。点击“查询审计”可更新默认时间范围。
+    </p>
     <el-alert v-if="validation || error" role="alert" type="error" show-icon :closable="false">{{
       validation || error
     }}</el-alert>
