@@ -10,6 +10,11 @@ export interface Readiness {
   flow_enabled: boolean
 }
 
+export interface WorkerStatus {
+  status: 'ready' | 'unready' | 'offline' | 'unknown'
+  last_heartbeat_at: string | null
+}
+
 async function getStatus(path: string, allowUnavailable = false): Promise<unknown> {
   const response = await fetch(path, {
     credentials: 'same-origin',
@@ -52,4 +57,20 @@ export async function getReadiness(): Promise<Readiness> {
     throw new Error('无效的就绪响应')
   }
   return value as unknown as Readiness
+}
+
+export async function getWorkerStatus(): Promise<WorkerStatus> {
+  const value = await getStatus('/api/v1/worker/status')
+  if (
+    !record(value) ||
+    !['ready', 'unready', 'offline', 'unknown'].includes(String(value.status)) ||
+    !(
+      value.last_heartbeat_at === null ||
+      (typeof value.last_heartbeat_at === 'string' &&
+        Number.isFinite(Date.parse(value.last_heartbeat_at)))
+    ) ||
+    (value.status === 'ready' && value.last_heartbeat_at === null)
+  )
+    throw new Error('无效的 Worker 状态响应')
+  return value as unknown as WorkerStatus
 }

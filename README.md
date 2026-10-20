@@ -54,6 +54,8 @@ cd backend
 uv run --locked keystone-worker
 ```
 
+Worker 默认持续向 PostgreSQL 上报心跳，无需额外配置；控制台“平台状态”显示就绪状态与最近心跳时间。命令行探针见[Worker 健康检查](docs/development.md#worker-健康检查排障)。
+
 ### 4. 另开终端启动前端
 
 ```bash

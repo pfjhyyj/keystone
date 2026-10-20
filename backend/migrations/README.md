@@ -11,6 +11,7 @@ Keystone 保留一条 Alembic 迁移链，初始迁移按领域划分。编号�
 | `0005_model_access` | 模型接入 | model_channels、model_entries、model_invocations |
 | `0006_flow` | Flow | flow_runs |
 | `0007_channel_credentials` | 模型凭据 | model_channels 改为保存加密 API Key |
+| `0008_worker_heartbeats` | 运行观测 | worker_heartbeats 保存各 Worker 实例的状态与最近心跳 |
 
 文件均在 versions/ 下，名称为 `<revision>.py`，六份初始迁移从 identity 连到 flow，随后追加增量迁移，只有一个 head。每份初始迁移完整列出本领域的字段、约束、索引及逆序回滚；不导入运行时 ORM 模型或调用 create_all，避免模型后续修改影响历史迁移。审计字段在各表中显式声明，不用公共字段函数或动态建表循环隐藏结构。
 
@@ -32,8 +33,12 @@ Alembic 连接固定 search_path=public，所有领域表仍显式位于 keyston
 
 ## 文件多源初始结构
 
-文件多源直接包含在 `0004_files`：创建 files 时同时定义非空的 storage_key，并保留 storage_fingerprint、object_key。storage_key 由上传服务根据显式的源配置填写，ORM 和数据库都没有默认源值。共六份初始迁移和后续增量迁移、单条链、head=0007_channel_credentials；新库运行 keystone migrate 即可建立完整初始结构。
+文件多源直接包含在 `0004_files`：创建 files 时同时定义非空的 storage_key，并保留 storage_fingerprint、object_key。storage_key 由上传服务根据显式的源配置填写，ORM 和数据库都没有默认源值。共六份初始迁移和后续增量迁移、单条链、head=0008_worker_heartbeats；新库运行 keystone migrate 即可建立完整初始结构。
 
 ## 渠道凭据升级
 
 `0007_channel_credentials` 保留渠道和模型记录，替换旧凭据引用字段为可空密文字段。旧引用名不包含可恢复的 Key，升级后在控制台手动重新填写渠道 API Key；不读取或导入旧环境变量。新建渠道必须填写推理 Key，账务 Key 可选。回滚该迁移会移除密文列，凭据需重新配置；真实数据恢复应使用对应版本的联合备份。
+
+## Worker 心跳
+
+`0008_worker_heartbeats` 增加运行观测表，由原有 `keystone init` / `keystone migrate` 建立，无需单独初始化。API/Worker 不自动建表；表未就绪时 Worker 状态显示无法确认，API 自身仍按原有迁移检查返回就绪结果。该表不保存业务状态，不用于任务投递或锁定，不记录配置秘密。

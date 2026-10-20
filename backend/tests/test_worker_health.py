@@ -1,54 +1,53 @@
 import asyncio
-import os
-import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from keystone.core import worker_health
 from keystone.core.config import Settings
 from keystone.core.worker_health import WorkerHealth
 from keystone.entrypoints import worker
 from keystone.platform.flow import worker as flow_worker
 
 
-def test_marker_freshness_and_invalid_paths(tmp_path):
-    path = tmp_path / "worker.ready"
-    health = WorkerHealth(path)
-    assert not health.healthy() and not WorkerHealth(None).healthy()
-    health.refresh()
-    assert health.healthy()
-    for timestamp in (time.time() - 31, time.time() + 60):
-        os.utime(path, (timestamp, timestamp))
-        assert not health.healthy()
-    health.clear()
-    assert not path.exists()
-    assert not WorkerHealth(tmp_path).healthy()
+def test_liveness_and_readiness_are_separate_and_old_checks_expire(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(worker_health.time, "monotonic", lambda: now[0])
+    health = WorkerHealth(None)
+    assert health.observation() == "starting"
+    health.checked(True)
+    assert health.observation() == "ready"
+    assert health.observation(False) == "unready"
+    now[0] += 31
+    assert health.observation() == "unready"
+    health.checked(False)
+    assert health.observation() == "unready"
 
 
-@pytest.mark.parametrize("ready", [False, True])
-def test_probe_exit_code_without_runtime_or_database(tmp_path, monkeypatch, capsys, ready):
-    path = tmp_path / "worker.ready"
-    if ready:
-        path.touch()
-        timestamp = time.time() - 1
-        os.utime(path, (timestamp, timestamp))
+@pytest.mark.parametrize("status", ["ready", "unready", "offline", "unknown"])
+def test_probe_queries_database_without_starting_executor(monkeypatch, capsys, status):
+    database = SimpleNamespace(close=AsyncMock())
+    query = AsyncMock(return_value={"status": status})
+    monkeypatch.setattr(worker, "Database", lambda *args, **kwargs: database)
+    monkeypatch.setattr(worker, "worker_status", query)
+    monkeypatch.setattr(worker, "Settings", lambda: Settings(_env_file=None))
+    monkeypatch.setattr(worker, "build_runtime", lambda _: pytest.fail("Probe started executor"))
     monkeypatch.setattr("sys.argv", ["keystone-worker", "--check"])
-    monkeypatch.setattr(
-        worker, "Settings", lambda: Settings(_env_file=None, worker_ready_file=path)
-    )
-    monkeypatch.setattr(worker, "build_runtime", lambda _: pytest.fail("Probe started runtime"))
     with pytest.raises(SystemExit) as result:
         worker.main()
-    assert result.value.code == (0 if ready else 1)
-    assert capsys.readouterr().out.strip() == ("Worker healthy" if ready else "Worker unavailable")
-    assert path.exists() == ready  # Probes never refresh or create the marker.
+    assert result.value.code == (0 if status == "ready" else 1)
+    assert capsys.readouterr().out.strip() == (
+        "Worker healthy" if status == "ready" else "Worker unavailable"
+    )
+    assert query.call_args.kwargs["host_id"]
+    database.close.assert_awaited_once()
 
 
 async def wait_until(condition):
     async with asyncio.timeout(3):
         while not condition():
-            await asyncio.sleep(0.01)
+            await asyncio.sleep(0.005)
 
 
 @pytest.fixture
@@ -58,20 +57,22 @@ def runtime(monkeypatch):
         flow_engine=SimpleNamespace(close=AsyncMock()),
         storage=object(),
         readiness=AsyncMock(return_value={"status": "ready", "checks": {"database": "ok"}}),
+        observations=[],
     )
+
+    async def publish(self, state):
+        result.observations.append(state)
+
+    monkeypatch.setattr(WorkerHealth, "publish", publish)
     monkeypatch.setattr(worker, "build_runtime", lambda _: result)
     monkeypatch.setattr(worker, "POLL_SECONDS", 0.01)
+    monkeypatch.setattr(worker, "HEARTBEAT_SECONDS", 0.01)
     monkeypatch.setattr(worker, "cleanup", AsyncMock())
     monkeypatch.setattr(worker, "register_workflows", lambda: None)
     return result
 
 
-async def test_maintenance_marker_tracks_dependencies_failure_recovery_and_stop(
-    tmp_path, monkeypatch, runtime
-):
-    path = tmp_path / "worker.ready"
-    path.touch()  # A previous process left a fresh file; startup must invalidate it.
-    health = WorkerHealth(path)
+async def test_heartbeats_continue_while_starting_unready_and_recovering(tmp_path, runtime):
     entered, release, stop = asyncio.Event(), asyncio.Event(), asyncio.Event()
 
     async def initial_check():
@@ -83,38 +84,37 @@ async def test_maintenance_marker_tracks_dependencies_failure_recovery_and_stop(
     settings = Settings(
         _env_file=None,
         flow_enabled=False,
-        worker_ready_file=path,
         file_coordination_root=tmp_path,
         file_storages={"local": {"driver": "filesystem", "root": tmp_path}},
     )
     task = asyncio.create_task(worker.run(settings, stop))
     try:
-        await asyncio.wait_for(entered.wait(), 3)
-        assert not path.exists()
+        await entered.wait()
+        await wait_until(lambda: len(runtime.observations) >= 2)
+        assert set(runtime.observations) == {"starting"}
         release.set()
-        await wait_until(health.healthy)
+        await wait_until(lambda: runtime.observations[-1] == "ready")
         runtime.readiness.side_effect = None
         runtime.readiness.return_value = {"status": "unavailable", "checks": {"database": "bad"}}
-        await wait_until(lambda: not path.exists())
+        await wait_until(lambda: runtime.observations[-1] == "unready")
+        count = len(runtime.observations)
+        await wait_until(lambda: len(runtime.observations) >= count + 2)
+        assert runtime.observations[-1] == "unready"
         runtime.readiness.return_value = {"status": "ready", "checks": {"database": "ok"}}
-        await wait_until(health.healthy)
+        await wait_until(lambda: runtime.observations[-1] == "ready")
         worker.cleanup.side_effect = RuntimeError("cleanup failed")
-        await wait_until(lambda: not path.exists())
+        await wait_until(lambda: runtime.observations[-1] == "unready")
         worker.cleanup.side_effect = None
-        await wait_until(health.healthy)
+        await wait_until(lambda: runtime.observations[-1] == "ready")
     finally:
         release.set()
         stop.set()
         await asyncio.wait_for(task, 3)
-    assert not path.exists()
+    assert runtime.observations[-1] == "stopped"
     runtime.database.close.assert_awaited_once()
 
 
-async def test_flow_marker_waits_for_initialization_and_clears_on_failure(
-    tmp_path, monkeypatch, runtime
-):
-    path = tmp_path / "worker.ready"
-    health = WorkerHealth(path)
+async def test_flow_readiness_and_failure_are_observed(monkeypatch, runtime):
     entered, initialized, failure, stop = (asyncio.Event() for _ in range(4))
 
     async def fake_flow(runtime, stop, *, ready):
@@ -128,28 +128,65 @@ async def test_flow_marker_waits_for_initialization_and_clears_on_failure(
             ready.clear()
 
     monkeypatch.setattr(flow_worker, "run", fake_flow)
-    settings = Settings(_env_file=None, worker_ready_file=path, flow_enabled=True)
-    task = asyncio.create_task(worker.run(settings, stop))
+    task = asyncio.create_task(worker.run(Settings(_env_file=None), stop))
     try:
-        await asyncio.wait_for(entered.wait(), 3)
-        await wait_until(lambda: runtime.readiness.await_count >= 2)
-        assert not path.exists()
+        await entered.wait()
+        await wait_until(lambda: len(runtime.observations) >= 2)
+        assert "ready" not in runtime.observations
         initialized.set()
-        await wait_until(health.healthy)
+        await wait_until(lambda: runtime.observations[-1] == "ready")
     finally:
-        initialized.set()
         failure.set()
+        initialized.set()
         with pytest.raises(RuntimeError, match="executor stopped"):
             await asyncio.wait_for(task, 3)
-    assert not path.exists()
+    assert runtime.observations[-1] == "stopped"
+    runtime.database.close.assert_awaited_once()
     runtime.flow_engine.close.assert_awaited_once()
-    runtime.database.close.assert_awaited_once()
 
 
-async def test_unwritable_marker_stops_worker_and_closes_resources(tmp_path, runtime):
-    path = tmp_path / "missing-parent" / "worker.ready"
-    settings = Settings(_env_file=None, worker_ready_file=path, flow_enabled=False)
-    with pytest.raises(OSError):
-        await worker.run(settings, asyncio.Event())
-    assert not path.exists()
-    runtime.database.close.assert_awaited_once()
+async def test_slow_maintenance_keeps_heartbeat_but_loses_readiness(tmp_path, monkeypatch, runtime):
+    monkeypatch.setattr(worker_health, "MAX_AGE_SECONDS", 0.05)
+    stop, release = asyncio.Event(), asyncio.Event()
+    settings = Settings(
+        _env_file=None,
+        flow_enabled=False,
+        file_coordination_root=tmp_path,
+        file_storages={"local": {"driver": "filesystem", "root": tmp_path}},
+    )
+    task = asyncio.create_task(worker.run(settings, stop))
+    try:
+        await wait_until(lambda: "ready" in runtime.observations)
+
+        async def slow_cleanup(*args):
+            await release.wait()
+
+        worker.cleanup.side_effect = slow_cleanup
+        await wait_until(lambda: runtime.observations[-1] == "unready")
+        count = len(runtime.observations)
+        await wait_until(lambda: len(runtime.observations) >= count + 2)
+    finally:
+        release.set()
+        stop.set()
+        await asyncio.wait_for(task, 3)
+    assert runtime.observations[-1] == "stopped"
+
+
+async def test_failed_heartbeat_write_retries_without_exposing_driver_details(monkeypatch, caplog):
+    stop = asyncio.Event()
+    health = WorkerHealth(None)
+    health.checked(True)
+    attempts = []
+
+    async def publish(state):
+        attempts.append(state)
+        if len(attempts) == 1:
+            raise RuntimeError("password=hidden-heartbeat-secret")
+        stop.set()
+
+    health.publish = publish
+    monkeypatch.setattr(worker, "HEARTBEAT_SECONDS", 0.01)
+    await asyncio.wait_for(worker.report_health(health, stop, lambda: True), 3)
+    assert attempts == ["ready", "ready"]
+    assert "worker_heartbeat_failed" in caplog.text
+    assert "hidden-heartbeat-secret" not in caplog.text

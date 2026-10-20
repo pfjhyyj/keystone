@@ -11,6 +11,7 @@ from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.http import install_errors
 from keystone.core.migrations import expected_heads
+from keystone.core.worker_health import worker_status
 from keystone.model_registry import load_models
 from keystone.platform.audit.controllers import router as audit_router
 from keystone.platform.dictionary.controllers import router as dictionary_router
@@ -108,6 +109,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.status_code = 200 if result["status"] == "ready" else 503
         response.headers["Cache-Control"] = "no-store"
         return result
+
+    @app.get("/api/v1/worker/status", tags=["health"])
+    async def worker_state():
+        return await worker_status(app.state.runtime.database)
 
     app.include_router(identity_router)
     app.include_router(audit_router)

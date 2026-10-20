@@ -16,7 +16,6 @@ from test_identity import assign, bearer, create_user, login, query, role, token
 from test_model_access import channel, entry
 
 from keystone.core.errors import ServiceError
-from keystone.core.worker_health import WorkerHealth
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.files.models import FileReference
@@ -82,7 +81,6 @@ def worker(client, tmp_path, *, code=None, stub=True):
         "KEYSTONE_FILE_DEFAULT_STORAGE": settings.file_default_storage,
     }
     log = tmp_path / f"worker-{time.time_ns()}.log"
-    env["KEYSTONE_WORKER_READY_FILE"] = str(log.with_suffix(".ready"))
     with log.open("w", encoding="utf8") as output:
         process = subprocess.Popen(
             [
@@ -665,14 +663,13 @@ run(main())
 """
     with worker(client, tmp_path, code=code) as (process, log):
         deadline = time.monotonic() + 20
-        health = WorkerHealth(log.with_suffix(".ready"))
-        while not health.healthy():
+        while client.get("/api/v1/worker/status").json()["status"] != "ready":
             assert process.poll() is None and time.monotonic() < deadline
             time.sleep(0.1)
         with worker(client, tmp_path) as (other, _):
             assert other.wait(timeout=15) != 0
-        assert health.healthy()
+        assert client.get("/api/v1/worker/status").json()["status"] == "ready"
         stop_file.touch()
         assert process.wait(timeout=20) == 0, log.read_text(encoding="utf8")
         assert "worker_stopped" in log.read_text(encoding="utf8")
-        assert not health.path.exists()
+        assert client.get("/api/v1/worker/status").json()["status"] == "offline"

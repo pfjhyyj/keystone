@@ -17,7 +17,7 @@ def test_source_migrations_are_independent_of_working_directory(tmp_path, monkey
     settings = Settings(_env_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == source
-    assert migrations.expected_heads(settings) == {"0007_channel_credentials"}
+    assert migrations.expected_heads(settings) == {"0008_worker_heartbeats"}
 
 
 def test_installed_package_uses_migrations_beside_working_directory(tmp_path, monkeypatch):
@@ -32,7 +32,7 @@ def test_installed_package_uses_migrations_beside_working_directory(tmp_path, mo
     settings = Settings(_env_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == app / "migrations"
-    assert migrations.expected_heads(settings) == {"0007_channel_credentials"}
+    assert migrations.expected_heads(settings) == {"0008_worker_heartbeats"}
 
 
 def test_missing_migration_files_fail_before_database_access(tmp_path, monkeypatch):

@@ -18,7 +18,6 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     database_url: SecretStr | None = None
-    worker_ready_file: Path | None = None
     file_coordination_root: Path | None = None
     file_storages: dict[StorageKey, StorageConfig] = Field(default_factory=dict, repr=False)
     file_default_storage: StorageKey = "local"

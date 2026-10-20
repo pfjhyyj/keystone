@@ -56,13 +56,16 @@ backend/.venv/bin/python scripts/check.py
 
 ## Worker 健康检查（排障）
 
-Worker 和 API 在本机分别运行。API 的 `/api/v1/ready` 检查数据库和存储，Worker 日志中的 `flow_worker_ready` 表示 Flow 执行器已就绪。
+Worker 默认每 5 秒向现有 PostgreSQL 写入一次心跳，无需环境变量、文件探针或额外服务。启动中、依赖失败及维护未就绪时仍会上报；就绪需要依赖检查、文件维护循环及已启用的 Flow 执行器都正常。检查结果超过 30 秒没有更新会撤销就绪，心跳本身仍可继续，避免“进程在线”被误认为“任务处理正常”。
 
-需要独立探针时，可在 `backend/.env` 设置 `KEYSTONE_WORKER_READY_FILE=../.data/keystone-worker.ready`（父目录须存在），重启 Worker 后，在另一个终端检查：
+控制台“平台状态”每 5 秒刷新 Worker 就绪状态和最近心跳时间。API 的 `GET /api/v1/worker/status` 返回 `ready`、`unready`、`offline` 或 `unknown`，以及 `last_heartbeat_at`。正常退出保留最后心跳并标记离线；异常退出超过 30 秒判为离线。数据库不可访问、迁移未完成或查询失败时返回无法确认，不猜测离线。时间戳与过期判断统一使用数据库时钟。
+
+API 的 `/api/v1/ready` 继续只检查自身数据库、迁移版本和存储；Worker 状态不会影响该接口或登录。API/Worker 使用同一个数据库，API 查询所有实例中仍有新鲜心跳的 Worker；旧实例停止上报或退出不会覆盖新实例。该机制只提供运行观测，不替代 Flow 的单 Worker 执行约束、权限检查或工作流恢复机制。
+
+需要命令行探针时，从 `backend/` 执行：
 
 ```bash
-cd backend
 uv run --locked keystone-worker --check
 ```
 
-探针只读取最近 30 秒的本地就绪标记，不连接数据库或模型渠道。不同 Worker 使用不同标记路径；本机默认未配置时探针返回失败，不影响 Worker 运行。该标记只证明维护循环近期完成且所需执行器已初始化，不保证每个流程成功。
+探针只查询当前主机的最近心跳，不启动执行器、创建记录或刷新心跳；就绪时退出 0，其余状态退出 1。记录按进程实例区分，正常退出保留最近时间，Worker 上报时清理超过 24 小时的旧记录。心跳表是运行观测数据，不作为业务或任务完成依据；从备份恢复的旧记录也必须通过新鲜度检查。

@@ -368,7 +368,7 @@ def exercise(source, restored, checks):
             "SELECT count(*) FROM information_schema.tables WHERE table_schema='keystone' "
             "AND table_name <> 'alembic_version'"
         )
-        == "16"
+        == "17"
     )
     passed("empty-volume cold start, repeatable migrations/storage init, non-root processes")
     verify_api_recreation(source)

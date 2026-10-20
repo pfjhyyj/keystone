@@ -4,6 +4,7 @@ from keystone.core.database import Base
 
 
 def load_models():
+    from keystone.core import models as core_models  # noqa: F401
     from keystone.platform.audit import models as audit_models  # noqa: F401
     from keystone.platform.dictionary import models as dictionary_models  # noqa: F401
     from keystone.platform.files import models as file_models  # noqa: F401

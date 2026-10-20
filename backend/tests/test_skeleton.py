@@ -57,8 +57,11 @@ def test_liveness_does_not_imply_database_or_domain_readiness():
     with TestClient(create_app(settings())) as client:
         live = client.get("/api/v1/health")
         ready = client.get("/api/v1/ready")
+        worker_state = client.get("/api/v1/worker/status")
     assert live.status_code == 200
     assert ready.status_code == 503
+    assert worker_state.status_code == 200
+    assert worker_state.json() == {"status": "unknown", "last_heartbeat_at": None}
     assert ready.json()["checks"] == {
         "database": "unconfigured",
         "schema": "unavailable",

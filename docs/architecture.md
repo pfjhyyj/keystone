@@ -88,7 +88,7 @@ API 与 Worker 使用一致的配置定义和构建版本，但连接池、SDK �
 
 首版采用停写联合备份：完整数据库同时包含业务、版本和 DBOS 数据，与同一窗口的文件卷（内容、卷标识和永久锁文件）、原镜像和运行配置成套保存。恢复到新项目，先恢复原版本，再按发布流程升级；不增加备份领域或服务。ready 不扫描历史文件，不能替代恢复后字节/授权/Flow 核对；会话/PAT 也回到备份时点，真实上游副作用不会随数据库回滚。具体操作与边界见[联合备份与恢复](backup-restore.md)。
 
-Worker 的进程健康由入口维护本地就绪文件，core/worker_health.py 提供只读探针；Flow 执行器仅通过进程内 Event 通知初始化/退出状态。本机探针使用 `keystone-worker --check`（按需配置健康文件），不增加领域表、跨进程心跳服务或后台聚合接口。API ready 保持原有依赖检查含义，具体新鲜度和故障语义见[开发说明](development.md#worker-健康检查排障)。
+Worker 默认每 5 秒向 PostgreSQL 的 worker_heartbeats 运行观测表上报状态，core/worker_health.py 管理写入、数据库时钟下的新鲜度判断及只读探针；Flow 执行器通过进程内 Event 通知就绪。独立心跳循环持续上报启动中或未就绪状态，维护检查过期不再认为就绪；实例 ID 防止旧进程退出覆盖新进程状态。API `/api/v1/worker/status` 提供就绪与最近心跳，console 定时刷新；API ready 保持原有依赖检查含义。无需文件探针配置、Redis 或新服务，具体故障语义见[开发说明](development.md#worker-健康检查排障)。
 
 ## 4. 事务、身份与外部调用
 
@@ -169,7 +169,7 @@ keystone/
 
 backend/ 内维护唯一后端依赖与锁文件，frontend/ 下每个应用维护自己的依赖、锁文件、构建和测试。Dockerfile、.dockerignore 和镜像入口配置随各自工程维护，使用工程目录作为构建上下文。首版只创建 console，不创建占位业务前端、pnpm workspace 或共享前端包。业务前端数量与后端业务模块数量不要求一致。deploy/ 负责第三方依赖编排，不容纳领域规则；docs/ 是当前设计唯一维护位置。
 
-当前已实现 platform/identity、audit、files、dictionary、model_access、flow 及 businesses/document_review。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 提供 init/migrate/migrate-flow/revision/check/init-admin/init-storage；console 提供账户、文件、字典、模型及 Flow 基本操作。初始迁移按 identity、audit、dictionary、files、model_access、flow 分为六份，保持一条链，增加渠道凭据增量迁移后，当前 head 为 0007_channel_credentials，文件多源字段包含在 0004_files 初始结构中；keystone schema 共十六张领域表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
+当前已实现 platform/identity、audit、files、dictionary、model_access、flow 及 businesses/document_review。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 提供 init/migrate/migrate-flow/revision/check/init-admin/init-storage；console 提供账户、文件、字典、模型及 Flow 基本操作。初始迁移按 identity、audit、dictionary、files、model_access、flow 分为六份，保持一条链，追加渠道凭据和 Worker 心跳迁移后，当前 head 为 0008_worker_heartbeats，文件多源字段包含在 0004_files 初始结构中；keystone schema 包含十六张领域表和一张 Worker 运行观测表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
 
 CLI 另提供 recover-model-calls --confirm-api-stopped：操作者停止全部 API/普通调用进程后，显式将普通遗留 running 调用收尾为 unknown，保留费用与编号并记录系统审计。确认标志不代替进程检测；恢复期间保持 API 停止。Flow 调用继续由持有单 Worker 排他锁的启动恢复处理，不新增后台超时扫描器。详细边界见[模型离线收尾](domains/model-access.md#75-普通-api-调用离线收尾)。
 
@@ -218,7 +218,7 @@ console 使用 `router/index.ts` 集中定义路由、导航与会话守卫，�
 
 `views/<页面>/` 保存路由页面（如 `UsersView.vue`），页面私有组件放在同目录的 `components/`，页面专用配置也就近维护；没有私有组件时不建空目录。顶层 `components/` 仅保留共用的弹窗、选择、分页、状态等基础组件，以及 `components/models/` 中被模型页面和 Flow 业务表单复用的选择器、费用展示。页面之间不导入其他页面的私有组件，按实际复用提取共享组件，保持目录层级简洁及组件名明确。
 
-`plugins/element-plus.ts` 集中注册 Element Plus 基础组件，`styles/index.css` 定义主题与布局；编辑使用 `AppDialog`，运行、调用和引用详情使用抽屉。`AppSelect` 保留原生 form 必选校验，分页保持接口支持的上一页/下一页。领域表单直接维护字段，不增加 schema 表单或通用 CRUD 框架。概览只展示健康/就绪接口提供的实际状态，不推断 Worker 在线状态。个人中心在切换页签或身份变化时清理密码、权限选择和令牌明文。
+`plugins/element-plus.ts` 集中注册 Element Plus 基础组件，`styles/index.css` 定义主题与布局；编辑使用 `AppDialog`，运行、调用和引用详情使用抽屉。`AppSelect` 保留原生 form 必选校验，分页保持接口支持的上一页/下一页。领域表单直接维护字段，不增加 schema 表单或通用 CRUD 框架。概览展示 API 健康/就绪和独立的 Worker 心跳状态，不通过 API 就绪推断 Worker 在线。个人中心在切换页签或身份变化时清理密码、权限选择和令牌明文。
 
 表格使用自动布局、原生滚动条和 `fit=false`，表体通过 CSS 至少填满容器。避免组件在 ResizeObserver 回调中同步调整列宽；手机缩放和侧栏切换由浏览器布局处理。
 

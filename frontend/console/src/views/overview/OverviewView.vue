@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { Connection, Cpu, Files, Monitor, Refresh } from '@element-plus/icons-vue'
-import { getHealth, getReadiness } from '../../api/system'
-import type { Health, Readiness } from '../../api/system'
+import { getHealth, getReadiness, getWorkerStatus } from '../../api/system'
+import type { Health, Readiness, WorkerStatus } from '../../api/system'
 const health = ref<Health | null>(null),
   ready = ref<Readiness | null>(null),
+  worker = ref<WorkerStatus | null>(null),
   busy = ref(false)
+let alive = true
+let timer: ReturnType<typeof setInterval> | undefined
 const checked = ref('尚未检查')
+const workerLabels = { ready: '就绪', unready: '未就绪', offline: '离线', unknown: '无法确认' }
 const labels: Record<string, string> = {
   ok: '正常',
   unconfigured: '未配置',
@@ -20,6 +24,13 @@ const cards = computed(() => [
     value: health.value ? '在线' : '无法确认',
     good: !!health.value,
     note: health.value ? `Keystone API · ${health.value.version}` : '等待接口响应',
+  },
+  {
+    label: 'Worker 服务',
+    icon: Cpu,
+    value: workerLabels[worker.value?.status ?? 'unknown'],
+    good: worker.value?.status === 'ready',
+    note: '独立心跳检查，超过 30 秒未上报视为离线',
   },
   ...(
     [
@@ -42,13 +53,22 @@ const cards = computed(() => [
 async function refresh() {
   if (busy.value) return
   busy.value = true
-  const result = await Promise.allSettled([getHealth(), getReadiness()])
+  const result = await Promise.allSettled([getHealth(), getReadiness(), getWorkerStatus()])
+  if (!alive) return
   health.value = result[0].status === 'fulfilled' ? result[0].value : null
   ready.value = result[1].status === 'fulfilled' ? result[1].value : null
+  worker.value = result[2].status === 'fulfilled' ? result[2].value : null
   checked.value = new Date().toLocaleString('zh-CN')
   busy.value = false
 }
-onMounted(refresh)
+onMounted(() => {
+  void refresh()
+  timer = setInterval(refresh, 5000)
+})
+onScopeDispose(() => {
+  alive = false
+  clearInterval(timer)
+})
 </script>
 <template>
   <section class="overview-page" aria-label="平台状态">
@@ -76,14 +96,20 @@ onMounted(refresh)
           ><StatusTag :status="ready?.flow_enabled ? 'active' : 'disabled'">{{
             ready ? (ready.flow_enabled ? '已启用' : '未启用') : '无法确认'
           }}</StatusTag></el-descriptions-item
-        ><el-descriptions-item label="Worker 在线状态">需通过独立健康检查确认</el-descriptions-item
+        ><el-descriptions-item label="Worker 最近心跳"
+          ><time v-if="worker?.last_heartbeat_at" :datetime="worker.last_heartbeat_at">{{
+            new Date(worker.last_heartbeat_at).toLocaleString('zh-CN')
+          }}</time
+          ><span v-else>{{
+            worker?.status === 'offline' ? '暂无记录' : '无法读取'
+          }}</span></el-descriptions-item
         ><el-descriptions-item label="最近检查">{{
           checked
         }}</el-descriptions-item></el-descriptions
       >
       <div class="overview-note">
         <el-tag disable-transitions type="info" effect="plain">就绪检查</el-tag>
-        <p>API 就绪不代表 Worker 已在线；模型渠道配置可在模型接入页查看。</p>
+        <p>状态每 5 秒刷新；Worker 心跳独立于 API 就绪检查。模型渠道配置可在模型接入页查看。</p>
       </div></el-card
     >
   </section>

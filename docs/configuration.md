@@ -39,7 +39,6 @@ Compose 中已有 shell 变量优先于环境文件，再使用代码默认值�
 | `KEYSTONE_FILE_MAX_BYTES` | 16 MiB，最大 64 MiB；使用 Nginx 镜像时同步调整代理限制 |
 | `KEYSTONE_FLOW_ENABLED` | 默认 `true`；Worker 执行流程，不另需消息队列服务 |
 | `KEYSTONE_INITIAL_ADMIN_PASSWORD` | 可选，仅供非交互 `keystone init`；本机首次默认交互输入，已有用户时忽略 |
-| `KEYSTONE_WORKER_READY_FILE` | 默认未设置；独立健康探针按需配置，见[开发说明](development.md#worker-健康检查排障) |
 
 构建后的容器通过运行环境显式注入这些参数，文件目录使用实际挂载路径。后端镜像默认监听 `0.0.0.0:8000`；前端 Nginx 镜像默认代理同 Docker 网络的 `api:8000`。镜像构建不读取实际 `.env`，具体边界见[打包与发布](deployment.md)。
 
