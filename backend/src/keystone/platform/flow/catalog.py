@@ -41,6 +41,7 @@ class Definition:
     output_file_fields: tuple[str, ...] = ()
     # Trusted code declaration, not a new persisted field or public import path.
     model_field: str | None = None
+    timeout_seconds: int = 300
 
     def output_schema(self):
         # Match workflow model_dump(mode="json", by_alias=False), including serializers.
@@ -57,6 +58,7 @@ class Definition:
             "required_permissions": self.required_permissions,
             "file_fields": self.file_fields,
             "output_file_fields": self.output_file_fields,
+            "timeout_seconds": self.timeout_seconds,
         }
 
     def snapshot(self):
@@ -101,6 +103,11 @@ def build_definitions(definitions, permissions):
     """Validate the complete explicit list and freeze this application's directory."""
     result, entrypoints = {}, set()
     for definition in definitions:
+        if (
+            type(definition.timeout_seconds) is not int
+            or not 1 <= definition.timeout_seconds <= 86400
+        ):
+            raise ValueError("Flow timeout must be between 1 and 86400 seconds")
         if not definition.key or definition.key in result:
             raise ValueError("Empty or duplicate Flow definition key")
         if set(definition.required_permissions) - permissions.keys():

@@ -193,6 +193,11 @@ def test_source_routing_independent_files_and_pinned_replays(multi_client, s3):
     assert upload(client, storage_key="cloud").json()["code"] == "idempotency_conflict"
     client.app.state.runtime.storage.default_key = "cloud"
     assert upload(client).json()["id"] == local["id"]
+    # Resolve the original source before applying a default source's smaller body limit.
+    client.app.state.runtime.settings.file_max_bytes = 128 * 1024**2
+    oversized_declaration = upload(client, expected_size=65 * 1024**2)
+    assert oversized_declaration.status_code == 422
+    assert oversized_declaration.json()["code"] == "file_size_mismatch"
     assert upload(client, key="new-default").json()["storage_key"] == "cloud"
     for file in (local, cloud):
         assert client.get(f"/api/v1/files/{file['id']}/content").content == b"hello"

@@ -87,7 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.runtime = runtime
         app.state.passwords = Passwords()
         app.state.login_limiter = LoginLimiter()
-        app.state.upload_slots = asyncio.Semaphore(4)
+        app.state.upload_slots = asyncio.Semaphore(settings.file_transfer_slots)
         try:
             yield
         finally:

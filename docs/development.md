@@ -69,3 +69,15 @@ uv run --locked keystone-worker --check
 ```
 
 探针只查询当前主机的最近心跳，不启动执行器、创建记录或刷新心跳；就绪时退出 0，其余状态退出 1。记录按进程实例区分，正常退出保留最近时间，Worker 上报时清理超过 24 小时的旧记录。心跳表是运行观测数据，不作为业务或任务完成依据；从备份恢复的旧记录也必须通过新鲜度检查。
+
+
+## 本地媒体专项验收
+
+安装可执行 FFmpeg、前端依赖及 Playwright 浏览器后，在专用 keystone_test 数据库上执行：
+
+```bash
+backend/.venv/bin/python scripts/accept_local_media.py
+# Windows 可选系统 Edge：backend/.venv/Scripts/python.exe scripts/accept_local_media.py --browser-channel msedge
+```
+
+脚本建立并清理随机测试库，运行独立 HTTP API，验证 16/256 MiB 流式上传下载、SHA-256、HEAD/Range、API 进程峰值内存，以及浏览器 H.264 播放和跳转。视频使用合法 free box 填充到指定大小，区分传输规模和媒体解码；FFmpeg 仅是验收工具，不是平台运行依赖。结果保存在 `.artifacts/local-media/`，不接触业务库、云端或模型。NAS 性能与客户原片另在部署环境验证。

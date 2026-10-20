@@ -44,7 +44,9 @@ async def run(runtime, stop, *, ready=None):
         try:
             await recover_interrupted_calls(runtime.database)
             DBOS.launch()
-            await DBOS.register_queue_async(QUEUE, worker_concurrency=2)
+            await DBOS.register_queue_async(
+                QUEUE, worker_concurrency=runtime.settings.flow_worker_concurrency
+            )
             if ready is not None:
                 ready.set()
             log.info("flow_worker_ready executor=keystone-worker version=%s", execution_version())

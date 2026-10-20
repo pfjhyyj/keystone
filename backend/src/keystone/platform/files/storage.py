@@ -3,7 +3,10 @@
 import asyncio
 import hashlib
 import json
+import os
 import re
+from collections import OrderedDict
+from contextlib import asynccontextmanager
 
 import opendal
 
@@ -12,20 +15,42 @@ from keystone.core.storage_config import StorageConfig
 from keystone.platform.files import leases
 
 
-async def blocking(function, *args):
+async def blocking(function, *args, on_cancel=None):
     # Cancellation must not release the coordination lock while native I/O still runs.
     task = asyncio.create_task(asyncio.to_thread(function, *args))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
+        if on_cancel is not None:
+            on_cancel()
         while not task.done():
             try:
                 await asyncio.shield(task)
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                # Native cleanup/abort errors must not replace the caller's cancellation.
+                pass
         if not task.cancelled():
             task.exception()
         raise
+
+
+@asynccontextmanager
+async def opened(function, *args, on_cancel=None):
+    """Cancellation while opening must still close the handle created by the I/O thread."""
+    handle = None
+
+    def acquire():
+        nonlocal handle
+        handle = function(*args)
+
+    try:
+        await blocking(acquire, on_cancel=on_cancel)
+        yield handle
+    finally:
+        if handle is not None:
+            await blocking(handle.close)
 
 
 class Storage:
@@ -33,6 +58,7 @@ class Storage:
         self.config = config
         self.root = self.config.root
         self.volume = leases.LocalLeases(self.root)
+        self._verified = OrderedDict()
 
     def fingerprint(self):
         if self.config.driver == "filesystem":
@@ -80,11 +106,81 @@ class Storage:
 
     def write(self, fingerprint, key, data):
         try:
+            from keystone.platform.files.transfers import CHUNK_BYTES, StagedUpload
+
             op = self.operator(fingerprint, key)
+            if isinstance(data, StagedUpload):
+                if self.config.driver != "filesystem":
+                    raise leases.unavailable()
+                # Only uploading/failed objects can reach here, under their file lease.
+                # A failed partial write stays unreadable and uses existing cleanup/retry.
+                checksum, size = hashlib.sha256(), 0
+                with data.path.open("rb") as source, (self.root / key).open("wb") as target:
+                    while chunk := source.read(CHUNK_BYTES):
+                        if data.cancelled.is_set():
+                            raise leases.unavailable()
+                        size += len(chunk)
+                        if size > data.size:
+                            raise leases.unavailable()
+                        target.write(chunk)
+                        checksum.update(chunk)
+                    target.flush()
+                    os.fsync(target.fileno())
+                if (
+                    size != data.size
+                    or checksum.hexdigest() != data.checksum
+                    or (self.root / key).stat().st_size != size
+                ):
+                    raise leases.unavailable()
+                return
             op.write(key, data)
             if op.stat(key).content_length != len(data):
                 raise leases.unavailable()
         except Exception:
+            raise leases.unavailable() from None
+
+    def open_local(self, fingerprint, key, expected_size, checksum, cancelled=None):
+        """Return a verified local reader. Cache only unchanged filesystem identities.
+
+        Every request checks the marker, key, size and stat signature. First access
+        after restart/external change hashes incrementally; repeated video seeks
+        do not scan the whole file. Managed active content is immutable.
+        """
+        from keystone.platform.files.transfers import checksum as content_checksum
+
+        stream = None
+        try:
+            if self.config.driver != "filesystem":
+                raise leases.unavailable()
+            self.operator(fingerprint, key)
+            path = self.root / key
+            stream = path.open("rb")
+
+            def signature():
+                stat = os.fstat(stream.fileno())
+                return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+            before = signature()
+            if before[2] != expected_size:
+                raise leases.unavailable()
+            identity = (fingerprint, key, before, checksum)
+            if identity not in self._verified:
+                try:
+                    actual = content_checksum(stream, expected_size, cancelled)
+                except ValueError:
+                    raise ServiceError(503, "file_corrupt", "文件内容校验失败") from None
+                if signature() != before or actual != checksum:
+                    raise ServiceError(503, "file_corrupt", "文件内容校验失败")
+                self._verified[identity] = True
+                if len(self._verified) > 1024:
+                    self._verified.popitem(last=False)
+                stream.seek(0)
+            return stream
+        except Exception as error:
+            if stream is not None:
+                stream.close()
+            if isinstance(error, ServiceError):
+                raise
             raise leases.unavailable() from None
 
     def read(self, fingerprint, key, expected_size):
@@ -119,6 +215,9 @@ class StorageRegistry:
         self.default_key = settings.file_default_storage
         self.sources = {key: Storage(config) for key, config in settings.file_storages.items()}
         self.coordination = leases.LocalLeases(settings.file_coordination_root)
+        from keystone.platform.files.transfers import Transfers
+
+        self.transfers = Transfers(self.coordination, settings)
 
     def get(self, key=None):
         storage = self.sources.get(key if key is not None else self.default_key)
@@ -126,8 +225,8 @@ class StorageRegistry:
             raise ServiceError(503, "storage_unavailable", "文件存储未配置或暂不可用")
         return storage
 
-    def lease(self, key):
-        return self.coordination.lease(key)
+    def lease(self, key, *, shared=False):
+        return self.coordination.lease(key, shared=shared)
 
     def initialize(self):
         if not self.sources:

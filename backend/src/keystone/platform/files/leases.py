@@ -57,7 +57,7 @@ class LocalLeases:
             raise unavailable() from None
 
     @contextmanager
-    def lease(self, key):
+    def lease(self, key, *, shared=False):
         self.fingerprint()
         # Permanent lock files: unlinking one permits two independent lock owners.
         path = self.root / ".locks" / hashlib.sha256(str(key).encode()).hexdigest()
@@ -67,7 +67,8 @@ class LocalLeases:
             raise unavailable() from None
         try:
             try:
-                portalocker.lock(handle, portalocker.LOCK_EX | portalocker.LOCK_NB)
+                mode = portalocker.LOCK_SH if shared else portalocker.LOCK_EX
+                portalocker.lock(handle, mode | portalocker.LOCK_NB)
             except portalocker.exceptions.LockException:
                 raise ServiceError(409, "file_busy", "文件正在处理中，请稍后重试") from None
             yield

@@ -1,5 +1,8 @@
 import hashlib
 import json
+from contextlib import asynccontextmanager, nullcontext
+from dataclasses import dataclass
+from threading import Event
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -12,7 +15,8 @@ from keystone.platform.files import policy
 from keystone.platform.files.models import File, FileGrant
 from keystone.platform.files.schemas import view
 from keystone.platform.files.services.references import require_unreferenced, retain_artifact
-from keystone.platform.files.storage import blocking
+from keystone.platform.files.storage import blocking, opened
+from keystone.platform.files.transfers import CHUNK_BYTES, StagedUpload
 from keystone.platform.identity.access import AccessContext
 
 
@@ -20,6 +24,25 @@ def digest(value):
     return hashlib.sha256(
         json.dumps(value, ensure_ascii=False, sort_keys=True).encode()
     ).hexdigest()
+
+
+@dataclass
+class ContentReader:
+    name: str
+    content_type: str
+    size: int
+    checksum: str
+    stream: object
+
+    async def chunks(self, start=0, length=None):
+        await blocking(self.stream.seek, start)
+        remaining = self.size - start if length is None else length
+        while remaining:
+            chunk = await blocking(self.stream.read, min(CHUNK_BYTES, remaining))
+            if not chunk:
+                raise ServiceError(503, "file_corrupt", "文件内容不完整")
+            remaining -= len(chunk)
+            yield chunk
 
 
 class FileService:
@@ -40,6 +63,52 @@ class FileService:
                 raise ServiceError(413, "file_too_large", "文件超过上传上限")
             if storage_key is not None and storage_key not in self.storage.sources:
                 raise ServiceError(422, "storage_unknown", "请选择已配置的文件存储源")
+            if (
+                storage_key is not None
+                and self.storage.get(storage_key).config.driver != "filesystem"
+                and expected_size > 64 * 1024 * 1024
+            ):
+                raise ServiceError(413, "file_too_large", "此存储源保留 64 MiB 上传限制")
+
+    async def _resolved_upload(self, data):
+        # A default-source change cannot retarget an already registered request key.
+        async with self.identity.access("file:create") as (session, auth):
+            previous = None
+            if data.request_key:
+                key = digest(["file.upload", str(auth.user.id), data.request_key])
+                previous = await session.scalar(select(File).where(File.upload_key == key))
+            storage_key = data.storage_key or (
+                previous.storage_key if previous else self.storage.default_key
+            )
+        await self.prepare_upload(data.expected_size, storage_key)
+        return data.model_copy(update={"storage_key": storage_key})
+
+    async def upload_body(self, data, chunks):
+        data = await self._resolved_upload(data)
+        if self.storage.get(data.storage_key).config.driver == "filesystem":
+            return await self.upload_stream(data, chunks)
+        # Existing cloud upload remains bounded to 64 MiB; stage 0A adds no cloud protocol.
+        content = bytearray()
+        async for chunk in chunks:
+            if len(content) + len(chunk) > data.expected_size:
+                raise ServiceError(413, "file_too_large", "上传内容超过声明大小")
+            content.extend(chunk)
+        return await self.upload(data, bytes(content))
+
+    async def upload_stream(self, data, chunks, *, owner=None, slot=None, _transfer_slot=None):
+        """Local-only streaming; ordinary upload remains available to bounded callers."""
+        data = await self._resolved_upload(data)
+        if self.storage.get(data.storage_key).config.driver != "filesystem":
+            raise ServiceError(422, "local_storage_required", "流式上传需要本地文件存储")
+        if (owner is None) != (slot is None) or (
+            owner is not None and (not owner or len(owner) > 160 or not slot or len(slot) > 100)
+        ):
+            raise ValueError("Invalid reference key")
+        reference = (owner, slot) if owner is not None else None
+        async with self.storage.transfers.stage(
+            chunks, data.expected_size, data.checksum_sha256, _slot=_transfer_slot
+        ) as staged:
+            return await self._upload_content(data, staged, reference=reference)
 
     async def listing(self, offset=0, limit=50):
         async with self.identity.access("file:inspect") as (session, auth):
@@ -74,7 +143,11 @@ class FileService:
             raise ServiceError(422, "file_size_mismatch", "实际内容与预期大小不一致")
         if len(content) > self.identity.settings.file_max_bytes:
             raise ServiceError(413, "file_too_large", "文件超过上传上限")
-        checksum = hashlib.sha256(content).hexdigest()
+        checksum = (
+            content.checksum
+            if isinstance(content, StagedUpload)
+            else hashlib.sha256(content).hexdigest()
+        )
         if data.checksum_sha256 and checksum != data.checksum_sha256:
             raise ServiceError(422, "file_checksum_mismatch", "文件内容校验失败")
         async with self.identity.access("file:create") as (_, auth):
@@ -182,7 +255,12 @@ class FileService:
         try:
             # Same-key retries can only write identical validated bytes. This also makes
             # delayed S3 PUTs harmless to a completed retry; deletion uses tombstone sweeps.
-            await blocking(storage.write, fingerprint, object_key, content)
+            if isinstance(content, StagedUpload):
+                await blocking(
+                    storage.write, fingerprint, object_key, content, on_cancel=content.cancelled.set
+                )
+            else:
+                await blocking(storage.write, fingerprint, object_key, content)
             async with self.identity.database.transaction() as session:
                 file = await policy.locked(session, identifier)
                 if file.status == "uploading":
@@ -253,13 +331,13 @@ class FileService:
 
         await mark()
 
-    async def content(self, identifier, *, max_bytes=None):
-        if max_bytes is not None and max_bytes < 0:
+    async def content(self, identifier, *, max_bytes=64 * 1024 * 1024):
+        if max_bytes is None or max_bytes < 0:
             raise ValueError("max_bytes must be non-negative")
         # Fast authorization before probing storage, then recheck under the lease.
         async with self.identity.access("file:content_read") as (session, auth):
             await policy.require(session, auth, await session.get(File, identifier), "content_read")
-        with self.storage.lease(identifier):
+        with self.storage.lease(identifier, shared=True):
             async with self.identity.access("file:content_read") as (session, auth):
                 file = await session.get(File, identifier)
                 await policy.require(session, auth, file, "content_read")
@@ -276,6 +354,44 @@ class FileService:
                 file = await session.get(File, identifier)
                 await policy.require(session, auth, file, "content_read")
                 return file.name, content
+
+    @asynccontextmanager
+    async def open_content(self, identifier, *, _transfer_slot=None, max_bytes=None):
+        """Hold the object lease until transport/Worker closes the reader; no DB I/O lock."""
+        async with self.identity.access("file:content_read") as (session, auth):
+            await policy.require(session, auth, await session.get(File, identifier), "content_read")
+        slot = self.storage.transfers.slot() if _transfer_slot is None else nullcontext()
+        with slot, self.storage.lease(identifier, shared=True):
+            async with self.identity.access("file:content_read") as (session, auth):
+                file = await session.get(File, identifier)
+                await policy.require(session, auth, file, "content_read")
+                source = self.storage.get(file.storage_key)
+                metadata = file.name, file.content_type, file.size_bytes, file.checksum_sha256
+                fingerprint, key = file.storage_fingerprint, file.object_key
+                if max_bytes is not None and file.size_bytes > max_bytes:
+                    raise ServiceError(413, "file_too_large", "文件超过读取上限")
+
+            cancelled = Event()
+
+            def acquire():
+                if source.config.driver == "filesystem":
+                    return source.open_local(fingerprint, key, metadata[2], metadata[3], cancelled)
+                # Preserve the existing bounded S3 path; cloud streaming is stage 0B.
+                from io import BytesIO
+
+                if metadata[2] > 64 * 1024 * 1024:
+                    raise ServiceError(413, "file_too_large", "此存储源保留 64 MiB 读取限制")
+                body = source.read(fingerprint, key, metadata[2])
+                if hashlib.sha256(body).hexdigest() != metadata[3]:
+                    raise ServiceError(503, "file_corrupt", "文件内容校验失败")
+                return BytesIO(body)
+
+            async with opened(acquire, on_cancel=cancelled.set) as stream:
+                async with self.identity.access("file:content_read") as (session, auth):
+                    await policy.require(
+                        session, auth, await session.get(File, identifier), "content_read"
+                    )
+                yield ContentReader(*metadata, stream)
 
     async def edit(self, identifier, data):
         async with self.identity.access(

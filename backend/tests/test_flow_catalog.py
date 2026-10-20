@@ -20,6 +20,9 @@ from keystone.platform.identity.policy import PERMISSIONS
     [
         ({"entrypoint": ""}, "entrypoint"),
         ({"entrypoint": "   "}, "entrypoint"),
+        ({"timeout_seconds": 0}, "timeout"),
+        ({"timeout_seconds": 86401}, "timeout"),
+        ({"timeout_seconds": True}, "timeout"),
         ({"model_field": "missing"}, "model field"),
         ({"model_field": ""}, "model field"),
         ({"file_fields": ("missing",)}, "file paths"),

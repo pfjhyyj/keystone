@@ -40,13 +40,21 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 | `[file_storages.<源名>]` | `KEYSTONE_FILE_STORAGES__<源名>__<字段>` | 逐项配置内容源，见第 4 节 |
 | `file_coordination_root` | `KEYSTONE_FILE_COORDINATION_ROOT` | 本地共享协调目录，示例为 `../.data/files` |
 | `file_default_storage` | `KEYSTONE_FILE_DEFAULT_STORAGE` | `local`，必须指向已配置源 |
-| `file_max_bytes` | `KEYSTONE_FILE_MAX_BYTES` | 16 MiB，最大 64 MiB；同步 Nginx 上传限制 |
+| `file_max_bytes` | `KEYSTONE_FILE_MAX_BYTES` | 默认 16 MiB；本地可配置到 1 TiB，同时受临时配额和代理限制；S3 保留 64 MiB 上限 |
+| `file_transfer_slots` | `KEYSTONE_FILE_TRANSFER_SLOTS` | 默认 4，范围 1–32；API/Worker 共用本地传输与临时文件槽位 |
+| `file_temp_bytes` | `KEYSTONE_FILE_TEMP_BYTES` | 默认 64 GiB；每槽临时文件上限为总额除以槽数，同时不能超过 file_max_bytes |
+| `file_upload_timeout_seconds` | `KEYSTONE_FILE_UPLOAD_TIMEOUT_SECONDS` | 默认 3600 秒，范围 1–86400；包含 API 槽位排队、上传接收与确认的总期限 |
+| `flow_worker_concurrency` | `KEYSTONE_FLOW_WORKER_CONCURRENCY` | 默认 2，范围 1–16；单 Worker 的持久队列并发 |
 | `flow_enabled` | `KEYSTONE_FLOW_ENABLED` | `true`，API 与 Worker 保持一致 |
 | `initial_admin_password` | `KEYSTONE_INITIAL_ADMIN_PASSWORD` | 可选，仅供空安装非交互初始化；默认交互输入，已有用户时忽略 |
 
 嵌套环境变量用双下划线 `__` 分隔层级。例如 `KEYSTONE_FILE_STORAGES__LOCAL__ROOT=/data/files` 只覆盖 `local` 源的根目录。源名称以小写字母开头，可包含数字、单下划线和连字符，不使用连续双下划线；环境变量中的名称使用大写。数组在 TOML 中直接填写；通过环境变量覆盖 `browser_origins` 时使用 JSON 数组，例如 `KEYSTONE_BROWSER_ORIGINS='["https://console.example.com"]'`。
 
 后端镜像默认监听 `0.0.0.0:8000`，配置在运行时挂载，真实 `keystone.toml` 不进入构建上下文，详见[打包与发布](deployment.md)。
+
+本地媒体可从 `file_max_bytes = 17179869184`（16 GiB）、4 个槽位、64 GiB 临时预算开始配置。这个预算限制 `.transfers` 工作副本，不包含正式文件容量；上传确认期间还需正式存储的一份空间。临时副本在整个上下文中占槽，处理期间再上传文件会占第二个槽，因此应按业务并发留出余量，满载会明确返回 `503 file_transfer_busy`。磁盘预检不足返回 `507 file_temporary_full`，每槽配额不足返回 `413 file_temporary_limit`。
+
+API/Worker 必须保持相同协调目录、槽位数、临时预算和大小限制；调整槽位前停止全部旧进程，再清理已退出进程遗留的 `.transfers` 普通临时文件。不要清理 `.locks` 或受管 `files`。字节可放 filesystem/NAS，协调目录仍须是同宿主可靠本地卷。当前 Nginx 文件路由为 16 GiB 上限、3600 秒上游期限，关闭请求/响应完整缓存；放大文件和时间限制时同时调整代理。上限是配置边界，实际 NAS 吞吐及容量须部署时实测。
 
 ## 3. 配置变更
 

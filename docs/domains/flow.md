@@ -326,7 +326,7 @@ composition.py 集中声明轻量 Definition，bootstrap 加载该目录；只�
 
 ### 7.2 Worker 与执行预算
 
-固定 executor 为 keystone-worker，队列为 keystone-flows，并发 2。每轮按 ID 游标扫描最多 25 条非终态 Run，单条协调上限 15 秒；缺少原版本时不重新解释原输入、不分发给新版本，保留运行并记录脱敏告警。成功查询引擎才更新 observed_at。受理键承诺至少保留 7 天，当前完全不自动清理，因此原 Run 仍在时持续去重。
+固定 executor 为 keystone-worker，队列为 keystone-flows，默认并发 2，可通过 flow_worker_concurrency 配置为 1–16，满载保留在持久队列。每轮按 ID 游标扫描最多 25 条非终态 Run，单条协调上限 15 秒；缺少原版本时不重新解释原输入、不分发给新版本，保留运行并记录脱敏告警。成功查询引擎才更新 observed_at。受理键承诺至少保留 7 天，当前完全不自动清理，因此原 Run 仍在时持续去重。
 
 execution_version 是后端源码、打包资源和 uv.lock 的内容摘要；源码换行统一后计算，API/Worker 必须交付同一制品。当前资源包括 Python、Markdown、JSON、文本；以后引入其他执行资源时同步纳入摘要。定义快照仍只有 output_schema 和 output_file_fields。发布前处理未完成运行，或保留原制品用于恢复；不做多版本同时调度。
 
@@ -369,3 +369,14 @@ ExecutionIdentity 只覆盖身份授权，共用 AccessContext 的事务、锁�
 FlowModel 通过 ModelRuntime.invoke_sdk 传入固定模型选择、稳定调用 ID、FlowContext 和 SDK 回调，直接取得 Agent 响应对象，不再构造 model_key=internal 或占位文本。与普通/流式调用共用发送登记、授权、费用收尾及异常分类；Pydantic AI 包装后的 HTTP 402/429 保留相同的安全错误码和 failed 状态，未知结果仍禁止重发。
 
 DBOS 错误投影沿用 Ether 的显式安全码白名单边界。补齐模型执行可能产生的 model_not_found、model_target_changed、model_input_too_large、model_response_too_large、model_stream_incomplete、model_interrupted、model_invalid_request 和 upstream_model_not_found；其中 HTTP 400/422 对应 model_invalid_request，404 对应 upstream_model_not_found。只有完整匹配白名单的代码进入 FlowRun.error_code；未知代码或附带原始消息的字符串一律变为 flow_execution_failed，不透传供应商消息、异常正文或凭据。白名单不改变模型调用记录的 failed/unknown 判断或禁止自动重发规则，不增加错误实体或异常框架。
+
+
+### 7.3 人工素材库接入入口
+
+`FlowService.start_in_transaction(session, auth, Start(...))` 接收调用方从 `AccessContext.access()` 取得的当前身份事务。业务先验证自身对象，再在同一事务中保存业务记录、授权/引用、FlowRun 和成功审计；内部沿用权限、幂等和契约校验，不提交也不做外部 I/O。调用方中途失败则全部回滚。提交后 Worker 扫描 pending，即使受理 API 已退出也能补投，无需额外 outbox。事务内入口只供可信业务代码，不能接受客户端自造的 auth 或 owner/slot。
+
+媒体步骤可以使用 `async with host.materialize_file(run_id, file_id) as path` 取得经授权、校验的受限本地副本；退出删除副本，不能把 path/句柄作为 DBOS 检查点保存。`host.upload_file(run_id, key, path, name=..., content_type=...)` 分块校验并上传业务产生的本地文件，以运行和产物键幂等，确认时保留 artifact 引用。两者在扫描字节前取得容量槽位并检查大小，复用既有身份、存储指纹、文件锁和授权；原有有界 read_file/upload 字节入口继续可用。
+
+新增文件上下文在持有资源期间每秒检查运行是否取消或执行身份失效；取消触发当前异步任务退出，分块校验/复制停止后续块，等待当前原生 I/O 结束后清理句柄、临时文件和槽位。资源释放不依赖引擎取消调用成功；引擎取消仍由协调循环统一处理，明确的 flow_cancelled 错误在存在取消请求时归为 cancelled，不掩盖其他业务失败。DBOS 自身的步骤边界取消机制继续保留。业务必须让处理保持可取消：同步重活放线程/子进程，子进程在自身 finally 中终止并等待退出，FFmpeg 参数与工作目录由业务管理。
+
+Definition 的可信代码字段 `timeout_seconds` 默认 300，可设 1–86400 秒并形成新执行制品；客户端不能任意放大执行期限。它控制 DBOS 运行预算，队列并发控制同时执行数量，临时槽位和文件限额控制本地 I/O 资源，不引入新的媒体调度器。

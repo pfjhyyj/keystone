@@ -197,9 +197,15 @@ FileGrant、FileReference 物理移除，审计日志保留 file_id、授权主�
 
 filesystem 的身份来自 `.keystone-storage`，目录搬迁或恢复须连同标记保存；S3 身份来自 driver、endpoint、bucket、region、prefix，不包含凭据。配置目标改变或源被移除时，旧文件访问失败，不回退到默认源。凭据轮换不改变身份。应用不自动创建 S3 bucket；init-storage 仅显式初始化本地协调卷及已配置的本地源。对外只暴露源键，不暴露路径、对象 key、指纹、端点和凭据。源键选择使用现有 file:create 权限，首版没有按源授权；部署只应配置允许平台用户上传的源。
 
-上传 POST /api/v1/files：查询参数为 name、content_type、expected_size，可选 storage_key、request_key、checksum_sha256；正文是原始二进制。GET /options 返回 max_file_bytes、storage_keys、default_storage；后台提供存储源选择。使用请求键必须提供 SHA-256，摘要覆盖原始元数据、源键及指纹；同键换源或改变内容返回冲突，两个独立文件须用不同请求键。默认单文件 16 MiB，最大 64 MiB；Nginx 上限需同步调整。单 API 同时接收 4 个上传，接收/处理期限 60 秒，S3 单次存储操作超时 30 秒；取消仍等待已启动的原生 I/O 结束后释放锁。保留有界内存上传，不开放直传或分片接口。
+上传 POST /api/v1/files：查询参数为 name、content_type、expected_size，可选 storage_key、request_key、checksum_sha256；正文是原始二进制。GET /options 返回 max_file_bytes、storage_keys、default_storage。使用请求键必须提供 SHA-256，摘要覆盖原始元数据、源键及指纹；同键换源或改变内容返回冲突，两个独立文件须用不同请求键。
 
-本地锁由独立 LocalLeases 管理，API/Worker 必须共用同宿主的可靠本地协调卷与标记（KEYSTONE_FILE_COORDINATION_ROOT）。配置任何内容源时都必须显式提供协调目录，协调目录与内容源互不推导，可以配置为同一路径。锁覆盖上传请求键、File 上传、完整读取及清理；冲突立即返回 409 file_busy，数据库只使用短事务。重试保留同一 File、原始请求摘要和现有授权，不补回被撤销授权。S3 重试只允许写同一已校验内容，迟到的旧 PUT 因内容完全一致不能覆盖成另一内容；不把本地锁当作远端请求已经停止的证明。不支持多宿主、NFS 协调或取消远端已受理请求。
+本地上传以 256 KiB 块写受限临时文件并增量校验，完整验证后才登记/重试 File，再分块写入正式位置、确认大小和校验结果，最后将 File 发布为 active。正文中断或校验失败清除临时文件；正式写入失败沿用 failed 状态与原键重试。崩溃遗留临时文件由下次取得同一 OS 槽锁的持有者清理。不会返回可读半文件，不支持分片续传。大小、期限、并发和空间边界见[配置说明](../configuration.md#2-应用参数)；S3 延续已有 64 MiB 内存上限和 30 秒存储操作超时，云端协议不在本地扩容范围内。
+
+本地 GET/HEAD 校验当前权限、active 状态、存储指纹和大小。首次访问或文件 stat 身份改变时分块核对 SHA-256；最多缓存 1024 个通过核验的身份，后续拖动不反复扫描整个文件。受管 active 内容不可原地修改；外部修改导致身份变化后重新校验，校验失败返回 503。GET 支持 `bytes=start-end`、`start-`、`-suffix`，不可满足或多区间返回 416；HEAD 无正文并忽略 Range。返回实际 content_type，音视频 inline，其他文件 attachment，保留 sandbox/nosniff 和 no-store；强 ETag 为内容哈希，If-Range 不匹配则返回完整 200。每次新请求均重新授权，撤权前已开始的传输允许完成。
+
+读取使用共享文件锁，多个读取可以共存；写入及清理使用排他锁，持有读取期间清理会跳过。删除请求仍先将状态改为 deleting，阻止后续新读取。响应头准备期间与传输期间的断开均会退出；取消及异常均关闭句柄再释放锁，原生 I/O 已开始时等待其完成，数据库事务不跨越文件传输。
+
+本地锁由独立 LocalLeases 管理，API/Worker 必须共用同宿主的可靠本地协调卷与标记（KEYSTONE_FILE_COORDINATION_ROOT）。配置任何内容源时都必须显式提供协调目录，协调目录与内容源互不推导，可以配置为同一路径。锁覆盖上传请求键、File 上传、读取及清理；不兼容锁冲突立即返回 409 file_busy，数据库只使用短事务。重试保留同一 File、原始请求摘要和现有授权，不补回被撤销授权。S3 重试只允许写同一已校验内容，迟到的旧 PUT 因内容完全一致不能覆盖成另一内容；不把本地锁当作远端请求已经停止的证明。不支持多宿主、NFS 协调或取消远端已受理请求。
 
 S3 超时、断线或进程崩溃可能出现迟到 PUT。文件删除仍先阻止读取与重试，确认当前 DELETE 后转为 deleted、清除授权；远端物理删除采用最终清理语义。Worker 对已配置 S3 源的 deleted 记录每小时检查精确 object_key，存在时重新删除并记录残留清理审计，保留 tombstone、deleted_at 和删除完成审计，不恢复文件或授权；failed 记录也保留并重试残留清理。数据库必须保留这些记录和原源配置，才能继续追踪迟到写入。没有 bucket 扫描、版本清除或 multipart 清理权限；S3 版本与未完成 multipart 的保留/清理由桶策略管理。
 
@@ -215,7 +221,7 @@ S3 超时、断线或进程崩溃可能出现迟到 PUT。文件删除仍先阻�
 |---|---|
 | GET /api/v1/files、/{id} | 按当前对象范围过滤后分页、查询详情；不输出存储定位和上传摘要 |
 | GET /api/v1/files/options | 返回上传上限、源键列表与默认源，要求 create |
-| GET /api/v1/files/{id}/content | 校验权限、状态、大小和 SHA-256 后下载 |
+| GET/HEAD /api/v1/files/{id}/content | 当前授权读取、视频播放与单区间 Range；类型、长度、ETag、206/416 |
 | PATCH /api/v1/files/{id} | 修改 name 与 active/disabled；不替换内容，成功仅返回 `{id}` 回执 |
 | DELETE /api/v1/files/{id} | 受理删除并返回 202 与 `{id}` 回执；Worker 确认完成前仍为 deleting |
 | GET/POST /api/v1/files/{id}/grants | 管理者查询/新增单文件授权；重复新增返回原关系 |
@@ -247,3 +253,10 @@ authenticated 仅能选择 inspect/content_read，不能选择 manage。可用�
 三个实体各自位于 models/ 下的独立文件。services/files.py 管生命周期，grants.py 管授权，references.py 管引用及受控产物保留，cleanup.py 管 Worker 清理。Flow 通过 references 内部入口写引用，调用方保留原事务与锁，不能绕过有效使用记录检查；目录与字段响应遵循整体架构规范。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
 内部 content 接口可指定 max_bytes，授权后在读取存储前检查文件大小，仍执行完整性和读取后授权检查。超限返回 file_too_large，引用资格错误返回 file_reference_invalid；具体业务自行转换为业务错误，Files 不声明 Flow 错误码。公开 HTTP 上传新增可选 storage_key，详情新增 storage_key；内容下载契约不变。
+
+
+### 事务组合入口
+
+`FileGrantService.grant_in_transaction(session, auth, file_id, data, grant_id=...)` 在调用方当前身份事务内新增或撤销授权，仍检查功能权限、文件 manage 范围、目标主体与生命周期。调用方从 `AccessContext.access()` 取得 session/auth，完成业务对象授权后传入；内部不提交、不另开事务。与 `FileReferences`、业务记录及 `FlowService.start_in_transaction` 一起提交或回滚，成功审计在同一事务；HTTP 原入口继续自管事务。
+
+整文件字节读取入口 `FileService.content` 默认限制为 64 MiB，显式 max_bytes 也必须为非负上限；媒体调用使用流式读取或 Worker 落盘入口，上传容量扩展不会自动放大内存读取上限。

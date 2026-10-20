@@ -106,7 +106,10 @@ async def reconcile_one(runtime, engine, identifier):
             except (ServiceError, ValidationError):
                 await finish(session, current, "failed", error="flow_invalid_output")
         elif status in {"ERROR", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"}:
-            await finish(session, current, "failed", error=state["error_code"])
+            if current.cancel_requested_at and state["error_code"] == "flow_cancelled":
+                await finish(session, current, "cancelled")
+            else:
+                await finish(session, current, "failed", error=state["error_code"])
         elif status == "CANCELLED":
             await finish(session, current, "cancelled")
         elif status == "PENDING":

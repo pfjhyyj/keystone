@@ -39,80 +39,82 @@ class FlowService:
             }
 
     async def start(self, data):
-        small_json(data.input)
         async with self.identity.access(action="flow.start", target="flow.run") as (session, auth):
-            pat_id = auth.credential.id if auth.kind == "pat" else None
-            digest = hashlib.sha256(
-                small_json([data.definition_key, data.input, str(pat_id) if pat_id else None])
-            ).hexdigest()
-            lock = int.from_bytes(
-                hashlib.sha256(f"{auth.user.id}:{data.request_key}".encode()).digest()[:4],
-                signed=True,
+            return await self.start_in_transaction(session, auth, data)
+
+    async def start_in_transaction(self, session, auth, data):
+        """Trusted caller holds AccessContext.access() and commits business facts together.
+
+        Uses the current authorization under its identity lock; never commits, opens
+        another transaction or performs external I/O. Worker discovers pending rows.
+        """
+        small_json(data.input)
+        pat_id = auth.credential.id if auth.kind == "pat" else None
+        digest = hashlib.sha256(
+            small_json([data.definition_key, data.input, str(pat_id) if pat_id else None])
+        ).hexdigest()
+        lock = int.from_bytes(
+            hashlib.sha256(f"{auth.user.id}:{data.request_key}".encode()).digest()[:4],
+            signed=True,
+        )
+        await session.execute(text("SELECT pg_advisory_xact_lock(73190423, :key)"), {"key": lock})
+        old = await session.scalar(
+            select(FlowRun).where(
+                FlowRun.actor_id == auth.user.id, FlowRun.request_key == data.request_key
             )
-            await session.execute(
-                text("SELECT pg_advisory_xact_lock(73190423, :key)"), {"key": lock}
+        )
+        if old:
+            if old.request_digest != digest:
+                raise ServiceError(409, "idempotency_conflict", "同一请求键对应不同流程请求")
+            auth.require("flow:read")
+            return view(old)
+        auth.require("flow:start")
+        if not self.identity.settings.flow_enabled:
+            raise ServiceError(503, "flow_disabled", "Flow 尚未启用")
+        definition = self.flow_definitions.get(data.definition_key)
+        if definition is None:
+            raise ServiceError(404, "definition_unavailable", "流程定义不可用")
+        for permission in definition.required_permissions:
+            auth.require(permission)
+        try:
+            inputs = definition.input_type.model_validate(data.input).model_dump(
+                mode="json", by_alias=False
             )
-            old = await session.scalar(
-                select(FlowRun).where(
-                    FlowRun.actor_id == auth.user.id, FlowRun.request_key == data.request_key
-                )
-            )
-            if old:
-                if old.request_digest != digest:
-                    raise ServiceError(409, "idempotency_conflict", "同一请求键对应不同流程请求")
-                auth.require("flow:read")
-                return view(old)
-            auth.require("flow:start")
-            if not self.identity.settings.flow_enabled:
-                raise ServiceError(503, "flow_disabled", "Flow 尚未启用")
-            definition = self.flow_definitions.get(data.definition_key)
-            if definition is None:
-                raise ServiceError(404, "definition_unavailable", "流程定义不可用")
-            for permission in definition.required_permissions:
-                auth.require(permission)
+        except ValidationError:
+            raise ServiceError(422, "flow_invalid_input", "输入不符合流程契约") from None
+        try:
+            identifiers = file_ids(inputs, definition.file_fields)
+        except ValueError:
+            raise ServiceError(422, "flow_invalid_input", "输入文件 ID 无效或数量超限") from None
+        if definition.model_field:
             try:
-                inputs = definition.input_type.model_validate(data.input).model_dump(
-                    mode="json", by_alias=False
-                )
-            except ValidationError:
-                raise ServiceError(422, "flow_invalid_input", "输入不符合流程契约") from None
-            try:
-                identifiers = file_ids(inputs, definition.file_fields)
-            except ValueError:
-                raise ServiceError(
-                    422, "flow_invalid_input", "输入文件 ID 无效或数量超限"
-                ) from None
-            if definition.model_field:
-                try:
-                    selected = await select_model(
-                        session, inputs[definition.model_field], lock=True
-                    )
-                except ServiceError as error:
-                    if error.code in {"model_not_found", "model_disabled"}:
-                        raise ServiceError(409, "model_disabled", "模型或渠道不可用") from None
-                    raise
-                inputs[definition.model_field] = selected.model_dump(mode="json")
-            small_json(inputs)
-            run = FlowRun(
-                id=uuid4(),
-                definition_key=definition.key,
-                definition_snapshot=definition.snapshot(),
-                execution_version=execution_version(),
-                actor_id=auth.user.id,
-                personal_access_token_id=pat_id,
-                request_key=data.request_key,
-                request_digest=digest,
-                input=inputs,
-            )
-            session.add(run)
-            await session.flush()
-            await FileReferences(
-                session, auth, "flow", correlation_id=self.identity.correlation_id
-            ).replace(str(run.id), "input", identifiers)
-            await self.identity.log(
-                session, auth, "flow.start", "flow.run", run.id, {"definition_key": definition.key}
-            )
-            return view(run)
+                selected = await select_model(session, inputs[definition.model_field], lock=True)
+            except ServiceError as error:
+                if error.code in {"model_not_found", "model_disabled"}:
+                    raise ServiceError(409, "model_disabled", "模型或渠道不可用") from None
+                raise
+            inputs[definition.model_field] = selected.model_dump(mode="json")
+        small_json(inputs)
+        run = FlowRun(
+            id=uuid4(),
+            definition_key=definition.key,
+            definition_snapshot=definition.snapshot(),
+            execution_version=execution_version(),
+            actor_id=auth.user.id,
+            personal_access_token_id=pat_id,
+            request_key=data.request_key,
+            request_digest=digest,
+            input=inputs,
+        )
+        session.add(run)
+        await session.flush()
+        await FileReferences(
+            session, auth, "flow", correlation_id=self.identity.correlation_id
+        ).replace(str(run.id), "input", identifiers)
+        await self.identity.log(
+            session, auth, "flow.start", "flow.run", run.id, {"definition_key": definition.key}
+        )
+        return view(run)
 
     async def listing(self, offset, limit, status=None):
         async with self.identity.access("flow:read") as (session, auth):

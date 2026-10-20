@@ -1,12 +1,12 @@
 import asyncio
 from typing import Annotated
-from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, Query, Request
 
 from keystone.core.errors import ServiceError
 from keystone.platform.files import schemas
+from keystone.platform.files.controllers.streaming import ContentResponse
 from keystone.platform.files.services.files import FileService
 from keystone.platform.identity.dependencies import access_context
 
@@ -34,17 +34,12 @@ async def upload(request: Request, data: Annotated[schemas.Upload, Query()]):
     target = _service(request)
     await target.prepare_upload(data.expected_size, data.storage_key)
     # Raw binary body avoids unbounded multipart spooling before authentication.
-    async with request.app.state.upload_slots:
-        try:
-            async with asyncio.timeout(60):
-                content = bytearray()
-                async for chunk in request.stream():
-                    if len(content) + len(chunk) > data.expected_size:
-                        raise ServiceError(413, "file_too_large", "上传内容超过声明大小")
-                    content.extend(chunk)
-                return await target.upload(data, bytes(content))
-        except TimeoutError:
-            raise ServiceError(408, "upload_timeout", "上传超时，请重试") from None
+    try:
+        async with asyncio.timeout(request.app.state.runtime.settings.file_upload_timeout_seconds):
+            async with request.app.state.upload_slots:
+                return await target.upload_body(data, request.stream())
+    except TimeoutError:
+        raise ServiceError(408, "upload_timeout", "上传超时，请重试") from None
 
 
 @router.get("/{identifier}")
@@ -52,18 +47,9 @@ async def detail(identifier: UUID, request: Request):
     return await _service(request).detail(identifier)
 
 
-@router.get("/{identifier}/content")
+@router.api_route("/{identifier}/content", methods=["GET", "HEAD"])
 async def content(identifier: UUID, request: Request):
-    name, body = await _service(request).content(identifier)
-    return Response(
-        body,
-        media_type="application/octet-stream",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(name, safe='')}",
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "sandbox",
-        },
-    )
+    return ContentResponse(_service(request).open_content(identifier), request)
 
 
 @router.patch("/{identifier}")

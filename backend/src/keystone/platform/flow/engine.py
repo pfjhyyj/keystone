@@ -4,6 +4,8 @@ import asyncio
 
 from dbos import DBOSClient
 
+from keystone.core.errors import ServiceError
+
 QUEUE = "keystone-flows"
 ERRORS = {
     "execution_not_authorized",
@@ -58,7 +60,7 @@ class Engine:
                 "queue_name": QUEUE,
                 "workflow_id": workflow_id(run.id),
                 "app_version": run.execution_version,
-                "workflow_timeout": 300,
+                "workflow_timeout": definition.timeout_seconds,
             },
             str(run.id),
         )
@@ -70,7 +72,7 @@ class Engine:
         if not rows:
             return None
         row = rows[0]
-        code = str(row.error) if row.error else None
+        code = row.error.code if isinstance(row.error, ServiceError) else str(row.error)
         return {
             "status": row.status,
             "result": row.output,
