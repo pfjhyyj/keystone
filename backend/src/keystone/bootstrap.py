@@ -18,7 +18,7 @@ from keystone.platform.dictionary.controllers import router as dictionary_router
 from keystone.platform.files.controllers import router as files_router
 from keystone.platform.files.services.grants import FileGrantService
 from keystone.platform.files.storage import StorageRegistry
-from keystone.platform.flow.catalog import Definition
+from keystone.platform.flow.catalog import Definition, execution_version
 from keystone.platform.flow.controllers import router as flow_router
 from keystone.platform.flow.services.runs import FlowService
 from keystone.platform.identity.controllers import router as identity_router
@@ -61,6 +61,8 @@ class Runtime:
 def build_runtime(settings: Settings) -> Runtime:
     catalog = build_catalog()
     definitions = build_flow_definitions(catalog)
+    if settings.flow_enabled:
+        execution_version()
     load_models()
     heads = expected_heads(settings)
     runtime = Runtime(

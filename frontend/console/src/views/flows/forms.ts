@@ -1,7 +1,4 @@
-// Application composition: remove this entry and import to retire the example form.
+// Application composition: register business-specific input forms here.
 import type { Component } from 'vue'
-import DocumentReviewInput from '../../businesses/document-review/FlowInput.vue'
 
-export const flowForms: Readonly<Record<string, Component>> = {
-  'document.review': DocumentReviewInput,
-}
+export const flowForms: Readonly<Record<string, Component>> = {}

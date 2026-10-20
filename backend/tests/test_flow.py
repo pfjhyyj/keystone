@@ -32,6 +32,9 @@ def configuration(client, monkeypatch):
 
     install(monkeypatch)
     runtime = client.app.state.runtime
+    from flow_fixture.contracts import definition
+
+    runtime.flow_definitions = {definition.key: definition}
     settings = runtime.settings
     settings.flow_enabled = True
     DBOS.migrate(settings.database_url.get_secret_value())
@@ -78,7 +81,12 @@ def worker(client, tmp_path, *, code=None, stub=True):
             [
                 sys.executable,
                 "-c",
-                ("from model_stub import install; install(); " if stub else "")
+                (
+                    "from model_stub import install; install(); "
+                    "from flow_fixture import install; install(); "
+                    if stub
+                    else ""
+                )
                 + (code or "from keystone.entrypoints.worker import main; main()"),
             ],
             env=env,

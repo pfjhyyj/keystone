@@ -169,7 +169,7 @@ keystone/
 
 backend/ 内维护唯一后端依赖与锁文件，frontend/ 下每个应用维护自己的依赖、锁文件、构建和测试。Dockerfile、.dockerignore 和镜像入口配置随各自工程维护，使用工程目录作为构建上下文。首版只创建 console，不创建占位业务前端、pnpm workspace 或共享前端包。业务前端数量与后端业务模块数量不要求一致。deploy/ 负责第三方依赖编排，不容纳领域规则；docs/ 是当前设计唯一维护位置。
 
-当前已实现 platform/identity、audit、files、dictionary、model_access、flow 及 businesses/document_review。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 以 init 统一初始化业务结构、Flow、存储和管理员，另提供 revision/check/init-admin/init-storage；console 提供账户、文件、字典、模型及 Flow 基本操作。初始结构按 identity、audit、dictionary、files、model_access、flow 和 core 七个领域/模型归属拆分，不使用数字前缀，保持一条迁移链和单一 head（core）；文件多源和渠道凭据密文直接包含在各自领域的初始结构中；keystone schema 包含十六张领域表和一张 Worker 运行观测表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
+当前已实现 platform/identity、audit、files、dictionary、model_access、flow；默认不装配业务流程。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 以 init 统一初始化业务结构、Flow、存储和管理员，另提供 revision/check/init-admin/init-storage；console 提供账户、文件、字典、模型及 Flow 基本操作。初始结构按 identity、audit、dictionary、files、model_access、flow 和 core 七个领域/模型归属拆分，不使用数字前缀，保持一条迁移链和单一 head（core）；文件多源和渠道凭据密文直接包含在各自领域的初始结构中；keystone schema 包含十六张领域表和一张 Worker 运行观测表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
 
 CLI 另提供 recover-model-calls --confirm-api-stopped：操作者停止全部 API/普通调用进程后，显式将普通遗留 running 调用收尾为 unknown，保留费用与编号并记录系统审计。确认标志不代替进程检测；恢复期间保持 API 停止。Flow 调用继续由持有单 Worker 排他锁的启动恢复处理，不新增后台超时扫描器。详细边界见[模型离线收尾](domains/model-access.md#75-普通-api-调用离线收尾)。
 
@@ -286,7 +286,7 @@ platform/identity/
 
 共用规则只保留小函数或静态声明：审计与模型历史通过 core/time_range.py 解析带时区的闭区间，默认截止为数据库当前时间，默认起点为截止前 30 天，最多 366 天；审计事件时间也由数据库生成。模型渠道、官方地址、路径与 HTTP 方法由 gateway.SUPPORTED_TARGETS 统一声明，目录过滤和临发送校验共用，查询目录不能替代发送校验。普通 API 离线恢复与 Worker 启动恢复保留不同前提和记录范围，共用每批 100 条的状态更新及逐条系统审计，不重发调用。
 
-Flow host 文件读取返回 bytes，由调用方指定 max_bytes；上传显式传入 content_type，可选 storage_key 指定产物源；读取仍按 File 的源路由。UTF-8 和 16 KiB 限制属于 document_review 示例。FileService.upload_referenced 只供可信业务调用，owner/slot 由服务端固定；Files 自己校验上传归属、幂等键与状态，在完成事务内保存引用，不把 ORM 实体通过回调交给 Flow。撤权或取消后的既有写入仍完成事实保存，返回结果前重新授权；文件域错误由 Flow 在输出协调边界转换为既有 flow_invalid_output。
+Flow host 文件读取返回 bytes，由调用方指定 max_bytes；上传显式传入 content_type，可选 storage_key 指定产物源；读取仍按 File 的源路由。UTF-8 和 16 KiB 限制属于 测试审查夹具。FileService.upload_referenced 只供可信业务调用，owner/slot 由服务端固定；Files 自己校验上传归属、幂等键与状态，在完成事务内保存引用，不把 ORM 实体通过回调交给 Flow。撤权或取消后的既有写入仍完成事实保存，返回结果前重新授权；文件域错误由 Flow 在输出协调边界转换为既有 flow_invalid_output。
 
 模型 HTTP 与 Agent 入口共用 ModelRuntime 的发送核心和 classify_error 分类，沿异常因果链识别平台错误、SDK/Pydantic AI HTTP 错误与超时。明确 HTTP 4xx 拒绝记 failed，5xx、网络、取消及无法确认的结果保持 unknown；公开安全错误和持久状态来自同一次分类，不透传上游消息。Agent 使用 invoke_sdk(selection, invocation_id, sdk_request, flow_context)，无需构造公开 Invoke 的占位消息。费用补查协议归 providers.py，Service 保留授权、配置复查与事实保存。
 
@@ -355,7 +355,7 @@ Flow 输入统一限制为 64 KiB 的紧凑 UTF-8 JSON，原始请求和默认�
 
 ### 5.6 示例流程装配与停用
 
-应用级 `composition.py` 集中维护 `FLOW_DEFINITIONS` 与 Worker 的 `register_workflows()`。bootstrap 只加载该目录，不直接导入示例业务；API 不导入 workflow、Agent 或 Skills。前端 `views/flows/forms.ts` 只负责显式映射输入表单，文本审查的文件和模型选择位于 `src/businesses/document-review/FlowInput.vue`。未映射的定义继续使用 JSON 输入，不增加动态插件系统。
+应用级 `composition.py` 集中维护 `FLOW_DEFINITIONS` 与 Worker 的 `register_workflows()`。bootstrap 只加载该目录，不直接导入示例业务；API 不导入 workflow、Agent 或 Skills。前端 `views/flows/forms.ts` 只负责显式映射输入表单，默认映射为空；文本审查表单仅保留在测试夹具中。未映射的定义继续使用 JSON 输入，不增加动态插件系统。
 
 停用文本审查示例时，从 composition.py 删除契约导入和 FLOW_DEFINITIONS 中的对应项，并移除 register_workflows 中的 workflow 导入；无流程时保留空元组和空函数。在 views/flows/forms.ts 删除对应导入和映射即可回到通用 JSON 表单。示例目录可按需移除。
 

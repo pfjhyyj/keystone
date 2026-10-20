@@ -89,8 +89,9 @@ def test_audit_fields_reject_string_input(fields):
 
 
 def test_flow_permissions_must_be_in_application_catalog(monkeypatch):
+    from flow_fixture import contracts
+
     from keystone.bootstrap import build_runtime
-    from keystone.businesses.document_review import contracts
 
     monkeypatch.setattr(
         composition,
@@ -102,7 +103,8 @@ def test_flow_permissions_must_be_in_application_catalog(monkeypatch):
 
 
 def test_all_flow_definitions_are_validated_and_directory_is_frozen():
-    from keystone.businesses.document_review.contracts import definition
+    from flow_fixture.contracts import definition
+
     from keystone.platform.flow.catalog import build_definitions
     from keystone.platform.identity.policy import PERMISSIONS
 
@@ -120,7 +122,8 @@ def test_all_flow_definitions_are_validated_and_directory_is_frozen():
 
 @pytest.mark.postgres
 def test_flow_directory_isolation_in_api_execution_and_reconciliation(monkeypatch, request):
-    from keystone.businesses.document_review import contracts
+    from flow_fixture import contracts
+
     from keystone.core.schemas import Input
     from keystone.platform.flow.identity import ExecutionIdentity
     from keystone.platform.flow.reconcile import reconcile_one
@@ -199,10 +202,10 @@ def test_flow_directory_isolation_in_api_execution_and_reconciliation(monkeypatc
 @pytest.mark.parametrize("expansion", ["default", "serializer", "model_selection"])
 @pytest.mark.parametrize("extra_bytes", [0, 1])
 def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_bytes):
+    from flow_fixture import contracts
     from pydantic import Field, field_serializer
     from test_model_access import channel, entry
 
-    from keystone.businesses.document_review import contracts
     from keystone.core.schemas import Input
     from keystone.platform.files.models import FileReference
     from keystone.platform.flow.catalog import small_json
@@ -274,9 +277,9 @@ def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_byte
 @pytest.mark.postgres
 @pytest.mark.parametrize("case", ["invalid_uuid", "too_many"])
 def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, request, case):
+    from flow_fixture import contracts
     from pydantic import ConfigDict, Field
 
-    from keystone.businesses.document_review import contracts
     from keystone.core.schemas import Input
     from keystone.platform.files.models import FileReference
     from keystone.platform.flow.models import FlowRun
@@ -333,9 +336,9 @@ def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, 
 def test_flow_reconciliation_uses_serialized_output_contract(
     monkeypatch, request, result, expected
 ):
+    from flow_fixture import contracts
     from pydantic import Field, field_serializer
 
-    from keystone.businesses.document_review import contracts
     from keystone.core.schemas import Input
     from keystone.platform.flow.catalog import execution_version
     from keystone.platform.flow.reconcile import reconcile_one

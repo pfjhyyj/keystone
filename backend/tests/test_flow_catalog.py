@@ -3,13 +3,14 @@
 import subprocess
 import sys
 from dataclasses import replace
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from flow_fixture.contracts import definition
 from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ConfigDict, Field, field_serializer
 
-from keystone.businesses.document_review.contracts import definition
 from keystone.core.schemas import Input
 from keystone.platform.flow.catalog import build_definitions, file_ids
 from keystone.platform.identity.policy import PERMISSIONS
@@ -133,8 +134,11 @@ def test_worker_imports_register_every_declared_entrypoint(omit_registration):
     # Fresh imports exercise the real public decorator. No DBOS launch, DB or private registry.
     code = (
         f"OMIT_REGISTRATION = {omit_registration!r}\n"
+        + f"import sys; sys.path.insert(0, {str(Path(__file__).parent)!r})\n"
         + """
 import sys
+from flow_fixture import install
+install()
 from keystone.bootstrap import build_runtime
 from keystone.composition import register_workflows
 from keystone.core.config import Settings

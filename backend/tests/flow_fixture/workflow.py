@@ -9,7 +9,7 @@ from pydantic_ai.durable_exec.dbos import DBOSDurability
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import Skills
 
-from keystone.businesses.document_review.contracts import Judgment, ReviewOutput, definition
+from flow_fixture.contracts import Judgment, ReviewOutput, definition
 from keystone.core.errors import ServiceError
 from keystone.platform.flow import host
 from keystone.platform.flow.agent_model import resolve_model
