@@ -190,6 +190,7 @@ onMounted(loadCatalog)
       :title="readOnly ? '查看角色权限' : target ? '配置角色权限' : '新建角色'"
       :busy="busy"
       width="960px"
+      class="role-dialog"
       @close="editing = false"
     >
       <form class="dialog-form role-form" @submit.prevent="save">

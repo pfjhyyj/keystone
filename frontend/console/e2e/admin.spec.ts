@@ -1,5 +1,29 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
 import { check, choose, watchWindowErrors } from './controls'
+
+async function expectSingleDialogScroll(dialog: Locator) {
+  await expect
+    .poll(() =>
+      dialog.evaluate((element) => {
+        const overlay = element.closest('.el-overlay-dialog')!
+        return [overlay, element, ...element.querySelectorAll('*')]
+          .filter((node) => {
+            const style = getComputedStyle(node)
+            return (
+              node.clientHeight > 0 &&
+              node.scrollHeight > node.clientHeight + 1 &&
+              /auto|scroll/.test(style.overflowY) &&
+              node.getClientRects().length > 0
+            )
+          })
+          .map((node) =>
+            node.classList.contains('el-dialog__body') ? 'dialog-body' : node.className,
+          )
+      }),
+    )
+    .toEqual(['dialog-body'])
+  await expect(dialog.getByRole('button', { name: '保存角色', exact: true })).toBeVisible()
+}
 
 test('user, role, audit and session lifecycle against the real API', async ({ page, browser }) => {
   const errors: string[] = []
@@ -20,6 +44,7 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByRole('heading', { name: '用户管理', exact: true })).toBeVisible()
+  await expect(page.getByText('标识与时间', { exact: true })).toHaveCount(0)
   await page.reload()
   await expect(page.getByRole('heading', { name: '用户管理', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '折叠侧栏' }).click()
@@ -64,6 +89,17 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await dialog.getByRole('button', { name: '关闭对话框', exact: true }).click()
   await page.getByRole('button', { name: '新建角色', exact: true }).click()
   dialog = page.getByRole('dialog')
+  await expectSingleDialogScroll(dialog)
+  await page.setViewportSize({ width: 1440, height: 600 })
+  await expectSingleDialogScroll(dialog)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expectSingleDialogScroll(dialog)
+  await page.screenshot({
+    path: '../../.artifacts/console-role-full-mobile.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.setViewportSize({ width: 1440, height: 1000 })
   await dialog.getByLabel('角色标识', { exact: true }).fill('reader')
   await dialog.getByLabel('角色名称', { exact: true }).fill('用户只读')
   await choose(dialog, '角色权限模块', '身份与访问')

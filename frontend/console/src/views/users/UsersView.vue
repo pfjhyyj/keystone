@@ -133,13 +133,7 @@ function submit() {
           ><template #default="{ row: user }"
             ><strong>{{ user.display_name }}</strong>
             <p>{{ user.username }} <small v-if="user.id === identity?.user.id">（本人）</small></p>
-            <details>
-              <summary>标识与时间</summary>
-              <p>{{ user.id }}</p>
-              <p>创建 {{ new Date(user.created_at).toLocaleString() }}</p>
-              <p>修改 {{ new Date(user.updated_at).toLocaleString() }}</p>
-            </details></template
-          ></el-table-column
+          </template></el-table-column
         >
         <el-table-column label="状态" min-width="120"
           ><template #default="{ row: user }"

@@ -202,8 +202,7 @@ function reset() {
   font-size: 12px;
 }
 .permission-table-scroll {
-  max-height: 340px;
-  overflow: auto;
+  overflow-x: auto;
   border: 1px solid #e5eaf0;
   border-radius: 6px;
 }
@@ -214,9 +213,6 @@ function reset() {
   font-size: 13px;
 }
 .permission-table th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
   background: #f6f8fa;
   color: #738095;
   font-weight: 500;
