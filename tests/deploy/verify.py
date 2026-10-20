@@ -113,6 +113,7 @@ class Deployment:
                 script = (
                     "import sys; sys.path.insert(0, '/test-support'); "
                     "from model_stub import install; install(); "
+                    "from flow_fixture import install; install(); "
                     f"from keystone.entrypoints.{entrypoint} import main; main()"
                 )
                 lines += [
@@ -121,6 +122,10 @@ class Deployment:
                     "      - type: bind",
                     "        source: " + json.dumps(str(ROOT / "backend/tests/model_stub.py")),
                     "        target: /test-support/model_stub.py",
+                    "        read_only: true",
+                    "      - type: bind",
+                    "        source: " + json.dumps(str(ROOT / "backend/tests/flow_fixture")),
+                    "        target: /test-support/flow_fixture",
                     "        read_only: true",
                 ]
             if service == "api":

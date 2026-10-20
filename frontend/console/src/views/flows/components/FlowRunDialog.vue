@@ -2,7 +2,7 @@
 // Ether's independent detail sections and request generation, narrowed to Keystone's Run.
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { can, identity } from '../../../stores/session'
-import { ApiError, downloadFile, request } from '../../../api/client'
+import { ApiError, request } from '../../../api/client'
 import { flowApi, flowStates, ongoing, type FlowRun, type Steps } from '../../../api/flows'
 import type { Costs } from '../../../api/models'
 import { useAction } from '../../../composables/useAction'
@@ -171,15 +171,6 @@ onScopeDispose(() => {
       <h3>结果</h3>
       <pre v-if="row.result" class="audit-details">{{ JSON.stringify(row.result, null, 2) }}</pre>
       <p v-else>尚无结果</p>
-      <el-button
-        v-if="row.result?.report_file_id && can('file:content_read')"
-        :disabled="busy"
-        @click="run(() => downloadFile(String(row?.result?.report_file_id), 'review-report.txt'))"
-        native-type="button"
-        type="primary"
-      >
-        下载报告
-      </el-button>
       <h3>步骤记录</h3>
       <el-alert v-if="stepError" role="alert" type="error" show-icon :closable="false"
         >{{ stepError }}；不代表运行失败。</el-alert

@@ -89,8 +89,11 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
   })
   await page.getByRole('button', { name: '发起流程', exact: true }).click()
   dialog = page.getByRole('dialog')
-  await choose(dialog, '可见源文件', 'referenced.txt')
-  await choose(dialog, '模型', 'openrouter_chat')
+  const files = await (await page.request.get('/api/v1/files?limit=50')).json()
+  const source = files.find((file: { name: string }) => file.name === 'referenced.txt')
+  await dialog
+    .getByLabel('流程输入 JSON')
+    .fill(JSON.stringify({ source_file_id: source.id, model_key: 'openrouter_chat' }))
   await dialog.getByRole('button', { name: '提交流程', exact: true }).click()
   dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: '运行详情', exact: true })).toBeVisible()
@@ -98,9 +101,6 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
   await expect(dialog).toContainText('模拟审查已完成')
   await expect(dialog).toContainText('0.0024 credits')
   await expect(dialog.locator('.el-timeline-item').first()).toBeVisible()
-  const download = page.waitForEvent('download')
-  await dialog.getByRole('button', { name: '下载报告' }).click()
-  expect((await download).suggestedFilename()).toBe('review-report.txt')
   await page.screenshot({
     path: '../../.artifacts/console-flow-detail.png',
     fullPage: true,

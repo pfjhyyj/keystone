@@ -132,17 +132,15 @@ def execution_version():
     from keystone.composition import EXECUTION_PACKAGES
 
     root = Path(__file__).resolve().parents[2]
-    # Deployment copies source plus uv.lock; wheel installations still use the deployed source tree.
+    # Hash the package actually loaded by this process, including wheel installations.
+    # A stale deployment source copy must not hide a different installed executor.
     lock = next((p / "uv.lock" for p in root.parents if (p / "uv.lock").is_file()), None)
     if lock is None:
         raise ServiceError(503, "execution_version_unavailable", "执行制品缺少 uv.lock")
-    source = lock.parent / "src" / "keystone"
-    if not source.is_dir():
-        source = root
     digest = hashlib.sha256(lock.read_bytes())
-    for path in sorted(source.rglob("*")):
+    for path in sorted(root.rglob("*")):
         if path.is_file() and path.suffix in {".py", ".md", ".json", ".txt"}:
-            digest.update(path.relative_to(source).as_posix().encode())
+            digest.update(path.relative_to(root).as_posix().encode())
             digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
     for name, required in sorted(EXECUTION_PACKAGES.items()):
         _package_version(digest, name, required)

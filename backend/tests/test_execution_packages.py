@@ -75,3 +75,24 @@ def test_text_normalization_across_stream_boundary(package):
     before = version()
     (package / "child.py").write_bytes(b"a" * (1024 * 1024 - 1) + b"\nnext\r")
     assert version() == before
+
+
+def test_installed_backend_is_hashed_instead_of_shadow_sources(package, tmp_path, monkeypatch):
+    from keystone.platform.flow import catalog
+
+    application = tmp_path / "application"
+    installed = application / ".venv/lib/site-packages/keystone/platform/flow/catalog.py"
+    installed.parent.mkdir(parents=True)
+    installed.write_text("# installed backend\n")
+    shadow = application / "src/keystone/catalog.py"
+    shadow.parent.mkdir(parents=True)
+    shadow.write_text("# stale source tree\n")
+    (application / "uv.lock").write_text("# locked dependencies\n")
+    monkeypatch.setattr(catalog, "__file__", str(installed))
+    monkeypatch.setattr(composition, "EXECUTION_PACKAGES", {})
+    before = version()
+    installed.write_text("# different installed backend\n")
+    actual = version()
+    assert actual != before, "A stale source copy must not hide changes to loaded code"
+    shadow.write_text("# changed unused source copy\n")
+    assert version() == actual

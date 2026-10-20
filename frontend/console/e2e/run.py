@@ -133,6 +133,7 @@ def main():
                             sys.executable,
                             "-c",
                             "from model_stub import install; install(); "
+                            "from flow_fixture import install; install(); "
                             "from keystone.entrypoints.api import main; main()",
                         ],
                         cwd=directory,
@@ -147,6 +148,7 @@ def main():
                                 sys.executable,
                                 "-c",
                                 "from model_stub import install; install(); "
+                                "from flow_fixture import install; install(); "
                                 "from keystone.entrypoints.worker import main; main()",
                             ],
                             cwd=directory,

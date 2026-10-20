@@ -84,7 +84,7 @@ describe('file grants and references', () => {
     expect(button(wrapper, '上传文件').attributes('disabled')).toBeUndefined()
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(uploads).toHaveLength(1)
+    await vi.waitFor(() => expect(uploads).toHaveLength(1))
     expect(uploads[0]).toContain('storage_key=local')
   })
   it('uploads to the selected source and preserves the request key on retry', async () => {

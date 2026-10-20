@@ -447,6 +447,53 @@ def test_unregistered_output_file_rejected_and_old_version_not_dispatched(client
     assert unavailable["status"] == "pending" and unavailable["observed_at"] is not None
 
 
+def test_external_package_change_blocks_execution_and_delivery(client, tmp_path, monkeypatch):
+    from keystone import composition
+    from keystone.platform.flow.catalog import execution_version
+    from keystone.platform.flow.identity import ExecutionIdentity
+
+    package = tmp_path / "execution_review_package"
+    package.mkdir()
+    code = package / "__init__.py"
+    code.write_text("# original executor\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setattr(
+        composition,
+        "EXECUTION_PACKAGES",
+        {**composition.EXECUTION_PACKAGES, "execution_review_package": ()},
+    )
+    execution_version.cache_clear()
+    try:
+        row = start(client, upload(client).json()["id"]).json()
+        assert row["execution_version"] == execution_version()
+        code.write_text("# incompatible executor\n")
+        execution_version.cache_clear()
+        assert execution_version() != row["execution_version"]
+
+        async def access():
+            async with ExecutionIdentity(client.app.state.runtime, row["id"]).access():
+                return True
+
+        with pytest.raises(ServiceError) as error:
+            client.portal.call(access)
+        assert error.value.code == "execution_version_unavailable"
+
+        class Pending:
+            async def state(self, identifier):
+                return None
+
+            async def enqueue(self, *args):
+                raise AssertionError("Must not dispatch an incompatible execution version")
+
+        client.portal.call(reconcile_one, client.app.state.runtime, Pending(), UUID(row["id"]))
+        assert client.get(f"/api/v1/flow-runs/{row['id']}").json()["status"] == "pending"
+        code.write_text("# original executor\n")
+        execution_version.cache_clear()
+        assert client.portal.call(access)
+    finally:
+        execution_version.cache_clear()
+
+
 def test_start_audit_failure_rolls_back_run_and_references(client, monkeypatch):
     file_id = upload(client).json()["id"]
     original = audit.record
