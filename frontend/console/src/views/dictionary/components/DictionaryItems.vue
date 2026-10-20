@@ -93,16 +93,7 @@ async function save() {
         class="data-table"
       >
         <el-table-column label="显示名称" min-width="180"
-          ><template #default="{ row: item }"
-            >{{ item.label }}
-            <details>
-              <summary>标识与时间</summary>
-              <small
-                >ID：{{ item.id }}<br />创建：{{ new Date(item.created_at).toLocaleString()
-                }}<br />修改：{{ new Date(item.updated_at).toLocaleString() }}</small
-              >
-            </details></template
-          ></el-table-column
+          ><template #default="{ row: item }">{{ item.label }}</template></el-table-column
         >
         <el-table-column label="稳定值" min-width="180"
           ><template #default="{ row: item }">{{ item.value }}</template></el-table-column

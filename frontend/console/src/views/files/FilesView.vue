@@ -195,18 +195,7 @@ onMounted(() => void loadOptions())
           class="data-table"
         >
           <el-table-column label="文件名" min-width="180"
-            ><template #default="{ row: row }"
-              >{{ row.name }}
-              <details>
-                <summary>标识与时间</summary>
-                <small
-                  >ID：{{ row.id }}<br />所属人：{{ row.owner_id }}<br />存储源：{{ row.storage_key
-                  }}<br />创建：{{ new Date(row.created_at).toLocaleString() }}<br />修改：{{
-                    new Date(row.updated_at).toLocaleString()
-                  }}</small
-                >
-              </details></template
-            ></el-table-column
+            ><template #default="{ row: row }">{{ row.name }}</template></el-table-column
           >
           <el-table-column label="大小" min-width="100"
             ><template #default="{ row: row }">{{

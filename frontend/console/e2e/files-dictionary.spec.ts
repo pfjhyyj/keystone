@@ -77,6 +77,7 @@ test('file grants, reference protection and dictionaries against the real API', 
   await page.getByRole('button', { name: '上传文件', exact: true }).click()
   const fileRow = page.getByRole('row').filter({ hasText: 'sharing.txt' })
   await expect(fileRow).toBeVisible()
+  await expect(page.getByText('标识与时间', { exact: true })).toHaveCount(0)
   await fileRow.getByRole('button', { name: '文件授权', exact: true }).click()
   let dialog = page.getByRole('dialog')
   await choose(dialog, '授权主体', '角色')
@@ -224,6 +225,7 @@ test('file grants, reference protection and dictionaries against the real API', 
   }
   const items = page.getByRole('region', { name: '字典选项', exact: true })
   await expect(items.locator('tbody tr').first()).toContainText('优先')
+  await expect(page.getByText('标识与时间', { exact: true })).toHaveCount(0)
   const dictionaryRow = page.getByRole('row').filter({ hasText: 'browser_source' })
   await dictionaryRow.getByRole('button', { name: '编辑字典', exact: true }).click()
   dialog = page.getByRole('dialog')

@@ -99,14 +99,7 @@ function changePage(value: number) {
         <el-table-column label="字典" min-width="180"
           ><template #default="{ row: row }"
             >{{ row.name }}<small>{{ row.description }}</small>
-            <details>
-              <summary>标识与时间</summary>
-              <small
-                >ID：{{ row.id }}<br />创建：{{ new Date(row.created_at).toLocaleString()
-                }}<br />修改：{{ new Date(row.updated_at).toLocaleString() }}</small
-              >
-            </details></template
-          ></el-table-column
+          </template></el-table-column
         >
         <el-table-column label="标识" min-width="180"
           ><template #default="{ row: row }">{{ row.key }}</template></el-table-column
