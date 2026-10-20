@@ -19,7 +19,7 @@ mkdir "$BACKUP"
 docker compose -f deploy/compose.yaml exec -T postgres \
     pg_dump -U keystone -d keystone -Fc > "$BACKUP/database.dump"
 tar -C .data/files -cpf "$BACKUP/files.tar" .
-cp backend/.env "$BACKUP/backend.env"
+cp backend/keystone.toml "$BACKUP/keystone.toml"
 tar -cpf "$BACKUP/source.tar" backend/src backend/migrations \
     backend/pyproject.toml backend/uv.lock backend/Dockerfile \
     backend/.dockerignore frontend/console/src \
@@ -27,7 +27,7 @@ tar -cpf "$BACKUP/source.tar" backend/src backend/migrations \
     frontend/console/index.html frontend/console/tsconfig.json \
     frontend/console/vite.config.ts frontend/console/Dockerfile \
     frontend/console/.dockerignore frontend/console/docker/nginx.conf deploy
-(cd "$BACKUP" && shasum -a 256 database.dump files.tar source.tar > SHA256SUMS)
+(cd "$BACKUP" && shasum -a 256 database.dump files.tar source.tar keystone.toml > SHA256SUMS)
 ```
 
 使用自定义 Compose 项目或环境文件时，上述 Compose 命令使用相同参数。另行保存实际运行环境中的覆盖变量、前端自定义环境文件、反向代理配置和发布镜像；源码包保留当前文件及锁文件，不能只记 Git 提交而遗漏未提交的改动。备份含数据库凭据、密钥和认证记录，限制访问并加密转存；本机 `.artifacts` 仅作中转。
@@ -44,14 +44,14 @@ BACKUP=/absolute/path/to/backup
 tar -xpf "$BACKUP/source.tar"
 mkdir -p .data/files
 tar -C .data/files -xpf "$BACKUP/files.tar"
-cp "$BACKUP/backend.env" backend/.env
+cp "$BACKUP/keystone.toml" backend/keystone.toml
 export KEYSTONE_POSTGRES_PORT=55433
 docker compose -p keystone-recovery -f deploy/compose.yaml up -d --wait
 docker compose -p keystone-recovery -f deploy/compose.yaml exec -T postgres \
     pg_restore -U keystone -d keystone --exit-on-error --single-transaction < "$BACKUP/database.dump"
 ```
 
-启动应用前修改恢复目录 `backend/.env` 的数据库 URL，指向新数据库端口 55433，并核对文件路径、原秘密与浏览器 Origin；使用原版本源码和锁文件，在本机按 [README](../README.md#本机启动linuxmacos) 分别启动 API、Worker、前端。先验证原版本，再按发布流程升级。
+启动应用前修改恢复目录 `backend/keystone.toml` 的数据库 URL，指向新数据库端口 55433，并核对文件路径、原秘密与浏览器 Origin；使用原版本源码和锁文件，在本机按 [README](../README.md#本机启动linuxmacos) 分别启动 API、Worker、前端。先验证原版本，再按发布流程升级。
 
 核对原文件与报告的字节和权限、认证和字典、模型原调用记录、Flow 原 ID 与 DBOS 步骤。只恢复数据库而使用新的文件卷标识会使原文件读取失败；恢复时必须保留原文件标识和锁文件。会话/PAT 也回到备份时点，上游模型费用或副作用不会随数据库回滚，未知调用不能自动重发。
 

@@ -1,8 +1,9 @@
+import os
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict, TomlConfigSettingsSource
 from sqlalchemy.engine import make_url
 
 from keystone.core.storage_config import StorageConfig, StorageKey
@@ -10,9 +11,13 @@ from keystone.core.storage_config import StorageConfig, StorageKey
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="KEYSTONE_", env_file=".env", extra="ignore", hide_input_in_errors=True
+        env_prefix="KEYSTONE_",
+        env_nested_delimiter="__",
+        extra="forbid",
+        hide_input_in_errors=True,
     )
 
+    config_file: Path | None = Field(default=Path("keystone.toml"), exclude=True)
     env: Literal["development", "test", "production"] = "development"
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
@@ -33,12 +38,51 @@ class Settings(BaseSettings):
         "http://localhost:8080",
     ]
 
+    @classmethod
+    def settings_customise_sources(
+        cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings
+    ):
+        path = init_settings.init_kwargs.get(
+            "config_file", os.environ.get("KEYSTONE_CONFIG_FILE", "keystone.toml")
+        )
+        explicit = (
+            "config_file" in init_settings.init_kwargs or "KEYSTONE_CONFIG_FILE" in os.environ
+        )
+        if explicit and path is not None and not Path(path).is_file():
+            raise ValueError("Configured keystone.toml file does not exist")
+        source = TomlConfigSettingsSource(settings_cls, toml_file=path)
+        if "config_file" in source():
+            raise ValueError("Set the config file path through KEYSTONE_CONFIG_FILE")
+        return init_settings, env_settings, source
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_file_paths(cls, values):
+        values = dict(values)
+        config = values.get("config_file", "keystone.toml")
+        base = Path(config).resolve().parent if config is not None else Path.cwd()
+
+        def absolute(value):
+            return (base / value).resolve() if isinstance(value, (str, Path)) else value
+
+        if values.get("file_coordination_root") is not None:
+            values["file_coordination_root"] = absolute(values["file_coordination_root"])
+        sources = values.get("file_storages")
+        if isinstance(sources, dict):
+            values["file_storages"] = {
+                key: {**source, "root": absolute(source["root"])}
+                if isinstance(source, dict) and source.get("root") is not None
+                else source
+                for key, source in sources.items()
+            }
+        return values
+
     @model_validator(mode="after")
     def valid_storage_sources(self):
         if self.file_storages and self.file_default_storage not in self.file_storages:
             raise ValueError("Default file storage must name a configured source")
         if self.file_storages and self.file_coordination_root is None:
-            raise ValueError("Configured file storage requires FILE_COORDINATION_ROOT")
+            raise ValueError("Configured file storage requires file_coordination_root")
         return self
 
     @model_validator(mode="after")

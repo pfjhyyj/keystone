@@ -14,13 +14,11 @@ x-backend: &backend
     KEYSTONE_DATABASE_URL: ${KEYSTONE_DATABASE_URL:?Set KEYSTONE_DATABASE_URL for the test fixture}
     KEYSTONE_HOST: 0.0.0.0
     KEYSTONE_PORT: 8000
-    KEYSTONE_FILE_COORDINATION_ROOT: /data/files
-    KEYSTONE_FILE_STORAGES: '${KEYSTONE_FILE_STORAGES:-{"local":{"driver":"filesystem","root":"/data/files"}}}'
-    KEYSTONE_FILE_DEFAULT_STORAGE: ${KEYSTONE_FILE_DEFAULT_STORAGE:-local}
     KEYSTONE_FILE_MAX_BYTES: ${KEYSTONE_FILE_MAX_BYTES:-16777216}
     KEYSTONE_FLOW_ENABLED: ${KEYSTONE_FLOW_ENABLED:-true}
   volumes:
     - file_data:/data/files
+    - ./backend.toml:/app/keystone.toml:ro
   init: true
 
 services:

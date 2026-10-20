@@ -170,7 +170,7 @@ def test_role_deletion_coordinates_grants_and_audit_rollback(client, monkeypatch
 def client(empty_database_url, tmp_path):
     initialize(tmp_path / "storage")
     settings = Settings(
-        _env_file=None,
+        config_file=None,
         database_url=empty_database_url,
         env="test",
         file_coordination_root=tmp_path / "storage",

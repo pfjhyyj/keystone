@@ -14,7 +14,7 @@ def test_source_migrations_are_independent_of_working_directory(tmp_path, monkey
     (decoy / "env.py").write_text("", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
-    settings = Settings(_env_file=None)
+    settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == source
     assert migrations.expected_heads(settings) == {"0008_worker_heartbeats"}
@@ -29,7 +29,7 @@ def test_installed_package_uses_migrations_beside_working_directory(tmp_path, mo
     monkeypatch.setattr(migrations, "__file__", str(installed))
     monkeypatch.chdir(app)
 
-    settings = Settings(_env_file=None)
+    settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == app / "migrations"
     assert migrations.expected_heads(settings) == {"0008_worker_heartbeats"}
@@ -42,4 +42,4 @@ def test_missing_migration_files_fail_before_database_access(tmp_path, monkeypat
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(RuntimeError, match="Migration files missing"):
-        migrations.migration_config(Settings(_env_file=None))
+        migrations.migration_config(Settings(config_file=None))

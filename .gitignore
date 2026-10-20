@@ -4,6 +4,7 @@
 .env
 .env.*
 !.env.example
+keystone.toml
 **/.venv/
 **/__pycache__/
 **/*.py[cod]

@@ -134,7 +134,8 @@ class StorageRegistry:
             raise ServiceError(
                 503,
                 "storage_unavailable",
-                "文件存储未配置；请检查 KEYSTONE_FILE_STORAGES 和当前工作目录的 .env",
+                "文件存储未配置；请检查 keystone.toml 中的 file_storages、"
+                "file_coordination_root 及当前工作目录",
             )
         roots = {self.coordination.root}
         roots.update(source.root for source in self.sources.values() if source.root is not None)

@@ -62,7 +62,7 @@ def main():
                 root = Path(directory) / "storage"
                 initialize(root)
                 settings = Settings(
-                    _env_file=None,
+                    config_file=None,
                     env="test",
                     database_url=database_url,
                     file_coordination_root=root,
@@ -114,9 +114,8 @@ def main():
                         "KEYSTONE_DATABASE_URL": database_url,
                         "KEYSTONE_PORT": str(port),
                         "KEYSTONE_FILE_COORDINATION_ROOT": str(root),
-                        "KEYSTONE_FILE_STORAGES": json.dumps(
-                            {"local": {"driver": "filesystem", "root": str(root)}}
-                        ),
+                        "KEYSTONE_FILE_STORAGES__LOCAL__DRIVER": "filesystem",
+                        "KEYSTONE_FILE_STORAGES__LOCAL__ROOT": str(root),
                         "KEYSTONE_BROWSER_ORIGINS": json.dumps(["http://127.0.0.1:5175"]),
                         "PYTHONPATH": str(console.parents[1] / "backend/tests"),
                         "KEYSTONE_FLOW_ENABLED": "true",

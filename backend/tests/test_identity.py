@@ -31,7 +31,7 @@ BROWSER = {"Origin": ORIGIN, "X-Keystone-Request": "1"}
 
 @pytest.fixture
 def client(empty_database_url):
-    settings = Settings(_env_file=None, database_url=empty_database_url, env="test")
+    settings = Settings(config_file=None, database_url=empty_database_url, env="test")
     config = migration_config(settings)
     config.attributes["create_schema"] = True
     command.upgrade(config, "head")

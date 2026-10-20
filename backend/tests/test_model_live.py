@@ -190,7 +190,7 @@ def configure(client, **changes):
 
 
 def test_real_transport_is_the_default_without_mode_configuration():
-    settings = Settings(_env_file=None)
+    settings = Settings(config_file=None)
     assert "model_mode" not in Settings.model_fields
     transport = gateway.Gateway(settings).transport("openrouter")
     assert isinstance(transport, httpx2.AsyncHTTPTransport)

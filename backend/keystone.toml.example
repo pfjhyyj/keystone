@@ -1,0 +1,35 @@
+# Copy to keystone.toml and start API/Worker/CLI from backend/.
+# KEYSTONE_* environment variables override individual fields. Restart after changes.
+env = "development"
+host = "127.0.0.1"
+port = 8000
+log_level = "INFO"
+
+# Local development database; keep in sync with deploy/.env if overriding it.
+database_url = "postgresql+psycopg://keystone:keystone_local_only@127.0.0.1:55432/keystone"
+browser_origins = [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "http://127.0.0.1:8080",
+    "http://localhost:8080",
+]
+session_hours = 8
+pat_max_days = 90
+
+# Paths are relative to this configuration file, including environment overrides.
+file_coordination_root = "../.data/files"
+file_default_storage = "local"
+# Default 16 MiB, maximum 64 MiB; coordinate Nginx's upload limit.
+file_max_bytes = 16777216
+
+# Model channels/keys are configured manually in the console after startup.
+flow_enabled = true
+
+# Optional for non-interactive initialization of an empty installation only.
+# Otherwise `keystone init` prompts. Existing passwords are never reset.
+# initial_admin_password = ""
+
+[file_storages.local]
+driver = "filesystem"
+root = "../.data/files"
+# For simultaneous local + S3 sources see docs/configuration.md.

@@ -65,7 +65,7 @@ def install(monkeypatch):
 def test_invalid_business_declarations_fail_at_startup(monkeypatch, declarations):
     monkeypatch.setattr(composition, "BUSINESS_CATALOGS", declarations)
     with pytest.raises(ValueError, match="business"):
-        with TestClient(create_app(Settings(_env_file=None))):
+        with TestClient(create_app(Settings(config_file=None))):
             pytest.fail("Invalid declarations must prevent startup")
 
 
@@ -98,7 +98,7 @@ def test_flow_permissions_must_be_in_application_catalog(monkeypatch):
         (replace(contracts.definition, required_permissions=(READ,)),),
     )
     with pytest.raises(ValueError, match="undeclared permissions"):
-        build_runtime(Settings(_env_file=None))
+        build_runtime(Settings(config_file=None))
 
 
 def test_all_flow_definitions_are_validated_and_directory_is_frozen():

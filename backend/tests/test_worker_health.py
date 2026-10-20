@@ -31,7 +31,7 @@ def test_probe_queries_database_without_starting_executor(monkeypatch, capsys, s
     query = AsyncMock(return_value={"status": status})
     monkeypatch.setattr(worker, "Database", lambda *args, **kwargs: database)
     monkeypatch.setattr(worker, "worker_status", query)
-    monkeypatch.setattr(worker, "Settings", lambda: Settings(_env_file=None))
+    monkeypatch.setattr(worker, "Settings", lambda: Settings(config_file=None))
     monkeypatch.setattr(worker, "build_runtime", lambda _: pytest.fail("Probe started executor"))
     monkeypatch.setattr("sys.argv", ["keystone-worker", "--check"])
     with pytest.raises(SystemExit) as result:
@@ -82,7 +82,7 @@ async def test_heartbeats_continue_while_starting_unready_and_recovering(tmp_pat
 
     runtime.readiness.side_effect = initial_check
     settings = Settings(
-        _env_file=None,
+        config_file=None,
         flow_enabled=False,
         file_coordination_root=tmp_path,
         file_storages={"local": {"driver": "filesystem", "root": tmp_path}},
@@ -128,7 +128,7 @@ async def test_flow_readiness_and_failure_are_observed(monkeypatch, runtime):
             ready.clear()
 
     monkeypatch.setattr(flow_worker, "run", fake_flow)
-    task = asyncio.create_task(worker.run(Settings(_env_file=None), stop))
+    task = asyncio.create_task(worker.run(Settings(config_file=None), stop))
     try:
         await entered.wait()
         await wait_until(lambda: len(runtime.observations) >= 2)
@@ -149,7 +149,7 @@ async def test_slow_maintenance_keeps_heartbeat_but_loses_readiness(tmp_path, mo
     monkeypatch.setattr(worker_health, "MAX_AGE_SECONDS", 0.05)
     stop, release = asyncio.Event(), asyncio.Event()
     settings = Settings(
-        _env_file=None,
+        config_file=None,
         flow_enabled=False,
         file_coordination_root=tmp_path,
         file_storages={"local": {"driver": "filesystem", "root": tmp_path}},

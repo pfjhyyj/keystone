@@ -21,7 +21,7 @@ PASSWORD = "initial-admin-test-password"
 
 def configuration(empty_database_url, tmp_path):
     return Settings(
-        _env_file=None,
+        config_file=None,
         env="test",
         database_url=empty_database_url,
         file_coordination_root=tmp_path,
@@ -90,3 +90,30 @@ def test_init_requires_a_password_only_for_an_empty_installation(empty_database_
     assert missing.value.code == "initial_admin_password_required"
     settings.initial_admin_password = SecretStr(PASSWORD)
     initialize(settings, non_interactive=True)
+
+
+def test_init_and_login_from_toml_without_models(empty_database_url, tmp_path, monkeypatch):
+    config = tmp_path / "keystone.toml"
+    config.write_text(
+        'file_coordination_root = "files"\n'
+        '[file_storages.local]\ndriver = "filesystem"\nroot = "files"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KEYSTONE_CONFIG_FILE", str(config))
+    monkeypatch.setenv("KEYSTONE_DATABASE_URL", empty_database_url)
+    monkeypatch.setenv("KEYSTONE_INITIAL_ADMIN_PASSWORD", PASSWORD)
+    settings = Settings()
+    initialize(settings, non_interactive=True)
+    assert (tmp_path / "files/.keystone-storage").is_file()
+    assert not (tmp_path / "files" / KEY_FILE).exists()
+    with TestClient(
+        create_app(settings), backend_options={"loop_factory": new_event_loop}
+    ) as client:
+        assert client.get("/api/v1/ready").status_code == 200
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"username": "admin", "password": PASSWORD},
+            headers={"Origin": "http://127.0.0.1:5173", "X-Keystone-Request": "1"},
+        )
+        assert response.status_code == 200
+        assert client.get("/api/v1/model-channels").json() == []

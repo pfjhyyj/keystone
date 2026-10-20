@@ -48,7 +48,7 @@ def test_platform_starts_with_an_empty_flow_directory(monkeypatch):
 
     monkeypatch.setattr(composition, "FLOW_DEFINITIONS", ())
     with TestClient(
-        create_app(Settings(_env_file=None, database_url=None)),
+        create_app(Settings(config_file=None, database_url=None)),
         backend_options={"loop_factory": new_event_loop},
     ) as client:
         assert client.get("/api/v1/health").status_code == 200
@@ -136,7 +136,7 @@ from keystone.bootstrap import build_runtime
 from keystone.composition import register_workflows
 from keystone.core.config import Settings
 
-runtime = build_runtime(Settings(_env_file=None, database_url=None, flow_enabled=False))
+runtime = build_runtime(Settings(config_file=None, database_url=None, flow_enabled=False))
 assert not any(name.startswith('keystone.businesses.') and name.endswith('.workflow')
                for name in sys.modules)
 from dbos import DBOS

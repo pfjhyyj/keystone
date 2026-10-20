@@ -17,11 +17,24 @@ docker build -t keystone-console:local ./frontend/console
 | 后端 Worker | 同一个后端镜像 | `keystone-worker` |
 | 控制台 | `frontend/console/Dockerfile` | Nginx（镜像默认命令） |
 
-API 与 Worker 使用同一份代码、锁文件和镜像，分别启动进程。后台镜像包含编译后的 Vue 静态文件及 `/api` 反向代理。每个工程的 `.dockerignore` 仅允许构建所需源码和配置进入上下文，不读取或打包实际 `.env`；构建不执行初始化、不创建模型配置。
+API 与 Worker 使用同一份代码、锁文件和镜像，分别启动进程。后台镜像包含编译后的 Vue 静态文件及 `/api` 反向代理。每个工程的 `.dockerignore` 仅允许构建所需源码和配置进入上下文，不读取或打包实际 `keystone.toml`、`.env`；构建不执行初始化、不创建模型配置。
 
 ## 2. 运行配置与初始化
 
 由实际部署环境配置应用进程、数据库连接、文件卷、精确的浏览器 Origin 和入口代理；后端参数见[配置说明](configuration.md)。API/Worker 镜像以 UID 10001 运行，挂载的协调目录和本地文件目录须可写。控制台镜像默认通过 Docker 内部 DNS 转发到同网络中名为 `api` 的服务、端口 8000；其他部署拓扑需调整 `frontend/console/docker/nginx.conf` 后构建。
+
+后端统一读取 `keystone.toml`。在运行时将同一份配置只读挂载到初始化进程、API 和 Worker 的 `/app/keystone.toml`，不将真实配置或秘密写入镜像。也可通过 `KEYSTONE_CONFIG_FILE=/etc/keystone/keystone.toml` 指定挂载位置。相对文件路径以配置文件目录为基准；容器内建议使用绝对挂载路径，例如：
+
+```toml
+file_coordination_root = "/data/files"
+file_default_storage = "local"
+
+[file_storages.local]
+driver = "filesystem"
+root = "/data/files"
+```
+
+进程环境变量覆盖 TOML，适合注入 `KEYSTONE_DATABASE_URL`、`KEYSTONE_INITIAL_ADMIN_PASSWORD` 或 `KEYSTONE_FILE_STORAGES__CLOUD__SECRET_KEY` 等秘密。容器默认通过 `KEYSTONE_HOST=0.0.0.0` 监听网络接口；浏览器入口、数据库连接及存储路径按实际环境设置。纯环境变量部署也可运行，文件源逐项注入，不需要 JSON 存储映射；具体规则见[配置说明](configuration.md)。
 
 在应用的实际运行环境中手动执行一次 `keystone init`，然后分别运行 API 与 Worker。初始化仅负责业务迁移、Flow 迁移、文件存储与初始管理员；重复执行保留已有数据、密码和卷标识。API/Worker 自身启动只检查依赖，不迁移数据库。
 

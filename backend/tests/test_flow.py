@@ -1,4 +1,3 @@
-import json
 import os
 import subprocess
 import sys
@@ -56,30 +55,23 @@ def start(client, file_id, key="review", **overrides):
 def worker(client, tmp_path, *, code=None, stub=True):
     settings = client.app.state.runtime.settings
     env = {
-        **os.environ,
+        **{
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("KEYSTONE_FILE_STORAGES")
+        },
         "PYTHONPATH": str(__import__("pathlib").Path(__file__).parent),
         "KEYSTONE_ENV": "test",
         "KEYSTONE_FLOW_ENABLED": "true",
         "KEYSTONE_DATABASE_URL": settings.database_url.get_secret_value(),
         "KEYSTONE_FILE_COORDINATION_ROOT": str(settings.file_coordination_root),
-        "KEYSTONE_FILE_STORAGES": json.dumps(
-            {
-                key: (
-                    source.model_dump(mode="json", exclude={"access_key", "secret_key"})
-                    | (
-                        {
-                            "access_key": source.access_key.get_secret_value(),
-                            "secret_key": source.secret_key.get_secret_value(),
-                        }
-                        if source.driver == "s3"
-                        else {}
-                    )
-                )
-                for key, source in settings.file_storages.items()
-            }
-        ),
         "KEYSTONE_FILE_DEFAULT_STORAGE": settings.file_default_storage,
     }
+    for key, source in settings.file_storages.items():
+        for field, value in source.model_dump(mode="json", exclude_none=True).items():
+            if field in {"access_key", "secret_key"}:
+                value = getattr(source, field).get_secret_value()
+            env[f"KEYSTONE_FILE_STORAGES__{key.upper()}__{field.upper()}"] = str(value)
     log = tmp_path / f"worker-{time.time_ns()}.log"
     with log.open("w", encoding="utf8") as output:
         process = subprocess.Popen(

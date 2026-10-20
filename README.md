@@ -8,15 +8,15 @@
 
 ### 已有旧环境：重新测试（可选）
 
-首次使用可直接跳到第 1 步。已有旧 `.env`、希望恢复默认本机配置时，先用 Ctrl+C 停止 API、Worker 和前端，再从仓库根目录执行：
+首次使用可直接跳到第 1 步。已有旧配置、希望恢复默认本机配置时，先用 Ctrl+C 停止 API、Worker 和前端，再从仓库根目录执行：
 
 ```bash
-cp backend/.env.example backend/.env
+cp backend/keystone.toml.example backend/keystone.toml
 cp frontend/console/.env.example frontend/console/.env
 cp deploy/.env.example deploy/.env
 ```
 
-这些命令覆盖旧配置，补齐本地文件存储并移除旧的模型、应用容器参数。默认启动不需要传入 `deploy/.env`。若当前终端设置过 `KEYSTONE_*`、`POSTGRES_*` 或 `COMPOSE_*` 环境变量，先取消相应覆盖，避免它们优先于 `.env` 生效。
+这些命令覆盖旧配置，补齐本地文件存储并移除旧的模型、应用容器参数。默认启动不需要传入 `deploy/.env`。若当前终端设置过 `KEYSTONE_*`、`POSTGRES_*` 或 `COMPOSE_*` 环境变量，先取消相应覆盖，避免它们优先于配置文件生效。后端只读取 `keystone.toml`，旧 `backend/.env` 不再生效；保留原数据时，应将原数据库连接、存储源名称和路径转写到 TOML 中。
 
 要连测试数据一起清空，再执行下面两条命令；仅用于默认本机开发环境，会删除数据库中的用户、模型配置、Flow 记录及 `.data/files` 中的文件和模型加密密钥：
 
@@ -39,13 +39,15 @@ docker compose -f deploy/compose.yaml up -d --wait
 
 ```bash
 cd backend
-[ -f .env ] || cp .env.example .env
+[ -f keystone.toml ] || cp keystone.toml.example keystone.toml
 uv sync --locked
 uv run --locked keystone init
 uv run --locked keystone-api
 ```
 
-已有 `.env` 会保留，旧文件缺少存储配置时见[初始化排障](docs/configuration.md#5-初始化时文件存储未配置)。`init` 首次交互设置管理员密码（用户名 `admin`），完成数据库迁移、Flow 迁移和文件存储初始化；重复执行保留已有数据及密码。它不配置模型，不要求模型 Key。API 默认监听 `127.0.0.1:8000`。
+已有 `keystone.toml` 会保留，旧文件缺少存储配置时见[初始化排障](docs/configuration.md#5-初始化时文件存储未配置)。`init` 首次交互设置管理员密码（用户名 `admin`），完成数据库迁移、Flow 迁移和文件存储初始化；重复执行保留已有数据及密码。它不配置模型，不要求模型 Key。API 默认监听 `127.0.0.1:8000`。
+
+API、Worker 和 CLI 共用 `keystone.toml`，`KEYSTONE_*` 环境变量可覆盖对应字段；文件存储的相对路径以 TOML 所在目录为基准。配置示例和覆盖规则见[配置说明](docs/configuration.md)。
 
 ### 3. 另开终端启动 Worker
 

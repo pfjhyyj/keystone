@@ -18,7 +18,7 @@ from keystone.platform.files.leases import initialize
 async def test_empty_database_migration_and_transaction_rollback(empty_database_url, tmp_path):
     initialize(tmp_path / "storage")
     settings = Settings(
-        _env_file=None,
+        config_file=None,
         database_url=empty_database_url,
         file_coordination_root=tmp_path / "storage",
         file_storages={"local": {"driver": "filesystem", "root": tmp_path / "storage"}},
@@ -120,7 +120,7 @@ def test_domain_migrations_upgrade_and_downgrade_in_order(empty_database_url):
         ("0007_channel_credentials", set()),
         ("0008_worker_heartbeats", {"worker_heartbeats"}),
     ]
-    config = migration_config(Settings(_env_file=None, database_url=empty_database_url))
+    config = migration_config(Settings(config_file=None, database_url=empty_database_url))
     config.attributes["create_schema"] = True
     engine = create_engine(empty_database_url)
     try:

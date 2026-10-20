@@ -99,9 +99,6 @@ class Deployment:
                 "KEYSTONE_ENV": "test",
                 "KEYSTONE_INITIAL_ADMIN_PASSWORD": PASSWORD,
                 "KEYSTONE_FLOW_ENABLED": "true",
-                "KEYSTONE_FILE_STORAGES": json.dumps(
-                    {"local": {"driver": "filesystem", "root": "/data/files"}}
-                ),
                 "KEYSTONE_BROWSER_ORIGINS": json.dumps([self.origin]),
             }
         )

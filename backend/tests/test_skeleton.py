@@ -27,7 +27,7 @@ def test_offline_recovery_requires_explicit_stop_confirmation(monkeypatch):
 
 
 def settings(**values):
-    return Settings(_env_file=None, database_url=None, **values)
+    return Settings(config_file=None, database_url=None, **values)
 
 
 @pytest.mark.parametrize("failure", ["missing_storage", "driver_error"])
@@ -46,8 +46,8 @@ def test_cli_reports_safe_configuration_hint_without_raw_exception(monkeypatch, 
     assert "hidden-cli-secret" not in caplog.text
     if failure == "missing_storage":
         assert "storage_unavailable" in caplog.text
-        assert "KEYSTONE_FILE_STORAGES" in caplog.text
-        assert ".env" in caplog.text
+        assert "file_storages" in caplog.text
+        assert "keystone.toml" in caplog.text
     else:
         assert "invalid_configuration_or_database" in caplog.text
         assert "detail=" in caplog.text
@@ -116,7 +116,7 @@ def test_errors_hide_input_and_exception_details_and_assign_request_id(caplog):
 
 def test_settings_reject_non_postgres_without_exposing_secret():
     with pytest.raises(ValidationError) as error:
-        Settings(_env_file=None, database_url="sqlite:///hidden-test-secret")
+        Settings(config_file=None, database_url="sqlite:///hidden-test-secret")
     assert "hidden-test-secret" not in str(error.value)
 
 

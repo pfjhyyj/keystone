@@ -18,7 +18,7 @@ def test_database_rejects_missing_application_catalog_before_creating_engine(mon
     create_engine = Mock()
     monkeypatch.setattr("keystone.core.database.create_async_engine", create_engine)
     settings = Settings(
-        _env_file=None, database_url="postgresql+psycopg://user:password@localhost/keystone"
+        config_file=None, database_url="postgresql+psycopg://user:password@localhost/keystone"
     )
     with pytest.raises(TypeError):
         Database(settings)
@@ -60,7 +60,7 @@ def test_new_password_length_without_complexity_requirements(schema, extra):
 
 def test_production_requires_https_origins_and_csrf_is_session_bound():
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, env="production", browser_origins=["http://example.test"])
+        Settings(config_file=None, env="production", browser_origins=["http://example.test"])
     assert csrf_token("first-session-secret") != csrf_token("second-session-secret")
     assert csrf_token("first-session-secret") != "first-session-secret"
 

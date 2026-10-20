@@ -1,10 +1,10 @@
 # 开发与测试
 
-日常运行顺序见 [README](../README.md#本机启动linuxmacos)：Compose 启动 PostgreSQL，本机终端分别启动 API、Worker 和前端。数据库的默认值与 `backend/.env.example` 一致；平台初始化与服务启动均不要求模型凭据，渠道和模型由操作者之后手动配置。
+日常运行顺序见 [README](../README.md#本机启动linuxmacos)：Compose 启动 PostgreSQL，本机终端分别启动 API、Worker 和前端。数据库的默认值与 `backend/keystone.toml.example` 一致；平台初始化与服务启动均不要求模型凭据，渠道和模型由操作者之后手动配置。
 
 ## 开发配置
 
-- `backend/.env`：本机 API、Worker 和 CLI 共用。默认使用本机 55432 端口与 `.data/files` 目录。
+- `backend/keystone.toml`：本机 API、Worker 和 CLI 共用。默认使用本机 55432 端口与 `.data/files` 目录。
 - `frontend/console/.env`：仅在更改 API 地址时需要，可设置 `KEYSTONE_API_PROXY`；默认代理 `http://127.0.0.1:8000`。
 - `deploy/.env`：可选，仅用于覆盖 PostgreSQL 密码、宿主端口或镜像。例如复制示例后使用 `docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --wait`；改密码或端口时同步修改后端数据库 URL。
 

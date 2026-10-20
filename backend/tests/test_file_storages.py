@@ -37,30 +37,32 @@ def cloud_config(s3, **changes):
 
 
 def test_configuration_validation_and_secret_redaction(tmp_path, s3, monkeypatch):
-    monkeypatch.setenv("KEYSTONE_FILE_STORAGES", cloud_config(s3).model_dump_json())
+    monkeypatch.setenv("KEYSTONE_FILE_STORAGES__LOCAL__ROOT", str(tmp_path))
     with pytest.raises(ValidationError):
-        Settings(_env_file=None)
-    monkeypatch.delenv("KEYSTONE_FILE_STORAGES")
+        Settings(config_file=None)
+    monkeypatch.delenv("KEYSTONE_FILE_STORAGES__LOCAL__ROOT")
     sources = {"local": {"driver": "filesystem", "root": str(tmp_path)}, "cloud": cloud_config(s3)}
-    settings = Settings(_env_file=None, file_storages=sources, file_coordination_root=tmp_path)
+    settings = Settings(config_file=None, file_storages=sources, file_coordination_root=tmp_path)
     assert set(settings.file_storages) == {"local", "cloud"}
     assert settings.file_coordination_root == tmp_path
     assert "fixture-secret" not in repr(settings)
     with pytest.raises(ValidationError):
         Settings(
-            _env_file=None,
+            config_file=None,
             file_storages=sources,
             file_default_storage="missing",
             file_coordination_root=tmp_path,
         )
-    with pytest.raises(ValidationError, match="FILE_COORDINATION_ROOT"):
-        Settings(_env_file=None, file_storages=sources)
+    with pytest.raises(ValidationError, match="file_coordination_root"):
+        Settings(config_file=None, file_storages=sources)
     with pytest.raises(ValidationError):
         Settings(
-            _env_file=None, file_storages={"cloud": cloud_config(s3)}, file_default_storage="cloud"
+            config_file=None,
+            file_storages={"cloud": cloud_config(s3)},
+            file_default_storage="cloud",
         )
     cloud_only = Settings(
-        _env_file=None,
+        config_file=None,
         file_storages={"cloud": cloud_config(s3)},
         file_default_storage="cloud",
         file_coordination_root=tmp_path,
@@ -80,12 +82,12 @@ def test_configuration_validation_and_secret_redaction(tmp_path, s3, monkeypatch
 
 
 async def test_coordination_directory_does_not_create_a_storage_source(tmp_path):
-    registry = StorageRegistry(Settings(_env_file=None, file_coordination_root=tmp_path))
+    registry = StorageRegistry(Settings(config_file=None, file_coordination_root=tmp_path))
     assert registry.sources == {}
     assert await registry.readiness() == ("unconfigured", {})
     with pytest.raises(ServiceError):
         registry.get()
-    with pytest.raises(ServiceError, match="KEYSTONE_FILE_STORAGES") as missing:
+    with pytest.raises(ServiceError, match="file_storages") as missing:
         registry.initialize()
     assert missing.value.code == "storage_unavailable"
     assert not list(tmp_path.iterdir())
@@ -94,7 +96,7 @@ async def test_coordination_directory_does_not_create_a_storage_source(tmp_path)
 async def test_initialize_uses_explicit_coordination_and_content_directories(tmp_path):
     registry = StorageRegistry(
         Settings(
-            _env_file=None,
+            config_file=None,
             file_coordination_root=tmp_path / "coordination",
             file_storages={"local": {"driver": "filesystem", "root": tmp_path / "content"}},
         )
@@ -153,7 +155,7 @@ async def test_auxiliary_source_failure_does_not_gate_default(tmp_path, s3):
     initialize(tmp_path)
     registry = StorageRegistry(
         Settings(
-            _env_file=None,
+            config_file=None,
             file_coordination_root=tmp_path,
             file_storages={
                 "local": StorageConfig(driver="filesystem", root=tmp_path),
