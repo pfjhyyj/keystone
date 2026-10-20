@@ -169,7 +169,7 @@ keystone/
 
 backend/ 内维护唯一后端依赖与锁文件，frontend/ 下每个应用维护自己的依赖、锁文件、构建和测试。Dockerfile、.dockerignore 和镜像入口配置随各自工程维护，使用工程目录作为构建上下文。首版只创建 console，不创建占位业务前端、pnpm workspace 或共享前端包。业务前端数量与后端业务模块数量不要求一致。deploy/ 负责第三方依赖编排，不容纳领域规则；docs/ 是当前设计唯一维护位置。
 
-当前已实现 platform/identity、audit、files、dictionary、model_access、flow 及 businesses/document_review。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 提供 init/migrate/migrate-flow/revision/check/init-admin/init-storage；console 提供账户、文件、字典、模型及 Flow 基本操作。初始迁移按 identity、audit、dictionary、files、model_access、flow 分为六份，保持一条链，追加渠道凭据和 Worker 心跳迁移后，当前 head 为 0008_worker_heartbeats，文件多源字段包含在 0004_files 初始结构中；keystone schema 包含十六张领域表和一张 Worker 运行观测表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
+当前已实现 platform/identity、audit、files、dictionary、model_access、flow 及 businesses/document_review。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 以 init 统一初始化业务结构、Flow、存储和管理员，另提供 revision/check/init-admin/init-storage；console 提供账户、文件、字典、模型及 Flow 基本操作。初始结构按 identity、audit、dictionary、files、model_access、flow 和 core 七个领域/模型归属拆分，不使用数字前缀，保持一条迁移链和单一 head（core）；文件多源和渠道凭据密文直接包含在各自领域的初始结构中；keystone schema 包含十六张领域表和一张 Worker 运行观测表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
 
 CLI 另提供 recover-model-calls --confirm-api-stopped：操作者停止全部 API/普通调用进程后，显式将普通遗留 running 调用收尾为 unknown，保留费用与编号并记录系统审计。确认标志不代替进程检测；恢复期间保持 API 停止。Flow 调用继续由持有单 Worker 排他锁的启动恢复处理，不新增后台超时扫描器。详细边界见[模型离线收尾](domains/model-access.md#75-普通-api-调用离线收尾)。
 

@@ -6,8 +6,8 @@ Tables: files, file_grants, file_references.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0004_files"
-down_revision = "0003_dictionary"
+revision = "files"
+down_revision = "dictionary"
 branch_labels = None
 depends_on = None
 

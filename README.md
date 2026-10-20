@@ -45,7 +45,7 @@ uv run --locked keystone init
 uv run --locked keystone-api
 ```
 
-已有 `keystone.toml` 会保留，旧文件缺少存储配置时见[初始化排障](docs/configuration.md#5-初始化时文件存储未配置)。`init` 首次交互设置管理员密码（用户名 `admin`），完成数据库迁移、Flow 迁移和文件存储初始化；重复执行保留已有数据及密码。它不配置模型，不要求模型 Key。API 默认监听 `127.0.0.1:8000`。
+已有 `keystone.toml` 会保留，旧文件缺少存储配置时见[初始化排障](docs/configuration.md#5-初始化时文件存储未配置)。`init` 首次交互设置管理员密码（用户名 `admin`），一次创建完整业务结构、Flow 执行结构和文件存储；重复执行保留已有数据及密码。无需单独运行迁移命令。它不配置模型，不要求模型 Key。API 默认监听 `127.0.0.1:8000`。
 
 API、Worker 和 CLI 共用 `keystone.toml`，`KEYSTONE_*` 环境变量可覆盖对应字段；文件存储的相对路径以 TOML 所在目录为基准。配置示例和覆盖规则见[配置说明](docs/configuration.md)。
 

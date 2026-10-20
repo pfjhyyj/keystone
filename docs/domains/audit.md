@@ -112,7 +112,7 @@ AccessContext 成功取得授权上下文后，失败或拒绝日志与成功日
 
 平台 ACTIONS 保留平台动作，业务在自身 catalog.py 声明动作及详情字段白名单，由 composition.py 合并成应用级不可变目录并显式绑定 Database。writer 从调用方事务的 session.info 读取目录，未绑定目录或动作未声明时拒绝写入；不同应用的目录不会互相覆盖。业务沿用下述事务、身份、关联编号、递归字段校验和 8 KiB 大小限制，不增加业务审计表；具体声明见[业务接入规范](../architecture.md#55-业务权限审计与模型接入)。
 
-代码位于 backend/src/keystone/platform/audit/，表为 keystone.audit_logs，由独立的 0002_audit 迁移创建。record 接受调用方事务；成功日志写入失败时抛错并回滚整个业务操作。HTTP 用例服务的权限拒绝、业务冲突和执行失败在回滚后尝试独立写日志，失败审计不可用只记录脱敏运行告警，不覆盖原始错误。请求 Schema 校验和 CSRF 边界拒绝不自动解析请求正文生成领域审计。Flow 内部步骤失败通过运行终态的 flow.complete 及安全错误码留痕，不逐步骤复制失败审计。
+代码位于 backend/src/keystone/platform/audit/，表为 keystone.audit_logs，由 audit 领域初始迁移创建。record 接受调用方事务；成功日志写入失败时抛错并回滚整个业务操作。HTTP 用例服务的权限拒绝、业务冲突和执行失败在回滚后尝试独立写日志，失败审计不可用只记录脱敏运行告警，不覆盖原始错误。请求 Schema 校验和 CSRF 边界拒绝不自动解析请求正文生成领域审计。Flow 内部步骤失败通过运行终态的 flow.complete 及安全错误码留痕，不逐步骤复制失败审计。
 
 登录失败使用 anonymous，成功登录使用验证后的用户；CLI 初始化使用 system；PAT 操作使用所属用户，details 可保存非秘密 credential_id；管理员批量撤销其他人的凭据记录实际管理员，目标及 details 保存被管理用户。密码、哈希、Cookie 和秘密令牌均不进入 details。occurred_at 在结果写入时取服务端 UTC，correlation_id 使用服务端生成的请求 ID。
 

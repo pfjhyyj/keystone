@@ -236,7 +236,7 @@ Channel、ModelEntry 不论是否已被引用，首版均不提供物理删除�
 
 ## 7. 当前实现约定
 
-代码位于 backend/src/keystone/platform/model_access/，迁移 0005_model_access 建立 model_channels、model_entries、model_invocations；0007_channel_credentials 将旧部署引用改为渠道凭据密文，已有渠道升级后需在控制台手动重新填写 Key。复用 Ether ai/runtime.py、dispatch.py、invocations.py 的受控发送、运行时凭据注入、响应观测和安全错误分类思路，按 Keystone 的发送前登记规则改写；没有复制路由池、配额、聊天会话或其他领域实体。
+代码位于 backend/src/keystone/platform/model_access/，model_access 领域初始迁移建立 model_channels、model_entries、model_invocations，渠道直接使用凭据密文字段。复用 Ether ai/runtime.py、dispatch.py、invocations.py 的受控发送、运行时凭据注入、响应观测和安全错误分类思路，按 Keystone 的发送前登记规则改写；没有复制路由池、配额、聊天会话或其他领域实体。
 
 ### 7.1 配置
 

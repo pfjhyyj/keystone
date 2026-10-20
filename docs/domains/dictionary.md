@@ -106,7 +106,7 @@ Dictionary、DictionaryItem 都是管理配置，各自保留四个审计字段�
 
 ## 7. 当前实现约定
 
-代码位于 backend/src/keystone/platform/dictionary/，迁移 0003_dictionary 创建 dictionaries 和 dictionary_items。key/value 使用小写英文字母开头、后接小写字母/数字/下划线，1–64 字符，不静默转换大小写；name/label 去除首尾空白后 1–128 字符，description 可空、最多 1000 字符。sort_order 为 32 位整数。创建默认启用，更新请求不接受 key/value/dictionary_id 或审计字段。
+代码位于 backend/src/keystone/platform/dictionary/，dictionary 领域初始迁移创建 dictionaries 和 dictionary_items。key/value 使用小写英文字母开头、后接小写字母/数字/下划线，1–64 字符，不静默转换大小写；name/label 去除首尾空白后 1–128 字符，description 可空、最多 1000 字符。sort_order 为 32 位整数。创建默认启用，更新请求不接受 key/value/dictionary_id 或审计字段。
 
 | 入口 | 权限与行为 |
 |---|---|

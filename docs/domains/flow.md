@@ -307,7 +307,7 @@ Ether 的 Run 模型 同时保存 definition_revision、definition_snapshot、en
 
 不可变映射由当前 Runtime.flow_definitions 持有，目录展示、发起、ExecutionIdentity 授权及 reconcile 补投都使用同一映射；不再保留全局 _definitions 或覆盖式注册。Worker 继续由 register_workflows 单独显式导入 workflow，装饰器使用 definition.entrypoint，避免手写第二份入口名。未增加插件发现、执行版本字段或多项目调度能力。
 
-代码位于 backend/src/keystone/platform/flow/；迁移 0006_flow 只增加 keystone.flow_runs，保持上文 16 字段，不增加投递、步骤、Agent、租约或快照版本表。DBOS 自己管理同一 PostgreSQL 的 dbos schema，通过一次性 `keystone migrate-flow` 初始化/升级；API 和 Worker 启动均不运行迁移。
+代码位于 backend/src/keystone/platform/flow/；flow 领域初始迁移创建 keystone.flow_runs，保持上文 16 字段，不增加投递、步骤、Agent、租约或快照版本表。DBOS 自己管理同一 PostgreSQL 的 dbos schema，由同一个 `keystone init` 初始化/升级；API 和 Worker 启动均不运行迁移。
 
 composition.py 集中声明轻量 Definition，bootstrap 加载该目录；只有 Worker 装配 workflow、Agent 和 Skills。新增业务流程时在业务目录声明契约、编排和受控能力，在 composition.py 注册，不修改平台执行器。API 使用 DBOSClient 查询历史，不启动 DBOS 执行器。`KEYSTONE_FLOW_ENABLED` 默认 true。
 

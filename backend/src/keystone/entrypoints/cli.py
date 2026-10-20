@@ -28,7 +28,7 @@ async def recover_model_calls(settings, *, api_stopped=False):
     try:
         checks = await database.readiness(expected_heads(settings))
         if any(value != "ok" for value in checks.values()):
-            raise ServiceError(503, "database_not_ready", "Run keystone migrate first")
+            raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
         count = await recover_api_calls(database, api_stopped=True)
         logging.getLogger(__name__).info("model_calls_recovered count=%s", count)
         return count
@@ -50,7 +50,7 @@ async def init_admin(settings, data):
     runtime = build_runtime(settings)
     try:
         if (await runtime.readiness())["status"] != "ready":
-            raise ServiceError(503, "database_not_ready", "Run keystone migrate first")
+            raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
         identifier = await initialize_admin(runtime.database, Passwords(), data)
         logging.getLogger(__name__).info("administrator_initialized user_id=%s", identifier)
     finally:
@@ -111,8 +111,6 @@ def main() -> None:
         "command",
         choices=[
             "init",
-            "migrate",
-            "migrate-flow",
             "revision",
             "check",
             "init-admin",
@@ -161,12 +159,6 @@ def main() -> None:
         if args.command == "recover-model-calls":
             run_async(recover_model_calls(settings, api_stopped=args.confirm_api_stopped))
             return
-        if args.command == "migrate-flow":
-            from dbos import DBOS
-
-            DBOS.migrate(settings.database_url.get_secret_value(), schema="dbos")
-            logging.getLogger(__name__).info("flow_migration_completed")
-            return
         if args.command == "check":
             raise SystemExit(0 if run_async(check_database(settings)) else 1)
         if args.command == "init-admin":
@@ -181,13 +173,7 @@ def main() -> None:
             del password
             run_async(init_admin(settings, data))
             return
-        config = migration_config(settings)
-        if args.command == "migrate":
-            config.attributes["create_schema"] = True
-            command.upgrade(config, "head")
-            logging.getLogger(__name__).info("migration_completed")
-        else:
-            command.current(config)
+        command.current(migration_config(settings))
     except Exception as error:
         # Do not print raw settings/driver exceptions, which can contain secrets.
         logging.getLogger(__name__).error(

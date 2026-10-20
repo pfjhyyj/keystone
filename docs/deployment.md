@@ -36,7 +36,7 @@ root = "/data/files"
 
 进程环境变量覆盖 TOML，适合注入 `KEYSTONE_DATABASE_URL`、`KEYSTONE_INITIAL_ADMIN_PASSWORD` 或 `KEYSTONE_FILE_STORAGES__CLOUD__SECRET_KEY` 等秘密。容器默认通过 `KEYSTONE_HOST=0.0.0.0` 监听网络接口；浏览器入口、数据库连接及存储路径按实际环境设置。纯环境变量部署也可运行，文件源逐项注入，不需要 JSON 存储映射；具体规则见[配置说明](configuration.md)。
 
-在应用的实际运行环境中手动执行一次 `keystone init`，然后分别运行 API 与 Worker。初始化仅负责业务迁移、Flow 迁移、文件存储与初始管理员；重复执行保留已有数据、密码和卷标识。API/Worker 自身启动只检查依赖，不迁移数据库。
+在应用的实际运行环境中手动执行一次 `keystone init`，然后分别运行 API 与 Worker。初始化一次完成完整业务结构、Flow 执行结构、文件存储与初始管理员，无需单独执行迁移命令；重复执行保留已有数据、密码和卷标识。API/Worker 自身启动只检查依赖，不迁移数据库。
 
 模型凭据、渠道和模型由操作者按需在控制台手动配置，步骤见 [README](../README.md#模型配置手动)。未配置模型时平台仍可启动；启动和初始化不发起真实模型请求。
 

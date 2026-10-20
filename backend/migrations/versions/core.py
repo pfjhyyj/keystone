@@ -1,10 +1,10 @@
-"""Share always-on Worker heartbeats without an additional infrastructure dependency."""
+"""Initialize core runtime observations: always-on Worker heartbeats."""
 
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0008_worker_heartbeats"
-down_revision = "0007_channel_credentials"
+revision = "core"
+down_revision = "flow"
 branch_labels = None
 depends_on = None
 

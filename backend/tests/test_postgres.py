@@ -99,10 +99,10 @@ async def test_empty_database_migration_and_transaction_rollback(empty_database_
 
 
 @pytest.mark.postgres
-def test_domain_migrations_upgrade_and_downgrade_in_order(empty_database_url):
+def test_initial_schema_is_complete_reversible_and_preserves_dbos(empty_database_url):
     domains = [
         (
-            "0001_identity",
+            "identity",
             {
                 "users",
                 "roles",
@@ -112,14 +112,14 @@ def test_domain_migrations_upgrade_and_downgrade_in_order(empty_database_url):
                 "personal_access_tokens",
             },
         ),
-        ("0002_audit", {"audit_logs"}),
-        ("0003_dictionary", {"dictionaries", "dictionary_items"}),
-        ("0004_files", {"files", "file_grants", "file_references"}),
-        ("0005_model_access", {"model_channels", "model_entries", "model_invocations"}),
-        ("0006_flow", {"flow_runs"}),
-        ("0007_channel_credentials", set()),
-        ("0008_worker_heartbeats", {"worker_heartbeats"}),
+        ("audit", {"audit_logs"}),
+        ("dictionary", {"dictionaries", "dictionary_items"}),
+        ("files", {"files", "file_grants", "file_references"}),
+        ("model_access", {"model_channels", "model_entries", "model_invocations"}),
+        ("flow", {"flow_runs"}),
+        ("core", {"worker_heartbeats"}),
     ]
+    tables = set().union(*(tables for _, tables in domains))
     config = migration_config(Settings(config_file=None, database_url=empty_database_url))
     config.attributes["create_schema"] = True
     engine = create_engine(empty_database_url)
@@ -130,31 +130,51 @@ def test_domain_migrations_upgrade_and_downgrade_in_order(empty_database_url):
             connection.execute(text("CREATE TABLE dbos.retention_probe (value integer)"))
             connection.execute(text("INSERT INTO dbos.retention_probe VALUES (42)"))
         expected = {"alembic_version"}
-        for revision, tables in domains:
+        for revision, created in domains:
             command.upgrade(config, revision)
-            expected |= tables
+            expected |= created
             assert set(inspect(engine).get_table_names(schema="keystone")) == expected
-            if revision == "0004_files":
-                columns = {
-                    column["name"]: column
-                    for column in inspect(engine).get_columns("files", schema="keystone")
-                }
-                assert not columns["storage_key"]["nullable"]
-                assert columns["storage_key"]["default"] is None
             with engine.connect() as connection:
                 assert (
                     connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
                     == revision
                 )
+        columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns("files", schema="keystone")
+        }
+        assert not columns["storage_key"]["nullable"]
+        assert columns["storage_key"]["default"] is None
+        channel_columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("model_channels", schema="keystone")
+        }
+        assert {"api_key_encrypted", "billing_api_key_encrypted"} <= channel_columns
+        assert not {"credential_ref", "billing_credential_ref"} & channel_columns
+        with engine.begin() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
+                == "core"
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO keystone.users "
+                    "(id, username, display_name, password_hash, is_active, "
+                    "password_change_required) "
+                    "VALUES ('00000000-0000-4000-8000-000000000001', 'baseline_user', "
+                    "'Baseline', 'not-a-login-credential', true, false)"
+                )
+            )
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT username FROM keystone.users")) == "baseline_user"
         for index in reversed(range(len(domains))):
-            target = domains[index - 1][0] if index else "base"
-            command.downgrade(config, target)
+            command.downgrade(config, domains[index - 1][0] if index else "base")
             expected -= domains[index][1]
             assert set(inspect(engine).get_table_names(schema="keystone")) == expected
         command.upgrade(config, "head")
-        assert set(inspect(engine).get_table_names(schema="keystone")) == {
-            "alembic_version",
-            *(name for _, tables in domains for name in tables),
+        assert set(inspect(engine).get_table_names(schema="keystone")) == tables | {
+            "alembic_version"
         }
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 42

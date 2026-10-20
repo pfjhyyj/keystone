@@ -7,8 +7,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "0002_audit"
-down_revision = "0001_identity"
+revision = "audit"
+down_revision = "identity"
 branch_labels = None
 depends_on = None
 

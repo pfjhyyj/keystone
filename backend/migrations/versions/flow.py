@@ -7,8 +7,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "0006_flow"
-down_revision = "0005_model_access"
+revision = "flow"
+down_revision = "model_access"
 branch_labels = None
 depends_on = None
 

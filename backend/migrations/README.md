@@ -1,44 +1,31 @@
-# 数据库迁移
+# 数据库结构与迁移
 
-Keystone 保留一条 Alembic 迁移链，初始迁移按领域划分。编号表示执行顺序，领域名说明归属。
+初始结构按领域模型拆分，不使用数字编号。每份迁移完整声明对应领域的字段、约束和索引，不导入运行时 ORM 或调用 `create_all`，避免后续模型修改影响历史结构。
 
-| Revision / 文件 | 领域 | 负责的表 |
+| 文件 / Revision | 模型归属 | 表 |
 |---|---|---|
-| `0001_identity` | 身份与权限 | users、roles、user_roles、role_permissions、login_sessions、personal_access_tokens |
-| `0002_audit` | 审计 | audit_logs |
-| `0003_dictionary` | 字典 | dictionaries、dictionary_items |
-| `0004_files` | 文件 | files、file_grants、file_references |
-| `0005_model_access` | 模型接入 | model_channels、model_entries、model_invocations |
-| `0006_flow` | Flow | flow_runs |
-| `0007_channel_credentials` | 模型凭据 | model_channels 改为保存加密 API Key |
-| `0008_worker_heartbeats` | 运行观测 | worker_heartbeats 保存各 Worker 实例的状态与最近心跳 |
+| `identity.py` / `identity` | 身份与权限 | users、roles、user_roles、role_permissions、login_sessions、personal_access_tokens |
+| `audit.py` / `audit` | 审计 | audit_logs |
+| `dictionary.py` / `dictionary` | 字典 | dictionaries、dictionary_items |
+| `files.py` / `files` | 文件 | files、file_grants、file_references |
+| `model_access.py` / `model_access` | 模型接入 | model_channels、model_entries、model_invocations |
+| `flow.py` / `flow` | Flow | flow_runs |
+| `core.py` / `core` | Core 运行观测 | worker_heartbeats |
 
-文件均在 versions/ 下，名称为 `<revision>.py`，六份初始迁移从 identity 连到 flow，随后追加增量迁移，只有一个 head。每份初始迁移完整列出本领域的字段、约束、索引及逆序回滚；不导入运行时 ORM 模型或调用 create_all，避免模型后续修改影响历史迁移。审计字段在各表中显式声明，不用公共字段函数或动态建表循环隐藏结构。
+文件均位于 `versions/`，通过 `down_revision` 按上表顺序连接，只有一个 head：`core`。文件多源字段合入 files，渠道凭据密文字段合入 model_access，不再经过历史版本转换。17 张表均位于 `keystone` schema，Alembic 另维护一张版本表。
 
-所有业务表位于 keystone schema。`keystone migrate` 显式创建命名空间并升级到 head；API/Worker 只检查版本，不自动迁移。DBOS 使用独立 dbos schema，仍由 `keystone migrate-flow` 管理，业务迁移及回滚不修改 DBOS 表。
+## 初始化
 
-## 后续变更
+正常启动只需执行 `keystone init`，一次完成业务结构、DBOS 的 `dbos` schema、文件存储与初始管理员。重复执行保留已有数据和密码，无需分别执行迁移命令。API/Worker 启动仍只检查依赖，不自动执行 DDL。
 
-业务接入测试在干净子进程中先捕获 load_models 注册结果，再扫描业务模型文件，防止测试导入掩盖漏注册；同时检查 models/__init__.py 导出、单实体文件、schema、表名前缀及反向依赖。执行 `pytest tests/test_business_models.py` 即可检查，无需数据库或容器。扫描只存在于测试中，迁移仍显式导入；临时测试模型不进入业务目录或迁移链。
+本次合并针对尚未发布的开发版本；旧链数据库须先补齐并核对实际结构，再对齐新基线，不能仅修改版本号掩盖结构差异。正式发布后不再重写已使用的迁移。
 
-模型加载隔离测试检查平台表集合完整、共享 metadata/schema，并且不引入 HTTP 或执行器；不限制总表数。新增业务表可进入同一 metadata，仍由上述业务模型检查约束，不能通过替换或漏掉平台表来满足检查。
+## 后续结构变更
 
-平台与业务 ORM 统一由 `keystone.model_registry.load_models()` 显式加载，bootstrap 和 migrations/env.py 共用此入口。新增业务时，在自己的 models/__init__.py 导出实体，并在 load_models 中增加明确导入；不导入 API、workflow 或初始化数据。业务实体共享 Base/keystone schema，表名带业务前缀，继续追加同一迁移链，不增加独立迁移目录或版本表。
+新增结构继续追加同一条 Alembic 迁移链，按领域和变更含义命名，revision 与文件名一致，`down_revision` 指向当前 head；不为领域另建分支或版本表。部署仍通过 `keystone init` 更新，不增加启动步骤。
 
-Alembic 连接固定 search_path=public，所有领域表仍显式位于 keystone。这样即使登录角色也叫 keystone，元数据反射仍保留表和外键的 schema，避免自动比较把已有结构误判为变化；schema 过滤仍只包含 keystone，不管理 public 或 dbos 的表。接入测试用临时实体验证 Alembic 识别新增表、建表后差异归零；这不新增生产实体或迁移。
+平台与业务模型由 `keystone.model_registry.load_models()` 显式加载，bootstrap 和 `env.py` 共用该入口。业务实体共享 Base/keystone schema，表名带业务前缀；模型注册不导入 API、workflow 或初始化数据。接入检查见 `tests/test_business_models.py`。
 
-初始领域迁移保持现有布局，已经初始化的环境通过追加增量迁移保留已有数据。正式发布后，已发布或共享环境已使用的迁移保持不变；模型调整应追加编号递增的迁移，revision 与文件名一致，down_revision 指向当前 head。不重新生成整套初始迁移，也不为每个领域维护分支 head。确需跨领域原子调整时，在同一份增量迁移中写明涉及领域与依赖，不强行拆开事务。
+Alembic 连接固定 `search_path=public`，只管理 `keystone` schema。DBOS 的表及数据由执行引擎管理，业务迁移和回滚不修改它们。
 
-新增迁移需核对对应[领域模型](../../docs/README.md)、外键顺序和回滚行为。测试使用随机隔离 PostgreSQL 库，验证迁移结果与 ORM 一致、重复升级、逐领域回滚与重新升级，以及 DBOS 数据保持不变。回滚测试只在测试库执行。
-
-## 文件多源初始结构
-
-文件多源直接包含在 `0004_files`：创建 files 时同时定义非空的 storage_key，并保留 storage_fingerprint、object_key。storage_key 由上传服务根据显式的源配置填写，ORM 和数据库都没有默认源值。共六份初始迁移和后续增量迁移、单条链、head=0008_worker_heartbeats；新库运行 keystone migrate 即可建立完整初始结构。
-
-## 渠道凭据升级
-
-`0007_channel_credentials` 保留渠道和模型记录，替换旧凭据引用字段为可空密文字段。旧引用名不包含可恢复的 Key，升级后在控制台手动重新填写渠道 API Key；不读取或导入旧环境变量。新建渠道必须填写推理 Key，账务 Key 可选。回滚该迁移会移除密文列，凭据需重新配置；真实数据恢复应使用对应版本的联合备份。
-
-## Worker 心跳
-
-`0008_worker_heartbeats` 增加运行观测表，由原有 `keystone init` / `keystone migrate` 建立，无需单独初始化。API/Worker 不自动建表；表未就绪时 Worker 状态显示无法确认，API 自身仍按原有迁移检查返回就绪结果。该表不保存业务状态，不用于任务投递或锁定，不记录配置秘密。
+测试使用随机隔离 PostgreSQL 库，验证逐领域建表与回滚、完整结构与 ORM 一致、重复初始化保留数据，以及 DBOS 数据不受影响。回滚仅在测试库执行。

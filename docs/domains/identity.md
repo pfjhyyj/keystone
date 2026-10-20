@@ -258,7 +258,7 @@ LoginSession 不被 FlowRun 引用，过期或撤销后按自己的保留策略�
 
 ## 7. 最小实现约定
 
-代码位于 backend/src/keystone/platform/identity/，六张身份表由 0001_identity 迁移创建；AuditLog 由独立审计迁移负责。复用 Ether 的 Argon2 校验、随机凭据摘要、当前授权加载、管理范围和显式审计模式；会话和 PAT 按本文重新实现，不引入 JWT。权限库锁定 PyCasbin 2.8.0，使用其内存 Enforcer 和 RBAC 规则，参考[官方 Python 实现](https://github.com/pycasbin/casbin)；每次短操作从 Keystone 关系表装载，不使用数据库 Adapter、casbin_rule 或全局授权缓存。
+代码位于 backend/src/keystone/platform/identity/，六张身份表由 identity 领域初始迁移创建，AuditLog 由 audit 领域初始迁移创建。复用 Ether 的 Argon2 校验、随机凭据摘要、当前授权加载、管理范围和显式审计模式；会话和 PAT 按本文重新实现，不引入 JWT。权限库锁定 PyCasbin 2.8.0，使用其内存 Enforcer 和 RBAC 规则，参考[官方 Python 实现](https://github.com/pycasbin/casbin)；每次短操作从 Keystone 关系表装载，不使用数据库 Adapter、casbin_rule 或全局授权缓存。
 
 | 项目 | 当前规则 |
 |---|---|

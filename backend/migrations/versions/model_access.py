@@ -7,8 +7,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "0005_model_access"
-down_revision = "0004_files"
+revision = "model_access"
+down_revision = "files"
 branch_labels = None
 depends_on = None
 
@@ -20,8 +20,8 @@ def upgrade():
         sa.Column("name", sa.String(length=128), nullable=False),
         sa.Column("provider", sa.String(length=32), nullable=False),
         sa.Column("api_base", sa.String(length=512), nullable=False),
-        sa.Column("credential_ref", sa.String(length=64), nullable=False),
-        sa.Column("billing_credential_ref", sa.String(length=64), nullable=True),
+        sa.Column("api_key_encrypted", sa.Text(), nullable=True),
+        sa.Column("billing_api_key_encrypted", sa.Text(), nullable=True),
         sa.Column("upstream_account_ref", sa.String(length=128), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False),
         sa.Column("balance_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=True),

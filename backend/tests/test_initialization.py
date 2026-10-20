@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from keystone.bootstrap import create_app
 from keystone.composition import build_catalog
@@ -73,9 +73,14 @@ def test_init_prepares_all_dependencies_and_preserves_existing_accounts(
                     )
                     == 1
                 )
-                from sqlalchemy import text
-
                 assert await session.scalar(text("SELECT to_regclass('dbos.workflow_status')"))
+                assert await session.scalar(
+                    text("SELECT to_regclass('keystone.worker_heartbeats')")
+                )
+                assert (
+                    await session.scalar(text("SELECT version_num FROM keystone.alembic_version"))
+                    == "core"
+                )
         finally:
             await database.close()
 
