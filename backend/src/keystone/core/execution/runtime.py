@@ -85,25 +85,6 @@ async def lifespan(
             await asyncio.gather(*pending, return_exceptions=True)
 
 
-async def configure_schedule(*, name, workflow, enabled):
-    """Install a code-owned five-second plan, or pause its persisted disabled plan."""
-    if enabled:
-        await DBOS.apply_schedules_async(
-            [
-                {
-                    "schedule_name": name,
-                    "workflow_fn": workflow,
-                    "schedule": "*/5 * * * * *",
-                    "automatic_backfill": False,
-                }
-            ]
-        )
-        # apply_schedules preserves a persisted PAUSED status across configuration changes.
-        await asyncio.to_thread(DBOS.resume_schedule, name)
-    elif await DBOS.get_schedule_async(name) is not None:
-        await asyncio.to_thread(DBOS.pause_schedule, name)
-
-
 async def inspect_queues(settings):
     """Bounded read-only deployment diagnostics, without inputs, outputs or an executor."""
     client = None

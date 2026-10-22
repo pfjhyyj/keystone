@@ -5,10 +5,11 @@ from uuid import uuid4
 from pydantic import ValidationError
 from sqlalchemy import select, text
 
+from keystone.composition import execution_version
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.files.services.references import FileReferences
-from keystone.platform.flow.catalog import execution_version, file_ids, small_json
+from keystone.platform.flow.catalog import file_ids, small_json
 from keystone.platform.flow.models import TERMINAL, FlowRun
 from keystone.platform.flow.schemas import view
 from keystone.platform.identity.access import AccessContext

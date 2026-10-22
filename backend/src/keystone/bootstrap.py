@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from fastapi import FastAPI, Response
 
 from keystone import __version__
-from keystone.composition import build_catalog, build_flow_definitions, build_model_clients
+from keystone.composition import (
+    build_catalog,
+    build_flow_definitions,
+    build_model_clients,
+    execution_version,
+)
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.http import install_errors
@@ -19,7 +24,7 @@ from keystone.platform.dictionary.controllers import router as dictionary_router
 from keystone.platform.files.controllers import router as files_router
 from keystone.platform.files.services.grants import FileGrantService
 from keystone.platform.files.storage import StorageRegistry
-from keystone.platform.flow.catalog import Definition, execution_version
+from keystone.platform.flow.catalog import Definition
 from keystone.platform.flow.controllers import router as flow_router
 from keystone.platform.flow.services.runs import FlowService
 from keystone.platform.identity.controllers import router as identity_router

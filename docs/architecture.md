@@ -2,9 +2,11 @@
 
 采用模块化单体，字段、权限和生命周期见[领域文档](README.md#按领域阅读)。
 
+**阅读状态：**第 1～5 节记录当前实现；第 6 节说明已落地的任务设施和后续 Flow 扩展边界。core/execution/、各模块 tasks/ 和三类维护的 Step 拆分已实现，FlowPackage、素材粗选及协议/宿主目录的进一步整合仍为目标。完整接口与切换约束见[任务执行与模块规范设计](execution-design.md)。
+
 Worker 通过 DBOS 承载业务 Flow、系统自动任务和定时任务。公共生命周期、文件清理、Flow 协调及自动费用核对已实现；关闭业务 Flow 后公共运行时、文件维护和查费仍启动。默认运行一个 Worker，支持同宿主、同版本的 1～4 个固定身份。共享并发、稳定去重、按旧实例恢复和实例/共享维护观测见第 3.4～3.7 节；跨宿主与自动接管不在当前范围。multi_workers 增量迁移扩展模型发送归属、Flow 扫描依据和 Worker 观测，不新增业务表；升级前停机备份并执行 `keystone init`，历史无归属 Flow 调用须专项离线收尾。操作见[部署文档](deployment.md#4-多-worker-部署与发布)。
 
-Model Access 已按 billing/inference/Service 分层，三类系统任务的 DBOS 接入统一位于 worker/tasks/，见[Model Access 分层](#541-model-access-分层)。分层职责不随进程数量变化，费用确认和 Flow 权限规则保持一致。
+Model Access 已按 billing/inference/Service 分层，三类系统任务的 DBOS 接入位于所属模块的 tasks/，见[Model Access 分层](#541-model-access-分层)。分层职责不随进程数量变化，费用确认和 Flow 权限规则保持一致。
 
 固定身份动态登记、API 成员发现及显式退役已实现：新增 Worker 自动登记，API 和已有 Worker 无需重启，规则见第 3.5～3.6 节。worker_ids 仅兼容一次性旧环境迁移，不再限制准入或进入公共摘要；实现位置见第 3.7 节。首次切换执行 worker_registration 增量迁移，保留旧身份与恢复依据。
 
@@ -44,7 +46,7 @@ flowchart TD
 | flow | Definition 目录、FlowRun、业务流程的 DBOS 接入 | 发起、查询、取消、执行上下文、补投和结果同步 |
 | 具体业务 | 业务实体、业务规则、Workflow、Agent 与 Skills | 业务用例、结果采用和业务查询 |
 
-Worker 是进程，DBOS 是执行引擎，两者都不是新增领域。公共 DBOS 初始化、启动关闭及配置已集中到 `core/dbos_runtime.py` 这一薄文件；Worker 入口持有按身份的 OS 锁与 PostgreSQL 会话锁，并以共享的原全局锁排斥旧单实例制品，composition 显式装配领域服务、任务入口与稳定计划，core 不反向导入领域模块。worker/tasks/ 承担系统任务的 DBOS 接入，费用核对、文件维护及 Flow 协调规则继续归所属模块的 Service。DBOS workflow/step 直接用于明确的执行适配代码和业务 Flow，不进入普通 Service、模型或供应商协议适配包；不建设独立 Execution 子系统、通用 JobRun 表或多引擎接口。任务入口由 composition 显式装配，当前职责及后续调整见第 3.7 节。
+Worker 是进程，DBOS 是执行引擎，两者都不是新增领域。公共 DBOS 初始化、启动关闭及配置已集中到 `core/execution/runtime.py` 这一薄文件；Worker 入口持有按身份的 OS 锁与 PostgreSQL 会话锁，并以共享的原全局锁排斥旧单实例制品，composition 显式装配领域服务、任务入口与稳定计划，core 不反向导入领域模块。各模块 tasks/ 承担系统任务的 DBOS 接入，费用核对、文件维护及 Flow 协调规则继续归所属模块的 Service。DBOS workflow/step 直接用于明确的执行适配代码和业务 Flow，不进入普通 Service、模型或供应商协议适配包；不建设独立 Execution 子系统、通用 JobRun 表或多引擎接口。任务入口由 composition 显式装配，当前职责及后续调整见第 3.7 节。
 
 调用遵循以下规则：
 
@@ -70,7 +72,7 @@ Worker 是进程，DBOS 是执行引擎，两者都不是新增领域。公共 D
 
 ## 3. API 与 Worker 的分工
 
-公共生命周期、三类维护任务及自动费用核对已实现；系统任务入口集中在 worker/tasks/。当前结构见第 3.7/5.4.1 节，多 Worker 边界见第 3.5 节；当前支持同宿主、同版本的固定 Worker，不提供跨宿主或自动接管。
+公共生命周期、三类维护任务及自动费用核对已实现；系统任务入口位于所属模块的 tasks/。当前结构见第 3.7/5.4.1 节，多 Worker 边界见第 3.5 节；当前支持同宿主、同版本的固定 Worker，不提供跨宿主或自动接管。
 
 ### 3.1 职责与状态归属
 
@@ -122,9 +124,9 @@ DBOS 生命周期由 Worker 公共启动代码管理。`flow_enabled` 只控制�
 
 初期统一由 Worker 扫描所属模块的持久待办并提交 DBOS，API 不承担即时投递。业务事务提交与引擎入队不假定原子：API 退出或提交响应丢失后，已保存的待办仍可被发现；Worker 不可用时待办保留，接受少量扫描延迟。沿用 FlowRun、文件状态和费用核对状态作为恢复入口，不增加消息代理、通用投递表或 JobRun 领域。
 
-新增自动任务时，在所属模块实现业务服务、保存必要待办，再由 composition 显式装配 Worker 扫描与执行入口。DBOS 装饰器、队列/计划注册、技术去重和执行健康包装统一放在 worker/tasks/，调用模块公开 Service；普通 Service 不自行注册或投递 DBOS 任务，也不接收调度器上下文。不得从客户端接收任意导入路径、处理函数或执行身份。
+当前新增自动任务时，在所属模块实现业务服务、保存必要待办，再由 composition 显式装配 Worker 扫描与执行入口。当前 DBOS 装饰器、队列/计划注册、技术去重和执行健康包装放在所属模块的 tasks/，调用模块公开 Service；普通 Service 不自行注册或投递 DBOS 任务，也不接收调度器上下文。公共声明、投递、计划和安全 Step 收在 core/execution/，见第 6 节。不得从客户端接收任意导入路径、处理函数或执行身份。
 
-自动费用核对已接入 Yunwu/Openlux 日志查询及 OpenRouter 请求直查，由 Service 管理费用待办及写回，billing/ 处理供应商账务协议，worker/tasks/model_costs.py 处理 DBOS 接入；不新增业务 Definition、FlowRun、JobRun 表或独立账务服务。查询契约、状态和落库规则见[模型接入的自动费用核对](domains/model-access.md#36-自动费用核对)，目录调整不改变这些规则。
+自动费用核对已接入 Yunwu/Openlux 日志查询及 OpenRouter 请求直查，由 Service 管理费用待办及写回，billing/ 处理供应商账务协议，model_access/tasks/workflows.py 处理 DBOS 接入；不新增业务 Definition、FlowRun、JobRun 表或独立账务服务。查询契约、状态和落库规则见[模型接入的自动费用核对](domains/model-access.md#36-自动费用核对)，目录调整不改变这些规则。
 
 1. 模型发送前仍登记稳定 ModelInvocation，并绑定实际站点、原查询范围和非秘密费用口径。收到可用于查费的响应编号后尽早保存；调用结束时在同一短事务保存回执和费用待办。适配器确认响应已提供实际账户费用时直接保存，缺失费用不视为零。
 2. Worker 启动时投递一次费用扫描，此后通过 DBOS 每 5 秒发现到期待办。只扫描已结束、待核对且到期的记录，不把仍在执行的调用改判未知；succeeded、failed、unknown 均可能需要核对。扫描队列不执行慢 HTTP，不因关闭 Flow 而停用。
@@ -258,7 +260,7 @@ Worker 公共启动、维护计划、Model Access 分层及固定多 Worker 已�
 | 位置 | 当前职责 |
 |---|---|
 | entrypoints/worker.py、core/worker_identity.py | 固定身份和本次实例、OS/数据库身份锁、公共配置/主机/版本校验、排空和原身份重启 |
-| core/dbos_runtime.py、worker/tasks/ | DBOS 生命周期、每进程/全局队列预算、稳定计划与活动投递去重；只读部署诊断，不解释业务规则 |
+| core/execution/runtime.py、各模块 tasks/ | DBOS 生命周期、每进程/全局队列预算、稳定计划与活动投递去重；只读部署诊断，不解释业务规则 |
 | platform/flow | 实际发送时提供可信 Worker 归属；原受理、权限、取消、持久步骤及结果同步；持久化公平扫描依据 |
 | platform/model_access | 发送前登记归属，按旧实例恢复；共享推理/查费预算，范围锁与持锁短事务写回，轮次/revision 比较；billing/inference 不引入 ORM 或 DBOS |
 | platform/files | 原文件锁、生命周期与有界幂等清理；Worker 只包装调度 |
@@ -336,7 +338,7 @@ keystone/
 │   │   │   ├── files/
 │   │   │   ├── model_access/
 │   │   │   └── flow/
-│   │   ├── worker/tasks/       # 系统任务的 DBOS 入口，调用领域服务
+│   │   ├── worker/             # 进程身份、排空与健康；任务归所属模块 tasks/
 │   │   └── businesses/         # 具体业务模块
 │   ├── migrations/             # 一条 Keystone 业务迁移链
 │   └── tests/                  # unit、integration 与 support 分层
@@ -374,7 +376,7 @@ model_access 复用 Ether 的受控 SDK 传输思路：发送边界重新认证�
 
 有接口和持久化对象的模块统一以 controllers/、services/、models/、schemas/ 四个包为基本骨架，按领域放在一起；六个平台领域已按此整理，一个持久化实体一个文件。模块按实际职责增加 billing/、inference/、storage.py 等能力包或适配文件，不要求所有模块预建同一套扩展目录。HTTP 路由由 Controller 声明，API 入口统一注册；entrypoints 只处理启动与生命周期。core 只放技术设施和通用契约基类，不接收业务规则。具体职责、依赖和风格见下方模块规范。
 
-一个业务集中保存自身模型、服务、接口和流程。例如以下为业务出现后的组织方式，不预建视频业务：
+一个业务集中保存自身模型、服务、接口和流程。以下为按需扩展的目录示意，当前脚手架只生成模型、服务、接口和契约；目标目录统一使用 workflows/，不预建视频业务：
 
 ```text
 businesses/media_selection/
@@ -383,7 +385,7 @@ businesses/media_selection/
 ├── schemas/
 ├── services/
 ├── controllers/
-└── flows/
+└── workflows/
     └── select_material/
         ├── definition.py       # 轻量目录定义
         ├── contracts.py        # 输入输出契约
@@ -393,9 +395,9 @@ businesses/media_selection/
         └── resources/          # 提示词、Skills 等
 ```
 
-platform/flow 管运行记录、权限、补投、取消和同步；业务 flows 管步骤、Agent、工具、分支与业务结果。新增流程在 composition.py 显式注册契约和执行导入，不修改平台执行器，也不扫描任意 Python 路径或动态安装插件。简单流程仅保留定义、契约和 workflow，复杂后再拆目录。
+platform/flow 管运行记录、权限、补投、取消和同步；业务 workflows 管步骤、Agent、工具、分支与业务结果。新增流程在 composition.py 显式注册契约和执行导入，不修改平台执行器，也不扫描任意 Python 路径或动态安装插件。简单流程仅保留定义、契约和 workflow，复杂后再拆目录。
 
-系统任务由 worker/tasks/ 统一提供执行适配入口，调用所属模块 Service；清理、费用核对和 Flow 协调的业务规则与持久待办仍归原模块。composition 显式装配 Worker 包装，按[自动任务](#33-自动任务与费用核对)和[定时任务](#34-定时任务与队列)保留调度语义。`core/dbos_runtime.py` 继续管理 DBOS 公共生命周期及薄计划接入，不新增领域、通用 JobRun 或可替换引擎框架。
+系统任务由所属模块 tasks/ 提供执行适配入口，调用所属模块 Service；清理、费用核对和 Flow 协调的业务规则与持久待办仍归原模块。composition 显式装配 Worker 包装，按[自动任务](#33-自动任务与费用核对)和[定时任务](#34-定时任务与队列)保留调度语义。`core/execution/runtime.py` 管理 DBOS 公共生命周期，schedules.py 管理稳定计划，不新增领域、通用 JobRun 或可替换引擎框架。
 
 bootstrap 按进程职责显式装配：API 加载模块路由和轻量 Definition/契约；Worker 加载匹配版本的 workflow、Agent、资源和维护任务。平台不反向导入具体业务，业务通过公开服务或受控 Flow 上下文使用平台能力，不能直接修改平台表。简单业务直接传递明确服务对象；未来确有独立交付需求时再提取业务包，不预建插件容器或独立 SDK。
 
@@ -433,7 +435,7 @@ API、Worker、CLI 共用镜像与后端依赖，通过不同命令启动；不�
 
 ### 5.4 模块分层与代码规范
 
-采用 MVC 职责划分，通过 Service 承载业务用例。Vue 页面承担 View；后端 schemas/ 负责输入输出契约及响应投影。领域目录保持聚合，六个平台领域统一使用四个基本包，具体业务增加接口或持久化对象时遵循同样规范。统一约束职责与依赖方向，协议适配按模块实际能力组织；目标 Model Access 结构见第 5.4.1 节。
+采用 MVC 职责划分，通过 Service 承载业务用例。Vue 页面承担 View；后端 schemas/ 负责输入输出契约及响应投影。领域目录保持聚合，六个平台领域当前统一使用四个基本包，具体业务增加接口或持久化对象时遵循同样规范。统一约束职责与依赖方向，协议适配按模块实际能力组织；当前 Model Access 结构见第 5.4.1 节，模块目录目标见第 6 节。
 
 ```text
 platform/identity/
@@ -496,7 +498,7 @@ Identity 通过 role_grants 一次联表读取当前角色权限，执行授权�
 | Files | files / grants / references / cleanup |
 | Dictionary | dictionaries，父字典与条目保留同一组事务规则 |
 | Model Access | channels / entries / invocations / runtime / costs，恢复入口独立 |
-| Flow | runs；catalog、engine、reconcile、host 保留清晰的执行职责 |
+| Flow | runs；services/reconciliation 管状态事务，tasks/workflows 管同步编排；catalog、engine、host 保留现有执行职责 |
 | Audit | writer / query，写入不反向依赖身份服务 |
 
 ### 5.4.1 Model Access 分层
@@ -509,7 +511,7 @@ Identity 通过 role_grants 一次联表读取当前角色权限，执行授权�
 | inference/ | 复用 OpenAI 兼容等调用协议；封装 SDK、受控 transport 和流式观测，返回必要回执；实际发送通过 Service 的受控登记边界 |
 | billing/ | 依据原账务站点和口径处理响应费用、请求直查、日志分页、可选余额及错误分类，返回规范化结果；不同中转站分别适配 |
 | credentials.py、coordination.py | 提供凭据加解密、非秘密范围标识及查询协调等技术能力；Service 决定使用范围和持久状态，不将数据库锁藏进 HTTP 网关 |
-| worker/tasks/ | 为费用扫描/核对、文件清理、Flow 协调提供薄执行入口；负责 DBOS 调度接入和执行健康，调用所属模块 Service |
+| 各模块 tasks/ | 为费用扫描/核对、文件清理、Flow 协调提供薄执行入口；负责 DBOS 调度接入和执行健康，调用所属模块 Service |
 
 多个中转站可共用调用协议，各自选择 billing 适配器。例如 Openlux 渠道映射到 OpenAI 兼容调用客户端与 Openlux 账务适配器；相同请求格式不代表账务路径、Token 可见范围或金额单位一致。映射由代码显式声明，保留 Channel.provider 等现有字段，不因目录整理新增协议配置列；注册表不保存秘密、不执行数据库查询或启动任务。
 
@@ -528,7 +530,7 @@ flowchart LR
     Billing --> Upstream
 ```
 
-Service、models/、schemas/、billing/、inference/ 不直接导入 DBOS；DBOS 生命周期位于 core/dbos_runtime.py，系统任务的装饰器和投递位于 worker/tasks/。Flow 的 engine.py、Agent 持久执行适配及业务 workflow/step 继续按既有 Flow 约定使用 DBOS，不为隐藏其持久语义另建一套流程抽象。技术重试/执行恢复与费用业务重试分开，后者仍由持久费用状态驱动。
+Service、models/、schemas/、billing/、inference/ 不直接导入 DBOS；DBOS 生命周期位于 core/execution/runtime.py，系统任务的装饰器位于各模块 tasks/，投递共用 core/execution/dispatch.py。Flow 的 engine.py、Agent 持久执行适配及业务 workflow/step 继续按既有 Flow 约定使用 DBOS，不为隐藏其持久语义另建一套流程抽象。技术重试/执行恢复与费用业务重试分开，后者仍由持久费用状态驱动。
 
 结构整理不改现有三张表、API 权限、费用/调用状态及恢复前提，也不新增配置开关、通用任务表、Repository 或任务引擎接口。Model Access、文件清理和 Flow 协调采用同一 Worker 接入边界；多 Worker 仍按第 3.5 节单独设计和验证。
 
@@ -589,3 +591,60 @@ Flow 输入统一限制为 64 KiB 的紧凑 UTF-8 JSON，原始请求和默认�
 Flow 默认启用，真实模型接入默认可用，权限判断使用 Casbin。示例和业务代码变更遵守执行版本及同版本发布约束。
 
 未处理 HTTP 异常记录 request_id、异常类型与调用文件/函数/行号；Worker、CLI 与 Flow 协调失败也保留安全位置。日志不输出异常正文、源码行或局部变量，异常链和帧数量有界；错误响应继续保持原脱敏契约。前端使用 Prettier，格式检查与后端 Ruff 一起纳入统一入口和 CI。
+
+## 6. 任务设施与模块目录规范
+
+本节的公共任务设施及三类维护迁移已实现；FlowPackage、多角色模型、数组文件路径、素材粗选和 Flow runtime/ 目录仍待后续。完整接口及四个场景见[任务执行与模块规范设计](execution-design.md)，FlowPackage 与业务阶段衔接见 [Flow 第 8 节](domains/flow.md#8-目标设计尚未实现)，业务接入步骤见[扩展说明第 9 节](extending.md#9-任务与模块规范)。
+
+### 6.1 概念与执行范围
+
+| 概念 | 平台含义 | 归属 |
+|---|---|---|
+| Task | 独立投递的后台作业，如查费、清理、协调 | 所属模块 tasks/ |
+| Flow | 独立受理、授权及管理的业务流程，如素材粗选 | platform/flow 管 Run；业务包管算法与编排 |
+| Workflow / Step | DBOS 编排与检查点，不是另两种业务领域 | 执行适配与业务 workflows/ |
+| Schedule | 何时触发，不拥有处理规则 | 轻量声明与公共计划接入 |
+| 人工操作 | 业务资源上的审核、继续或驳回 | 所属业务 Service 保存决定，按需受理独立后续 Flow |
+
+持久后台作业与业务 Flow 共用 DBOS；普通请求直接调用 Service，心跳/连接维护仍属进程内循环。Task 可以多步，Flow 可以单步，是否包含 AI 不决定分类。维护任务不创建 FlowRun，每个 Flow 工具或 Agent 也不注册成 Task。
+
+### 6.2 目录与依赖
+
+```text
+core/execution/                    # 公共声明、投递、计划、Step 保护、生命周期和制品版本
+platform/<module>/
+  controllers/  schemas/  models/  services/
+  policies/                        # 按需，无 I/O 的业务判断
+  adapters/                        # 按需，SDK/协议/存储等技术实现
+  tasks/definitions.py             # 轻量声明
+  tasks/workflows.py               # 原生 DBOS workflow/step 与窄依赖绑定
+  workflows/                       # 按需，业务流程
+platform/flow/runtime/             # 后续整合目标，当前 host/engine 等仍在模块根目录
+businesses/<module>/               # 相同职责规则；独立 Flow 包可只有流程/规则/适配
+worker/                            # 进程启动、身份、排空与健康
+composition.py                     # 显式装配，不扫描或在线安装代码
+```
+
+Controller/执行适配 → Service → Model/技术适配器。普通 Service、Model、Schema、协议适配器不直接导入 DBOS；tasks/、workflows/ 和 Flow runtime 可以使用 DBOS。无需增加 Module 基类、通用 Repository、TaskContext 或任务业务表。现有 Model Access inference/billing 拆分保留，目标收在 adapters/ 下；根目录混合文件按内容逐一拆分，不强制预建空目录。
+
+公共执行设施不反向导入业务或 composition；由 composition 传入完整声明和执行清单。执行制品哈希已移到 core/execution/version.py，由 composition.execution_version() 显式传入包清单并缓存；费用任务及文件维护不再依赖 Flow catalog 取版本。
+
+### 6.3 声明、调度与事实边界
+
+TaskDefinition 声明逻辑键、DBOS 入口、输入模型、队列和可选期限；TaskBinding 显式绑定已注册 workflow、启用状态与观测标识；ScheduleDefinition 声明稳定计划、目标任务、时间规则、迟到/补跑/重叠策略。planning.py 交叉校验入口/计划/队列唯一性、绑定函数名称、计划目标及输入和全部任务预算；禁用队列不被消费。执行过程继续使用原生 DBOS，而不是另一套 handler 引擎。
+
+execution_key 标识一次执行；coalesce_key 只合并排队/运行中的工作，结束后允许下一轮。费用扫描与范围核对分开投递；文件清理先保留有界批次；Flow 协调将查询、投递/取消和结果投影拆开，不能整体套 Step。异常在每个检查点持久化前脱敏，模型结果未知继续防重发。独立投递仅使用固定执行键，活动合并才附加队列去重策略；投递授权失败先重新观察引擎，避免覆盖并发完成的事实。队列和 API/Worker 共享容量沿用现有隔离。
+
+数据库业务事实仍归原模块，技术执行记录归 DBOS。业务先提交可扫描待办，Worker 后发现；不假定业务事务与任意引擎调用原子。人工批准与后续 pending FlowRun、业务关联及审计在同一数据库事务提交，再由既有协调扫描投递，不依赖提交后通知。
+
+### 6.4 Flow 与业务人工操作
+
+目标 FlowPackage 显式列出轻量定义、执行模块、资源和依赖。受理时固定契约与全部角色模型，输出数组文件引用走受限路径校验；独立素材包需适配宿主 API 和受控媒体能力，目录迁移不表示已兼容。
+
+人工操作归业务模块：Flow A 生成/分析后结束，业务保存结果版本和文件引用；人工审核该版本，通过后受理独立 Flow B，驳回则保存驳回或返工状态。业务整体状态由资源串联，A/B 分别拥有自己的 Run、身份、执行版本与预算。人工期间不悬挂 workflow，不增加人工等待队列、唤醒接口或平台待办实体。
+
+生成成功、审核决定、后续执行状态分别保存：驳回不修改 A 的成功，B 失败或取消不撤销批准。新业务版本需要重新审核，B 实际操作前核对批准版本和当前执行关联。批准即继续时使用现有 start_in_transaction()，同事务保存决定、pending Run、业务唯一关联与审计；业务唯一约束负责跨操作者幂等，不能只依赖按发起人去重的 Flow 请求键。明确重复提交与失败后显式重试的差异，详见 [Flow 衔接设计](domains/flow.md#83-业务人工操作与独立-flow-衔接目标设计)。这些业务规则、字段与页面尚未实现。
+
+### 6.5 切换约束
+
+三类维护的任务、tick 和范围查询只保留无版本后缀的最新入口，输入统一为 JSON 对象；原稳定计划名、队列名和执行键前缀保留。目录移动会改变执行制品哈希；新增 Step 或改变参数格式也改变恢复协议。切换前清空在途执行或使用原制品/原身份恢复收尾，不能仅保留同名函数就宣称兼容。保留原计划/队列名与逻辑标识，不自动删除旧 DBOS 执行，不创建新 Run 重发未知模型请求。架构测试已检查模块任务/领域服务/公共执行设施的依赖边界。

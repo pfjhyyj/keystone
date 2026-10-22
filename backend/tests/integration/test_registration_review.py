@@ -15,14 +15,14 @@ from test_identity import query
 from test_maintenance import wait_for
 from test_model_access import invoke
 
-from keystone.core import dbos_runtime
+from keystone.composition import execution_version
 from keystone.core.errors import ServiceError
+from keystone.core.execution import runtime as dbos_runtime
 from keystone.core.worker_health import WorkerHealth
 from keystone.core.worker_registration import identity_lease
 from keystone.entrypoints import worker
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.services import writer as audit
-from keystone.platform.flow.catalog import execution_version
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.services.recovery import recover_interrupted_calls
 from keystone.worker.lifecycle import change_worker

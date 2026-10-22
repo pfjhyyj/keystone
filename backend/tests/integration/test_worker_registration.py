@@ -19,13 +19,13 @@ from test_maintenance import schedules, wait_for
 from test_model_access import invoke
 from test_multi_workers import FIRST, SECOND, held_model_code, status
 
+from keystone.composition import execution_version
 from keystone.core.errors import ServiceError
 from keystone.core.models import WorkerHeartbeat, WorkerRegistration
 from keystone.core.worker_health import WorkerHealth
 from keystone.core.worker_identity import config_digest
 from keystone.core.worker_registration import identity_lease
 from keystone.platform.audit.services import writer as audit
-from keystone.platform.flow.catalog import execution_version
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.worker import lifecycle
 

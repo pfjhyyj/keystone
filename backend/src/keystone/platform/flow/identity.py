@@ -2,8 +2,8 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from keystone.composition import execution_version
 from keystone.core.errors import ServiceError
-from keystone.platform.flow.catalog import execution_version
 from keystone.platform.flow.models import TERMINAL, FlowRun
 from keystone.platform.identity.access import AccessContext
 from keystone.platform.identity.policy import load_authorization

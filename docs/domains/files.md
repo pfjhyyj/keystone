@@ -238,7 +238,7 @@ S3 超时、断线或进程崩溃可能出现迟到 PUT。文件删除仍先阻�
 
 业务只通过 FileReferences(session, auth, namespace).replace/release 在已授权业务事务中维护引用；namespace、owner、slot 来自可信业务代码，不能从客户端透传。调用方先取得身份事务锁与当前授权，再检查业务对象。相同 owner/slot 使用事务锁，受影响文件按 ID 排序加行锁，与删除、授权写入互斥；仅增删变化项，已有停用或撤权引用保持不变。单 slot 最多 100 个目标，owner 完整长度最多 160，slot 最多 100。不提供公开引用写入 API；业务失败则引用和成功审计一起回滚。
 
-Worker 通过 worker/tasks/files.py 注册 `keystone.files.cleanup` DBOS 持久计划，每 5 秒触发，启动时立即扫描。实际清理使用独立的 `keystone-files-maintenance` 串行队列；同类任务未结束时合并触发，慢文件 I/O 不占用 Flow 协调或业务执行的队列容量。关闭 Flow 不关闭文件维护；未配置存储时不启用文件计划。停机不补跑所有旧时间点，重启后扫描当前待办；清理中断由 DBOS 恢复，领域写入保持幂等。
+Worker 通过 files/tasks/workflows.py 注册 `keystone.files.cleanup` DBOS 持久计划，每 5 秒触发，启动时立即扫描。实际清理使用独立的 `keystone-files-maintenance` 串行队列；同类任务未结束时合并触发，慢文件 I/O 不占用 Flow 协调或业务执行的队列容量。关闭 Flow 不关闭文件维护；未配置存储时不启用文件计划。停机不补跑所有旧时间点，重启后扫描当前待办；清理中断由 DBOS 恢复，领域写入保持幂等。
 
 每轮仍最多处理 20 个候选：deleting，以及一小时没有更新的 uploading/failed。先取得文件锁，重新检查状态和引用；仍在写入的文件跳过。过期 uploading 标记 failed 并清理残留，failed 保留元数据/授权以便原请求重试，残留维护至多每小时重试。不会自动删除所有无引用 active/disabled 文件。删除完成将 deleted、deleted_at、授权清除及完成审计同事务提交；存储删除后数据库失败则保持 deleting，后续周期幂等重试确认。维护使用 system，删除请求使用实际用户。
 
@@ -258,7 +258,7 @@ authenticated 仅能选择 inspect/content_read，不能选择 manage。可用�
 
 ### 代码组织
 
-三个实体各自位于 models/ 下的独立文件。services/files.py 管生命周期，grants.py 管授权，references.py 管引用及受控产物保留，cleanup.py 保留原有界清理服务，worker/tasks/files.py 只负责 DBOS 计划、投递和维护健康检查。Flow 通过 references 内部入口写引用，调用方保留原事务与锁，不能绕过有效使用记录检查；目录与字段响应遵循整体架构规范。统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
+三个实体各自位于 models/ 下的独立文件。services/files.py 管生命周期，grants.py 管授权，references.py 管引用及受控产物保留，cleanup.py 保留原有界清理服务，files/tasks/workflows.py 只负责 DBOS 计划、投递和维护健康检查。Flow 通过 references 内部入口写引用，调用方保留原事务与锁，不能绕过有效使用记录检查；目录与字段响应遵循整体架构规范。统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
 内部 content 接口可指定 max_bytes，授权后在读取存储前检查文件大小，仍执行完整性和读取后授权检查。超限返回 file_too_large，引用资格错误返回 file_reference_invalid；具体业务自行转换为业务错误，Files 不声明 Flow 错误码。公开 HTTP 上传新增可选 storage_key，详情新增 storage_key；内容下载契约不变。
 

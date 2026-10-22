@@ -8,6 +8,7 @@ Keystone 是模块化单体平台。API、Worker 与 CLI 共用一个 Python 工
 
 | 用途 | 文档 |
 |---|---|
+| Task/Flow 边界、已实现任务接口、模块目录与后续素材接入设计 | [任务执行与模块规范设计](execution-design.md) |
 | 首次启动 | [仓库说明](../README.md) |
 | 源码开发与测试 | [开发说明](development.md) |
 | 业务 Flow 示例、输出验收、预算与工具摘要 | [业务 Flow 开发](flow-development.md) |
@@ -28,6 +29,12 @@ Keystone 是模块化单体平台。API、Worker 与 CLI 共用一个 Python 工
 | [字典](domains/dictionary.md) | 选项维护、启停、业务校验和历史名称解析 |
 | [模型接入](domains/model-access.md) | 渠道、模型、调用记录、费用与余额 |
 | [Flow](domains/flow.md) | DBOS 执行、受理幂等、取消、恢复、步骤和结果文件 |
+
+## 当前实现与目标设计
+
+当前三类维护入口位于 `platform/{model_access,files,flow}/tasks/`，公共执行设施位于 `core/execution/`。TaskDefinition/TaskBinding、统一计划和投递已可使用；FlowPackage、多角色模型、数组文件路径与素材粗选接入仍为[目标设计](execution-design.md)。
+
+人工审核、继续和驳回归具体业务模块，前后自动处理分别运行独立 Flow。业务资源保存版本、决定、文件引用与前后 Run 关联；批准与后续 Flow 受理在同一业务事务衔接。详见[业务人工操作与独立 Flow 衔接](domains/flow.md#83-业务人工操作与独立-flow-衔接目标设计)。当前有事务内受理和产物校验接口，具体审核业务、页面与幂等关联仍需业务实现；不建设通用人工节点或跨人工操作悬挂的 Run。
 
 ## 维护约定
 

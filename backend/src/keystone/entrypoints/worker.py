@@ -7,17 +7,21 @@ import socket
 from contextlib import AsyncExitStack
 
 from keystone.bootstrap import build_runtime
-from keystone.composition import build_catalog, register_maintenance, register_workflows
+from keystone.composition import (
+    build_catalog,
+    execution_version,
+    register_maintenance,
+    register_workflows,
+)
 from keystone.core.asyncio import run as run_async
 from keystone.core.config import Settings
 from keystone.core.database import Database
-from keystone.core.dbos_runtime import inspect_queues
-from keystone.core.dbos_runtime import lifespan as dbos_lifespan
 from keystone.core.errors import ServiceError
+from keystone.core.execution.runtime import inspect_queues
+from keystone.core.execution.runtime import lifespan as dbos_lifespan
 from keystone.core.logging import configure_logging, safe_exception
 from keystone.core.worker_health import WorkerHealth, worker_status
 from keystone.core.worker_registration import identity_lease
-from keystone.platform.flow.catalog import execution_version
 
 log = logging.getLogger(__name__)
 POLL_SECONDS = 5

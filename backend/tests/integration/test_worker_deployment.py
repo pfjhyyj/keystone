@@ -11,12 +11,12 @@ from test_flow import configuration as configuration
 from test_identity import query
 from test_model_access import invoke
 
-from keystone.core.dbos_runtime import inspect_queues
+from keystone.composition import execution_version
 from keystone.core.errors import ServiceError
+from keystone.core.execution.runtime import inspect_queues
 from keystone.core.worker_identity import WorkerIdentity
 from keystone.core.worker_registration import identity_lease
 from keystone.entrypoints.cli import recover_model_calls
-from keystone.platform.flow.catalog import execution_version
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.services.recovery import recover_interrupted_calls
 

@@ -21,7 +21,7 @@ from test_maintenance import schedules, wait_for
 from keystone.core.errors import ServiceError
 from keystone.platform.model_access.coordination import QueryCoordination
 from keystone.platform.model_access.models import Channel
-from keystone.worker.tasks import model_costs
+from keystone.platform.model_access.tasks import workflows as model_costs
 
 pytestmark = pytest.mark.postgres
 FIRST, SECOND = "keystone-worker", "keystone-worker-02"
@@ -86,7 +86,7 @@ def test_graceful_drain_keeps_other_worker_running(client, tmp_path, pair):
     code = f"""
 import asyncio, os
 from pathlib import Path
-from keystone.worker.tasks import files
+from keystone.platform.files.tasks import workflows as files
 from keystone.entrypoints.worker import run
 from keystone.core.asyncio import run as run_async
 from keystone.core.config import Settings

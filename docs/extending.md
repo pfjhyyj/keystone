@@ -1,5 +1,7 @@
 # 新增业务
 
+**阅读状态：**第 0～8 节是当前脚手架和业务 Flow 接入方法。第 9 节中的任务设施与模块 tasks/ 已实现；FlowPackage、素材粗选和具体审核业务仍为目标设计。完整契约见[任务执行与模块规范设计](execution-design.md)。
+
 Keystone 不在运行时扫描或热加载业务。一个业务由**显式声明**和**显式导入**组成：目录中的代码只有被 `composition.py`、`bootstrap.py` 和 `model_registry.py` 引用后才生效。启动时校验命名空间、权限、审计动作、路由和 Flow 契约，声明错误直接阻止启动。
 
 业务可以只使用身份、文件、字典、模型和 Flow 等底座能力，也可以拥有自己的 ORM 实体、HTTP 接口和 Flow/Agent。先按需增加，不要预建空目录或插件层。
@@ -203,3 +205,67 @@ export const flowForms: Readonly<Record<string, Component>> = {
 - [ ] Flow 契约、入口与权限已注册（如使用 Flow）
 - [ ] 前端表单映射与权限显示已处理（如使用 console）
 - [ ] `backend/.venv/bin/python scripts/check.py` 通过
+
+## 9. 任务与模块规范
+
+本节不能按现有脚手架直接执行。公共契约、代码示例与迁移约束以[任务执行与模块规范设计](execution-design.md)为准；当前第 0～8 节仍使用现有接口。
+
+### 9.1 选择接入方式
+
+| 需求 | 接入方式 | 示例 |
+|---|---|---|
+| 当前请求内有界完成 | 公开 Service，按需提供 Controller | 保存配置、查询、手动查费 |
+| 推进持久后台待办 | TaskDefinition + 原生 DBOS workflow/step | 费用核对、文件清理 |
+| 独立受理并管理一次业务运行 | FlowDefinition / FlowPackage | 素材粗选、生图、生视频 |
+| Flow 内部能力 | Step、Agent、工具或普通函数 | 抽帧、定位、审片、标签 |
+| 人工继续/驳回 | 业务 Service 保存决定，通过后受理独立 Flow | 审核结果版本后再发布 |
+
+Task 和 Flow 共用 DBOS，但维护 Task 不创建 FlowRun，每个工具也不注册成 Task。任务耗时、步骤数量或是否含 AI 不决定分类。
+
+### 9.2 模块目录与后台任务
+
+普通模块按需保留 controllers/schemas/models/services；增加 policies/ 放无 I/O 判断，adapters/ 放技术协议，tasks/definitions.py 放轻量声明，tasks/workflows.py 放原生 DBOS 执行适配。具体业务 workflows/ 组织多步流程；独立分发的流程包不需要空建 ORM/HTTP 目录。Model Access 的 inference/billing 拆分保留，目标归入 adapters/。
+
+后台任务接入顺序：
+
+1. 所属模块定义业务待办、授权、事务、审计和幂等，普通 Service 不导入 DBOS。
+2. 在 tasks/definitions.py 声明 TaskDefinition 和可选 ScheduleDefinition，输入模型使用 `extra="forbid"` 且序列化为小型 JSON 对象。仅含必要标识，拒绝 RootModel、运行时句柄和凭据。
+3. 在 tasks/workflows.py 的 register 工厂绑定服务与 Worker 观测，注册 workflow 和 safe_step，返回 `(bindings, install)`。参考现有费用查询、文件清理和 Flow 同步的实现。
+4. 查询/外部 I/O 放 safe_step；子任务投递在 workflow 层使用 `enqueue_task(binding, payload, execution_key=..., coalesce_key=...)`。返回实际执行引用；不传 coalesce_key 时独立投递，同 execution_key 复用原执行；传入时只合并活动工作，活动键自动附加制品版本。每个 Step 的错误在写入引擎前脱敏，默认不自动重试。
+5. composition 显式汇总绑定、计划及队列预算，通过 `planning.queue_budgets` 检查唯一性、实际 DBOS 绑定、计划目标/输入与队列预算，API 不导入重型执行代码。
+6. 验证执行 ID、活动合并、重启、忙碌暂缓、依赖故障、残留 tick 和业务状态幂等。
+
+不从请求接收任意处理函数、导入路径或执行身份。execution_key 恢复同一次执行，coalesce_key 只合并活动工作；同一范围的队列合并不能替代 API/Worker 共享锁。需要逐次处理的事件不能用类型级合并键。
+
+### 9.3 FlowPackage 与素材粗选
+
+目标包提供轻量 catalog、输入输出模型、契约 revision、受限文件路径、角色模型字段，以及显式执行模块/资源清单。宿主受理时固定 ModelEntry，API 只读契约，Worker 加载 workflow、Agent、工具、提示词和 Skills。FlowContext 只暴露当前 Run 的受控能力。
+
+```text
+businesses/<namespace>/workflows/<flow>/
+  contracts.py
+  workflow.py
+  steps/  agents/  tools/  prompts/  skills/    # 按需
+
+独立流程包/
+  catalog.py
+  domain/
+  adapters/
+  workflows/                                  # 不要求 ORM 或 Controller
+```
+
+素材粗选保留准备原片 → 发现 → 定位 → 实际裁片 → 独立验收 → 标签 → 有界补查 → 保存结果。宿主业务校验后入库并允许编辑，不默认增加采用门槛；若业务需要审核，使用业务资源上的普通操作，通过后另行受理独立 Flow。现有 Ether 包的模型引用、文件权限与宿主 API 需要适配，多模态大小和预算需要核验，详见[具体差距](execution-design.md#63-素材粗选的执行与真实差距)。
+
+### 9.4 人工操作与独立 Flow 衔接
+
+业务 Service 负责审核对象与版本、处理人范围、决定载荷、幂等及审计。Flow A 结束后，结果先采用为持久业务版本并登记业务文件引用，再允许人工操作；通过后发起独立 Flow B。业务记录关联 A、固定结果版本、决定和 B 的执行尝试，不改 A 的 input/result，也不让原 Run 等待人工。
+
+批准即继续的业务在同一身份事务内锁定版本、验证业务批准权与后续 Flow 的发起/能力权限、保存决定、调用 FlowService.start_in_transaction()、保存 Run 关联及审计。任何一步失败全部回滚，提交后由既有 Worker 扫描 pending；不用额外消息唤醒。B 使用明确授权的新发起身份，A 的身份保持不变，业务页面可关联查询但仍分别授权 Run 和文件。
+
+业务关联使用资源 ID、固定版本、动作和执行尝试的唯一约束；批准请求另存规范化载荷摘要。重复同一动作先返回已有、经当前授权的关联，同键不同载荷或相反决定冲突；不能仅用 Flow 的 actor_id/request_key 去重，因为不同审核人或凭据不共享同一受理范围。B 已失败时，重复批准仍返回原 B；只有显式重试操作在确认旧执行终态及副作用可安全处理后，创建新尝试和新 Run。
+
+生成结果状态、审核状态、后续执行状态分别表达：A 成功可以待审核；驳回不使 A 失败；批准后 B 失败保留批准；取消 B 不回滚人工决定。新内容生成新版本并重新审核，旧 B 不能发布被替换的内容。状态矩阵、事务示例和验收见 [Flow 衔接设计](domains/flow.md#83-业务人工操作与独立-flow-衔接目标设计)。现有平台只提供基础受理与产物服务，具体审核业务和页面仍需实现；本次不建设通用人工待办或跨人工操作的执行等待。
+
+### 9.5 实施边界与切换
+
+TaskDefinition/TaskBinding、core/execution/、files/model_access/flow 的 tasks/ 和架构导入检查已落地。FlowPackage、多角色模型及数组文件路径仍未实现，具体业务的审核/衔接也没有通用实现。四层脚手架不自动创建任务空目录，后台任务按上述步骤显式装配。目录依赖检查递归覆盖平台及业务模块，包含嵌套任务文件与经公共执行实现包绕过的依赖。入口只保留最新实现，不加版本后缀；制品指纹校验和原身份恢复规则继续保留。目录移动会改变执行制品，新增 Step 或参数结构变化必须按原制品在途执行收尾后切换；不能因为“只整理目录”就跳过发布与恢复约束。

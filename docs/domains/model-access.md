@@ -2,7 +2,7 @@
 
 自动费用核对已接入 Worker 和 DBOS 定时计划，职责见[整体架构第 3 节](../architecture.md#3-api-与-worker-的分工)。本模块拥有待核对状态、渠道查询和幂等保存，不依赖 FlowRun，也不重发模型请求。[第 3.6 节](#36-自动费用核对)说明 Yunwu/Openlux 分页查费及 OpenRouter 请求 ID 补查规则。支持同宿主同版本的固定 Worker，查询预算和分页跨进程共享，启动只收尾本槽位旧实例的模型调用。
 
-billing/、inference/ 和 Service 已按职责分层，系统任务的 DBOS 接入位于 worker/tasks/。实际结构、依赖边界和原文件迁移映射见[第 8 节](#8-代码结构与职责映射)。模型调用、自动查费和原身份权限规则保持一致；跨宿主及自动接管未实现。
+billing/、inference/ 和 Service 已按职责分层，费用任务的 DBOS 接入位于 model_access/tasks/。实际结构、依赖边界和原文件迁移映射见[第 8 节](#8-代码结构与职责映射)。模型调用、自动查费和原身份权限规则保持一致；跨宿主及自动接管未实现。
 
 [范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项) · [当前实现](#7-当前实现约定) · [代码结构](#8-代码结构与职责映射)
 
@@ -249,7 +249,7 @@ GET https://api.openlux.ai/api/log/token?key=<原调用API_KEY>&start_timestamp=
 
 调用结束的短事务同时保存回执和费用待办，API 不负责即时投递。只有已结束且费用核对 pending、next_check_at 到期的记录可被扫描；运行中的调用沿用原收尾机制，不能为了查费按时间改判 unknown。调用 succeeded、failed、unknown 均可能产生费用。
 
-worker/tasks/model_costs.py 由 composition 显式装配：启动投递一次，此后 DBOS 每 5 秒扫描；关闭 Flow 不关闭该能力。稳定计划名为 keystone.model_access.reconcile_costs。扫描使用 keystone-model-maintenance 串行队列，每轮最多投递 20 个到期范围；外部查询使用 keystone-system，默认全部 Worker 与 API 手动入口共享查费并发 2，同一查询范围串行，并与推理容量隔离。Worker 仅提供 DBOS 执行包装，费用扫描和核对规则由本模块 Service 提供，计划与容量语义保持不变。
+model_access/tasks/workflows.py 由 composition 显式装配：启动投递一次，此后 DBOS 每 5 秒扫描；关闭 Flow 不关闭该能力。稳定计划名为 keystone.model_access.reconcile_costs。扫描使用 keystone-model-maintenance 串行队列，每轮最多投递 20 个到期范围；外部查询使用 keystone-system，默认全部 Worker 与 API 手动入口共享查费并发 2，同一查询范围串行，并与推理容量隔离。Worker 仅提供 DBOS 执行包装，费用扫描和核对规则由本模块 Service 提供，计划与容量语义保持不变。
 
 请求直查按调用处理；日志查询按原 Token 范围和相近时间窗口合并，单页可确认多次调用。每次执行限制页数和总耗时，单次 HTTP 使用明确超时；未完成则保存固定起止窗口、下一页和本轮匹配范围，后续继续。该小型 checkpoint 归原 Channel，费用和进度协调写入，不新增分页任务表。下一页只在本页匹配结果提交后推进，崩溃后可安全重读同一页。
 
@@ -473,7 +473,7 @@ keystone recover-model-calls --confirm-api-stopped
 
 错误分类统一由 inference/errors.py 的 classify_error 沿异常因果链处理；显式 ServiceError 优先，SDK APIStatusError 和 Pydantic AI ModelHTTPError 使用同一 HTTP 错误码映射。HTTP 402/429 在普通调用与 Agent 中均为 failed，并分别保留 model_insufficient_credits / model_rate_limited；上游 5xx、超时、取消及无法确认结果仍为 unknown。分类同时提供安全响应和调用状态，不从原始异常文本推断、不透传上游内容；费用未知仍为未知，失败不代表免费。参考 Ether ai/runtime.py 的安全包装，保留 Keystone 的发送前登记和拒绝重发规则。
 
-billing/openrouter.py 负责 generation 直查；billing/openlux.py 和 yunwu.py 各自声明站点与单位，共用 token_logs.py 解析有界日志页。services/cost_context.py 绑定原账务范围，cost_policy.py 管费用状态与等待策略，costs.py 管互斥、查询、重试及原子写回；worker/tasks/model_costs.py 只负责 DBOS 扫描和投递。InvocationService 保留授权和手动入口。DeepSeek/阿里云仍不补算调用价格。UTC 应用时间统一使用 core/time.py，数据库生成的 created_at 和历史窗口规则不变。
+billing/openrouter.py 负责 generation 直查；billing/openlux.py 和 yunwu.py 各自声明站点与单位，共用 token_logs.py 解析有界日志页。services/cost_context.py 绑定原账务范围，cost_policy.py 管费用状态与等待策略，costs.py 管互斥、查询、重试及原子写回；model_access/tasks/workflows.py 只负责 DBOS 扫描和投递。InvocationService 保留授权和手动入口。DeepSeek/阿里云仍不补算调用价格。UTC 应用时间统一使用 core/time.py，数据库生成的 created_at 和历史窗口规则不变。
 
 ## 8. 代码结构与职责映射
 
@@ -514,12 +514,13 @@ platform/model_access/
 ├── credentials.py             # 凭据加解密及非秘密范围标识
 └── coordination.py            # 查询范围锁、连接所有权等技术协调
 
-worker/tasks/
-├── model_costs.py              # 费用扫描和核对的 DBOS 执行包装
-├── files.py                    # 文件清理的 DBOS 执行包装
-└── flow.py                     # Flow 补投/同步的 DBOS 执行包装
+model_access/tasks/
+├── definitions.py             # 轻量费用任务、输入和稳定计划声明
+└── workflows.py               # 扫描 Step、范围查询 Step 与子任务投递
+files/tasks/                   # 文件清理的声明与执行适配
+flow/tasks/                    # Flow 补投/同步的声明与执行适配
 
-core/dbos_runtime.py            # 公共 DBOS 生命周期与薄计划接入
+core/execution/                # 公共声明、投递、计划、Step 保护、生命周期及版本
 composition.py                 # 显式装配服务、调用协议、账务适配及任务入口
 ```
 
@@ -568,16 +569,16 @@ services/cost_policy.py 保留纯规则：首次等待、未出账间隔、暂�
 |---|---|
 | 模型调用 | Controller/可信 Flow 适配 → 调用 Service → inference；Service 结合 billing 解析账务回执并保存事实 |
 | 手动查费 | Controller → InvocationService 授权和记录范围检查 → 共用费用核对 Service → billing |
-| 自动查费 | DBOS 计划/队列 → worker/tasks/model_costs.py → 同一个费用扫描/核对 Service → billing |
+| 自动查费 | DBOS 计划/队列 → model_access/tasks/workflows.py → 同一个费用扫描/核对 Service → billing |
 | 手动余额刷新 | Controller → 已授权 Service → billing 余额能力 → 原子替换成功快照或保留旧值 |
 
-worker/tasks/model_costs.py 只负责扫描与核对入口的 DBOS 装饰器、稳定执行标识、队列/计划、技术去重和执行健康包装。扫描入口调用 Service 获取到期 scope 并合并投递；核对入口传入 scope 调用 Service。任务输入只传必要非秘密标识，原凭据、原口径和分页进度执行时从领域记录加载，不把 Service、应用 Runtime、秘密或完整日志序列化进任务。
+model_access/tasks/workflows.py 只负责扫描与核对入口的 DBOS 装饰器、稳定执行标识、队列/计划、技术去重和执行健康包装。扫描入口调用 Service 获取到期 scope 并合并投递；核对入口传入 scope 调用 Service。任务输入只传必要非秘密标识，原凭据、原口径和分页进度执行时从领域记录加载，不把 Service、应用 Runtime、秘密或完整日志序列化进任务。
 
 费用待办、next_check_at、截止时间、错误预算和分页 checkpoint 继续由 ModelInvocation/Channel 保存。Worker 不决定费用金额、是否匹配或何时视为未出账；不直接读写这些 ORM 实体。DBOS 负责已投递执行的恢复，业务重试由持久费用状态驱动，不为每笔费用创建长期 sleep workflow。手动补查继续在有界同步预算内执行，分页未完成时保存进度并返回待核对状态，Worker 后续发现待办；不要求手动入口先投递 DBOS。
 
-本模块的 services/、models/、schemas/、billing/、inference/ 均不直接导入 DBOS，也不反向导入 Worker 任务或 Controller。core/dbos_runtime.py 只提供技术生命周期和薄调度接入，不导入 model_access、files 或 flow 的业务服务；由 composition 装配。Flow 的引擎与 Agent 持久适配、业务 workflow/step 仍按原约定使用 DBOS，目录整理不重写 Flow 表达方式。
+本模块的 services/、models/、schemas/、billing/、inference/ 均不直接导入 DBOS，也不反向导入 Worker 任务或 Controller。core/execution/runtime.py 只提供技术生命周期和薄调度接入，不导入 model_access、files 或 flow 的业务服务；由 composition 装配。Flow 的引擎与 Agent 持久适配、业务 workflow/step 仍按原约定使用 DBOS，目录整理不重写 Flow 表达方式。
 
-文件清理和 Flow 协调的 DBOS 包装分别位于 worker/tasks/files.py、flow.py，调用原所属模块的服务。清理规则、取消与同步、原执行身份和模型中断收尾不搬到 Worker；Flow 开关仍不关闭费用扫描或已启用文件维护。Worker 按固定身份互斥并共享预算；每次真实 Flow 模型发送登记当前实例归属，服务与适配器不因此导入 DBOS。
+文件清理和 Flow 协调的 DBOS 包装分别位于 files/tasks/workflows.py、flow.py，调用原所属模块的服务。清理规则、取消与同步、原执行身份和模型中断收尾不搬到 Worker；Flow 开关仍不关闭费用扫描或已启用文件维护。Worker 按固定身份互斥并共享预算；每次真实 Flow 模型发送登记当前实例归属，服务与适配器不因此导入 DBOS。
 
 ### 8.5 原文件与现行职责映射
 
@@ -591,8 +592,8 @@ worker/tasks/model_costs.py 只负责扫描与核对入口的 DBOS 装饰器、�
 | services/costs.py | 保留公共核对算法与事务，站点判断交给 billing，等待规则调用 cost_policy，锁调用 coordination | 完整分页后确认、重复不累加、矛盾阻塞、旧配置结果丢弃和金额/进度同事务 |
 | services/channels.py、invocations.py | 保留配置、历史、汇总及入口授权；通过明确账务能力和共用核对服务协作 | 原 Token 更换约束、本人/全部范围、PAT 权限、手动重启审计及已知费用保留 |
 | credentials.py、gateway.refresh_lock | 凭据能力仍就近保留，SQL 协调独立到 coordination.py | 密文用途绑定、共享卷密钥、同范围串行及失去所有权时拒绝旧写回 |
-| model_access/jobs.py、files/jobs.py、flow/jobs.py | 分别迁移 DBOS 包装到 worker/tasks/；重复的纯调度接入按需共用小函数 | 稳定计划/工作流/队列名、去重与恢复语义、健康检查及能力开关 |
-| composition.py、bootstrap.py、entrypoints/worker.py | 显式装配协议、账务适配、服务和 Worker 入口；核心生命周期继续由 core/dbos_runtime.py 管理 | API 不启动执行器、Worker 独占锁、Flow 启动恢复顺序和制品版本保护 |
+| model_access/jobs.py、files/jobs.py、flow/jobs.py | 分别迁移到所属模块 tasks/definitions.py 与 workflows.py；共用 core/execution/ 的计划和投递 | 稳定计划/队列名；仅保留最新工作流入口，保留去重及同版本恢复语义、健康检查及能力开关 |
+| composition.py、bootstrap.py、entrypoints/worker.py | 显式装配协议、账务适配、服务和 Worker 入口；核心生命周期继续由 core/execution/runtime.py 管理 | API 不启动执行器、Worker 独占锁、Flow 启动恢复顺序和制品版本保护 |
 
 这些是职责迁移，不要求把每个现有函数逐一变成一个类或增加通用 Repository、BaseService、多引擎接口。文件大小按实际职责控制；表、API 和配置不因目录调整而扩展。
 

@@ -15,14 +15,14 @@ from test_files_dictionary import upload
 from test_identity import assign, bearer, create_user, login, query, role, token
 from test_model_access import channel, entry
 
+from keystone.composition import execution_version
 from keystone.core.errors import ServiceError
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.files.models import FileReference
-from keystone.platform.flow.catalog import execution_version
 from keystone.platform.flow.engine import Engine
 from keystone.platform.flow.models import FlowRun
-from keystone.platform.flow.reconcile import reconcile_one
+from keystone.platform.flow.tasks.workflows import reconcile_one
 from keystone.platform.model_access.models import ModelInvocation
 
 pytestmark = pytest.mark.postgres
@@ -497,6 +497,140 @@ def test_original_output_contract_and_retention_after_revocation(client):
     assert {r.slot for r in refs} == {"input", "output"}
 
 
+@pytest.mark.parametrize("change", ["revoked", "cancelled"])
+def test_coordinator_replay_rechecks_identity_and_cancel_intent(client, change):
+    file_id = upload(client).json()["id"]
+    pat = token(client, list(client.get("/api/v1/auth/me").json()["permissions"]))
+    response = client.post(
+        "/api/v1/flow-runs",
+        headers=bearer(pat["token"]),
+        json={
+            "definition_key": "document.review",
+            "request_key": "replayed-plan",
+            "input": {"source_file_id": file_id, "model_key": "chat"},
+        },
+    )
+    assert response.status_code == 202, response.text
+    identifier = response.json()["id"]
+    if change == "revoked":
+        client.delete("/api/v1/auth/tokens/" + pat["id"])
+    else:
+        assert client.post(f"/api/v1/flow-runs/{identifier}/cancel").status_code == 200
+
+    class NotSubmitted:
+        async def state(self, identifier):
+            return None
+
+        async def enqueue(self, *args):
+            pytest.fail("A replayed plan must not bypass current authorization/cancellation")
+
+    async def replayed_plan(identifier):
+        return "submit"  # DBOS has already checkpointed this before the change.
+
+    async def synchronize():
+        await reconcile_one(
+            client.app.state.runtime,
+            NotSubmitted(),
+            UUID(identifier),
+            prepare=replayed_plan,
+        )
+
+    client.portal.call(synchronize)
+    done = client.get(f"/api/v1/flow-runs/{identifier}").json()
+    assert done["status"] == ("failed" if change == "revoked" else "cancelled")
+    if change == "revoked":
+        assert done["error_code"] == "execution_not_authorized"
+
+
+def test_replayed_submission_denial_preserves_concurrent_engine_completion(client):
+    file_id = upload(client).json()["id"]
+    pat = token(client, list(client.get("/api/v1/auth/me").json()["permissions"]))
+    row = client.post(
+        "/api/v1/flow-runs",
+        headers=bearer(pat["token"]),
+        json={
+            "definition_key": "document.review",
+            "request_key": "completion-race",
+            "input": {"source_file_id": file_id, "model_key": "chat"},
+        },
+    ).json()
+    client.delete("/api/v1/auth/tokens/" + pat["id"])
+
+    class CompletedDuringAuthorization:
+        observed = False
+
+        async def state(self, identifier):
+            if not self.observed:
+                self.observed = True
+                return None
+            return {
+                "status": "SUCCESS",
+                "version": row["execution_version"],
+                "name": "keystone.document.review",
+                "error_code": None,
+                "result": {
+                    "source_file_id": file_id,
+                    "characters": 5,
+                    "verdict": "reviewed",
+                    "summary": "ok",
+                    "report_file_id": file_id,
+                },
+            }
+
+        async def enqueue(self, *args):
+            pytest.fail("Revoked identity must not submit another execution")
+
+    async def cached_plan(identifier):
+        return "submit"
+
+    async def synchronize():
+        await reconcile_one(
+            client.app.state.runtime,
+            CompletedDuringAuthorization(),
+            UUID(row["id"]),
+            prepare=cached_plan,
+        )
+
+    client.portal.call(synchronize)
+    done = client.get(f"/api/v1/flow-runs/{row['id']}").json()
+    assert done["status"] == "succeeded" and done["error_code"] is None
+    assert done["result"]["report_file_id"] == file_id
+    assert len(client.get("/api/v1/audit-logs?action=flow.complete").json()) == 1
+
+
+@pytest.mark.parametrize("mismatch", ["version", "name"])
+def test_replayed_cancel_does_not_cancel_a_mismatched_engine_execution(client, mismatch):
+    row = start(client, upload(client).json()["id"]).json()
+    client.post(f"/api/v1/flow-runs/{row['id']}/cancel")
+
+    class DifferentExecution:
+        async def state(self, identifier):
+            return {
+                "status": "PENDING",
+                "version": row["execution_version"],
+                "name": "keystone.document.review",
+                mismatch: "different-execution",
+            }
+
+        async def cancel(self, identifier):
+            pytest.fail("A stale cancel plan must not cancel a different execution")
+
+    async def cached_plan(identifier):
+        return "cancel"
+
+    async def synchronize():
+        await reconcile_one(
+            client.app.state.runtime,
+            DifferentExecution(),
+            UUID(row["id"]),
+            prepare=cached_plan,
+        )
+
+    client.portal.call(synchronize)
+    done = client.get(f"/api/v1/flow-runs/{row['id']}").json()
+    assert done["status"] == "pending" and done["cancel_requested_at"] is not None
+
+
 def test_unregistered_output_file_rejected_and_old_version_not_dispatched(client):
     file_id = upload(client).json()["id"]
     unregistered = upload(client, b"other", key="other").json()["id"]
@@ -543,7 +677,7 @@ def test_unregistered_output_file_rejected_and_old_version_not_dispatched(client
 
 def test_external_package_change_blocks_execution_and_delivery(client, tmp_path, monkeypatch):
     from keystone import composition
-    from keystone.platform.flow.catalog import execution_version
+    from keystone.composition import execution_version
     from keystone.platform.flow.identity import ExecutionIdentity
 
     package = tmp_path / "execution_review_package"

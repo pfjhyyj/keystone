@@ -7,9 +7,9 @@ import pytest
 
 from keystone import composition
 from keystone.bootstrap import build_runtime
+from keystone.composition import execution_version
 from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
-from keystone.platform.flow.catalog import execution_version
 
 
 @pytest.fixture
@@ -78,17 +78,15 @@ def test_text_normalization_across_stream_boundary(package):
 
 
 def test_installed_backend_is_hashed_instead_of_shadow_sources(package, tmp_path, monkeypatch):
-    from keystone.platform.flow import catalog
-
     application = tmp_path / "application"
-    installed = application / ".venv/lib/site-packages/keystone/platform/flow/catalog.py"
+    installed = application / ".venv/lib/site-packages/keystone/composition.py"
     installed.parent.mkdir(parents=True)
     installed.write_text("# installed backend\n")
     shadow = application / "src/keystone/catalog.py"
     shadow.parent.mkdir(parents=True)
     shadow.write_text("# stale source tree\n")
     (application / "uv.lock").write_text("# locked dependencies\n")
-    monkeypatch.setattr(catalog, "__file__", str(installed))
+    monkeypatch.setattr(composition, "__file__", str(installed))
     monkeypatch.setattr(composition, "EXECUTION_PACKAGES", {})
     before = version()
     installed.write_text("# different installed backend\n")

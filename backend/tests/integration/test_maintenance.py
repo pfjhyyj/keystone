@@ -14,10 +14,10 @@ from test_identity import query
 
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.files.models import File
+from keystone.platform.files.tasks import workflows as files_jobs
 from keystone.platform.flow.models import FlowRun
-from keystone.worker.tasks import files as files_jobs
-from keystone.worker.tasks import flow as flow_jobs
-from keystone.worker.tasks import model_costs as model_jobs
+from keystone.platform.flow.tasks import workflows as flow_jobs
+from keystone.platform.model_access.tasks import workflows as model_jobs
 
 pytestmark = pytest.mark.postgres
 
@@ -142,7 +142,7 @@ def test_slow_cleanup_is_coalesced_and_does_not_block_flow_coordination(client, 
     identifier = start(client, upload(client).json()["id"]).json()["id"]
     code = """
 import asyncio
-from keystone.worker.tasks import files as jobs
+from keystone.platform.files.tasks import workflows as jobs
 original = jobs.cleanup
 calls = 0
 async def slow_once(*args, **kwargs):
@@ -182,7 +182,7 @@ def test_failed_cleanup_retries_on_next_tick_without_stopping_worker_or_exposing
     client, tmp_path
 ):
     code = """
-from keystone.worker.tasks import files as jobs
+from keystone.platform.files.tasks import workflows as jobs
 original = jobs.cleanup
 failed = False
 async def fail_once(*args, **kwargs):
@@ -208,6 +208,11 @@ main()
         )
         errors = executions(client, files_jobs.WORKFLOW, status="ERROR")
         assert all(str(row.error) == "file_cleanup_failed" for row in errors)
+        engine = client.app.state.runtime.flow_engine.client
+        for row in errors:
+            steps = client.portal.call(engine.list_workflow_steps_async, row.workflow_id)
+            failures = [step["error"] for step in steps if step.get("error")]
+            assert failures and all(str(error) == "file_cleanup_failed" for error in failures)
         assert "maintenance-secret" not in log.read_text(encoding="utf8")
         assert "file_cleanup_failed" in log.read_text(encoding="utf8")
 
@@ -217,7 +222,7 @@ def test_interrupted_cleanup_recovers_same_execution_after_worker_restart(client
     assert client.delete(f"/api/v1/files/{identifier}").status_code == 202
     code = """
 import asyncio
-from keystone.worker.tasks import files as jobs
+from keystone.platform.files.tasks import workflows as jobs
 async def interrupted(*args, **kwargs):
     print('cleanup_waiting_for_crash', flush=True)
     await asyncio.Event().wait()
@@ -304,6 +309,120 @@ def test_old_version_maintenance_cannot_hold_new_version_deduplication(client, t
                 if row.app_version == "previous-release"
             ]
             assert len(old) == 2 and all(row.status == "ENQUEUED" for row in old)
+
+
+def test_cost_scan_recovers_checkpointed_scopes_and_native_child_enqueues(client, tmp_path):
+    checkpoint = tmp_path / "interrupted-cost-scan.txt"
+    first = f"""
+import asyncio
+from pathlib import Path
+from dbos import DBOS
+from keystone.platform.model_access.tasks import workflows as jobs
+async def scopes(self): return ['a' * 64, 'b' * 64]
+async def reconcile(self, scope): pass
+jobs.CostService.scopes, jobs.CostService.reconcile = scopes, reconcile
+original = jobs.enqueue_task
+async def interrupt_after_enqueue(*args, **kwargs):
+    result = await original(*args, **kwargs)
+    if args[1]['scope'] == 'a' * 64:
+        Path({str(checkpoint)!r}).write_text(DBOS.workflow_id, encoding='utf8')
+        print('cost_scan_enqueued_first_scope', flush=True)
+        await asyncio.Event().wait()
+    return result
+jobs.enqueue_task = interrupt_after_enqueue
+from keystone.entrypoints.worker import main
+main()
+"""
+    with worker(client, tmp_path, code=first) as (process, log):
+        wait_for(
+            client,
+            process,
+            log,
+            lambda: "cost_scan_enqueued_first_scope" in log.read_text(encoding="utf8"),
+        )
+        identifier = checkpoint.read_text(encoding="utf8")
+        assert any(
+            row.workflow_id == identifier
+            for row in executions(
+                client,
+                model_jobs.WORKFLOW,
+                status="PENDING",
+            )
+        )
+
+    second = f"""
+from dbos import DBOS
+from keystone.platform.model_access.tasks import workflows as jobs
+async def scopes(self):
+    assert DBOS.workflow_id != {identifier!r}, 'must replay the saved scope list'
+    return []
+async def reconcile(self, scope): pass
+jobs.CostService.scopes, jobs.CostService.reconcile = scopes, reconcile
+from keystone.entrypoints.worker import main
+main()
+"""
+    with worker(client, tmp_path, code=second) as (process, log):
+        wait_for(
+            client,
+            process,
+            log,
+            lambda: any(
+                row.workflow_id == identifier
+                for row in executions(
+                    client,
+                    model_jobs.WORKFLOW,
+                    status="SUCCESS",
+                )
+            ),
+        )
+        children = [
+            row
+            for row in executions(client, model_jobs.QUERY_WORKFLOW)
+            if row.workflow_id.startswith(f"cost-query:{identifier}:")
+        ]
+        assert {row.workflow_id for row in children} == {
+            f"cost-query:{identifier}:{scope * 64}" for scope in ("a", "b")
+        }
+
+
+def test_independent_task_delivery_reuses_completed_execution_key(client, tmp_path):
+    code = """
+from dbos import DBOS
+from keystone.core.execution.contracts import NoInput, TaskBinding, TaskDefinition
+from keystone.core.execution.dispatch import enqueue_task
+from keystone.platform.files.tasks.definitions import CLEANUP
+import keystone.entrypoints.worker as worker
+
+definition = TaskDefinition('test.independent', 'keystone.test.independent', NoInput, CLEANUP.queue)
+@DBOS.workflow(name=definition.entrypoint)
+async def independent(payload):
+    print('independent_task_executed', flush=True)
+binding = TaskBinding(definition, independent)
+original = worker.register_maintenance
+def register(runtime, health):
+    queues, installers = original(runtime, health)
+    async def probe():
+        for key in ('independent-first', 'independent-first', 'independent-second'):
+            ref = await enqueue_task(binding, {}, execution_key=key)
+            assert ref.workflow_id == key
+            handle = await DBOS.retrieve_workflow_async(ref.workflow_id)
+            await handle.get_result()
+        print('independent_delivery_checked', flush=True)
+    return queues, [*installers, probe]
+worker.register_maintenance = register
+worker.main()
+"""
+    with worker(client, tmp_path, code=code) as (process, log):
+        wait_for(
+            client,
+            process,
+            log,
+            lambda: "independent_delivery_checked" in log.read_text(encoding="utf8"),
+        )
+        rows = executions(client, "keystone.test.independent")
+        assert {row.workflow_id for row in rows} == {"independent-first", "independent-second"}
+        assert all(row.status == "SUCCESS" for row in rows)
+        assert log.read_text(encoding="utf8").count("independent_task_executed") == 2
 
 
 def test_flow_scan_attempts_advance_fairly_across_scheduled_passes(client, tmp_path):

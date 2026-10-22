@@ -6,17 +6,16 @@ import socket
 
 from sqlalchemy import func
 
-from keystone.composition import build_catalog
+from keystone.composition import build_catalog, execution_version
 from keystone.core.database import Database
-from keystone.core.dbos_runtime import has_owned_work
 from keystone.core.errors import ServiceError
+from keystone.core.execution.runtime import has_owned_work
 from keystone.core.migrations import expected_heads
 from keystone.core.models import WorkerRegistration
 from keystone.core.worker_identity import config_digest
 from keystone.core.worker_registration import admit, identity_lease, serialized
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.files.storage import StorageRegistry
-from keystone.platform.flow.catalog import execution_version
 from keystone.platform.model_access.services.recovery import has_worker_calls
 
 

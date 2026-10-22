@@ -126,7 +126,7 @@ def test_flow_directory_isolation_in_api_execution_and_reconciliation(monkeypatc
 
     from keystone.core.schemas import Input
     from keystone.platform.flow.identity import ExecutionIdentity
-    from keystone.platform.flow.reconcile import reconcile_one
+    from keystone.platform.flow.tasks.workflows import reconcile_one
 
     class EmptyInput(Input):
         pass
@@ -339,9 +339,9 @@ def test_flow_reconciliation_uses_serialized_output_contract(
     from pydantic import Field, field_serializer
     from support.flow_fixture import contracts
 
+    from keystone.composition import execution_version
     from keystone.core.schemas import Input
-    from keystone.platform.flow.catalog import execution_version
-    from keystone.platform.flow.reconcile import reconcile_one
+    from keystone.platform.flow.tasks.workflows import reconcile_one
 
     class EmptyInput(Input):
         pass

@@ -26,7 +26,7 @@ from keystone.platform.flow.engine import Engine
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.model_access.models import Channel, ModelInvocation
 from keystone.platform.model_access.services.costs import CostService
-from keystone.worker.tasks import model_costs as jobs
+from keystone.platform.model_access.tasks import workflows as jobs
 
 pytestmark = pytest.mark.postgres
 

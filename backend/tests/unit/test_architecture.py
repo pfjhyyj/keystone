@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from support.ast_support import imports
+from support.module_checks import check_module_layers
 
 ROOT = Path(__file__).parents[2] / "src" / "keystone"
 DOMAINS = ("audit", "dictionary", "files", "flow", "identity", "model_access")
@@ -29,6 +30,8 @@ def test_platform_module_contract_and_dependencies(domain):
         tree = ast.parse(file.read_text(encoding="utf-8"))
         dependencies = list(imports(tree, package))
         layer = file.relative_to(root).parts[0]
+        if layer in {"controllers", "services", "schemas", "models", "policies", "adapters"}:
+            assert not any(d.startswith(("dbos", "keystone.worker")) for d in dependencies), file
         if layer == "controllers":
             assert not any(
                 d.startswith("sqlalchemy") or ".models" in d.split("platform")[-1]
@@ -83,6 +86,47 @@ def test_all_platform_domains_are_checked():
     assert actual == set(DOMAINS)
 
 
+def test_platform_and_business_modules_share_execution_boundaries():
+    for family in ("platform", "businesses"):
+        for module in (ROOT / family).iterdir():
+            if module.is_dir() and module.name != "__pycache__":
+                check_module_layers(module, f"keystone.{family}.{module.name}")
+
+
+@pytest.mark.parametrize(
+    "file,source",
+    [
+        ("services/records.py", "from keystone.core.execution.dispatch import enqueue_task"),
+        ("services/records.py", "from keystone.core import execution"),
+        ("services/records.py", "from ..tasks.workflows import register"),
+        ("tasks/nested/sync.py", "from ...models import Record"),
+        ("tasks/nested/sync.py", "from keystone.core.database import Database"),
+        ("tasks/definitions.py", "from ..services.records import RecordService"),
+        ("tasks/definitions.py", "from keystone.core.execution import dispatch"),
+        ("controllers/records.py", "from ..models import Record"),
+    ],
+)
+def test_business_module_checks_reject_execution_and_layer_bypasses(tmp_path, file, source):
+    module = tmp_path / "probe"
+    target = module / file
+    target.parent.mkdir(parents=True)
+    target.write_text(source, encoding="utf8")
+    with pytest.raises(AssertionError):
+        check_module_layers(module, "keystone.businesses.probe")
+
+
+def test_module_checks_allow_lightweight_contracts_and_normal_service_symbols(tmp_path):
+    module = tmp_path / "probe"
+    file = module / "services" / "records.py"
+    file.parent.mkdir(parents=True)
+    file.write_text(
+        "from keystone.core.execution.contracts import TaskDefinition\n"
+        "from ..services.features import workflows_enabled\n",
+        encoding="utf8",
+    )
+    check_module_layers(module, "keystone.businesses.probe")
+
+
 def test_relative_imports_cannot_bypass_layers():
     tree = ast.parse("from .. import models\nfrom ..services.users import UserService")
     found = set(imports(tree, "keystone.platform.identity.controllers"))
@@ -107,8 +151,9 @@ def test_model_access_protocols_and_services_are_independent_of_dbos():
     for file in root.rglob("*.py"):
         package = ".".join(file.relative_to(ROOT.parent).with_suffix("").parts[:-1])
         dependencies = list(imports(ast.parse(file.read_text(encoding="utf8")), package))
-        assert not any(d.startswith(("dbos", "keystone.worker")) for d in dependencies), file
         layer = file.relative_to(root).parts[0]
+        if layer != "tasks":
+            assert not any(d.startswith(("dbos", "keystone.worker")) for d in dependencies), file
         if layer in {"billing", "inference"}:
             assert not any(
                 d.startswith("sqlalchemy")
@@ -126,15 +171,27 @@ def test_model_access_protocols_and_services_are_independent_of_dbos():
 
 
 def test_system_task_adapters_do_not_own_domain_persistence():
-    for name in ("files", "flow", "model_costs"):
-        file = ROOT / "worker" / "tasks" / f"{name}.py"
-        assert file.is_file()
-        package = "keystone.worker.tasks"
-        dependencies = list(imports(ast.parse(file.read_text(encoding="utf8")), package))
-        assert not any(d.startswith("sqlalchemy") or ".models" in d for d in dependencies)
-    file = ROOT / "core" / "dbos_runtime.py"
-    dependencies = list(imports(ast.parse(file.read_text(encoding="utf8")), "keystone.core"))
-    assert not any(d.startswith("keystone.platform") for d in dependencies)
+    assert not list((ROOT / "worker" / "tasks").glob("*.py"))
+    for name in ("files", "flow", "model_access"):
+        folder = ROOT / "platform" / name / "tasks"
+        for leaf in ("__init__.py", "definitions.py", "workflows.py"):
+            file = folder / leaf
+            assert file.is_file()
+            dependencies = list(
+                imports(
+                    ast.parse(file.read_text(encoding="utf8")), f"keystone.platform.{name}.tasks"
+                )
+            )
+            assert not any(d.startswith("sqlalchemy") or ".models" in d for d in dependencies)
+            if leaf == "definitions.py":
+                assert not any(d.startswith("dbos") or ".services" in d for d in dependencies)
+    for file in (ROOT / "core" / "execution").glob("*.py"):
+        dependencies = list(
+            imports(ast.parse(file.read_text(encoding="utf8")), "keystone.core.execution")
+        )
+        assert not any(
+            d.startswith(("keystone.platform", "keystone.composition")) for d in dependencies
+        )
 
 
 TESTS = Path(__file__).parents[1]

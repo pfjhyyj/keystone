@@ -1,5 +1,7 @@
 # 编写业务 Flow
 
+**当前实现说明：**本文示例使用现有 Definition、FLOW_DEFINITIONS、host 和单个 model_field。已实现的 Task 设施和目标 FlowPackage 接口及目录见[任务执行与模块规范设计](execution-design.md)。人工操作归业务模块，前后拆成独立 Flow，状态、结果与幂等衔接见[Flow 目标设计](domains/flow.md#83-业务人工操作与独立-flow-衔接目标设计)。本文不提供通用人工节点；FlowPackage 等目标接口不能直接加到当前示例中。
+
 可复用示例位于 `backend/src/keystone/examples/document_review/`。它使用现有
 Pydantic AI、Harness、DBOS、文件服务和 ModelRuntime，不引入额外执行框架或业务表。
 集成测试通过 `backend/tests/support/flow_fixture/` 直接执行这份代码，不维护第二份示例。

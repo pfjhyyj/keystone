@@ -1,10 +1,12 @@
 # Keystone Flow 领域
 
+**阅读状态：**第 1～7 节描述当前契约、状态机与实现限制；第 8 节是尚未实现的 FlowPackage、多模型角色及业务阶段衔接设计。人工审核、继续和驳回由业务模块处理，前后使用独立 Flow，本次不建设通用人工节点。公共任务接口及模块目录见[任务执行与模块规范设计](../execution-design.md)。
+
 模型接入使用真实 OpenRouter 服务，Flow/Agent 直接复用相同 ModelRuntime，不新增执行分支或 FlowRun 字段。API/Worker 从数据库读取控制台维护的模型 Key；发起表单提示真实调用可能计费，取消不撤销已发生的调用。边界见[OpenRouter 接入](model-access.md#77-openrouter-接入)。
 
 Worker 同时承载业务 Flow、系统自动任务和定时任务，支持同宿主、同版本的固定身份，见[整体架构第 3 节](../architecture.md#3-api-与-worker-的分工)。公共 DBOS 生命周期在 Worker，Flow 补投和状态同步由定时任务触发；关闭 Flow 后公共 DBOS、文件维护和自动查费仍运行。本领域保留业务职责，第 7 节记录身份、并发和按实例恢复规则；跨宿主及自动接管未实现。
 
-[范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项) · [当前实现](#7-当前实现)
+[范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项) · [当前实现](#7-当前实现) · [目标设计](#8-目标设计尚未实现)
 
 ## 1. 范围与边界
 
@@ -20,7 +22,7 @@ Flow 为业务提供普通代码与 Agent 混合的流程编排，支持模型�
 
 执行成功不等于业务批准；审批通过/驳回等结论属于业务输出。文件清理等内部维护可以使用执行机制，但不必都注册成用户可见流程。普通业务可以直接调用 model_access 服务而不经过 Flow；实际 SDK 仍封装在模型模块，不能绕过其授权、调用记录和费用边界。
 
-flow 保留 Definition、FlowRun、受理与原身份授权、补投、取消、引擎状态投影、结果校验和文件引用。公共 DBOS 初始化、启动关闭、固定身份配置和进程互斥位于 Worker 公共启动；Flow 的 worker.py 保留恢复准备和业务队列注册，worker/tasks/flow.py 以 DBOS 定时任务调用原有界协调服务。费用核对归 model_access，文件维护归 files，二者通过各自的 Worker 任务入口接入，不依赖 FlowRun。多 Worker 仍沿用稳定 `flow:<run_id>` 和结果幂等规则，具体调整以整体架构第 3.7 节为准。
+flow 保留 Definition、FlowRun、受理与原身份授权、补投、取消、引擎状态投影、结果校验和文件引用。公共 DBOS 初始化、启动关闭、固定身份配置和进程互斥位于 Worker 公共启动；Flow 的 worker.py 保留恢复准备和业务队列注册，flow/tasks/workflows.py 以 DBOS 定时任务调用原有界协调服务。费用核对归 model_access，文件维护归 files，二者通过各自的 Worker 任务入口接入，不依赖 FlowRun。多 Worker 仍沿用稳定 `flow:<run_id>` 和结果幂等规则，具体调整以整体架构第 3.7 节为准。
 
 Agent 使用 Pydantic AI＋Harness，持久执行使用 DBOS。不自行重写 Agent 循环，也不额外引入另一套图执行框架。
 
@@ -53,7 +55,7 @@ flowchart LR
 
 图中是领域关系，不表示全部使用数据库外键。Definition 不在数据库里，StepExecution 来自引擎；模型调用通过 flow_context.flow_run_id 关联。文件引用的 owner 固定为 `flow:<run_id>`，slot 区分 input、output 或有稳定名称的中间产物。引用只表达使用关系，不授予访问权限。
 
-首版没有 FlowTask。将来需要人工分配与提交决定时，再加入独立待办实体；它与自动步骤不是同一概念。也不建立 Agent、Tool、Skill 管理表。
+当前没有平台人工待办实体，本次目标也不新增。人工决定与对象状态归所属业务，前后自动阶段使用独立 Flow，见[业务人工操作与独立 Flow 衔接](#83-业务人工操作与独立-flow-衔接目标设计)。当前也没有 Agent、Tool、Skill 管理表。
 
 ### 2.2 流程定义 Definition
 
@@ -73,7 +75,7 @@ Definition 随代码发布，不接受在线增删改，不需要数据库审计
 
 ### 2.3 运行实体 FlowRun
 
-FlowRun 共 16 个字段，业务对象通过自身保存的 run_id 关联运行。一行对应一次受理成功的流程请求。同一运行的重启恢复不新增行；用户再次发起才产生新 Run。身份验证或输入校验未通过时不创建 Run，必要的失败留痕由 AuditLog 负责。
+FlowRun 当前共 17 个字段，业务对象通过自身保存的 run_id 关联运行。一行对应一次受理成功的流程请求。同一运行的重启恢复不新增行；用户再次发起才产生新 Run。身份验证或输入校验未通过时不创建 Run，必要的失败留痕由 AuditLog 负责。
 
 **发起时固定的字段**
 
@@ -100,6 +102,7 @@ FlowRun 共 16 个字段，业务对象通过自身保存的 run_id 关联运行
 | cancel_requested_at | UTC 时间，初始空 | 首次取消请求受理时间，重复取消不覆盖 |
 | finished_at | UTC 时间，初始空 | 平台首次确认并保存终态的时间；不作为上游请求的精确耗时依据 |
 | observed_at | UTC 时间，初始空 | 最近成功查询 DBOS 的时间；不可达时不更新；它不是 Worker 心跳 |
+| reconcile_attempted_at | UTC 时间，初始空 | 最近领取协调尝试的时间；公平扫描使用，失败也推进，与成功观察时间分开 |
 
 definition_snapshot 只包含两个固定成员：
 
@@ -133,7 +136,7 @@ definition_snapshot 只包含两个固定成员：
 | 状态 | 含义 | 可以发生什么 |
 |---|---|---|
 | pending | 已受理，尚未确认开始，可能等待投递或排队 | 开始执行、取消；执行前明确拒绝时失败 |
-| running | 已开始且未结束，可能正在恢复或持久等待 | 成功、失败或取消 |
+| running | 已开始且未结束，可能正在恢复或等待外部处理；不表达业务待审核 | 成功、失败或取消 |
 | succeeded | 编排完成，结果通过本次运行契约校验 | 只读查询 |
 | failed | 明确执行失败、执行前授权拒绝，或最终输出无效 | 只读查询；重新发起使用新 request_key |
 | cancelled | 协调器确认取消；尚未投递时确认不会再投递 | 只读查询；不代表已撤回外部副作用 |
@@ -235,7 +238,7 @@ Run 的结果、输出引用及相应引用审计在同一事务内保存。引�
 
 ## 4. 权限与审计
 
-沿用用户、角色、个人令牌和 Casbin，声明 `flow:start`、`flow:read`、`flow:cancel`，跨用户管理使用 `flow:manage`。普通用户只能查询和取消自己的运行；人工待办权限等启用该能力时再定义。
+沿用用户、角色、个人令牌和 Casbin，声明 `flow:start`、`flow:read`、`flow:cancel`，跨用户管理使用 `flow:manage`。普通用户只能查询和取消自己的运行；人工审核权限由所属业务声明，Run 的查看或管理权不代替业务批准权或文件内容权。
 
 | 查询或操作内容 | 必须满足的规则 |
 |---|---|
@@ -285,11 +288,11 @@ Ether 的 Run 模型 同时保存 definition_revision、definition_snapshot、en
 
 跨模块调用与进程职责见 [整体架构](../architecture.md)。实现优先参考 Ether 已有的 Run 受理、Worker 补投、状态同步和宿主能力接入，再按本文范围裁剪；不另起一套编排机制。
 
-首版部署为 **API 进程＋一个 Flow Worker 进程＋PostgreSQL**。API 与 Worker 使用同一套业务代码和依赖，仍属于模块化单体。Worker 内允许受限并发，使用稳定 executor ID，由进程管理器在故障后重启并恢复；首版不承诺跨 Worker 自动接管。
+当前部署为 **API 进程＋固定身份 Worker＋PostgreSQL**，默认一个 Worker，支持同宿主、同版本的 1～4 个固定身份。API 与 Worker 使用同一套业务代码和依赖，仍属于模块化单体。Worker 内允许受限并发，按原身份恢复，不提供跨 Worker 自动接管；约束见[多 Worker 部署](../architecture.md#35-多-worker恢复与发布)。
 
-直接使用 DBOS 编排 API，平台只封装发起、查询和取消等少量入口。不做通用多引擎接口、独立编排服务、自建检查点表、Worker 租约或选主，首版不依赖 Conductor。需要多 Worker 高可用时，再单独明确执行器恢复与版本部署方案。
+直接使用 DBOS 编排 API，平台只封装发起、查询和取消等少量入口。不做通用多引擎接口、独立编排服务或自建检查点表，当前不依赖 Conductor。现有固定身份锁和归属校验用于互斥与原身份恢复，不提供选主或跨 Worker 自动接管。目标 core/execution/ 是公共技术接入目录，不是新的执行领域。
 
-相对 Ether，保留代码定义、运行归属、幂等、历史契约与 Agent 接入经验；暂缓人工任务、automatic/manual 切换、通用审批、Sandbox 生命周期、完整外部操作领域和多版本并行执行器。升级前处理未完成运行，不能把使用 DBOS 理解成自动解决不兼容版本迁移。
+相对 Ether，当前保留代码定义、运行归属、幂等、历史契约与 Agent 接入经验。本次不建设平台人工任务、automatic/manual 切换或通用审批；人工操作按第 8 节由业务衔接独立 Flow。Sandbox 生命周期、完整外部操作领域和多版本并行执行器仍未实现。升级前处理未完成运行，不能把使用 DBOS 理解成自动解决不兼容版本迁移。
 
 官方依据：[DBOS workflow 与取消](https://docs.dbos.dev/python/tutorials/workflow-tutorial)、[自托管恢复](https://docs.dbos.dev/production/workflow-recovery)、[Pydantic AI 的 DBOS 集成](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/)。参考项目的固定依赖与最新文档可能不同，实现时必须固定并验证版本。
 
@@ -298,7 +301,7 @@ Ether 的 Run 模型 同时保存 definition_revision、definition_snapshot、en
 - 真实供应商逐个联调，核对模型工具调用、结构化输出与实际账务能力；模拟完成不代表模型判断质量或真实计费正确。
 - 历史清理暂不纳入首版，不设定保留天数或清理入口；有实际容量或运维需求后再评估。当前保留 Run、DBOS 历史、调用记录和凭据，仍须遵守引用与恢复约束。备份恢复与升级沿用部署规程。
 - 具体业务出现后实现“采用结果”的业务用例，在同一事务写业务记录及自身文件引用。当前示例止于报告生成，不增加占位业务表或通用投影机制。
-- 人工待办、多 Worker 接管、流式 Agent 过程展示和复杂表单按实际业务另行扩展。
+- 需要人工操作的业务按第 8 节定义资源版本、决定与后续 Run 的关联、幂等和页面；不增加平台人工节点。多 Worker 自动接管、流式 Agent 过程展示和复杂表单仍按实际需求另行设计。
 
 ## 7. 当前实现
 
@@ -333,7 +336,7 @@ composition.py 集中声明轻量 Definition，bootstrap 加载该目录；只�
 
 默认一个 Worker，可按共同清单配置同宿主同版本的固定身份。原身份授权、稳定 Flow ID、取消与结果同步保持不变；身份、共享预算和首次迁移见[整体架构](../architecture.md#37-现有实现与调整点)及部署文档，不能复制同身份进程。
 
-executor_id 使用配置的固定 worker_id，第一个槽位保留 keystone-worker。业务队列 keystone-flows 默认每进程并发 2、全局 4，分别由 flow_worker_concurrency / flow_global_concurrency 控制，满载保留在队列。worker/tasks/flow.py 注册同一个 `keystone.flow.reconcile` 计划，每 5 秒触发、启动立即扫描；实际协调在独立全局串行队列运行，活动触发合并去重，不占业务执行和文件清理容量。每轮按持久 reconcile_attempted_at/创建时间最多选 25 条，单条协调上限 15 秒，进程轮换或重启不重置公平扫描依据。停机不逐个补跑旧时间点。缺少原版本时保留运行并告警，不将输入交给新版本解释；成功查询才更新 observed_at，与扫描尝试分开。受理键至少保留 7 天，当前完全不自动清理，原 Run 仍在时持续去重。
+executor_id 使用配置的固定 worker_id，第一个槽位保留 keystone-worker。业务队列 keystone-flows 默认每进程并发 2、全局 4，分别由 flow_worker_concurrency / flow_global_concurrency 控制，满载保留在队列。flow/tasks/workflows.py 注册同一个 `keystone.flow.reconcile` 计划，每 5 秒触发、启动立即扫描；实际协调在独立全局串行队列运行，活动触发合并去重，不占业务执行和文件清理容量。每轮按持久 reconcile_attempted_at/创建时间最多选 25 条，单条协调上限 15 秒，进程轮换或重启不重置公平扫描依据。停机不逐个补跑旧时间点。缺少原版本时保留运行并告警，不将输入交给新版本解释；成功查询才更新 observed_at，与扫描尝试分开。受理键至少保留 7 天，当前完全不自动清理，原 Run 仍在时持续去重。
 
 execution_version 是实际加载的后端包、打包资源和 uv.lock 的内容摘要；源码换行统一后计算，API/Worker 必须交付同一制品。wheel 安装时核验已安装包，不使用部署目录中另一份源码副本。后端资源包括 Python、Markdown、JSON、文本。外部执行包通过 composition.EXECUTION_PACKAGES 显式声明包名及必需资源路径；核验所有包内代码和资源（包含二进制资源、媒体子进程），排除字节码缓存，缺包或必需资源时启动失败。API 只定位包文件，不导入执行模块。定义快照仍只有 output_schema 和 output_file_fields。发布前处理未完成运行，或保留原制品用于恢复；不做多版本同时调度。
 
@@ -341,7 +344,7 @@ execution_version 是实际加载的后端包、打包资源和 uv.lock 的内�
 
 SDK 请求体上限 256 KiB。可复用文件审查示例只读 16 KiB 以内 UTF-8 文本，流程时限 180 秒，最多 4 次模型请求、3 次普通工具调用、16000 tokens，输出修正最多一次；每次模型输出最多 2048 tokens。FlowModel 默认输出上限为 1024，可信业务可显式配置 1～4096。业务调整执行预算须修改代码并形成新制品，具体约定见[业务 Flow 开发](../flow-development.md)。
 
-Worker 全生命周期持有按身份的 OS 与 PostgreSQL 锁，同身份双开拒绝；原 keystone-flow-worker 以共享锁持有，排斥旧单实例制品。prepare 绑定当前服务，只收尾自身旧 instance 的 Flow running 模型调用，再启动 DBOS；每次实际发送由可信适配提供当前 worker_id、instance_id 和 execution_version，不能从旧输入恢复。无归属的历史调用阻止启动，须在停机迁移后专项收尾。普通 API 调用仍独立离线处理，不按心跳或时间推断请求已终止。公共运行时位于 core/dbos_runtime.py，停止领取后上报 draining，按 worker_shutdown_seconds 有限等待再清理本进程 DBOS 协程，保留恢复依据；不取消其他组件的独立协程，剩余资源清理仍有独立线程池。
+Worker 全生命周期持有按身份的 OS 与 PostgreSQL 锁，同身份双开拒绝；原 keystone-flow-worker 以共享锁持有，排斥旧单实例制品。prepare 绑定当前服务，只收尾自身旧 instance 的 Flow running 模型调用，再启动 DBOS；每次实际发送由可信适配提供当前 worker_id、instance_id 和 execution_version，不能从旧输入恢复。无归属的历史调用阻止启动，须在停机迁移后专项收尾。普通 API 调用仍独立离线处理，不按心跳或时间推断请求已终止。公共运行时位于 core/execution/runtime.py，停止领取后上报 draining，按 worker_shutdown_seconds 有限等待再清理本进程 DBOS 协程，保留恢复依据；不取消其他组件的独立协程，剩余资源清理仍有独立线程池。
 
 Worker 持续上报[心跳与就绪](../development.md#worker-健康检查排障)，实例依赖/执行器健康和共享维护结果分开；空闲实例不必亲自完成每种维护。共享扫描失败或超过 30 秒未更新会反映为整体未就绪，但心跳继续。关闭 Flow 时暂停共享协调计划，不注册业务 workflow、不做 Flow 收尾或协调；监听不含 keystone-flows 和 keystone-flow-maintenance，禁用前须处理在途 Flow，所有进程使用一致开关。重新启用恢复原计划，不创建副本；公共 DBOS、文件维护和查费继续运行。扫描尝试字段不改变业务终态，也不把长期 pending 自动改判失败。
 
@@ -368,6 +371,8 @@ Worker 持续上报[心跳与就绪](../development.md#worker-健康检查排障
 参考 Ether 的 FlowStartDialog、FlowRunDialog 和 useFlowRunDetail，保留分区失败处理、请求代次和关闭清理；不引入人工任务、可视化编排或 DBOS 管理控制台。
 
 ### 代码组织
+
+Flow 同步由 `tasks/definitions.py` 声明、`tasks/workflows.py` 编排，状态事务位于 `services/reconciliation.py`。批次认领、准备和重新观察后的投影分别建立 Step；逐 Run 的内部子 workflow 记录 15 秒超时/失败，下一轮仍按领域待办扫描。引擎投递与取消位于 Step 外，继续使用独立 `flow:<run_id>`，不建立维护任务到业务 Flow 的递归取消关系。恢复时投递前重新检查原身份；投影重新检查版本/入口且不覆盖终态，完成事实仍可在发起人撤权后落库。
 
 FlowRun 独立于 models/flow_run.py，接口和用例分别位于 controllers/runs.py、services/runs.py。ExecutionIdentity 继承 AccessContext，只提供 Run 执行授权。Flow 不直接读写文件引用、渠道配置或模型调用表：模型选择/恢复、文件引用保留通过所属领域的内部服务完成，仍保持原事务、Worker 身份锁、受控 owner/slot 和取消授权规则。响应字段在 schemas/runs.py 明确列出。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
@@ -403,3 +408,147 @@ Definition 的可信代码字段 `timeout_seconds` 默认 300，可设 1–86400
 进程超时必须为 0–86400 秒之间的有限正数（默认 300）；stdout/stderr 分别有界，默认 256/64 KiB，均最多 16 MiB，超限返回 `413 process_output_limit`。可选的单个产物路径必须配非负容量上限，运行期间及退出后复查，超限返回 `413 process_file_limit`；超时返回 `504 process_timeout`。产物空间预留、路径选择和最终内容校验仍由调用方负责。平台错误仅投影安全码，不透传工具错误正文。
 
 取消等待原生清理完成后才返回，重复取消也不会提前释放上层文件资源；正常完成同样清理遗留子孙进程。宿主控制管道关闭会触发清理。Windows 使用 Job Object 并在启动工具前绑定监督器，监督器被强制结束也会关闭整个作业；POSIX 使用独立进程组并终止该组。这是可信工具的资源与生命周期约束，不是任意代码沙箱，也不限制主动脱离进程组的恶意程序。
+
+## 8. 目标设计（尚未实现）
+
+本节不改变第 1～7 节当前 Definition、FlowRun 五态、两成员快照、单模型字段或 host API。公共任务接口及维护场景见[任务执行设计](../execution-design.md)。下面的 FlowDefinition、FlowPackage、FlowContext 是拟议契约；第 8.3 节复用当前 start_in_transaction() 和产物服务，具体业务字段、审核与衔接示例尚未实现。
+
+### 8.1 FlowPackage、快照与素材包
+
+目标 FlowDefinition 增加明确契约 revision，将 model_fields 扩展为角色到输入路径的映射；文件路径允许受限数组 *。FlowPackage 声明轻量定义、执行模块、制品包/资源及宿主 API 版本。API 只读轻量目录，Worker 显式导入 workflow/Agent/资源，普通 Service 仍不依赖 DBOS。
+
+新 Run 的业务 input 与固定执行选择分开，角色模型及 revision 等进入有版本标识的 definition_snapshot；现有 input 中的单模型选择和两成员快照继续按原格式读取。先按原始提交与凭据范围核对幂等，旧请求仍返回原 Run；新请求才选择当前 revision、固定全部 ModelEntry。执行前复查当前权限和配置，不换模型，不从快照恢复秘密或旧 Worker 实例。快照不提供跨制品执行能力。
+
+目标 FlowContext 提供当前 Run 的受控文件、固定角色模型、产物、原身份检查及有界工具。原片/候选的算法、Agent 隔离、裁片、标签与补查归独立素材包；宿主负责 ModelEntry、文件授权、Run 和结果入库。示例与差距见[素材粗选设计](../execution-design.md#6-业务-flowpackage-与素材粗选)。没有默认插入人工采用门槛。
+
+### 8.2 Flow 协调任务与恢复
+
+费用、文件和 Flow 协调继续是后台 Task，不创建 FlowRun。Flow 协调不整体包装成 Step：已将公平领取 Run、读取/计划、引擎投递/取消、重新观察/结果落库拆开。投递在 workflow 层，通过固定 flow:<run_id> 执行；维护任务不等待业务 Flow，不把自己的取消递归传播给业务执行。
+
+计划与引擎观察可能在恢复时变旧，后续实际副作用仍复查原执行身份；投影锁定 Run、核对入口/版本/观察顺序、不覆盖终态。已完成运行的结果保存不因后来撤权而丢失。原制品不在时停止新的执行，不将旧输入交给当前最新代码。
+
+### 8.3 业务人工操作与独立 Flow 衔接（目标设计）
+
+人工审核、继续、驳回、返工归所属业务模块，前后自动阶段分别受理独立 Flow。平台不建设通用人工待办、人工节点、等待队列或消息唤醒接口。Flow A 完成即结束，人工操作期间业务对象可以处于待审核状态，原 Run 不保持 running，也不从原 workflow 的某个位置恢复。完整业务过程通过资源版本、决定及各阶段 Run 的关联追踪。
+
+当前已有 [FlowService.start_in_transaction()](../../backend/src/keystone/platform/flow/services/runs.py) 和第 7 节的产物查询/事务内校验能力；以下业务字段、审核 Service、流程定义与页面是接入示例，尚未实现。具体业务不需要审核时继续直接采用结果，不默认给素材粗选加审核门槛。
+
+```mermaid
+flowchart TB
+    A[Flow A 生成或分析] --> Adopt[采用结果为持久业务版本并保留文件引用]
+    Adopt --> Pending[业务状态：待审核]
+    Pending --> Review{人工业务操作}
+    Review -->|通过| Commit[同事务保存批准、Flow B 受理、关联与审计]
+    Commit --> B[独立 Flow B 发布或后处理]
+    Review -->|驳回| Rejected[业务状态：驳回或待返工]
+    Rejected -->|人工编辑| Revision[新业务版本并验收，重新审核]
+    Rejected -->|新请求重新生成| A
+    Revision --> Pending
+```
+
+#### 8.3.1 三类状态与关联
+
+生成结果是否可用、是否经过人工批准、后续处理是否完成分别表达。业务可采用如下状态含义，但不要求所有业务照搬字段名或新建相同表：
+
+| 情况 | 结果/资源状态 | 审核状态 | 后续处理状态 | FlowRun 含义 |
+|---|---|---|---|---|
+| A 仍在执行 | 尚未形成可审核版本 | 不可审核 | 未受理 | A pending/running |
+| A 明确失败或取消 | 本次没有可审核的成功结果 | 不可审核 | 未受理 | 保留 A 的 failed/cancelled，不解释成成功零结果 |
+| A 成功，业务采用尚未完成 | 结果待采用 | 不可审核 | 未受理 | A succeeded；重试采用，不重跑 A |
+| A 成功且业务采用完成 | 固定版本可用 | 待审核 | 未受理 | A succeeded，人工期间不占执行位置 |
+| 人工驳回 | 原结果及来源保留 | 已驳回或待返工 | 未受理 | A 仍 succeeded，不创建 B |
+| 批准并受理 B | 固定版本可用 | 已批准 | 已受理/排队 | A succeeded；B pending |
+| B 执行中 | 固定版本可用 | 已批准 | 处理中 | B running |
+| B 成功 | 保留批准版本与交付结果 | 已批准 | 已完成 | B succeeded |
+| B 失败或取消 | 保留结果与决定 | 已批准 | 失败/取消，按原因处理 | B failed/cancelled，不倒改批准 |
+| 内容被编辑 | 新版本保留来源 | 新版本待审核 | 新版本尚未受理 | 旧决定/旧 Run 仅对应旧版本 |
+
+表中的业务状态不是新增的 FlowRun 枚举。后续执行状态可以通过经授权的 Run 查询投影；若业务保存快照，须定义单向同步和新旧比较，不能用执行失败覆盖审核决定。原批准的幂等回执保留首次 B 的关联，业务当前处理状态按明确的当前 attempt 投影，历史尝试不得覆盖新尝试。后续外部副作用不确定时可增加业务“待核验”标识，不把它伪装成平台新增终态或默认可重试。
+
+业务记录至少能关联资源 ID、业务版本、source_run_id、结果/文件引用、审核决定及其实际操作者、后续动作和执行尝试对应的 next_run_id。这里的业务版本与 FlowDefinition.revision、execution_version 是不同概念。决定可以是资源上的字段和必要历史，不强制建立通用审批资源。每次人工修正创建新业务版本，不改写 A.input、A.result 或旧决定。
+
+#### 8.3.2 结果采用与文件保留
+
+A 先产生受控结果；业务通过现有公开产物服务验收并采用为明确版本，保存自身 FileReference，采用完成后才允许审核。来源 Run 成功、结果契约满足及文件集合与采用规则均应检查。业务采用失败可按稳定来源键继续采用已完成的结果，不为此重新执行 A。相同来源/逻辑产物的重复采用返回原版本，同一键对应不同内容应报冲突。
+
+B 的输入使用已批准资源版本、决定标识、必要文件引用及来源信息，由业务 Service 构造，不直接使用客户端重传的任意文件集合或 A 的临时路径/Agent 消息。B 在关键副作用前通过业务服务核对批准仍有效、版本/产物指纹匹配、当前动作尝试关联的是本 Run。业务变更与执行权的取得应按同一业务互斥规则协调；不持有跨外部 I/O 的长事务，也不承诺撤销决定能撤回已发生副作用。
+
+业务文件引用使审核与后续处理不依赖 A 的临时工作区或引擎历史。驳回不自动删除文件；后续保留/解除引用按业务生命周期及文件权限处理。不同版本与不同尝试的迟到结果只写回精确关联，不覆盖较新的内容或执行结果。
+
+当前产物接口仍检查 Run 可见范围及文件权限。跨用户审核若需要采用他人 Run 结果，必须核对并按需补服务端限定的业务授权入口；不能因拥有业务审核权就绕过现有范围，也不能通过业务接口枚举任意 Run 或文件。只返回业务关联回执，不自动开放 A/B 的完整运行明细或文件内容。
+
+#### 8.3.3 批准与 B 受理的事务
+
+本例选择“批准即受理后续处理”：由当前明确授权的业务操作者执行。一个身份事务内完成以下操作：
+
+1. 检查业务审核权和对象范围，按固定顺序锁定目标业务版本及动作关联。
+2. 查找同一逻辑动作的既有决定/关联，先处理重复提交或冲突。
+3. 新操作验证源结果已可审核、版本/指纹未变化、尚无相反决定。
+4. 保存批准，并用当前 auth 调用 start_in_transaction()；由平台继续检查 flow:start、目标 Flow 所需权限、文件范围和受理幂等，创建 pending B。
+5. 保存决定与 B 的业务关联及成功审计，共同提交。任一检查或受理失败则全部回滚，不能提示“批准且已启动”。
+
+代码片段中只有 FlowService.start_in_transaction() 是现有平台接口，其余 DTO、业务查询/写入和流程 key 是设计示例：
+
+```python
+async def approve_and_start(self, data):
+    async with self.context.access(write=True) as (session, auth):
+        auth.require("assets.review:decide")  # 示例业务权限，需显式声明
+        version = await self.lock_authorized_version(session, auth, data)
+        action_key = self.action_key(version, action="publish", attempt=1)
+
+        old = await self.find_transition(session, action_key)
+        if old is not None:
+            self.require_same_payload(old, data)
+            return self.authorized_receipt(auth, old)
+
+        await self.require_reviewable(session, auth, version, data)
+        decision = await self.save_approval(session, auth, version, data)
+        accepted = await self.flows.start_in_transaction(
+            session,
+            auth,
+            Start(
+                definition_key="assets.publish_approved",
+                request_key=self.flow_request_key(action_key),
+                input=self.publish_input(version, decision),
+            ),
+        )
+        transition = await self.link_run(
+            session, action_key, decision, accepted["id"]
+        )
+        await self.record_approval_audit(session, auth, transition)
+        return self.authorized_receipt(auth, transition)
+```
+
+审核权不自动授予发布、模型、文件或启动 Flow 的权限。上述事务内身份模式要求同一当前操作者具有相应权限；B.actor_id 记录该次实际发起身份，A.actor_id 不变。若业务改用自动执行身份，必须另行明确授权、受理和审计契约，不能隐式冒用 A 的身份或把 Worker 当用户。
+
+数据库提交后即有 pending B，Worker 通过既有 Flow 协调扫描补投。API 提交后退出或响应丢失不会丢失受理；无须发送“继续”消息，不在 API 后台协程中执行 B，也不在业务事务内直接调用 DBOS。业务若只想批准、暂不受理 B，需要显式定义“已批准但未受理”的状态和后续动作，不能沿用本例接口却宣称处理已启动。
+
+#### 8.3.4 业务幂等、相反决定与显式重试
+
+业务唯一约束按资源 ID、固定业务版本、动作及执行尝试建立；决定另保存规范化提交摘要。请求键由服务端根据该逻辑动作生成并满足 Flow 长度约束，不依赖点击时间、随机数或审核人。授权检查仍在重复请求读取前进行，回执不泄露独立受保护详情。
+
+Flow 自身的唯一范围是 actor_id/request_key，摘要还包含原凭据关联。它不足以阻止不同审核人、用户或凭据对同一业务动作产生两个 Run。业务必须先在锁与唯一约束下返回既有关联，不对重复批准再次调用 start_in_transaction()。
+
+| 情况 | 衔接规则 |
+|---|---|
+| 同一动作、相同规范化载荷重复提交 | 返回原决定及原 B 关联，即使 B 已失败/取消也不新建 |
+| 两位审核人同时批准同一版本 | 固定锁顺序及业务唯一约束保障最多一个决定/后续 Run；另一方返回已有回执或明确冲突 |
+| 同一逻辑动作但载荷不同 | 幂等冲突，不改写旧决定、输入或关联 |
+| 同一版本同时批准与驳回 | 最多一个有效决定，相反决定冲突；不把后提交当覆盖 |
+| 人工编辑或重新生成 | 新业务版本重新审核；旧批准不自动继承 |
+| A 的结果重复被采用 | 稳定来源键返回原版本；内容矛盾报冲突 |
+| B 明确失败后点击原批准按钮 | 返回原 B；不会隐式把一次失败变成新尝试 |
+| 显式“重试后处理” | 校验批准版本仍有效、旧尝试终态且副作用可安全处理，再原子增加 attempt、受理新 Run 和关联 |
+| 旧执行仍在途或结果/外部副作用未知 | 保留待核验与来源标识，先查询/协调；不换 Run 或调用 ID 掩盖未知 |
+
+显式重试只重做 B 的处理目标，不重新生成 A，也不重新批准未变化的内容；新尝试仍重新授权，并由当前代码校验其输入和版本兼容性。外部发布等副作用继续使用稳定业务目标键及领域幂等，不能仅凭 B.failed 就断言“未发布”。批准、撤销、编辑与正在执行的 B 必须有明确竞争规则；已发生事实保留，必要补偿由业务定义。
+
+#### 8.3.5 独立运行、取消与发布
+
+取消 B 仅控制 B 及其执行后代，不撤销批准、不修改已结束 A、不自动回滚已发生业务副作用。取消整个业务事项需业务 Service 明确协调对象状态与相关运行，不能依靠跨独立 Run 的自动级联。驳回后人工编辑或重新生成由业务操作决定，不能强制所有驳回都重跑 A。
+
+人工期间没有活跃 A，因此不占 DBOS 队列名额、没有 A 的执行倒计时或原检查点的唤醒问题；业务审核期限由业务规则管理，超时不默认批准。已有完成结果按业务引用保留。B 是新受理，可以绑定当前发布制品，但必须重新验证固定资源版本和输入契约；这是正常新运行，不是用新制品恢复 A。已经在途的 B 仍遵守原制品/原身份的恢复与升级约束。
+
+### 8.4 目标能力验收
+
+平台 Task/FlowPackage 目标仍按公共设计验收。采用人工衔接的业务另验证：A 成功但采用失败时只重试采用；来源版本/文件引用固定；业务审核和 A/B 查询权限隔离；重复采用；同操作者与跨操作者重复批准；批准/驳回/编辑竞争；批准、B 受理、关联与审计同事务回滚；提交响应丢失；Worker 停止后恢复补投；B 失败/取消不倒改批准；未知副作用不自动重试；显式重试只新增 B 尝试；旧结果不覆盖新版本；新制品受理 B 的契约检查。现有基础服务不等于这些具体业务字段、接口、页面和端到端验证已经完成。
