@@ -3,7 +3,12 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
 import { request } from '../../api/client'
 import type { PersonalToken } from '../../api/client'
-import { clearSession, identity, sessionError, sessionVersion } from '../../stores/session'
+import {
+  changePassword as updatePassword,
+  identity,
+  sessionError,
+  sessionVersion,
+} from '../../stores/session'
 import { useAction } from '../../composables/useAction'
 const route = useRoute(),
   router = useRouter()
@@ -36,11 +41,7 @@ async function changePassword() {
   await run(async () => {
     try {
       if (newPassword.value !== confirmation.value) throw new Error('两次新密码不一致')
-      await request('/auth/password', 'POST', {
-        current_password: currentPassword.value,
-        password: newPassword.value,
-      })
-      clearSession()
+      await updatePassword(currentPassword.value, newPassword.value)
     } finally {
       currentPassword.value = ''
       newPassword.value = ''

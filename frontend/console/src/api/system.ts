@@ -1,3 +1,5 @@
+import { sessionWork } from './client'
+
 export interface Health {
   status: 'ok'
   service: string
@@ -16,15 +18,25 @@ export interface WorkerStatus {
 }
 
 async function getStatus(path: string, allowUnavailable = false): Promise<unknown> {
-  const response = await fetch(path, {
-    credentials: 'same-origin',
-    cache: 'no-store',
-    signal: AbortSignal.timeout(6000),
-  })
-  if (!response.ok && !(allowUnavailable && response.status === 503)) {
-    throw new Error('服务暂时无法访问')
+  const work = sessionWork(undefined, 6000)
+  try {
+    const response = await fetch(path, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal: work.signal,
+    })
+    work.assert()
+    if (!response.ok && !(allowUnavailable && response.status === 503))
+      throw new Error('服务暂时无法访问')
+    const result = await response.json()
+    work.assert()
+    work.signal.throwIfAborted()
+    return result
+  } catch (error) {
+    return work.rethrow(error)
+  } finally {
+    work.close()
   }
-  return response.json()
 }
 
 function record(value: unknown): value is Record<string, unknown> {

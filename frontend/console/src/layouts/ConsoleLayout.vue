@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   ArrowDown,
@@ -15,7 +15,6 @@ import {
   Setting,
   User,
 } from '@element-plus/icons-vue'
-import { ApiError, request } from '../api/client'
 import {
   can,
   checking,
@@ -23,6 +22,9 @@ import {
   identity,
   initialized,
   sessionVersion,
+  logout,
+  refreshSession,
+  SESSION_EVENT,
 } from '../stores/session'
 import { loginDestination, navigation } from '../router'
 const route = useRoute(),
@@ -101,15 +103,30 @@ async function command(value: string) {
   if (logoutBusy.value) return
   logoutBusy.value = true
   try {
-    await request('/auth/logout', 'POST')
-    clearSession()
+    await logout()
   } catch (error) {
-    if (!(error instanceof ApiError && error.status === 401))
-      logoutError.value = error instanceof Error ? error.message : '退出失败，请重试'
+    logoutError.value = error instanceof Error ? error.message : '退出失败，请重试'
   } finally {
     logoutBusy.value = false
   }
 }
+function focused() {
+  void refreshSession()
+}
+function changed(event: StorageEvent) {
+  if (event.key === SESSION_EVENT) {
+    clearSession()
+    void refreshSession()
+  }
+}
+onMounted(() => {
+  window.addEventListener('focus', focused)
+  window.addEventListener('storage', changed)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('focus', focused)
+  window.removeEventListener('storage', changed)
+})
 </script>
 <template>
   <div v-if="!initialized" class="initial-loading"><el-skeleton :rows="5" animated /></div>

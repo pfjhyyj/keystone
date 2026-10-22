@@ -1,5 +1,6 @@
 import { vi } from 'vitest'
 import { identity } from '../stores/session'
+import { setCsrf } from '../api/client'
 import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { ElOption } from 'element-plus'
 import AppSelect from '../components/AppSelect.vue'
@@ -39,6 +40,7 @@ export function authorize(permissions: string[]) {
     credential_kind: 'session',
     csrf_token: 'test-csrf',
   }
+  setCsrf(identity.value.csrf_token)
 }
 export function fakeApi(handler: (path: string, init: RequestInit) => unknown | Promise<unknown>) {
   return vi.stubGlobal(

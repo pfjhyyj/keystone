@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { request, setCsrf } from '../../api/client'
-import { refreshSession, sessionError } from '../../stores/session'
+import { login as loginSession, sessionError } from '../../stores/session'
 const username = ref(''),
   password = ref(''),
   busy = ref(false),
@@ -11,12 +10,7 @@ async function login() {
   busy.value = true
   error.value = ''
   try {
-    const result = await request<{ csrf_token: string }>('/auth/login', 'POST', {
-      username: username.value,
-      password: password.value,
-    })
-    setCsrf(result.csrf_token)
-    await refreshSession()
+    await loginSession(username.value, password.value)
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : '登录失败，请重试'
   } finally {

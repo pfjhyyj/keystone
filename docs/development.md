@@ -40,6 +40,12 @@ src/
 
 路由保留[Vue Router 懒加载](https://router.vuejs.org/guide/advanced/lazy-loading.html)，组件使用含义明确的 PascalCase 文件名。目录是本项目按页面归属制定的约定；参考 [Vue 风格指南](https://vuejs.org/style-guide/rules-strongly-recommended.html)，避免继续嵌套通用 `index.vue`、`Item.vue` 等难以区分的文件。公共组合逻辑遵循 [Vue Composables](https://vuejs.org/guide/reusability/composables.html) 的使用方式。
 
+### 文件传输与会话
+
+`api/client.ts` 管理请求的会话版本、取消信号和错误观察，保留 JSON 请求与模型 SSE/JSON 响应。`request` 的第四个参数仍是是否观察身份错误，第五个参数可传调用方的 `AbortSignal`。退出、改密、身份/权限/CSRF 变化时中止未完成的请求、模型响应流、文件校验和上传；已完成请求会解除注册。错误响应使当前会话失效时，调用方仍收到原始 HTTP 错误；旧会话的迟到结果统一拒绝为 `identity_changed`，不自动重试写入或模型调用。
+
+登录、退出、改密由 `stores/session.ts` 协调，`api/auth.ts` 保留认证失败的原始错误。刷新按会话版本合并；登录/退出期间的焦点刷新等待当前操作，旧刷新结束不能清除新刷新的状态。控制台监听窗口焦点和 `keystone:session` 跨标签页通知，重新验证 Cookie 身份；通知只写随机标记，不保存凭据或用户资料。
+
 ## 开发检查
 
 编写业务 Flow 时参照[业务 Flow 开发约定与示例](flow-development.md)，其中包含输出验收、
