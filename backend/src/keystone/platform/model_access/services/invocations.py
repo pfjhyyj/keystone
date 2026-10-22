@@ -4,7 +4,7 @@ from sqlalchemy import func, select
 
 from keystone.core.errors import ServiceError
 from keystone.platform.audit.services.writer import Actor
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.services.costs import CostService

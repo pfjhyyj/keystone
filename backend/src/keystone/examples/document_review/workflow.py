@@ -19,8 +19,8 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import Skills
 
 from keystone.core.errors import ServiceError
-from keystone.platform.flow import host
-from keystone.platform.flow.agent_model import resolve_model
+from keystone.platform.flow.workflows import context as host
+from keystone.platform.flow.workflows.agent_model import resolve_model
 
 from .contracts import (
     EXCERPT_CHARACTERS,

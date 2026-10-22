@@ -4,14 +4,16 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from pydantic import ValidationError
 
+from keystone.composition import PLATFORM_CATALOG
 from keystone.core.catalog import Catalog
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.errors import ServiceError
-from keystone.platform.audit.services.writer import ACTIONS, Actor, record, validate_details
-from keystone.platform.identity.policy import permission_catalog
+from keystone.platform.audit.services.writer import Actor, record, validate_details
+from keystone.platform.identity.adapters.security import csrf_token
 from keystone.platform.identity.schemas import PasswordChange, PasswordReset, UserCreate
-from keystone.platform.identity.security import LoginLimiter, csrf_token
+from keystone.platform.identity.services.authorization import permission_catalog
+from keystone.platform.identity.services.login_limits import LoginLimiter
 
 
 def test_database_rejects_missing_application_catalog_before_creating_engine(monkeypatch):
@@ -65,12 +67,15 @@ def test_production_requires_https_origins_and_csrf_is_session_bound():
 def test_audit_allowlist_rejects_nested_secret_fields():
     with pytest.raises(ValueError):
         validate_details(
-            {"after": {"password_hash": "must-not-persist"}}, ACTIONS["identity.user.update"]
+            {"after": {"password_hash": "must-not-persist"}},
+            PLATFORM_CATALOG.audit_actions["identity.user.update"],
         )
 
 
 def test_login_limiter_expires_without_unbounded_username_growth(monkeypatch):
-    monkeypatch.setattr("keystone.platform.identity.security.time.monotonic", lambda: 100)
+    monkeypatch.setattr(
+        "keystone.platform.identity.services.login_limits.time.monotonic", lambda: 100
+    )
     limiter = LoginLimiter()
     for _ in range(5):
         limiter.check("alice")
@@ -81,6 +86,8 @@ def test_login_limiter_expires_without_unbounded_username_growth(monkeypatch):
     with pytest.raises(ServiceError):
         limiter.check("another-new-name")
     assert len(limiter.buckets) <= 61
-    monkeypatch.setattr("keystone.platform.identity.security.time.monotonic", lambda: 161)
+    monkeypatch.setattr(
+        "keystone.platform.identity.services.login_limits.time.monotonic", lambda: 161
+    )
     limiter.check("alice")
     assert len(limiter.buckets) == 2

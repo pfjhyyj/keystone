@@ -1,10 +1,12 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
 
-from keystone.platform.files import capacity as disk
+from keystone.platform.files.adapters import capacity as disk
+from keystone.platform.files.services import access as policy
 
 pytestmark = pytest.mark.postgres
 
@@ -39,7 +41,10 @@ def test_upload_rejects_missing_final_copy_capacity_before_registering_file(clie
     assert not list((root / ".transfers").iterdir())
 
 
-def test_disk_pressure_at_final_copy_returns_507_and_retains_retryable_file(client, monkeypatch):
+@pytest.mark.parametrize("settlement_delay", [0, 0.25])
+def test_disk_pressure_at_final_copy_returns_507_and_retains_retryable_file(
+    client, monkeypatch, settlement_delay
+):
     runtime = client.app.state.runtime
     state = SimpleNamespace(free=runtime.settings.file_min_free_bytes + 10)
     monkeypatch.setattr(disk.shutil, "disk_usage", lambda path: state)
@@ -49,6 +54,16 @@ def test_disk_pressure_at_final_copy_returns_507_and_retains_retryable_file(clie
     def pressure(*args):
         state.free = 0
         return write(*args)
+
+    if settlement_delay:
+        locked = policy.locked
+
+        async def slow_lock(session, identifier):
+            # The 100 ms disk monitor must interrupt a pending failure transaction.
+            await asyncio.sleep(settlement_delay)
+            return await locked(session, identifier)
+
+        monkeypatch.setattr(policy, "locked", slow_lock)
 
     monkeypatch.setattr(source, "write", pressure)
     response = upload(client, b"hello")

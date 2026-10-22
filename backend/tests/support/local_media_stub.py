@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 from keystone.core.schemas import Input
-from keystone.platform.flow.catalog import Definition
+from keystone.platform.flow.schemas.definitions import Definition
 
 
 class Source(Input):
@@ -34,7 +34,7 @@ definition = Definition(
 def register():
     from dbos import DBOS
 
-    from keystone.platform.flow import host
+    from keystone.platform.flow.workflows import context as host
 
     @DBOS.step(name="test.local_media.copy", retries_allowed=False)
     async def copy(run_id):
@@ -63,7 +63,7 @@ def install():
     composition.FLOW_DEFINITIONS = (definition,)
     composition.register_workflows = register
     if os.environ.get("KEYSTONE_ACCEPTANCE_CANCEL_FAIL") == "1":
-        from keystone.platform.flow.engine import Engine
+        from keystone.platform.flow.adapters.dbos import Engine
 
         async def unavailable(self, identifier):
             raise RuntimeError("Engine cancellation unavailable")

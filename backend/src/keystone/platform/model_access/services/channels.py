@@ -6,9 +6,9 @@ from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.inference.client import SUPPORTED_TARGETS
+from keystone.platform.model_access.adapters.inference.client import SUPPORTED_TARGETS
 from keystone.platform.model_access.models import Channel
 from keystone.platform.model_access.services.cost_context import bind_channel
 from keystone.platform.model_access.services.queries import balance_config, locked

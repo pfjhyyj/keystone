@@ -14,8 +14,8 @@ import pytest
 
 from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
-from keystone.platform.files import capacity as disk
-from keystone.platform.files.storage import StorageRegistry
+from keystone.platform.files.adapters import capacity as disk
+from keystone.platform.files.adapters.storage import StorageRegistry
 
 
 def registry(root, **overrides):
@@ -140,8 +140,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
-from keystone.platform.files import capacity as disk
-from keystone.platform.files.storage import StorageRegistry
+from keystone.platform.files.adapters import capacity as disk
+from keystone.platform.files.adapters.storage import StorageRegistry
 root = Path({str(root)!r})
 settings = Settings(config_file=None, file_coordination_root=root,
     file_storages={{"local": {{"driver": "filesystem", "root": root}}}}, file_min_free_bytes=1)

@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import Field, field_validator
 
 from keystone.core.schemas import Input
-from keystone.platform.flow.catalog import Definition
+from keystone.platform.flow.schemas.definitions import Definition
 from keystone.platform.model_access.schemas import Key
 
 SOURCE_BYTES = 16384

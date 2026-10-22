@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from keystone.core.config import Settings
-from keystone.platform.files.storage import StorageRegistry
+from keystone.platform.files.adapters.storage import StorageRegistry
 
 
 @pytest.fixture(autouse=True)

@@ -3,15 +3,30 @@
 from functools import lru_cache
 from pathlib import Path
 
-from keystone.core.catalog import Catalog, merge_catalogs
+from keystone.core.catalog import Catalog, combine_catalogs, merge_catalogs
 from keystone.core.execution.contracts import QueueDefinition
 from keystone.core.execution.planning import queue_budgets
 from keystone.core.execution.version import artifact_version
-from keystone.platform.audit.services.writer import ACTIONS
-from keystone.platform.flow.catalog import build_definitions
-from keystone.platform.identity.policy import PERMISSIONS
+from keystone.platform.audit.catalog import CATALOG as AUDIT_CATALOG
+from keystone.platform.dictionary.catalog import CATALOG as DICTIONARY_CATALOG
+from keystone.platform.files.catalog import CATALOG as FILES_CATALOG
+from keystone.platform.flow.catalog import CATALOG as FLOW_CATALOG
+from keystone.platform.flow.schemas.definitions import build_definitions
+from keystone.platform.identity.catalog import CATALOG as IDENTITY_CATALOG
+from keystone.platform.model_access.catalog import CATALOG as MODEL_CATALOG
+from keystone.worker.catalog import CATALOG as WORKER_CATALOG
 
-PLATFORM_CATALOG = Catalog(PERMISSIONS, ACTIONS)
+PLATFORM_CATALOG = combine_catalogs(
+    (
+        FLOW_CATALOG,
+        IDENTITY_CATALOG,
+        AUDIT_CATALOG,
+        FILES_CATALOG,
+        DICTIONARY_CATALOG,
+        MODEL_CATALOG,
+        WORKER_CATALOG,
+    )
+)
 
 # Import each business's lightweight CATALOG here and add (namespace, CATALOG).
 BUSINESS_CATALOGS: tuple[tuple[str, Catalog], ...] = ()
@@ -74,12 +89,12 @@ def build_catalog():
 
 
 def build_model_clients(settings, database):
-    from keystone.platform.model_access.billing.registry import BillingClient
-    from keystone.platform.model_access.clients import ModelClients
-    from keystone.platform.model_access.coordination import QueryCoordination
-    from keystone.platform.model_access.credentials import ChannelCredentials
-    from keystone.platform.model_access.http import HttpClient
-    from keystone.platform.model_access.inference.client import InferenceClient
+    from keystone.platform.model_access.adapters.billing.registry import BillingClient
+    from keystone.platform.model_access.adapters.clients import ModelClients
+    from keystone.platform.model_access.adapters.coordination import QueryCoordination
+    from keystone.platform.model_access.adapters.credentials import ChannelCredentials
+    from keystone.platform.model_access.adapters.http import HttpClient
+    from keystone.platform.model_access.adapters.inference.client import InferenceClient
 
     http = HttpClient()
     return ModelClients(

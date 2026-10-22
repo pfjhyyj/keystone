@@ -6,7 +6,7 @@ from fastapi import APIRouter, Query, Request
 
 from keystone.core.http import Page
 from keystone.platform.audit.services.query import AuditService
-from keystone.platform.identity.dependencies import access_context
+from keystone.platform.identity.controllers.dependencies import access_context
 
 router = APIRouter(prefix="/api/v1/audit-logs", tags=["audit"])
 

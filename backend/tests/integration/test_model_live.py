@@ -21,10 +21,10 @@ from test_identity import token
 from test_model_access import BILLING, SECRET, channel, entry, internal_service, invoke
 
 from keystone.core.errors import ServiceError
-from keystone.platform.flow.engine import Engine
+from keystone.platform.flow.adapters.dbos import Engine
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.http import HttpClient
-from keystone.platform.model_access.inference import client as gateway
+from keystone.platform.model_access.adapters.http import HttpClient
+from keystone.platform.model_access.adapters.inference import client as gateway
 from keystone.platform.model_access.services.runtime import ModelRuntime
 
 NETWORK_TRANSPORT = httpx2.AsyncHTTPTransport

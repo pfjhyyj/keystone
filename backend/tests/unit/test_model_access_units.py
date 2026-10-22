@@ -10,9 +10,9 @@ from pydantic import SecretStr
 from pydantic_ai.exceptions import ModelHTTPError
 
 from keystone.core.errors import ServiceError
-from keystone.platform.files.leases import initialize
-from keystone.platform.model_access.credentials import KEY_FILE, ChannelCredentials
-from keystone.platform.model_access.inference.errors import classify_error
+from keystone.platform.files.adapters.leases import initialize
+from keystone.platform.model_access.adapters.credentials import KEY_FILE, ChannelCredentials
+from keystone.platform.model_access.adapters.inference.errors import classify_error
 
 
 def test_credentials_are_bound_to_channel_and_purpose_and_shared_between_processes(tmp_path):

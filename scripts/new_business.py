@@ -134,7 +134,7 @@ def view(row) -> dict:
 from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.identity.services.access import AccessContext
 
 from ..models import @CLASS@
 from ..schemas import @CLASS@Create, @CLASS@Edit, view
@@ -212,7 +212,7 @@ router.include_router(@RESOURCE@_router)
 from fastapi import APIRouter, Request
 
 from keystone.core.http import Page
-from keystone.platform.identity.dependencies import access_context
+from keystone.platform.identity.controllers.dependencies import access_context
 
 from ..schemas import @CLASS@Create, @CLASS@Edit
 from ..services import @CLASS@Service

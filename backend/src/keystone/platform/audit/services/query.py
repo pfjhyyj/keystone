@@ -3,7 +3,7 @@ from sqlalchemy import select
 from keystone.core.time_range import history_range
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.schemas import view
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.identity.services.access import AccessContext
 
 
 class AuditService:

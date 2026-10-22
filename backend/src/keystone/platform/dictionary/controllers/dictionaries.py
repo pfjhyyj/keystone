@@ -5,7 +5,7 @@ from fastapi import APIRouter, Request
 from keystone.core.http import Page
 from keystone.platform.dictionary import schemas
 from keystone.platform.dictionary.services.dictionaries import DictionaryService
-from keystone.platform.identity.dependencies import access_context
+from keystone.platform.identity.controllers.dependencies import access_context
 
 router = APIRouter(prefix="/api/v1/dictionaries", tags=["dictionary"])
 

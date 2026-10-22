@@ -6,10 +6,10 @@ from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
-from keystone.platform.files import policy
+from keystone.platform.files.adapters.storage import blocking
 from keystone.platform.files.models import File, FileGrant
+from keystone.platform.files.services import access as policy
 from keystone.platform.files.services.references import require_unreferenced
-from keystone.platform.files.storage import blocking
 
 
 async def cleanup(database, storage, *, limit=20):

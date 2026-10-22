@@ -15,7 +15,7 @@ from keystone.core.models import WorkerRegistration
 from keystone.core.worker_identity import config_digest
 from keystone.core.worker_registration import admit, identity_lease, serialized
 from keystone.platform.audit.services import writer as audit
-from keystone.platform.files.storage import StorageRegistry
+from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.model_access.services.recovery import has_worker_calls
 
 

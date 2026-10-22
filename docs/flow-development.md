@@ -36,6 +36,21 @@ API 只加载 `contracts.py`，Worker 加载 `workflow.py`。启动方式沿用 
 自己的契约和入口。若放入独立顶层 Python 包，同时在 `EXECUTION_PACKAGES` 声明包和
 必需资源；不要扫描目录或在线安装代码。提示词与 Skills 必须随执行制品发布。
 
+上图是独立示例包；放入 `businesses/<module>/` 时，流程文件归 `workflows/<flow>/`，
+业务实体、HTTP 和用例分别归 models/controllers/services。模块根目录 catalog.py 仅声明
+权限与审计。当前 Flow 定义和宿主的导入方式为：
+
+```python
+from keystone.platform.flow.schemas.definitions import Definition
+from keystone.platform.flow.workflows import context as host
+from keystone.platform.flow.workflows.agent_model import FlowModel
+```
+
+Definition 与文件路径/小值校验位于 schemas/，API 可独立加载，不导入执行器。
+host 保留活动授权、取消和资源释放边界，输入及文件操作委托 services/resources.py；
+ExecutionIdentity 位于 services/identity.py，DBOSClient 包装位于 adapters/dbos.py。
+业务 Service 不导入 host，也不注册 workflow；具体执行代码保留原生 DBOS 语义。
+
 ## 2. 输出验收：结构、业务事实与副作用
 
 执行顺序为：准备可信源信息 → Agent/工具 → 业务验收 → 保存报告。

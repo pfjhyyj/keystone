@@ -15,15 +15,15 @@ from test_identity import bearer, create_user, query, token
 from keystone.core.errors import ServiceError
 from keystone.core.storage_config import StorageConfig
 from keystone.core.time import utcnow
+from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.files.models import FileReference
 from keystone.platform.files.services.references import FileReferences
-from keystone.platform.files.storage import StorageRegistry
-from keystone.platform.flow import host
-from keystone.platform.flow.identity import ExecutionIdentity
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.services.artifacts import FlowArtifactService, artifact_location
-from keystone.platform.identity.access import AccessContext
-from keystone.platform.identity.policy import Credential
+from keystone.platform.flow.services.identity import ExecutionIdentity
+from keystone.platform.flow.workflows import context as host
+from keystone.platform.identity.schemas.credentials import Credential
+from keystone.platform.identity.services.access import AccessContext
 
 pytestmark = pytest.mark.postgres
 

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from support.module_checks import check_module_layers
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT.parent / "scripts/new_business.py"
@@ -59,6 +60,7 @@ def test_generated_business_is_importable_and_migration_extends_head(tmp_path, m
     result, businesses, migrations = generate(tmp_path)
     assert result.returncode == 0, result.stderr
     package = businesses / "tiny_notes"
+    check_module_layers(package, "keystone.businesses.tiny_notes")
     assert {path.name for path in package.iterdir()} == {
         "__init__.py",
         "catalog.py",

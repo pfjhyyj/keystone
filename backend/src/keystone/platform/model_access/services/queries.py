@@ -2,7 +2,7 @@ from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time_range import history_range
-from keystone.platform.model_access.billing.registry import PROVIDERS
+from keystone.platform.model_access.adapters.billing.registry import PROVIDERS
 from keystone.platform.model_access.models import ModelInvocation
 
 

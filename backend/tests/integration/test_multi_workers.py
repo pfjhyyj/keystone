@@ -19,7 +19,7 @@ from test_identity import query
 from test_maintenance import schedules, wait_for
 
 from keystone.core.errors import ServiceError
-from keystone.platform.model_access.coordination import QueryCoordination
+from keystone.platform.model_access.adapters.coordination import QueryCoordination
 from keystone.platform.model_access.models import Channel
 from keystone.platform.model_access.tasks import workflows as model_costs
 
@@ -149,7 +149,7 @@ def held_model_code(tmp_path):
 import asyncio, json, os
 from pathlib import Path
 import httpx2
-from keystone.platform.model_access.http import HttpClient
+from keystone.platform.model_access.adapters.http import HttpClient
 original = HttpClient.transport
 root = Path({str(tmp_path)!r})
 class Held(httpx2.AsyncByteStream):
@@ -257,7 +257,7 @@ def billing_code(root, *, crash=False, hold=False):
 import asyncio, hashlib, json, os
 from pathlib import Path
 import httpx2
-from keystone.platform.model_access.http import HttpClient
+from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.services.costs import CostService
 root = Path({str(root)!r})
 original = HttpClient.transport
@@ -403,7 +403,7 @@ def test_lost_scope_connection_cannot_write_old_fee(client, billing, monkeypatch
         "import os; os.environ['KEYSTONE_MODEL_COST_CONCURRENCY']='3'",
         "import socket; socket.gethostname=lambda:'unsupported-other-host'",
         "import keystone.entrypoints.worker as w; w.execution_version=lambda:'other-release'",
-        "from keystone.platform.files.leases import LocalLeases; "
+        "from keystone.platform.files.adapters.leases import LocalLeases; "
         "LocalLeases.fingerprint=lambda self:'0'*64",
     ],
 )

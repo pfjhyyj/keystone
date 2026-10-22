@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 from contextlib import asynccontextmanager, nullcontext
@@ -11,13 +12,13 @@ from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
-from keystone.platform.files import policy
+from keystone.platform.files.adapters.storage import blocking, opened
+from keystone.platform.files.adapters.transfers import CHUNK_BYTES, StagedUpload
 from keystone.platform.files.models import File, FileGrant
 from keystone.platform.files.schemas import view
+from keystone.platform.files.services import access as policy
 from keystone.platform.files.services.references import require_unreferenced, retain_artifact
-from keystone.platform.files.storage import blocking, opened
-from keystone.platform.files.transfers import CHUNK_BYTES, StagedUpload
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.identity.services.access import AccessContext
 
 
 def digest(value):
@@ -311,7 +312,7 @@ class FileService:
     async def _fail_upload(self, identifier):
         async def mark():
             try:
-                async with self.identity.database.transaction() as session:
+                async with asyncio.timeout(5), self.identity.database.transaction() as session:
                     file = await policy.locked(session, identifier)
                     if file.status == "uploading":
                         file.status, file.updated_at, file.updated_by = "failed", utcnow(), None
@@ -333,7 +334,19 @@ class FileService:
                     "file_upload_recovery_pending file_id=%s", identifier
                 )
 
-        await mark()
+        # A disk/Run monitor may cancel the upload while its failure transaction
+        # is pending. Finish this bounded, known task before releasing file leases;
+        # repeated cancellation must not leave an otherwise writable row uploading.
+        settlement = asyncio.create_task(mark())
+        interrupted = False
+        while not settlement.done():
+            try:
+                await asyncio.shield(settlement)
+            except asyncio.CancelledError:
+                interrupted = True
+        settlement.result()
+        if interrupted:
+            raise asyncio.CancelledError()
 
     async def content(self, identifier, *, max_bytes=64 * 1024 * 1024):
         if max_bytes is None or max_bytes < 0:

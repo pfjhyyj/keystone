@@ -208,7 +208,7 @@ export const flowForms: Readonly<Record<string, Component>> = {
 
 ## 9. 任务与模块规范
 
-本节不能按现有脚手架直接执行。公共契约、代码示例与迁移约束以[任务执行与模块规范设计](execution-design.md)为准；当前第 0～8 节仍使用现有接口。
+模块目录和任务接入已实现，可按第 9.2 节扩展；第 9.3 节的 FlowPackage 仍为目标设计。公共契约、代码示例与迁移约束以[任务执行与模块规范设计](execution-design.md)为准。
 
 ### 9.1 选择接入方式
 
@@ -216,7 +216,7 @@ export const flowForms: Readonly<Record<string, Component>> = {
 |---|---|---|
 | 当前请求内有界完成 | 公开 Service，按需提供 Controller | 保存配置、查询、手动查费 |
 | 推进持久后台待办 | TaskDefinition + 原生 DBOS workflow/step | 费用核对、文件清理 |
-| 独立受理并管理一次业务运行 | FlowDefinition / FlowPackage | 素材粗选、生图、生视频 |
+| 独立受理并管理一次业务运行 | 当前 Definition + 显式注册；目标 FlowPackage | 文件审查；素材粗选、生图、生视频待接入 |
 | Flow 内部能力 | Step、Agent、工具或普通函数 | 抽帧、定位、审片、标签 |
 | 人工继续/驳回 | 业务 Service 保存决定，通过后受理独立 Flow | 审核结果版本后再发布 |
 
@@ -224,7 +224,15 @@ Task 和 Flow 共用 DBOS，但维护 Task 不创建 FlowRun，每个工具也�
 
 ### 9.2 模块目录与后台任务
 
-普通模块按需保留 controllers/schemas/models/services；增加 policies/ 放无 I/O 判断，adapters/ 放技术协议，tasks/definitions.py 放轻量声明，tasks/workflows.py 放原生 DBOS 执行适配。具体业务 workflows/ 组织多步流程；独立分发的流程包不需要空建 ORM/HTTP 目录。Model Access 的 inference/billing 拆分保留，目标归入 adapters/。
+模块按 MVC + Service 组织：controllers/ 处理 HTTP，schemas/ 放输入输出与显式投影，models/ 放实体，services/ 管用例、权限、事务、审计及幂等。Vue 页面承担 View。按需增加 adapters/ 放技术协议，tasks/definitions.py 放轻量任务声明，tasks/workflows.py 放原生 DBOS 执行适配，workflows/<flow>/ 放业务契约、编排、Agent 与资源。
+
+根目录只允许 __init__.py 包说明和 catalog.py 权限/审计声明；不放散落的 policy、host、storage、helpers 实现，不新增一级 policies/ 或 runtime/。纯判断就近放 services/，复杂后可分 services/policies/。一级目录必须属于上述七类并有 __init__.py；没有职责不建空目录。Model Access 的 inference/billing 和凭据、HTTP、协调能力已归 adapters/。独立分发的流程包不需要空建 ORM/HTTP 目录。
+
+Flow 定义使用 `from keystone.platform.flow.schemas.definitions import Definition`；业务执行上下文使用 `from keystone.platform.flow.workflows import context as host`。Flow 根目录 catalog.py 只声明 flow 权限和审计动作，不保存 Definition 或执行代码。API 读取轻量契约；Worker 才导入 workflows/。受权文件操作归 services/resources.py，DBOSClient 包装归 adapters/dbos.py，业务服务不导入执行上下文。
+
+依赖方向为 Controller/执行适配 → Service → Model/Adapter。Controller 不访问 ORM 或开启事务，Schema 不调用 Service/Adapter，Adapter 不调用 Service 或领域 ORM，Service 不依赖 HTTP/协议 SDK/DBOS 实现。tasks/workflows 只编排服务，不直接查询领域表。架构检查递归覆盖 platform 和 businesses，也检查脚手架生成结果；新增文件或层不能绕过检查。
+
+模块不导入 composition/bootstrap 等上层装配代码。需组合 Flow 的业务由装配层传入 `runtime.flow_service(identity)` 创建的服务，再调用原有 start_in_transaction 等入口；自行装配 FlowService 时显式传入 `execution_version` 查询函数。执行身份和协调器使用当前 Runtime 注入的同一版本来源，不能绕过校验或把版本、身份回调作为持久任务输入。架构检查逐条判断导入例外；同文件导入轻量 contracts 不会放行另一个执行实现导入，definitions 也不会匹配 definitions_runtime 等近似名称。
 
 后台任务接入顺序：
 
@@ -239,7 +247,7 @@ Task 和 Flow 共用 DBOS，但维护 Task 不创建 FlowRun，每个工具也�
 
 ### 9.3 FlowPackage 与素材粗选
 
-目标包提供轻量 catalog、输入输出模型、契约 revision、受限文件路径、角色模型字段，以及显式执行模块/资源清单。宿主受理时固定 ModelEntry，API 只读契约，Worker 加载 workflow、Agent、工具、提示词和 Skills。FlowContext 只暴露当前 Run 的受控能力。
+目标包通过 definitions.py 提供轻量流程定义、输入输出模型、契约 revision、受限文件路径、角色模型字段，以及显式执行模块/资源清单。宿主受理时固定 ModelEntry，API 只读契约，Worker 加载 workflow、Agent、工具、提示词和 Skills。FlowContext 只暴露当前 Run 的受控能力。
 
 ```text
 businesses/<namespace>/workflows/<flow>/
@@ -248,7 +256,7 @@ businesses/<namespace>/workflows/<flow>/
   steps/  agents/  tools/  prompts/  skills/    # 按需
 
 独立流程包/
-  catalog.py
+  definitions.py                               # FlowPackage 与轻量流程定义
   domain/
   adapters/
   workflows/                                  # 不要求 ORM 或 Controller
@@ -268,4 +276,4 @@ businesses/<namespace>/workflows/<flow>/
 
 ### 9.5 实施边界与切换
 
-TaskDefinition/TaskBinding、core/execution/、files/model_access/flow 的 tasks/ 和架构导入检查已落地。FlowPackage、多角色模型及数组文件路径仍未实现，具体业务的审核/衔接也没有通用实现。四层脚手架不自动创建任务空目录，后台任务按上述步骤显式装配。目录依赖检查递归覆盖平台及业务模块，包含嵌套任务文件与经公共执行实现包绕过的依赖。入口只保留最新实现，不加版本后缀；制品指纹校验和原身份恢复规则继续保留。目录移动会改变执行制品，新增 Step 或参数结构变化必须按原制品在途执行收尾后切换；不能因为“只整理目录”就跳过发布与恢复约束。
+TaskDefinition/TaskBinding、core/execution/、files/model_access/flow 的 tasks/、MVC + Service 目录归位和架构导入检查已落地。FlowPackage、多角色模型及数组文件路径仍未实现，具体业务的审核/衔接也没有通用实现。四层脚手架不自动创建任务空目录，后台任务按上述步骤显式装配。目录依赖检查递归覆盖平台及业务模块，包含嵌套任务文件与经公共执行实现包绕过的依赖。入口只保留最新实现，不加版本后缀；制品指纹校验和原身份恢复规则继续保留。目录移动会改变执行制品，新增 Step 或参数结构变化必须按原制品在途执行收尾后切换；不能因为“只整理目录”就跳过发布与恢复约束。

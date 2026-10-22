@@ -1,18 +1,19 @@
 import asyncio
 import hashlib
+from collections.abc import Callable
 from uuid import uuid4
 
 from pydantic import ValidationError
 from sqlalchemy import select, text
 
-from keystone.composition import execution_version
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.files.services.references import FileReferences
-from keystone.platform.flow.catalog import file_ids, small_json
 from keystone.platform.flow.models import TERMINAL, FlowRun
 from keystone.platform.flow.schemas import view
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.flow.schemas.files import file_ids
+from keystone.platform.flow.schemas.values import small_json
+from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access.services.entries import select_model
 
 
@@ -22,15 +23,18 @@ def scope(auth):
 
 
 class FlowService:
-    def __init__(self, identity: AccessContext, definitions):
+    def __init__(
+        self, identity: AccessContext, definitions, *, execution_version: Callable[[], str]
+    ):
         self.identity = identity
         self.flow_definitions = definitions
+        self.execution_version = execution_version
 
     async def definitions(self):
         async with self.identity.access("flow:start") as (_, auth):
             return {
                 "enabled": self.identity.settings.flow_enabled,
-                "execution_version": execution_version(),
+                "execution_version": self.execution_version(),
                 "idempotency_days": 7,
                 "items": [
                     d.view()
@@ -100,7 +104,7 @@ class FlowService:
             id=uuid4(),
             definition_key=definition.key,
             definition_snapshot=definition.snapshot(),
-            execution_version=execution_version(),
+            execution_version=self.execution_version(),
             actor_id=auth.user.id,
             personal_access_token_id=pat_id,
             request_key=data.request_key,

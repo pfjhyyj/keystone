@@ -20,7 +20,7 @@ from keystone.core.errors import ServiceError
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.files.models import FileReference
-from keystone.platform.flow.engine import Engine
+from keystone.platform.flow.adapters.dbos import Engine
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.tasks.workflows import reconcile_one
 from keystone.platform.model_access.models import ModelInvocation
@@ -201,7 +201,7 @@ def test_example_acceptance_and_budget_in_real_worker(
         f"SCENARIO = {scenario!r}\n"
         + """
 from pydantic_ai.messages import ToolCallPart
-from keystone.platform.flow.agent_model import FlowModel
+from keystone.platform.flow.workflows.agent_model import FlowModel
 submissions = 0
 original_request = FlowModel.request
 
@@ -345,7 +345,7 @@ def test_worker_crash_recovery_never_repeats_paid_request(client, tmp_path, poin
     if point == "registered":
         injection = """
 import httpx2
-from keystone.platform.model_access.http import HttpClient
+from keystone.platform.model_access.adapters.http import HttpClient
 def transport(self, provider):
     async def crash(request):
         os._exit(71)
@@ -354,7 +354,7 @@ HttpClient.transport = transport
 """
     elif point == "response":
         injection = """
-from keystone.platform.flow.agent_model import FlowModel
+from keystone.platform.flow.workflows.agent_model import FlowModel
 original = FlowModel.request
 async def crash(self, *args, **kwargs):
     await original(self, *args, **kwargs)
@@ -363,7 +363,7 @@ FlowModel.request = crash
 """
     else:
         injection = """
-from keystone.platform.flow import host
+from keystone.platform.flow.workflows import context as host
 original = host.upload
 async def crash(*args, **kwargs):
     await original(*args, **kwargs)
@@ -678,7 +678,7 @@ def test_unregistered_output_file_rejected_and_old_version_not_dispatched(client
 def test_external_package_change_blocks_execution_and_delivery(client, tmp_path, monkeypatch):
     from keystone import composition
     from keystone.composition import execution_version
-    from keystone.platform.flow.identity import ExecutionIdentity
+    from keystone.platform.flow.services.identity import ExecutionIdentity
 
     package = tmp_path / "execution_review_package"
     package.mkdir()
@@ -744,7 +744,7 @@ def test_cancel_during_model_send_preserves_inflight_receipt(client, tmp_path):
     code = """
 import asyncio
 import httpx2
-from keystone.platform.model_access.http import HttpClient
+from keystone.platform.model_access.adapters.http import HttpClient
 from support import model_stub as mock
 def transport(self, provider):
     async def respond(request):
@@ -820,7 +820,7 @@ def test_recovery_only_closes_flow_calls_not_live_api_calls(client):
 
 
 def test_execution_context_preserves_transaction_errors_and_audit(client):
-    from keystone.platform.flow.identity import ExecutionIdentity
+    from keystone.platform.flow.services.identity import ExecutionIdentity
 
     file_id = upload(client).json()["id"]
     row = start(client, file_id).json()
@@ -852,7 +852,7 @@ def test_execution_context_preserves_transaction_errors_and_audit(client):
 
 
 def test_flow_binary_files_limits_and_idempotent_retention(client, monkeypatch):
-    from keystone.platform.flow import host
+    from keystone.platform.flow.workflows import context as host
 
     client.app.state.runtime.settings.file_max_bytes = 32768
     data = b"\xff\x00\x81" * 6000
@@ -896,7 +896,7 @@ def test_flow_binary_files_limits_and_idempotent_retention(client, monkeypatch):
 def test_upload_completion_retains_file_after_flow_cancel(client, monkeypatch):
     from keystone.core.time import utcnow
     from keystone.platform.files.services import files
-    from keystone.platform.flow import host
+    from keystone.platform.flow.workflows import context as host
 
     runtime = client.app.state.runtime
     run_id = start(client, upload(client).json()["id"]).json()["id"]

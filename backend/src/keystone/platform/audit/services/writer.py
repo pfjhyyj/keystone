@@ -3,7 +3,6 @@
 import json
 import logging
 from dataclasses import dataclass
-from types import MappingProxyType
 from uuid import UUID
 
 from sqlalchemy import func
@@ -11,74 +10,6 @@ from sqlalchemy import func
 from keystone.platform.audit.models import AuditLog
 
 # Each action has a deliberately small, explicit allowlist; no model/request serialization.
-ACTIONS = {
-    "worker.retire": set(),
-    "worker.reactivate": set(),
-    "model.cost.recheck": {"previous_status"},
-    "flow.start": {"definition_key"},
-    "flow.cancel": set(),
-    "flow.complete": {"status", "error_code"},
-    "identity.login": {"reason"},
-    "identity.logout": {"user_id"},
-    "identity.password.change": {"sessions_revoked"},
-    "identity.user.create": {"username", "display_name"},
-    "identity.user.update": {"before", "after", "display_name"},
-    "identity.user.enable": {"is_active"},
-    "identity.user.disable": {"is_active", "sessions_revoked", "tokens_revoked"},
-    "identity.password.reset": {"sessions_revoked"},
-    "identity.credentials.revoke": {"sessions_revoked", "tokens_revoked", "user_id"},
-    "identity.role.create": {"key", "name", "permissions"},
-    "identity.role.update": {"before", "after", "name", "description", "permissions"},
-    "identity.role.delete": {"key", "permissions"},
-    "identity.role.assign": {"role_id", "assigned"},
-    "identity.pat.issue": {"user_id", "permissions"},
-    "identity.pat.revoke": {"user_id"},
-    "identity.admin.initialize": {"source", "username"},
-    "dictionary.definition.create": {"before", "after", "key", "name", "description"},
-    "dictionary.definition.update": {"before", "after", "name", "description", "is_active"},
-    "dictionary.item.create": {"before", "after", "value", "label", "sort_order"},
-    "dictionary.item.update": {"before", "after", "label", "sort_order", "is_active"},
-    "file.upload.start": {"initial_grants"},
-    "file.upload.complete": {"size_bytes"},
-    "file.upload.failure": {"reason"},
-    "file.upload.residue_cleanup": set(),
-    "file.update": {"before", "after", "name", "status"},
-    "file.delete.request": set(),
-    "file.delete.complete": {"grants_removed", "grant_scope"},
-    "file.cleanup.failure": {"reason"},
-    "file.grant": {"grant_id", "subject_type", "user_id", "role_id", "action", "added"},
-    "file.reference": {"owner", "slot", "added"},
-    "model.channel.create": {
-        "api_key_changed",
-        "billing_api_key_changed",
-        "before",
-        "after",
-        "name",
-        "provider",
-        "api_base",
-        "has_api_key",
-        "has_billing_api_key",
-        "upstream_account_ref",
-        "is_active",
-    },
-    "model.channel.update": {
-        "api_key_changed",
-        "billing_api_key_changed",
-        "before",
-        "after",
-        "name",
-        "api_base",
-        "has_api_key",
-        "has_billing_api_key",
-        "upstream_account_ref",
-        "is_active",
-    },
-    "model.entry.create": {"before", "after", "key", "channel_id", "provider_model", "is_active"},
-    "model.entry.update": {"before", "after", "channel_id", "provider_model", "is_active"},
-    "model.balance.refresh": {"status"},
-    "model.invocation.recover": {"source"},
-}
-ACTIONS = MappingProxyType({key: frozenset(fields) for key, fields in ACTIONS.items()})
 
 
 @dataclass(frozen=True)

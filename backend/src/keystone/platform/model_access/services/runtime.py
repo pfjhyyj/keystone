@@ -12,9 +12,9 @@ from sqlalchemy.dialects.postgresql import insert
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.model_access.billing.contracts import Receipt
-from keystone.platform.model_access.inference.errors import classify_error
-from keystone.platform.model_access.inference.transport import Observation
+from keystone.platform.model_access.adapters.billing.contracts import Receipt
+from keystone.platform.model_access.adapters.inference.errors import classify_error
+from keystone.platform.model_access.adapters.inference.transport import Observation
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.services.cost_context import bind_channel
 from keystone.platform.model_access.services.cost_policy import initialize_check

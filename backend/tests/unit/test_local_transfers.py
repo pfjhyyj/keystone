@@ -12,8 +12,8 @@ import pytest
 
 from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
-from keystone.platform.files.storage import StorageRegistry, blocking, opened
-from keystone.platform.files.transfers import CHUNK_BYTES, checksum
+from keystone.platform.files.adapters.storage import StorageRegistry, blocking, opened
+from keystone.platform.files.adapters.transfers import CHUNK_BYTES, checksum
 
 
 def registry(tmp_path, **settings):
@@ -168,7 +168,7 @@ import os
 from pathlib import Path
 from keystone.core.asyncio import run
 from keystone.core.config import Settings
-from keystone.platform.files.storage import StorageRegistry
+from keystone.platform.files.adapters.storage import StorageRegistry
 async def main():
     settings = Settings(config_file=None, file_coordination_root=Path({str(tmp_path)!r}),
         file_transfer_slots=1)

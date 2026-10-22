@@ -4,7 +4,7 @@ from fastapi import APIRouter, Request
 
 from keystone.core.http import Page
 from keystone.platform.files.services.references import FileReferenceService
-from keystone.platform.identity.dependencies import access_context
+from keystone.platform.identity.controllers.dependencies import access_context
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
 

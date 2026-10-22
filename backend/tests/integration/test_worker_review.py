@@ -21,7 +21,7 @@ from keystone.core.worker_identity import DEPLOYMENT_LOCK
 from keystone.entrypoints import cli
 from keystone.entrypoints.cli import recover_model_calls
 from keystone.platform.audit.services import writer as audit
-from keystone.platform.files.storage import StorageRegistry
+from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.schemas import Invoke
 from keystone.platform.model_access.services.runtime import ModelRuntime

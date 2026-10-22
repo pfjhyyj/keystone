@@ -10,10 +10,7 @@ from keystone.platform.identity.models import (
     User,
     UserRole,
 )
-from keystone.platform.identity.policy import (
-    ADMIN_KEY,
-    identity_lock,
-)
+from keystone.platform.identity.services.authorization import ADMIN_KEY, identity_lock
 
 
 async def initialize_admin(database, passwords, data):

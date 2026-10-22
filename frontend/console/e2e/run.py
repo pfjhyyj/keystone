@@ -23,15 +23,15 @@ from keystone.core.asyncio import run
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.migrations import migration_config
-from keystone.platform.files.leases import initialize
+from keystone.platform.files.adapters.leases import initialize
+from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.files.schemas import Upload
 from keystone.platform.files.services.files import FileService
 from keystone.platform.files.services.references import FileReferences
-from keystone.platform.files.storage import StorageRegistry
-from keystone.platform.identity.access import AccessContext
-from keystone.platform.identity.policy import Credential
+from keystone.platform.identity.adapters.security import Passwords
 from keystone.platform.identity.schemas import Login, UserCreate
-from keystone.platform.identity.security import Passwords
+from keystone.platform.identity.schemas.credentials import Credential
+from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.identity.services.auth import AuthService
 from keystone.platform.identity.services.initialize import initialize_admin
 

@@ -2,7 +2,7 @@
 
 自动费用核对已接入 Worker 和 DBOS 定时计划，职责见[整体架构第 3 节](../architecture.md#3-api-与-worker-的分工)。本模块拥有待核对状态、渠道查询和幂等保存，不依赖 FlowRun，也不重发模型请求。[第 3.6 节](#36-自动费用核对)说明 Yunwu/Openlux 分页查费及 OpenRouter 请求 ID 补查规则。支持同宿主同版本的固定 Worker，查询预算和分页跨进程共享，启动只收尾本槽位旧实例的模型调用。
 
-billing/、inference/ 和 Service 已按职责分层，费用任务的 DBOS 接入位于 model_access/tasks/。实际结构、依赖边界和原文件迁移映射见[第 8 节](#8-代码结构与职责映射)。模型调用、自动查费和原身份权限规则保持一致；跨宿主及自动接管未实现。
+adapters/billing/、adapters/inference/ 和 Service 已按职责分层，费用任务的 DBOS 接入位于 model_access/tasks/。实际结构、依赖边界和原文件迁移映射见[第 8 节](#8-代码结构与职责映射)。模型调用、自动查费和原身份权限规则保持一致；跨宿主及自动接管未实现。
 
 [范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项) · [当前实现](#7-当前实现约定) · [代码结构](#8-代码结构与职责映射)
 
@@ -135,7 +135,7 @@ Agent 一次运行可能发起多次模型请求，每次实际请求都独立�
 
 不支持的能力直接返回“不可用/不支持”，不为了统一接口编造金额。沿用普通适配类和显式 provider 注册，cost_query_mode 区分请求直查、日志分页和不支持；不增加插件系统或独立账务服务。OpenAI 兼容只说明推理格式相似，不能据此推断查费路径、凭据范围或金额单位相同。
 
-调用协议位于 inference/、费用和余额协议位于 billing/，Service 保留业务用例、权限与事实保存。多个中转站复用调用协议、分别选择账务适配；billing/ 不再复制一套 Controller/Service/Model，也不直接持久化费用。详细边界见第 8 节。
+调用协议位于 adapters/inference/、费用和余额协议位于 adapters/billing/，Service 保留业务用例、权限与事实保存。多个中转站复用调用协议、分别选择账务适配；adapters/billing/ 不再复制一套 Controller/Service/Model，也不直接持久化费用。详细边界见第 8 节。
 
 ### 3.2 调用与余额刷新
 
@@ -306,7 +306,7 @@ DBOS 投递去重不代替上述保护，进程内 Semaphore 只控制本地资�
 
 #### 3.6.8 实施与验收边界
 
-当前已实现回执选择及及时保存、分类查询结果、Yunwu/Openlux 账务适配、领域 CostService、费用状态和分页迁移；代码按第 8 节的 billing/inference/Service 分层，由 Worker 任务入口接入 DBOS。调用详情显示费用核对状态、原因及查询时间，费用汇总额外返回 cost_checks 分类数量。Worker 将费用扫描首次成功及持续推进纳入就绪，供应商待出账/限流/Token 失效保留为费用状态，不直接让整个 Worker 未就绪。最长未决时长和全局限流观测留待后续。
+当前已实现回执选择及及时保存、分类查询结果、Yunwu/Openlux 账务适配、领域 CostService、费用状态和分页迁移；代码按第 8 节的 adapters/billing/adapters/inference/Service 分层，由 Worker 任务入口接入 DBOS。调用详情显示费用核对状态、原因及查询时间，费用汇总额外返回 cost_checks 分类数量。Worker 将费用扫描首次成功及持续推进纳入就绪，供应商待出账/限流/Token 失效保留为费用状态，不直接让整个 Worker 未就绪。最长未决时长和全局限流观测留待后续。
 
 迁移保留既有费用和调用状态：旧已知金额标为 confirmed，缺少原范围的未知记录标为 unavailable/legacy_scope_unknown，不把历史 unknown 改成零或默认为当前 Key。已有 Channel 在配置保存或下一次真实调用时绑定非秘密范围，不启动历史批量回填。multi_workers 另增可信发送归属和共享维护观测，不扩大图片推理或自动余额刷新范围。
 
@@ -465,63 +465,64 @@ keystone recover-model-calls --confirm-api-stopped
 
 调用历史与汇总和审计共用 core/time_range.py：since/until 为闭区间，未传 until 时取数据库当前时间，未传 since 时取 until 前 30 天，最多 366 天，端点必须带时区；仅传历史 until 同样有效。ModelInvocation.created_at 使用数据库时间，默认查询也使用数据库时钟，避免刚写入的记录被应用时钟偏差排除。显式边界原样执行，错误保持 invalid_time_range。
 
-接入能力在 inference/client.py 的 SUPPORTED_TARGETS 声明推理渠道、固定地址和方法；日志适配器另声明受控账务 origin，只允许 GET /api/status 和 /api/log/token。模型目录按可推理渠道过滤，实际发送与账务查询再次校验，不增加动态插件注册。
+接入能力在 adapters/inference/client.py 的 SUPPORTED_TARGETS 声明推理渠道、固定地址和方法；日志适配器另声明受控账务 origin，只允许 GET /api/status 和 /api/log/token。模型目录按可推理渠道过滤，实际发送与账务查询再次校验，不增加动态插件注册。
 
 恢复共用每批 100 条锁定、unknown/model_interrupted 更新及逐条系统审计；保留费用、编号和归属，不重发模型请求。普通入口要求全部 API 已停，只处理无 flow_run_id 的 running；Worker 启动持有身份锁，只处理本 worker_id 的旧 worker_instance_id，不触碰其他槽位。Flow 发送归属列为内部字段，不进入公开调用投影或客户端输入；实际执行时生成，不从旧检查点复制。
 
 无归属历史 Flow 调用会阻止启动；迁移后在全部 API/Worker 停止期间使用 --legacy-flow --confirm-api-stopped --confirm-workers-stopped 专项收尾。该入口取得原全局排他锁，只处理无归属 Flow 调用并重置旧观测，不能当作在线恢复。审计仍为 model.invocation.recover，以 source=offline_api_recovery / flow_worker_recovery / offline_flow_recovery 区分；更新与日志同事务，重复执行不重复审计。
 
-错误分类统一由 inference/errors.py 的 classify_error 沿异常因果链处理；显式 ServiceError 优先，SDK APIStatusError 和 Pydantic AI ModelHTTPError 使用同一 HTTP 错误码映射。HTTP 402/429 在普通调用与 Agent 中均为 failed，并分别保留 model_insufficient_credits / model_rate_limited；上游 5xx、超时、取消及无法确认结果仍为 unknown。分类同时提供安全响应和调用状态，不从原始异常文本推断、不透传上游内容；费用未知仍为未知，失败不代表免费。参考 Ether ai/runtime.py 的安全包装，保留 Keystone 的发送前登记和拒绝重发规则。
+错误分类统一由 adapters/inference/errors.py 的 classify_error 沿异常因果链处理；显式 ServiceError 优先，SDK APIStatusError 和 Pydantic AI ModelHTTPError 使用同一 HTTP 错误码映射。HTTP 402/429 在普通调用与 Agent 中均为 failed，并分别保留 model_insufficient_credits / model_rate_limited；上游 5xx、超时、取消及无法确认结果仍为 unknown。分类同时提供安全响应和调用状态，不从原始异常文本推断、不透传上游内容；费用未知仍为未知，失败不代表免费。参考 Ether ai/runtime.py 的安全包装，保留 Keystone 的发送前登记和拒绝重发规则。
 
-billing/openrouter.py 负责 generation 直查；billing/openlux.py 和 yunwu.py 各自声明站点与单位，共用 token_logs.py 解析有界日志页。services/cost_context.py 绑定原账务范围，cost_policy.py 管费用状态与等待策略，costs.py 管互斥、查询、重试及原子写回；model_access/tasks/workflows.py 只负责 DBOS 扫描和投递。InvocationService 保留授权和手动入口。DeepSeek/阿里云仍不补算调用价格。UTC 应用时间统一使用 core/time.py，数据库生成的 created_at 和历史窗口规则不变。
+adapters/billing/openrouter.py 负责 generation 直查；adapters/billing/openlux.py 和 yunwu.py 各自声明站点与单位，共用 token_logs.py 解析有界日志页。services/cost_context.py 绑定原账务范围，cost_policy.py 管费用状态与等待策略，costs.py 管互斥、查询、重试及原子写回；model_access/tasks/workflows.py 只负责 DBOS 扫描和投递。InvocationService 保留授权和手动入口。DeepSeek/阿里云仍不补算调用价格。UTC 应用时间统一使用 core/time.py，数据库生成的 created_at 和历史窗口规则不变。
 
 ## 8. 代码结构与职责映射
 
-本节描述当前已实现的代码结构。保留现有三张表、API、权限和费用规则，不增加独立账务领域或进程。统一采用 Controller/Service/Model/Schema 基本骨架，同时按职责组织 inference/ 与 billing/ 两个能力包；它们不承担业务授权、ORM 持久化或后台调度。跨模块规则见[整体架构分层](../architecture.md#541-model-access-分层)。
+本节描述当前已实现的代码结构。保留现有三张表、API、权限和费用规则，不增加独立账务领域或进程。统一采用 Controller/Service/Model/Schema 基本骨架，同时按职责组织 adapters/inference/ 与 adapters/billing/ 两个能力包；它们不承担业务授权、ORM 持久化或后台调度。跨模块规则见[整体架构分层](../architecture.md#541-model-access-分层)。
 
 ### 8.1 目录与装配
 
 ```text
 platform/model_access/
+├── catalog.py                 # 本模块权限及审计字段白名单
 ├── controllers/               # HTTP 参数、响应、SSE 与服务入口
 ├── services/
 │   ├── channels.py            # 渠道配置、启停与原查询范围约束
 │   ├── entries.py             # 模型配置和固定选择
 │   ├── invocations.py         # 历史、汇总、手动补查授权
-│   ├── runtime.py             # 调用用例：授权、登记、发送和事实收尾
+│   ├── runtime.py             # 授权、发送前登记和事实收尾
 │   ├── costs.py               # 扫描、范围核对、分页进度和原子写回
 │   ├── cost_policy.py         # 等待、重试、截止和费用状态规则
 │   └── cost_context.py        # 原账务范围和非秘密口径快照绑定
 ├── models/                    # Channel、ModelEntry、ModelInvocation
 ├── schemas/                   # API 输入输出与内部可信调用契约
-├── inference/
-│   ├── client.py              # SDK 与调用协议适配、受控目标声明
-│   ├── transport.py           # 发送边界、流式观测和必要回执采集
-│   └── errors.py              # SDK/Pydantic AI 与平台错误的安全分类
-├── billing/
-│   ├── contracts.py           # 账务能力、查询上下文及规范化结果
-│   ├── registry.py            # 显式选择各 provider 的账务适配器
-│   ├── openrouter.py          # 响应费用、generation 直查、余额协议
-│   ├── openlux.py             # Openlux 站点及 USD 口径
-│   ├── yunwu.py               # Yunwu 站点及自定义额度口径
-│   ├── token_logs.py          # 已验证可共用的 Token 日志协议处理
-│   ├── http.py                # 账务 HTTP 失败分类与 Retry-After
-│   ├── deepseek.py            # 保留未开放的余额能力声明
-│   └── aliyun_bailian.py       # 保留未开放的余额能力声明
-├── clients.py                 # 明确依赖的不可变组合，无网关转发行为
-├── http.py                    # 有界 HTTP 读取机制，不解释站点账务语义
-├── receipts.py                # 共用的有界请求编号校验
-├── credentials.py             # 凭据加解密及非秘密范围标识
-└── coordination.py            # 查询范围锁、连接所有权等技术协调
+├── adapters/
+│   ├── inference/
+│   │   ├── client.py          # SDK 与调用协议、受控目标声明
+│   │   ├── transport.py       # 发送边界、流式观测和必要回执
+│   │   └── errors.py          # SDK/Pydantic AI 与平台错误安全分类
+│   ├── billing/
+│   │   ├── contracts.py       # 账务能力、查询上下文及规范化结果
+│   │   ├── registry.py        # 显式选择 provider 适配器
+│   │   ├── openrouter.py      # 响应费用、generation 直查、余额协议
+│   │   ├── openlux.py         # Openlux 站点及 USD 口径
+│   │   ├── yunwu.py           # Yunwu 站点及自定义额度口径
+│   │   ├── token_logs.py      # 已验证的共用 Token 日志协议
+│   │   ├── http.py            # 账务 HTTP 失败分类与 Retry-After
+│   │   ├── deepseek.py        # 未开放的余额能力声明
+│   │   └── aliyun_bailian.py  # 未开放的余额能力声明
+│   ├── clients.py             # 技术依赖的不可变组合
+│   ├── http.py                # 有界 HTTP 读取机制
+│   ├── receipts.py            # 有界请求编号校验
+│   ├── credentials.py         # 凭据加解密及非秘密范围标识
+│   └── coordination.py        # 查询范围锁、连接所有权
+└── tasks/
+    ├── definitions.py         # 轻量费用任务、输入和稳定计划
+    └── workflows.py           # 扫描 Step、范围 Step 与子任务投递
 
-model_access/tasks/
-├── definitions.py             # 轻量费用任务、输入和稳定计划声明
-└── workflows.py               # 扫描 Step、范围查询 Step 与子任务投递
-files/tasks/                   # 文件清理的声明与执行适配
-flow/tasks/                    # Flow 补投/同步的声明与执行适配
-
-core/execution/                # 公共声明、投递、计划、Step 保护、生命周期及版本
-composition.py                 # 显式装配服务、调用协议、账务适配及任务入口
+files/tasks/                   # 文件清理声明与执行适配
+flow/tasks/                    # Flow 补投/同步声明与执行适配
+core/execution/                # 声明、投递、计划、Step 保护、生命周期及版本
+composition.py                 # 显式装配，不扫描或自动加载目录
 ```
 
 上表列出主要职责文件，controllers/、services/、models/、schemas/ 内其他已有职责文件继续保留，包括普通离线收尾和 Flow 中断收尾。DeepSeek、阿里云等已有费用/余额能力声明按实际职责迁入对应 billing 文件，未开放的能力仍保持不可用，不因文件拆分扩大支持范围。
@@ -530,7 +531,7 @@ composition.py                 # 显式装配服务、调用协议、账务适�
 
 ### 8.2 billing 的职责与结果契约
 
-billing/ 负责供应商账务协议。它可以通过受控 HTTP 客户端查询，也可以独立解析必要回执；业务 Service 只依赖它声明的能力和规范化结果。
+adapters/billing/ 负责供应商账务协议。它可以通过受控 HTTP 客户端查询，也可以独立解析必要回执；业务 Service 只依赖它声明的能力和规范化结果。
 
 | 能力 | 适配器负责 | 返回给 Service 的信息 |
 |---|---|---|
@@ -551,7 +552,7 @@ Openlux 与 Yunwu 各自声明账务 origin、原 Token 范围、quota 换算及
 
 ### 8.3 inference 与 Service 的交接
 
-inference/ 封装 SDK、调用格式、受控地址、HTTP 方法、流式读取和必要回执观测。多个中转站共用已验证的调用协议；普通目录和临发送检查使用同一份显式推理能力声明，账务接口使用独立的受控声明。不自动发现端点，不允许任意代理地址、跳转或环境代理，也不恢复 SDK 隐藏重试。
+adapters/inference/ 封装 SDK、调用格式、受控地址、HTTP 方法、流式读取和必要回执观测。多个中转站共用已验证的调用协议；普通目录和临发送检查使用同一份显式推理能力声明，账务接口使用独立的受控声明。不自动发现端点，不允许任意代理地址、跳转或环境代理，也不恢复 SDK 隐藏重试。
 
 inference 和 billing 可复用受控 HTTP 请求、超时、响应大小及错误脱敏等小型技术函数，复用部分不包含站点账务语义、SDK 模型对象或 ORM。billing 不依赖 inference 的具体 SDK 实现，站点路径、鉴权位置及业务响应含义仍归对应账务适配器；技术复用不再形成一个同时处理数据库锁和所有供应商协议的 Gateway。
 
@@ -561,7 +562,7 @@ SDK/Pydantic AI 错误和网络异常在适配边界转换为安全分类，Serv
 
 services/costs.py 负责扫描到期范围、加载原查询快照、选择账务能力、固定窗口、跨页匹配、冲突检查、写前配置与所有权复核，并以短事务提交费用、证据和进度。HTTP 查询留在业务事务外。原 Token 不能被当前新 Key 替代，相同真实 Token 的多个 Channel 共用协调范围；这些规则由 Service 执行，不交给账务适配器更新渠道记录。
 
-services/cost_policy.py 保留纯规则：首次等待、未出账间隔、暂时失败预算、Retry-After 与截止时间的约束、费用状态转换。它不查询供应商、不访问数据库、不注册定时任务，也不按供应商名称决定口径。credentials.py 只提供加解密与 HMAC 范围标识等技术能力；coordination.py 提供会话锁和所有权检查。Service 决定何时取得锁、如何处理范围变化及何时写回，不把这些数据库协调实现继续放在 HTTP gateway 中。
+services/cost_policy.py 保留纯规则：首次等待、未出账间隔、暂时失败预算、Retry-After 与截止时间的约束、费用状态转换。它不查询供应商、不访问数据库、不注册定时任务，也不按供应商名称决定口径。adapters/credentials.py 只提供加解密与 HMAC 范围标识等技术能力；adapters/coordination.py 提供会话锁和所有权检查。Service 决定何时取得锁、如何处理范围变化及何时写回，不把这些数据库协调实现继续放在 HTTP gateway 中。
 
 ### 8.4 Worker、DBOS 与手动入口
 
@@ -576,22 +577,22 @@ model_access/tasks/workflows.py 只负责扫描与核对入口的 DBOS 装饰器
 
 费用待办、next_check_at、截止时间、错误预算和分页 checkpoint 继续由 ModelInvocation/Channel 保存。Worker 不决定费用金额、是否匹配或何时视为未出账；不直接读写这些 ORM 实体。DBOS 负责已投递执行的恢复，业务重试由持久费用状态驱动，不为每笔费用创建长期 sleep workflow。手动补查继续在有界同步预算内执行，分页未完成时保存进度并返回待核对状态，Worker 后续发现待办；不要求手动入口先投递 DBOS。
 
-本模块的 services/、models/、schemas/、billing/、inference/ 均不直接导入 DBOS，也不反向导入 Worker 任务或 Controller。core/execution/runtime.py 只提供技术生命周期和薄调度接入，不导入 model_access、files 或 flow 的业务服务；由 composition 装配。Flow 的引擎与 Agent 持久适配、业务 workflow/step 仍按原约定使用 DBOS，目录整理不重写 Flow 表达方式。
+本模块的 services/、models/、schemas/、adapters/billing/、adapters/inference/ 均不直接导入 DBOS，也不反向导入 Worker 任务或 Controller。core/execution/runtime.py 只提供技术生命周期和薄调度接入，不导入 model_access、files 或 flow 的业务服务；由 composition 装配。Flow 的引擎与 Agent 持久适配、业务 workflow/step 仍按原约定使用 DBOS，目录整理不重写 Flow 表达方式。
 
-文件清理和 Flow 协调的 DBOS 包装分别位于 files/tasks/workflows.py、flow.py，调用原所属模块的服务。清理规则、取消与同步、原执行身份和模型中断收尾不搬到 Worker；Flow 开关仍不关闭费用扫描或已启用文件维护。Worker 按固定身份互斥并共享预算；每次真实 Flow 模型发送登记当前实例归属，服务与适配器不因此导入 DBOS。
+文件清理和 Flow 协调的 DBOS 包装分别位于 files/tasks/workflows.py、flow/tasks/workflows.py，调用原所属模块的服务。清理规则、取消与同步、原执行身份和模型中断收尾不搬到 Worker；Flow 开关仍不关闭费用扫描或已启用文件维护。Worker 按固定身份互斥并共享预算；每次真实 Flow 模型发送登记当前实例归属，服务与适配器不因此导入 DBOS。
 
 ### 8.5 原文件与现行职责映射
 
 | 原代码 | 现行位置与职责 | 保持的约束 |
 |---|---|---|
-| providers.py | 费用/余额解析及站点口径分别进入 `billing/<provider>.py`；调用用量/协议观测进入 inference；抽取已验证的 token_logs 共用处理 | 原单位、合法编号选择、能力边界与安全校验，未支持能力仍明确不可用 |
-| gateway.py | SDK/推理目标进入 inference/client.py，账务路径/鉴权/业务响应分类进入 billing；共用受控 HTTP 机制保留明确技术边界，范围锁移到 coordination.py | 固定 HTTPS 目标、方法白名单、无跳转/环境代理/隐藏重试、超时、响应上限及脱敏 |
-| transport.py | 移入 inference/，负责传输与必要回执观测，账务语义通过 billing 解释 | 发送前回调、尽早保存编号、有限响应观测和安全失败处理 |
-| billing.py | 状态与等待规则进入 services/cost_policy.py；绑定原账务范围由 Service 调用 billing 声明和 credentials 技术能力后持久化 | 原范围及口径快照、缺少编号/能力的原因、截止和状态语义；billing/ 不兼任 ORM 更新工具集 |
+| providers.py | 费用/余额解析及站点口径分别进入 `adapters/billing/<provider>.py`；调用用量/协议观测进入 inference；抽取已验证的 token_logs 共用处理 | 原单位、合法编号选择、能力边界与安全校验，未支持能力仍明确不可用 |
+| gateway.py | SDK/推理目标进入 adapters/inference/client.py，账务路径/鉴权/业务响应分类进入 billing；共用受控 HTTP 机制保留明确技术边界，范围锁移到 adapters/coordination.py | 固定 HTTPS 目标、方法白名单、无跳转/环境代理/隐藏重试、超时、响应上限及脱敏 |
+| transport.py | 移入 adapters/inference/，负责传输与必要回执观测，账务语义通过 billing 解释 | 发送前回调、尽早保存编号、有限响应观测和安全失败处理 |
+| billing.py | 状态与等待规则进入 services/cost_policy.py；绑定原账务范围由 Service 调用 billing 声明和 credentials 技术能力后持久化 | 原范围及口径快照、缺少编号/能力的原因、截止和状态语义；adapters/billing/ 不兼任 ORM 更新工具集 |
 | services/runtime.py | 保留调用用例与受控登记，将 SDK/传输细节委托 inference，可信费用与查费编号解释委托 billing | 授权复查、固定选择、原子登记、一次发送、撤权/取消后的事实收尾 |
 | services/costs.py | 保留公共核对算法与事务，站点判断交给 billing，等待规则调用 cost_policy，锁调用 coordination | 完整分页后确认、重复不累加、矛盾阻塞、旧配置结果丢弃和金额/进度同事务 |
 | services/channels.py、invocations.py | 保留配置、历史、汇总及入口授权；通过明确账务能力和共用核对服务协作 | 原 Token 更换约束、本人/全部范围、PAT 权限、手动重启审计及已知费用保留 |
-| credentials.py、gateway.refresh_lock | 凭据能力仍就近保留，SQL 协调独立到 coordination.py | 密文用途绑定、共享卷密钥、同范围串行及失去所有权时拒绝旧写回 |
+| credentials.py、gateway.refresh_lock | 凭据能力仍就近保留，SQL 协调独立到 adapters/coordination.py | 密文用途绑定、共享卷密钥、同范围串行及失去所有权时拒绝旧写回 |
 | model_access/jobs.py、files/jobs.py、flow/jobs.py | 分别迁移到所属模块 tasks/definitions.py 与 workflows.py；共用 core/execution/ 的计划和投递 | 稳定计划/队列名；仅保留最新工作流入口，保留去重及同版本恢复语义、健康检查及能力开关 |
 | composition.py、bootstrap.py、entrypoints/worker.py | 显式装配协议、账务适配、服务和 Worker 入口；核心生命周期继续由 core/execution/runtime.py 管理 | API 不启动执行器、Worker 独占锁、Flow 启动恢复顺序和制品版本保护 |
 

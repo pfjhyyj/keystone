@@ -9,17 +9,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select, update
 
 from keystone.bootstrap import create_app
-from keystone.composition import build_catalog
+from keystone.composition import PLATFORM_CATALOG, build_catalog
 from keystone.core.asyncio import new_event_loop, run
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.migrations import migration_config
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
+from keystone.platform.identity.adapters.security import Passwords
 from keystone.platform.identity.models import LoginSession, PersonalAccessToken, User
-from keystone.platform.identity.policy import PERMISSIONS
 from keystone.platform.identity.schemas import UserCreate
-from keystone.platform.identity.security import Passwords
 from keystone.platform.identity.services.initialize import initialize_admin
 
 pytestmark = pytest.mark.postgres
@@ -167,7 +166,7 @@ def test_lists_batch_only_current_page_associations(client, resource):
         by_key = {row["key"]: row for row in rows}
         assert by_key["empty"]["permissions"] == []
         assert by_key["reader"]["permissions"] == ["audit:read", "dictionary:read"]
-        assert by_key["admin"]["permissions"] == sorted(PERMISSIONS)
+        assert by_key["admin"]["permissions"] == sorted(PLATFORM_CATALOG.permissions)
 
 
 def test_batched_role_grants_preserve_account_and_token_rules(client):
@@ -177,7 +176,7 @@ def test_batched_role_grants_preserve_account_and_token_rules(client):
 
     from keystone.core.errors import ServiceError
     from keystone.platform.identity.models import RolePermission
-    from keystone.platform.identity.policy import (
+    from keystone.platform.identity.services.authorization import (
         identity_lock,
         load_authorization,
         load_authorization_for_target,
@@ -218,7 +217,9 @@ def test_batched_role_grants_preserve_account_and_token_rules(client):
         assert set().union(*grouped.values()) == expected
         assert await role_grants(session, UUID(unassigned["id"])) == ({}, False)
         admin_roles, administrator = await role_grants(session, UUID(admin["id"]))
-        assert administrator and set().union(*admin_roles.values()) == set(PERMISSIONS)
+        assert administrator and set().union(*admin_roles.values()) == set(
+            PLATFORM_CATALOG.permissions
+        )
 
         target = await session.get(User, UUID(user["id"]))
         assert await load_authorization_for_target(session, target) == (expected, False)
@@ -312,7 +313,7 @@ def test_pat_scopes_revocation_and_disable_never_revive_credentials(client):
     assert client.delete(f"/api/v1/auth/tokens/{limited['id']}").status_code == 204
     assert client.get("/api/v1/users", headers=bearer(limited["token"])).status_code == 401
     # Last admin cannot be disabled, even by an all-scope PAT.
-    full = token(client, list(PERMISSIONS))
+    full = token(client, list(PLATFORM_CATALOG.permissions))
     assert (
         client.put(
             f"/api/v1/users/{admin['id']}/active",
@@ -375,7 +376,7 @@ def test_current_grants_pat_intersection_and_management_boundaries(client):
     assert client.get("/api/v1/users", headers=bearer(personal["token"])).status_code == 200
     assert client.delete(f"/api/v1/roles/{reader['id']}").json()["code"] == "role_in_use"
     # All ordinary permissions do not grant the administrator's special identity.
-    full_role = role(client, "ordinary-full", list(PERMISSIONS))
+    full_role = role(client, "ordinary-full", list(PLATFORM_CATALOG.permissions))
     assert assign(client, user["id"], full_role["id"]).status_code == 204
     admin_role = next(r for r in client.get("/api/v1/roles").json() if r["key"] == "admin")
     login(client, "alice", NEW_PASSWORD)
@@ -536,13 +537,13 @@ def test_concurrent_last_admin_protection(client):
     second = create_user(client, "second")
     admin_role = next(r for r in client.get("/api/v1/roles").json() if r["key"] == "admin")
     assign(client, second["id"], admin_role["id"])
-    first_pat = token(client, list(PERMISSIONS))
+    first_pat = token(client, list(PLATFORM_CATALOG.permissions))
     login(client, "second")
     client.post(
         "/api/v1/auth/password", json={"current_password": PASSWORD, "password": NEW_PASSWORD}
     )
     login(client, "second", NEW_PASSWORD)
-    second_pat = token(client, list(PERMISSIONS))
+    second_pat = token(client, list(PLATFORM_CATALOG.permissions))
 
     def disable(identifier, secret):
         return client.put(
@@ -666,9 +667,9 @@ def test_token_issue_racing_disable_and_initialization_is_one_off(client):
     from uuid import UUID
 
     from keystone.core.errors import ServiceError
-    from keystone.platform.identity.access import AccessContext
-    from keystone.platform.identity.policy import Credential
     from keystone.platform.identity.schemas import TokenCreate
+    from keystone.platform.identity.schemas.credentials import Credential
+    from keystone.platform.identity.services.access import AccessContext
     from keystone.platform.identity.services.tokens import TokenService
     from keystone.platform.identity.services.users import UserService
 

@@ -12,7 +12,7 @@ from keystone.core.errors import ServiceError
 from keystone.entrypoints.cli import initialize
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.identity.models import User
-from keystone.platform.model_access.credentials import KEY_FILE
+from keystone.platform.model_access.adapters.credentials import KEY_FILE
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 
 pytestmark = pytest.mark.postgres

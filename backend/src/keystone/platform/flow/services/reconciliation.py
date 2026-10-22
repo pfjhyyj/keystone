@@ -3,14 +3,13 @@ import logging
 from jsonschema import Draft202012Validator, FormatChecker
 from sqlalchemy import func, select
 
-from keystone.composition import execution_version
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services.writer import Actor, record
-from keystone.platform.flow.catalog import small_json
-from keystone.platform.flow.files import retain_outputs
-from keystone.platform.flow.identity import ExecutionIdentity
 from keystone.platform.flow.models import TERMINAL, FlowRun
+from keystone.platform.flow.schemas.values import small_json
+from keystone.platform.flow.services.identity import ExecutionIdentity
+from keystone.platform.flow.services.outputs import retain_outputs
 
 log = logging.getLogger(__name__)
 
@@ -21,7 +20,7 @@ def matches_observation(runtime, run, state):
         state["version"] == run.execution_version
         and (
             not definition
-            or run.execution_version != execution_version()
+            or run.execution_version != runtime.execution_version()
             or state["name"] == definition.entrypoint
         )
     )
@@ -60,7 +59,7 @@ async def prepare(runtime, identifier, state):
         if state is None:
             if (
                 run.definition_key not in runtime.flow_definitions
-                or run.execution_version != execution_version()
+                or run.execution_version != runtime.execution_version()
             ):
                 log.warning("flow_version_unavailable run_id=%s", identifier)
                 return "skip"
@@ -85,7 +84,7 @@ async def submission(runtime, identifier):
         if run is None or run.status in TERMINAL or run.cancel_requested_at:
             return None
         definition = runtime.flow_definitions.get(run.definition_key)
-        if definition is None or run.execution_version != execution_version():
+        if definition is None or run.execution_version != runtime.execution_version():
             return None
         return run, definition
 

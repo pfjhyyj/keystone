@@ -22,7 +22,7 @@ from test_model_access import model_configuration as model_configuration
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.flow.engine import Engine
+from keystone.platform.flow.adapters.dbos import Engine
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.model_access.models import Channel, ModelInvocation
 from keystone.platform.model_access.services.costs import CostService
@@ -391,7 +391,7 @@ def test_real_dbos_scheduler_queries_costs_with_flow_disabled(client, billing, t
     code = f"""
 import json, os
 import httpx2
-from keystone.platform.model_access.http import HttpClient
+from keystone.platform.model_access.adapters.http import HttpClient
 original = HttpClient.transport
 async def respond(request):
     assert request.method == 'GET'
@@ -585,7 +585,7 @@ import asyncio, json
 from pathlib import Path
 import httpx2
 from support import model_stub
-from keystone.platform.model_access.http import HttpClient
+from keystone.platform.model_access.adapters.http import HttpClient
 original = HttpClient.transport
 records = Path({str(records)!r})
 class DelayedResponse(httpx2.AsyncByteStream):
@@ -739,8 +739,8 @@ def test_openrouter_missing_response_cost_uses_direct_lookup(client, monkeypatch
 
 
 def test_another_billing_contract_reuses_inference_and_reconciliation(client, billing, monkeypatch):
-    from keystone.platform.model_access.billing.contracts import Binding, LogPage, Receipt
-    from keystone.platform.model_access.billing.registry import PROVIDERS
+    from keystone.platform.model_access.adapters.billing.contracts import Binding, LogPage, Receipt
+    from keystone.platform.model_access.adapters.billing.registry import PROVIDERS
 
     pages = []
 

@@ -58,6 +58,8 @@ src/
 编写业务 Flow 时参照[业务 Flow 开发约定与示例](flow-development.md)，其中包含输出验收、
 预算、工具摘要和按需读回的具体实现及接入方法。
 
+模块结构遵循 [MVC + Service 规范](architecture.md#54-模块分层与代码规范)。新增实现归入明确职责目录，模块根目录仅保留包说明与权限/审计声明；Flow 定义使用 schemas/definitions.py。结构及相对导入检查包含在单元测试中，脚手架也执行同一规则，具体覆盖见[后端测试说明](../backend/tests/README.md)。
+
 完成 README 的依赖安装后，从仓库根目录执行：
 
 ```bash

@@ -27,11 +27,10 @@ from keystone.platform.files.schemas import Grant
 from keystone.platform.files.services.files import FileService
 from keystone.platform.files.services.grants import FileGrantService
 from keystone.platform.files.services.references import FileReferences
-from keystone.platform.flow.engine import Engine
+from keystone.platform.flow.adapters.dbos import Engine
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.schemas import Start
-from keystone.platform.flow.services.runs import FlowService
-from keystone.platform.identity.dependencies import access_context
+from keystone.platform.identity.controllers.dependencies import access_context
 
 pytestmark = pytest.mark.postgres
 
@@ -95,7 +94,7 @@ def test_head_range_empty_corruption_and_current_authorization(client, monkeypat
     )
 
     # A stable stat signature reuses integrity validation instead of rescanning for every seek.
-    import keystone.platform.files.storage as storage_module
+    import keystone.platform.files.adapters.storage as storage_module
 
     original_hash = storage_module.hashlib.sha256
     scans = 0
@@ -276,7 +275,7 @@ def test_composed_transaction_rollback_idempotency_and_audit(
             await FileReferences(session, auth, "acceptance").replace(
                 str(record.id), "source", [identifier]
             )
-            result = await FlowService(context, runtime.flow_definitions).start_in_transaction(
+            result = await runtime.flow_service(context).start_in_transaction(
                 session,
                 auth,
                 Start(
@@ -430,7 +429,7 @@ def test_model_free_worker_materialization_heartbeat_cancel_and_restart(media, t
 
 
 def test_worker_admission_and_size_limits_precede_storage_scan(media, monkeypatch, tmp_path):
-    from keystone.platform.flow import host
+    from keystone.platform.flow.workflows import context as host
 
     runtime = media.app.state.runtime
     identifier = upload(media).json()["id"]

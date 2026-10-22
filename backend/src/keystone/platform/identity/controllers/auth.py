@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Request, Response
 
 from keystone.platform.identity import schemas
-from keystone.platform.identity.access import AccessContext
-from keystone.platform.identity.dependencies import (
+from keystone.platform.identity.adapters.security import csrf_token
+from keystone.platform.identity.controllers.dependencies import (
     access_context,
     browser_origin,
     clear_cookie,
     cookie_name,
 )
-from keystone.platform.identity.security import csrf_token
+from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.identity.services.auth import AuthService
 
 router = APIRouter(prefix="/api/v1", tags=["identity"])

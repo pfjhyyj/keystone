@@ -1,11 +1,11 @@
 from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
-from keystone.platform.files import policy
 from keystone.platform.files.models import File, FileGrant
 from keystone.platform.files.schemas import grant_view
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.files.services import access as policy
 from keystone.platform.identity.models import Role, User
+from keystone.platform.identity.services.access import AccessContext
 
 
 class FileGrantService:

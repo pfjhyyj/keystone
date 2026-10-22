@@ -1,15 +1,12 @@
 from sqlalchemy import or_, select
 
-from keystone.platform.identity.access import AccessContext
 from keystone.platform.identity.models import (
     User,
     UserRole,
 )
-from keystone.platform.identity.policy import (
-    manageable,
-    protect_last_admin,
-)
 from keystone.platform.identity.schemas import user_view
+from keystone.platform.identity.services.access import AccessContext
+from keystone.platform.identity.services.authorization import manageable, protect_last_admin
 from keystone.platform.identity.services.credentials import revoke_user_credentials
 
 

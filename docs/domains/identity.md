@@ -80,7 +80,7 @@ Permission 是代码声明的目录，不需要单独建表。持久化共六张
 
 ### 2.5 权限目录 Permission
 
-权限目录由代码声明，不新增数据库表。平台 PERMISSIONS 与业务 catalog.py 的权限在 composition.py 显式合并，生成当前 Runtime 的不可变目录；Database 必须绑定该目录，角色目录、管理员权限展开、可授予范围、PAT 和 Worker 授权从当前会话读取。未绑定目录时拒绝授权，显式空目录也不会继承平台权限。业务使用命名空间防止冲突，具体接入见[业务接入规范](../architecture.md#55-业务权限审计与模型接入)。
+权限目录由代码声明，不新增数据库表。各平台模块 catalog.py 的权限先通过 combine_catalogs 检查冲突并合并，再与业务 catalog.py 的声明在 composition.py 显式合并，生成当前 Runtime 的不可变目录；Database 必须绑定该目录，角色目录、管理员权限展开、可授予范围、PAT 和 Worker 授权从当前会话读取。未绑定目录时拒绝授权，显式空目录也不会继承平台权限。业务使用命名空间防止冲突，具体接入见[业务接入规范](../architecture.md#55-业务权限审计与模型接入)。
 
 新增权限不自动授予普通角色或扩大已有 PAT；从当前目录移除的权限不再生效，但不删除历史审计。管理员拥有全部已声明功能权限，对象范围和管理员例外仍由所属业务明确检查。
 
@@ -311,10 +311,10 @@ Cookie 使用 HttpOnly、SameSite=Lax、Path=/，生产环境使用 Secure 和 _
 
 ### 代码组织
 
-实现分为 controllers/、services/、models/、schemas/ 四层目录，六个持久化实体各自一个文件。AuthService/UserService/RoleService/TokenService 组合 access.py 的 AccessContext；其他领域仅复用上下文，不依赖账户管理服务。Password 哈希服务仅传给认证、用户管理及初始化。角色响应由 schemas/roles.py 显式投影。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
+实现分为 controllers/、services/、models/、schemas/ 四层目录，六个持久化实体各自一个文件。AuthService/UserService/RoleService/TokenService 组合 services/access.py 的 AccessContext；其他领域仅复用上下文，不依赖账户管理服务。Passwords 哈希服务仅传给认证、用户管理及初始化。HTTP 身份提取位于 controllers/dependencies.py；Credential 是 schemas/credentials.py 的轻量值对象；当前授权与角色读取位于 services/authorization.py，登录冷却策略位于 services/login_limits.py。加密/摘要及 Casbin 实现分别收在 adapters/security.py、adapters/rbac.py，不承担业务事务或管理范围判断。根目录 catalog.py 只声明 identity 权限与审计字段。角色响应由 schemas/roles.py 显式投影。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
 AccessContext.access 统一处理事务、共享/排他身份锁、权限、会话限制、失败审计和 IntegrityError → conflict。ExecutionIdentity 只覆盖 authorize(session)，按 Run 检查当前身份和执行资格；不另写事务上下文，也不接收后忽略调用参数。
 
-参考 Ether user/rbac/engine.py 的 user_grants，role_grants 用一次联表读取角色及已声明权限，保留空角色、内置管理员展开和未知权限过滤。load_authorization 与管理目标检查共用该读取；前者仍检查用户/PAT 状态、凭据范围和强制改密，后者仍保留停用或待改密目标的原角色范围用于防越权管理。权限不跨请求缓存。utcnow 移到 core/time.py，各领域直接引用，不再通过 identity.policy 获取通用时间工具。
+参考 Ether user/rbac/engine.py 的 user_grants，role_grants 用一次联表读取角色及已声明权限，保留空角色、内置管理员展开和未知权限过滤。load_authorization 与管理目标检查共用该读取；前者仍检查用户/PAT 状态、凭据范围和强制改密，后者仍保留停用或待改密目标的原角色范围用于防越权管理。权限不跨请求缓存。utcnow 移到 core/time.py，各领域直接引用，不通过身份授权服务获取通用时间工具。
 
 用户、角色列表先完成搜索、排序和分页，再用当前页 ID 一次读取 UserRole 或 RolePermission；空页不查询关联表，查询次数不随页内记录数增长。未分配角色的用户返回空 role_ids，空角色返回空 permissions，内置 admin 展开当前权限目录，未知权限仍被过滤。读取和响应投影分离，不增加缓存、Repository 或总数查询。

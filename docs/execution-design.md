@@ -1,6 +1,6 @@
 # 任务执行与模块规范设计
 
-**状态：任务设施与三类维护迁移已实现；Flow 扩展及素材粗选仍为目标设计。** 当前提供 core/execution/、模块 tasks/、TaskDefinition/TaskBinding、统一计划和投递。费用扫描/范围查询、文件清理及 Flow 同步使用统一任务入口和检查点。第 6 节 FlowPackage、多角色模型、数组文件路径及素材包适配尚未实现；相关代码块仍是设计示例。本文素材侧依据 `ether-flows-media-selection==0.17.0` 的粗选 v17、单段验收 v10 声明。当前源码入口见[整体架构第 3.7 节](architecture.md#37-现有实现与调整点)；现有业务接入见[新增业务](extending.md)。
+**状态：任务设施、三类维护迁移及 MVC + Service 目录归位已实现；Flow 扩展及素材粗选仍为目标设计。** 当前提供 core/execution/、模块 tasks/、TaskDefinition/TaskBinding、统一计划和投递。费用扫描/范围查询、文件清理及 Flow 同步使用统一任务入口和检查点。第 6 节 FlowPackage、多角色模型、数组文件路径及素材包适配尚未实现；相关代码块仍是设计示例。本文素材侧依据 `ether-flows-media-selection==0.17.0` 的粗选 v17、单段验收 v10 声明。当前源码入口见[整体架构第 3.7 节](architecture.md#37-现有实现与调整点)；现有业务接入见[新增业务](extending.md)。
 
 本文统一任务声明、模块目录及执行边界。人工操作归具体业务模块，前后自动阶段拆成独立 Flow；资源状态、结果版本、决定及幂等衔接统一见 [Flow 领域第 8.3 节](domains/flow.md#83-业务人工操作与独立-flow-衔接目标设计)。本次不建设通用人工节点，不让 Run 跨人工操作悬挂。现有事务内受理能力可复用，具体业务审核仍需单独实现。
 
@@ -44,7 +44,7 @@ flowchart TB
 
 普通查询、配置写入、手动同步查费继续直接调用 Service。Worker 心跳、连接维护等继续使用进程内异步循环。core/execution/ 只收拢 DBOS 技术接入，不增加执行领域、多引擎框架、通用 TaskRun/JobRun 表或自建检查点。
 
-## 2. 目标目录与依赖规则
+## 2. 当前目录与依赖规则
 
 ```text
 keystone/
@@ -58,12 +58,11 @@ keystone/
 │   └── version.py            # 执行制品版本
 ├── platform/<module>/
 │   ├── __init__.py
-│   ├── catalog.py            # 按需保留轻量声明
+│   ├── catalog.py            # 按需：权限与审计静态声明
 │   ├── controllers/
 │   ├── schemas/
 │   ├── models/
 │   ├── services/
-│   ├── policies/             # 按需：无 I/O 的业务判断
 │   ├── adapters/             # 按需：网络、SDK、存储、技术协调
 │   ├── tasks/
 │   │   ├── definitions.py    # 轻量任务、计划声明
@@ -75,7 +74,7 @@ keystone/
 └── model_registry.py        # ORM 元数据显式注册
 ```
 
-这些是职责目录，按需创建。Model Access 保留 inference/billing 的职责拆分，目标归入 adapters/；Flow 另有明确的 runtime/，容纳宿主上下文、引擎及 Agent 接入。模块根目录的混合文件按内容拆分，不能仅按文件名移动。当前已迁移三类 tasks/ 与 Flow 的 services/reconciliation.py，脚手架仍按需生成四个基本分层；协议目录和 Flow 宿主 runtime/ 的整合留待后续。
+这些是当前职责目录，按需创建。模块根目录只允许包说明和 catalog.py；纯判断就近放 services/，复杂后再分 services/policies/。Model Access 的 inference/billing 及凭据、HTTP、协调能力已归 adapters/。Flow 定义改放 schemas/definitions.py；原宿主拆为 workflows/context.py 的活动执行作用域和 services/resources.py 的受权操作，执行身份归 services/identity.py，引擎客户端归 adapters/dbos.py，Agent/启动接入归 workflows/。本次不保留旧导入别名，也不新增 runtime/ 根分层。
 
 | 位置 | 负责 | 边界 |
 |---|---|---|
@@ -83,11 +82,10 @@ keystone/
 | schemas | 输入输出与显式响应投影 | 不开事务、不调用服务 |
 | models | 实体、字段、约束、索引 | 不执行用例或调度 |
 | services | 用例、权限、事务、审计及领域查询 | 不导入 DBOS、Controller 或 Worker |
-| policies | 无 I/O 的业务判断 | 不查询数据库或外部服务 |
 | adapters | 协议、SDK、存储等技术实现 | 不拥有业务授权、领域事务或任务策略 |
 | tasks | Task 的 workflow/step、拆分与投递 | 允许 DBOS；领域读写通过 Service |
 | workflows | 业务编排、步骤、Agent、工具与资源 | 允许 DBOS；通过公开服务或 FlowContext 使用能力 |
-| Flow runtime | 执行身份、引擎与 Agent 接入 | 保留明确授权、检查点和取消语义 |
+| catalog.py | 模块权限与审计动作字段白名单 | 只依赖 core.catalog，不导入运行实现 |
 
 Controller/执行适配 → Service → 本模块 Model/技术适配器。跨模块调用公开 Service、Schema 或任务声明，不绕过权限直接查询其他模块的表。普通 Service 可被 HTTP 与 Step 共用。不增加 Module 基类、BaseService、通用 Repository、纯转发 public.py 或目录自动发现。
 
@@ -294,7 +292,7 @@ prepare 的结果在恢复时可能变旧，不能代替实际业务执行前的
 
 ```text
 media_selection/
-├── catalog.py
+├── definitions.py             # FlowPackage 与轻量流程定义
 ├── domain/
 ├── adapters/
 └── workflows/
@@ -348,7 +346,7 @@ PACKAGE = FlowPackage(
 )
 ```
 
-API 只读取轻量 catalog 与输入输出契约；Worker 显式导入执行模块。资源清单、代码和锁定依赖进入制品版本。revision 标识业务契约，execution_version 标识完整制品，二者都不表示可以跨制品重放旧检查点。
+API 只读取轻量流程定义与输入输出契约；Worker 显式导入执行模块。资源清单、代码和锁定依赖进入制品版本。revision 标识业务契约，execution_version 标识完整制品，二者都不表示可以跨制品重放旧检查点。
 
 ### 6.2 输入、执行绑定与受控能力
 
@@ -434,7 +432,7 @@ composition 创建依赖并汇总声明；core/execution/ 不反向导入 compos
 
 | 阶段 | 工作 | 验收重点 |
 |---|---|---|
-| 1（已实现） | 目录规则、轻量声明、公共执行接入 | 显式装配、依赖方向、共享配置一致性 |
+| 1（已实现） | MVC + Service 目录归位、轻量声明、公共执行接入 | 显式装配、依赖方向、共享配置一致性 |
 | 2（已实现） | 三类维护入口与 Step 边界 | 恢复、活动合并、队列隔离、查费共享锁、协调安全 |
 | 3 | FlowPackage、角色模型、数组文件路径及宿主契约 | 幂等受理、固定快照、授权、产物、版本与取消 |
 | 4 | 素材包适配 | 媒体与模型受控场景、预算、未知结果不重发、结果入库 |
@@ -442,6 +440,6 @@ composition 创建依赖并汇总声明；core/execution/ 不反向导入 compos
 
 三类维护、tick 和内部步骤只保留最新实现，执行入口不附加版本后缀，不保留旧签名的兼容分支；计划名、队列名和 execution_key 前缀保留。执行版本继续由制品指纹判断，不依赖入口名后缀；目录移动也改变当前制品哈希；切换前处理旧在途执行，或用原制品和原身份恢复收尾。计划名、队列名和逻辑任务键尽量稳定，旧参数格式与检查点不能被新代码冒充兼容。保留旧导入/函数名不足以跨版本恢复，更不能通过新 Run/调用 ID 重发未知模型请求。不直接删除 DBOS 执行来释放容量。
 
-架构检查递归覆盖 platform/ 和 businesses/：普通 Service 等分层不能直接或经 core/execution 的实现包依赖 DBOS/Worker，嵌套任务适配也不能直接访问 ORM，轻量任务声明不依赖服务或执行实现，core/execution/ 不反向导入 composition 或领域。现有 Flow 宿主与协议目录的进一步规整仍为后续工作。
+架构检查递归覆盖 platform/ 和 businesses/：普通 Service 等分层不能直接或经 core/execution 的实现包依赖 DBOS/Worker，嵌套任务适配也不能直接访问 ORM，轻量任务声明不依赖服务或执行实现，core/execution/ 不反向导入 composition 或领域。同一检查还覆盖根目录纯声明、允许的一级目录、MVC 依赖方向、协议适配器隔离及脚手架输出；Flow 宿主与协议目录已完成归位。
 
 验收至少覆盖多 Worker 共用计划/预算、活动去重与执行 ID 分离、扫描中断恢复、慢清理不阻塞协调、旧观察不覆盖终态、禁用残留触发、原身份撤权、未知模型结果、输入输出/文件数量上限。采用人工衔接的业务另验收资源变更、跨操作者重复批准、相反决定竞争、批准与 B 受理同事务回滚、提交响应丢失及 B 失败后的显式重试。结构检查、受控执行和真实业务质量分别记录，不能相互替代。

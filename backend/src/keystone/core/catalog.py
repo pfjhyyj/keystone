@@ -27,6 +27,20 @@ class Catalog:
         )
 
 
+def combine_catalogs(catalogs: Sequence[Catalog]) -> Catalog:
+    """Combine explicit platform declarations while rejecting accidental overrides."""
+    permissions, actions = {}, {}
+    for catalog in catalogs:
+        if (
+            permissions.keys() & catalog.permissions.keys()
+            or actions.keys() & catalog.audit_actions.keys()
+        ):
+            raise ValueError("Duplicate platform permission or audit action")
+        permissions.update(catalog.permissions)
+        actions.update(catalog.audit_actions)
+    return Catalog(permissions, actions)
+
+
 def merge_catalogs(platform: Catalog, businesses: Sequence[tuple[str, Catalog]]) -> Catalog:
     """Merge validated business declarations without allowing platform overrides."""
     permissions, actions = dict(platform.permissions), dict(platform.audit_actions)

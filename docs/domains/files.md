@@ -203,6 +203,8 @@ filesystem 的身份来自 `.keystone-storage`，目录搬迁或恢复须连同�
 
 本地写入使用跨进程容量预留：流式上传开始接收正文前同时预留临时与正式副本，内存上传在打开正式文件前预留目标空间，Flow 工作副本通过同一机制写入。按文件系统汇总预留并保留可配置的最低可用空间；崩溃回收依赖 OS 所有权锁，仍存活的进程预留不会被时间或 PID 判断误收。空间不足统一返回 `507 file_capacity_full`；正式写入失败保留 failed 记录供原请求重试，不发布半文件。
 
+正式写入失败后，服务会在释放文件租约前等待失败状态及审计的短事务完成，最多 5 秒；磁盘监控、运行取消或重复取消不会中断这笔已知的收尾事务，结束后继续传播取消。它是请求内被完整等待的清理协程，不新增平台任务或后台投递。数据库不可用时仍保留原上传登记供既有 Worker 恢复，不创建新文件或恢复已撤销授权。
+
 HTTP 内容读取在传输槽位满时异步等待最多 3 秒，获得槽位后重新校验权限和文件状态；等待期间断开连接不发送响应头、不泄漏槽位。Worker 和内部读取默认仍立即报告繁忙，避免持有其他资源时隐式等待。原有 Range、HEAD、ETag、完整性校验及文件锁规则保持一致。
 
 控制台上传使用 Worker 分块校验与 XHR 原生 File 传输，显示进度并可取消；服务器继续执行大小、期限、容量和幂等规则。取消或连接中断保留已选文件与原请求键供确认重试，不保证撤回服务端已经受理的上传。下载使用当前授权预检后交给浏览器原生 GET，不把整份内容读入页面内存。前端会话变化会中止尚未交给浏览器的工作并丢弃迟到响应，文件对象授权仍由后端判断。
@@ -258,7 +260,7 @@ authenticated 仅能选择 inspect/content_read，不能选择 manage。可用�
 
 ### 代码组织
 
-三个实体各自位于 models/ 下的独立文件。services/files.py 管生命周期，grants.py 管授权，references.py 管引用及受控产物保留，cleanup.py 保留原有界清理服务，files/tasks/workflows.py 只负责 DBOS 计划、投递和维护健康检查。Flow 通过 references 内部入口写引用，调用方保留原事务与锁，不能绕过有效使用记录检查；目录与字段响应遵循整体架构规范。统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
+根目录 catalog.py 仅声明文件权限与审计动作，三个实体各自位于 models/ 下的独立文件。原文件访问策略含 ORM 与对象权限检查，归 services/access.py；存储、LocalLeases、磁盘容量及分块传输分别归 adapters/storage.py、leases.py、capacity.py、transfers.py。适配器不反向调用业务 Service 或领域模型，文件请求键、对象键、存储指纹、锁和容量释放顺序不变。services/files.py 管生命周期，grants.py 管授权，references.py 管引用及受控产物保留，cleanup.py 保留原有界清理服务，files/tasks/workflows.py 只负责 DBOS 计划、投递和维护健康检查。Flow 通过 references 内部入口写引用，调用方保留原事务与锁，不能绕过有效使用记录检查；目录与字段响应遵循整体架构规范。统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
 内部 content 接口可指定 max_bytes，授权后在读取存储前检查文件大小，仍执行完整性和读取后授权检查。超限返回 file_too_large，引用资格错误返回 file_reference_invalid；具体业务自行转换为业务错误，Files 不声明 Flow 错误码。公开 HTTP 上传新增可选 storage_key，详情新增 storage_key；内容下载契约不变。
 

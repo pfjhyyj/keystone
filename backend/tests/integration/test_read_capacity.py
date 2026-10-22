@@ -14,7 +14,7 @@ from test_files_dictionary import upload
 from keystone.core.errors import ServiceError
 from keystone.platform.files.controllers.streaming import ContentResponse
 from keystone.platform.files.services.files import FileService
-from keystone.platform.identity.dependencies import access_context
+from keystone.platform.identity.controllers.dependencies import access_context
 
 pytestmark = pytest.mark.postgres
 

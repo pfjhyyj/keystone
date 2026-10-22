@@ -29,7 +29,7 @@ from dataclasses import replace
 from pydantic_ai.messages import ToolCallPart
 from keystone import composition
 from keystone.examples.document_review import workflow
-from keystone.platform.flow.agent_model import FlowModel
+from keystone.platform.flow.workflows.agent_model import FlowModel
 
 limits = {'requests': 2} if BUDGET_KIND == 'requests' else {}
 if BUDGET_KIND == 'tool_calls':

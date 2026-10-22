@@ -26,9 +26,9 @@ from keystone.core.asyncio import run
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.migrations import migration_config
-from keystone.platform.files.storage import StorageRegistry
+from keystone.platform.files.adapters.storage import StorageRegistry
+from keystone.platform.identity.adapters.security import Passwords
 from keystone.platform.identity.schemas import UserCreate
-from keystone.platform.identity.security import Passwords
 from keystone.platform.identity.services.initialize import initialize_admin
 
 ROOT = Path(__file__).resolve().parents[1]

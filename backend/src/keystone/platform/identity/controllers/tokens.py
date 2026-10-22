@@ -4,9 +4,7 @@ from fastapi import APIRouter, Request
 
 from keystone.core.http import Page
 from keystone.platform.identity import schemas
-from keystone.platform.identity.dependencies import (
-    access_context,
-)
+from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.identity.services.tokens import TokenService
 
 router = APIRouter(prefix="/api/v1", tags=["identity"])

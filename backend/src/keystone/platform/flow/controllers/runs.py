@@ -6,13 +6,13 @@ from fastapi import APIRouter, Request
 from keystone.core.http import Page
 from keystone.platform.flow.schemas import Start
 from keystone.platform.flow.services.runs import FlowService
-from keystone.platform.identity.dependencies import access_context
+from keystone.platform.identity.controllers.dependencies import access_context
 
 router = APIRouter(prefix="/api/v1", tags=["flow"])
 
 
 def _service(request: Request) -> FlowService:
-    return FlowService(access_context(request), request.app.state.runtime.flow_definitions)
+    return request.app.state.runtime.flow_service(access_context(request))
 
 
 @router.get("/flow-definitions")

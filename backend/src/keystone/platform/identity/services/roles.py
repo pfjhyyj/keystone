@@ -1,21 +1,21 @@
 from sqlalchemy import delete, select
 
 from keystone.core.errors import ServiceError
-from keystone.platform.identity.access import AccessContext
 from keystone.platform.identity.models import (
     Role,
     RolePermission,
     User,
     UserRole,
 )
-from keystone.platform.identity.policy import (
+from keystone.platform.identity.schemas import role_view
+from keystone.platform.identity.services.access import AccessContext
+from keystone.platform.identity.services.authorization import (
     ADMIN_KEY,
     manageable,
     permission_catalog,
     protect_last_admin,
     role_permissions,
 )
-from keystone.platform.identity.schemas import role_view
 
 
 class RoleService:

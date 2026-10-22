@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request
 
 from keystone.core.http import Page
-from keystone.platform.identity.dependencies import access_context
+from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.services.entries import ModelEntryService
 

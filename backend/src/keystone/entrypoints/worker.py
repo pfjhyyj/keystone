@@ -83,7 +83,7 @@ async def run_executor(runtime, stop, *, ready, health):
         async with AsyncExitStack() as stack:
             queues, installers = register_maintenance(runtime, health)
             if runtime.settings.flow_enabled:
-                from keystone.platform.flow import worker as flow_worker
+                from keystone.platform.flow.workflows import bootstrap as flow_worker
 
                 register_workflows()
                 await stack.enter_async_context(flow_worker.prepare(runtime, lease=lease))

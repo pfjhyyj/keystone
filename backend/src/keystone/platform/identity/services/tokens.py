@@ -5,12 +5,12 @@ from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.identity.adapters.security import digest
 from keystone.platform.identity.models import (
     PersonalAccessToken,
 )
 from keystone.platform.identity.schemas import token_view
-from keystone.platform.identity.security import digest
+from keystone.platform.identity.services.access import AccessContext
 
 
 class TokenService:

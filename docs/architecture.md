@@ -2,7 +2,7 @@
 
 采用模块化单体，字段、权限和生命周期见[领域文档](README.md#按领域阅读)。
 
-**阅读状态：**第 1～5 节记录当前实现；第 6 节说明已落地的任务设施和后续 Flow 扩展边界。core/execution/、各模块 tasks/ 和三类维护的 Step 拆分已实现，FlowPackage、素材粗选及协议/宿主目录的进一步整合仍为目标。完整接口与切换约束见[任务执行与模块规范设计](execution-design.md)。
+**阅读状态：**第 1～5 节记录当前实现；第 6 节说明已落地的任务设施和后续 Flow 扩展边界。core/execution/、各模块 tasks/、三类维护的 Step 拆分和 MVC + Service 目录归位已实现；FlowPackage、多角色模型、数组文件路径及素材粗选仍为目标。完整接口与切换约束见[任务执行与模块规范设计](execution-design.md)。
 
 Worker 通过 DBOS 承载业务 Flow、系统自动任务和定时任务。公共生命周期、文件清理、Flow 协调及自动费用核对已实现；关闭业务 Flow 后公共运行时、文件维护和查费仍启动。默认运行一个 Worker，支持同宿主、同版本的 1～4 个固定身份。共享并发、稳定去重、按旧实例恢复和实例/共享维护观测见第 3.4～3.7 节；跨宿主与自动接管不在当前范围。multi_workers 增量迁移扩展模型发送归属、Flow 扫描依据和 Worker 观测，不新增业务表；升级前停机备份并执行 `keystone init`，历史无归属 Flow 调用须专项离线收尾。操作见[部署文档](deployment.md#4-多-worker-部署与发布)。
 
@@ -374,7 +374,7 @@ model_access 复用 Ether 的受控 SDK 传输思路：发送边界重新认证�
 
 ### 5.1 后端模块与业务 Flow
 
-有接口和持久化对象的模块统一以 controllers/、services/、models/、schemas/ 四个包为基本骨架，按领域放在一起；六个平台领域已按此整理，一个持久化实体一个文件。模块按实际职责增加 billing/、inference/、storage.py 等能力包或适配文件，不要求所有模块预建同一套扩展目录。HTTP 路由由 Controller 声明，API 入口统一注册；entrypoints 只处理启动与生命周期。core 只放技术设施和通用契约基类，不接收业务规则。具体职责、依赖和风格见下方模块规范。
+有接口和持久化对象的模块统一以 controllers/、services/、models/、schemas/ 四个包为基本骨架，按领域放在一起；六个平台领域已按此整理，一个持久化实体一个文件。模块按实际职责在 adapters/ 下组织 billing/、inference/、storage.py 等技术实现，按需增加 tasks/ 和 workflows/，不在根目录散放实现或预建空目录。HTTP 路由由 Controller 声明，API 入口统一注册；entrypoints 只处理启动与生命周期。core 只放技术设施和通用契约基类，不接收业务规则。具体职责、依赖和风格见下方模块规范。
 
 一个业务集中保存自身模型、服务、接口和流程。以下为按需扩展的目录示意，当前脚手架只生成模型、服务、接口和契约；目标目录统一使用 workflows/，不预建视频业务：
 
@@ -435,82 +435,85 @@ API、Worker、CLI 共用镜像与后端依赖，通过不同命令启动；不�
 
 ### 5.4 模块分层与代码规范
 
-采用 MVC 职责划分，通过 Service 承载业务用例。Vue 页面承担 View；后端 schemas/ 负责输入输出契约及响应投影。领域目录保持聚合，六个平台领域当前统一使用四个基本包，具体业务增加接口或持久化对象时遵循同样规范。统一约束职责与依赖方向，协议适配按模块实际能力组织；当前 Model Access 结构见第 5.4.1 节，模块目录目标见第 6 节。
+采用 MVC 职责划分，通过 Service 承载业务用例。Vue 页面承担 View；后端 schemas/ 负责输入输出契约及响应投影，不另建后端 views/。平台与业务模块遵循同一套目录规则，按需增加 adapters/、tasks/、workflows/；没有对应职责就不创建空目录。模块根目录只保留包说明和权限/审计声明，执行、授权与技术实现全部进入明确分层。
 
 ```text
 platform/identity/
-├── controllers/                auth.py、users.py、roles.py、tokens.py
-├── services/                   auth.py、users.py、roles.py、tokens.py
-│                               credentials.py、initialize.py 为内部用例
-├── models/                     一个持久化实体一个文件
-│   ├── user.py
-│   ├── role.py
-│   ├── user_role.py
-│   ├── role_permission.py
-│   ├── login_session.py
-│   └── personal_access_token.py
-├── schemas/                    按资源归组输入与响应，types.py 放共用标量约束
-├── access.py                   AccessContext：身份、事务、权限与审计上下文
-├── dependencies.py             HTTP 身份提取、Cookie/CSRF 与上下文装配
-├── policy.py                   身份授权规则
-└── security.py                 密码、摘要与登录限流
+├── __init__.py                 # 仅包说明
+├── catalog.py                  # 本模块权限与审计字段白名单
+├── controllers/                # auth/users/roles/tokens
+│   └── dependencies.py         # HTTP 身份提取、Cookie/CSRF 与上下文装配
+├── services/                   # auth/users/roles/tokens、凭据撤销与初始化
+│   ├── access.py               # AccessContext：事务、身份锁、权限与审计
+│   ├── authorization.py        # 当前授权、管理范围、角色权限读取
+│   └── login_limits.py         # 登录失败与冷却策略
+├── models/                     # 六个持久化实体各自一个文件，__init__ 显式导出
+├── schemas/                    # 输入、响应与 Credential；types.py 放共用标量约束
+└── adapters/
+    ├── security.py             # 密码、随机凭据与摘要
+    └── rbac.py                 # Casbin 模型和内存 Enforcer 适配
 ```
 
 | 层 | 负责 | 不负责 |
 |---|---|---|
 | Controller | APIRouter、参数绑定、取得服务、Cookie/CSRF、状态码、SSE 和文件 HTTP 传输 | 直接查询 ORM、开启事务、实现业务授权或跨领域协调 |
-| Service | 业务规则、功能和对象权限、事务、审计、查询及调用适配器 | 接收 FastAPI Request/Response、导入 Controller、直接依赖 DBOS 或注册调度任务 |
+| Service | 业务规则、功能和对象权限、事务、审计、查询及调用适配器 | 接收 FastAPI Request/Response、导入 Controller、SDK 协议处理、注册 DBOS 任务 |
 | Model | SQLAlchemy 实体、字段、关系、约束与索引 | HTTP 处理、调用服务或供应商 |
-| Schema | Pydantic 输入约束、明确字段的响应投影及序列化 | 查询数据库、开事务、调用服务、遍历 ORM 列自动扩展响应 |
-| inference | SDK/调用协议、受控网络发送、流式观测和必要回执 | 决定账务单位、操作 ORM、判断业务权限或注册后台任务 |
-| billing | 账务请求与回执协议、编号选择、分页解析、单位口径及安全查询结果 | 决定重试预算、更新调用记录、操作 ORM 或 DBOS |
-| Worker 系统任务入口 | 调用 Service、DBOS 注册/投递、队列和计划、技术去重及执行健康 | 供应商协议判断、费用确认、直接更新领域表 |
+| Schema | 输入约束、明确字段的响应投影及序列化、轻量契约 | 查询数据库、开事务、调用服务、遍历 ORM 列自动扩展响应 |
+| Adapter | SDK、协议、存储、加密及技术锁；inference/billing 均位于 adapters/ | 业务授权、领域持久化、调用 Service 或注册执行器 |
+| tasks / workflows | 调用 Service、DBOS 编排、检查点、投递及执行健康 | 直接查询或修改领域表、把业务策略藏入执行包装 |
+| catalog.py | 本模块权限键、说明及审计动作字段白名单 | 导入 Service、ORM、SDK 或注册 Flow/任务 |
 
-依赖方向为 Controller/Worker 任务入口 → Service → Model/协议适配器；Controller 和 Service 均可使用 Schema。协议适配器不反向调用 Service、Controller 或 ORM，具体依赖由 composition/bootstrap 显式装配。通用 Input 位于 core/schemas.py。每个 models/*.py 只定义一个持久化实体，关联实体也独立；models/__init__.py 显式导出全部实体，供迁移元数据注册，不执行初始化业务。schemas/__init__.py 仅导出契约，UserCreate/UserUpdate/user_view 等同一资源的契约放在一起。
+依赖方向为 Controller/执行适配 → Service → Model/Adapter；Controller 和 Service 均可使用 Schema。适配器不反向调用 Service、Controller 或领域 ORM；技术协调可使用 core 的 Worker 登记与锁，不承担领域事实。具体依赖由 composition/bootstrap 显式装配。通用 Input 位于 core/schemas.py。
+
+```mermaid
+flowchart LR
+    HTTP[HTTP] --> Controller
+    DBOS[DBOS] --> Execution[tasks / workflows]
+    Controller --> Service
+    Execution --> Service
+    Controller --> Schema
+    Service --> Schema
+    Service --> Model[(Model)]
+    Service --> Adapter[adapters]
+    Adapter --> External[存储 / 供应商 / 技术协调]
+```
 
 统一约定：
 
-- Controller 和 Service 按资源或用例职责拆分，不按表机械生成接口。小模块采用相同目录，目录内可以只有一个文件。无 HTTP 或 ORM 职责的业务流程仍只保留 contracts/workflow 等实际需要的文件。
-- 每个 Controller 文件导出 router，用带类型标注的 `_service(request)` 获取服务；controllers/__init__.py 只聚合路由，由 bootstrap 注册。HTTP 请求体读取、Cookie/CSRF 和 SSE 编码留在边界。
-- AuthService、UserService、RoleService、TokenService 组合 AccessContext；只有密码相关服务接收 Passwords。其他领域直接使用 AccessContext，不依赖身份管理服务。ExecutionIdentity 仅重写 authorize(session) 解析 Run 执行身份，共用 access 的事务、身份锁、会话限制、权限检查、失败审计及冲突转译，不吞掉不支持的参数，不继承账户管理能力。
-- 权限、事务和成功审计一起提交；AccessContext 继续维护共享/排他身份锁及失败审计。上传预检和实际写入均校验授权；Flow 步骤、费用查询保留前后授权复查。
-- 跨领域组合使用明确服务入口，RoleDeletion、FlowCosts 仍放 use_cases.py 并由 bootstrap 装配。同事务内部方法可以接收调用方 session，明确授权和锁前提，不自行提交或嵌套另一事务。
-- Flow 模型选择由 model_access/services/entries.py 的 select_model 执行；Flow 保留输入映射和错误契约。当前 Flow 模型调用的启动收尾由 model_access/services/recovery.py 的 recover_interrupted_calls 执行，仅在 Worker 获得身份锁后按自身旧实例调用；无归属历史记录阻止启动，需按第 3.5 节专项离线处理。文件引用写入及有效使用记录检查归 files/services/references.py，Flow 仅提取输出文件 ID 并固定 owner/slot。
-- 响应投影显式列出字段，不能因新增 ORM 列扩展接口；角色权限先由服务读取，再交给 Schema 投影。费用 Decimal 字符串、Flow UTC 时间和既有最小回执保持不变。
-- 存储、调用协议、账务协议和执行引擎各有明确适配边界。模型接入代码按第 5.4.1 节分层；services/runtime.py 保留调用用例与发送前登记，SDK 和传输细节进入 inference/；文件清理规则仍位于 files/services/cleanup.py。不增加 BaseService、通用 CRUD、Repository 或动态模块扫描。
-- 文件和函数使用 snake_case，类型使用 PascalCase，公共边界优先标注类型；遵循 Python 3.12、Ruff 100 列和导入排序，异步服务不直接执行阻塞 I/O。
-
-共用规则只保留小函数或静态声明：审计与模型历史通过 core/time_range.py 解析带时区的闭区间，默认截止为数据库当前时间，默认起点为截止前 30 天，最多 366 天；审计事件时间也由数据库生成。当前模型推理渠道、固定地址、路径与 HTTP 方法由 inference/client.py 的 SUPPORTED_TARGETS 声明，账务适配在 billing/registry.py 显式选择；目录过滤和临发送校验共用推理能力声明，账务查询另按原站点受控契约校验。查询目录不能替代发送校验。普通 API 离线恢复与 Worker 启动恢复保留不同前提和记录范围，共用每批 100 条的状态更新及逐条系统审计，不重发调用。
-
-Flow host 文件读取返回 bytes，由调用方指定 max_bytes；上传显式传入 content_type，可选 storage_key 指定产物源；读取仍按 File 的源路由。UTF-8 和 16 KiB 限制属于 测试审查夹具。FileService.upload_referenced 只供可信业务调用，owner/slot 由服务端固定；Files 自己校验上传归属、幂等键与状态，在完成事务内保存引用，不把 ORM 实体通过回调交给 Flow。撤权或取消后的既有写入仍完成事实保存，返回结果前重新授权；文件域错误由 Flow 在输出协调边界转换为既有 flow_invalid_output。
-
-模型 HTTP 与 Agent 入口共用 ModelRuntime 的发送核心和 classify_error 分类，沿异常因果链识别平台错误、SDK/Pydantic AI HTTP 错误与超时。明确 HTTP 4xx 拒绝记 failed，5xx、网络、取消及无法确认的结果保持 unknown；公开安全错误和持久状态来自同一次分类，不透传上游消息。Agent 使用 invoke_sdk(selection, invocation_id, sdk_request, flow_context)，无需构造公开 Invoke 的占位消息。费用补查协议位于 billing/；Service 保留授权、配置复查与事实保存，错误适配拆分后仍保持普通调用和 Agent 的分类一致。
-
-Identity 通过 role_grants 一次联表读取当前角色权限，执行授权与管理目标检查共用读取结果；PAT 范围、强制改密和停用规则仍由各自调用方处理，不缓存授权。通用 utcnow 位于 core/time.py，各领域直接引用；历史窗口及审计事件的数据库时钟语义不变。
-
-用户和角色列表在分页后一次读取当前页关联数据，空页跳过关联查询，保留管理员权限展开和未知权限过滤。Flow 的 engine.py 使用显式白名单投影 DBOS 安全错误码，覆盖模型执行边界；未知代码及原始消息统一投影为 flow_execution_failed。两项均留在现有服务或适配器中，不增加通用加载器、错误框架或领域字段。
+- 根目录只允许 __init__.py 和按需提供的 catalog.py，不新增 helper.py、policy.py、host.py 等零散实现。纯判断就近放在 services/，复杂后可分 services/policies/。模块一级目录限 controllers、schemas、models、services、adapters、tasks、workflows。
+- Controller 和 Service 按资源或用例拆分，不按表机械生成接口。每个 Controller 导出 router，controllers/__init__.py 只聚合路由，由 bootstrap 注册；HTTP 身份提取与传输留在 controllers/。业务 Flow 的 contracts/workflow 放在 workflows/<flow>/ 下；独立分发的流程包另见第 6 节。
+- 每个 models/*.py 只定义一个持久化实体，关联实体也独立；models/__init__.py 显式导出实体，供迁移元数据注册。Schema 按资源归组，显式列出响应字段，不因增加 ORM 列扩大接口；费用 Decimal 字符串、UTC 时间和最小回执保持不变。
+- AuthService/UserService/RoleService/TokenService 组合 services/access.py 的 AccessContext；只有密码相关服务接收 Passwords。其他领域复用上下文，不依赖身份管理服务。ExecutionIdentity 只重写执行授权，共用事务、身份锁、会话限制、失败审计及冲突转译，不继承账户管理能力。
+- 权限、事务和成功审计一起提交；上传预检与实际写入均校验授权，费用查询保留前后授权复查。role_grants 共用一次联表读取，PAT、停用、强制改密及最后管理员保护保持不变，不缓存授权。
+- 跨模块协调使用明确 Service。RoleDeletion、FlowCosts 仍由 use_cases.py 和 bootstrap 装配；事务内方法显式接收 session 和 auth，说明授权及锁前提，不自行提交。Flow 不直接读写 Files 或 Model Access 表。
+- Flow 模型选择由 model_access/services/entries.py 执行；原实例中断收尾仍由 services/recovery.py 在 Worker 身份锁内执行。文件引用及有效使用检查归 files/services/references.py，Flow 只提取输出 ID 并固定 owner/slot。
+- 服务保留调用授权、发送前登记、结果未知不重发和费用事实写回；SDK/账务协议进入 adapters/inference 和 adapters/billing。错误安全分类、固定目标、无隐藏重试及原单位不变。历史时间窗口继续共用 core/time_range.py，应用 UTC 时间来自 core/time.py。
+- 文件和函数使用 snake_case，类型使用 PascalCase；遵循 Python 3.12、Ruff 100 列和导入排序。异步服务不直接执行阻塞 I/O，不增加 BaseService、通用 CRUD、Repository 或动态模块扫描。
 
 当前服务划分：
 
-| 领域 | 主要服务职责 |
+| 领域 | 主要服务职责及边界 |
 |---|---|
-| Identity | auth / users / roles / tokens，凭据撤销与管理员初始化独立 |
-| Files | files / grants / references / cleanup |
+| Identity | auth/users/roles/tokens；access/authorization/login_limits；加密与 Casbin 归 adapters |
+| Files | files/grants/references/cleanup/access；存储、锁、磁盘容量与传输归 adapters |
 | Dictionary | dictionaries，父字典与条目保留同一组事务规则 |
-| Model Access | channels / entries / invocations / runtime / costs，恢复入口独立 |
-| Flow | runs；services/reconciliation 管状态事务，tasks/workflows 管同步编排；catalog、engine、host 保留现有执行职责 |
-| Audit | writer / query，写入不反向依赖身份服务 |
+| Model Access | channels/entries/invocations/runtime/costs；恢复入口独立；协议归 adapters |
+| Flow | runs/reconciliation/identity/resources/outputs/artifacts；定义归 schemas，宿主与 Agent 执行接入归 workflows |
+| Audit | writer/query，写入不反向依赖身份服务；审计动作在各所属模块声明 |
+
+Flow 的 workflows/context.py 保留执行作用域与取消监测，services/resources.py 承担输入和受权文件操作，adapters/dbos.py 负责引擎客户端及安全错误投影。传输槽位 → 活动执行作用域 → 文件锁/句柄/临时文件的获取和释放顺序保持不变。稳定产物请求键、文件引用原子保存、撤权后事实收尾及返回前重新授权仍有效。
 
 ### 5.4.1 Model Access 分层
 
-本节描述当前已实现的代码结构。保留 controllers/、services/、models/、schemas/ 基本骨架，在 model_access 内分别组织 inference/ 和 billing/；它们是模块内部能力包，不另建领域、进程、账本或一套 Controller/Service/Model。完整文件职责和当前代码映射见[模型接入代码结构](domains/model-access.md#8-代码结构与职责映射)。
+本节描述当前已实现的代码结构。保留 controllers/、services/、models/、schemas/ 基本骨架，在 adapters/ 下分别组织 inference/ 和 billing/；它们是模块内部能力包，不另建领域、进程、账本或一套 Controller/Service/Model。完整文件职责和当前代码映射见[模型接入代码结构](domains/model-access.md#8-代码结构与职责映射)。
 
 | 边界 | 职责 |
 |---|---|
 | Service | 管理渠道、模型选择、调用用例、费用核对及授权；拥有事务、审计、费用待办、重试/截止规则和分页进度。手动与自动核对共用同一服务 |
-| inference/ | 复用 OpenAI 兼容等调用协议；封装 SDK、受控 transport 和流式观测，返回必要回执；实际发送通过 Service 的受控登记边界 |
-| billing/ | 依据原账务站点和口径处理响应费用、请求直查、日志分页、可选余额及错误分类，返回规范化结果；不同中转站分别适配 |
-| credentials.py、coordination.py | 提供凭据加解密、非秘密范围标识及查询协调等技术能力；Service 决定使用范围和持久状态，不将数据库锁藏进 HTTP 网关 |
+| adapters/inference/ | 复用 OpenAI 兼容等调用协议；封装 SDK、受控 transport 和流式观测，返回必要回执；实际发送通过 Service 的受控登记边界 |
+| adapters/billing/ | 依据原账务站点和口径处理响应费用、请求直查、日志分页、可选余额及错误分类，返回规范化结果；不同中转站分别适配 |
+| adapters/credentials.py、adapters/coordination.py | 提供凭据加解密、非秘密范围标识及查询协调等技术能力；Service 决定使用范围和持久状态，不将数据库锁藏进 HTTP 网关 |
 | 各模块 tasks/ | 为费用扫描/核对、文件清理、Flow 协调提供薄执行入口；负责 DBOS 调度接入和执行健康，调用所属模块 Service |
 
 多个中转站可共用调用协议，各自选择 billing 适配器。例如 Openlux 渠道映射到 OpenAI 兼容调用客户端与 Openlux 账务适配器；相同请求格式不代表账务路径、Token 可见范围或金额单位一致。映射由代码显式声明，保留 Channel.provider 等现有字段，不因目录整理新增协议配置列；注册表不保存秘密、不执行数据库查询或启动任务。
@@ -530,13 +533,13 @@ flowchart LR
     Billing --> Upstream
 ```
 
-Service、models/、schemas/、billing/、inference/ 不直接导入 DBOS；DBOS 生命周期位于 core/execution/runtime.py，系统任务的装饰器位于各模块 tasks/，投递共用 core/execution/dispatch.py。Flow 的 engine.py、Agent 持久执行适配及业务 workflow/step 继续按既有 Flow 约定使用 DBOS，不为隐藏其持久语义另建一套流程抽象。技术重试/执行恢复与费用业务重试分开，后者仍由持久费用状态驱动。
+Service、models/、schemas/、billing/、inference/ 不直接导入 DBOS；DBOS 生命周期位于 core/execution/runtime.py，系统任务的装饰器位于各模块 tasks/，投递共用 core/execution/dispatch.py。Flow 的 adapters/dbos.py（仅 DBOSClient）、workflows/agent_model.py 持久执行适配及业务 workflow/step 继续按既有 Flow 约定使用 DBOS，不为隐藏其持久语义另建一套流程抽象。技术重试/执行恢复与费用业务重试分开，后者仍由持久费用状态驱动。
 
 结构整理不改现有三张表、API 权限、费用/调用状态及恢复前提，也不新增配置开关、通用任务表、Repository 或任务引擎接口。Model Access、文件清理和 Flow 协调采用同一 Worker 接入边界；多 Worker 仍按第 3.5 节单独设计和验证。
 
 ### 5.5 业务权限、审计与模型接入
 
-接入声明校验在启动时完成：权限资源名每个点分段必须非空；审计字段须传集合，不能把字符串误当作字段列表。Catalog 保留不可变目录，不增加配置解析框架。
+各平台模块在自己的 catalog.py 声明权限与审计字段白名单，Worker 生命周期声明位于 worker/catalog.py；composition 使用 combine_catalogs 显式合并，任何重复权限或动作均拒绝启动，再合并业务声明。原权限键、说明和审计字段不变。Flow 定义另见 schemas/definitions.py，模块 catalog.py 不承担流程注册。接入声明校验在启动时完成：权限资源名每个点分段必须非空；审计字段须传集合，不能把字符串误当作字段列表。Catalog 保留不可变目录，不增加配置解析框架。
 
 Flow 的轻量目录同样按应用隔离：bootstrap 把显式定义列表交给 build_definitions，一次检查全部定义的重复键、权限声明、非空且唯一的执行入口、模型字段存在性及输入输出文件路径，再保存到 Runtime.flow_definitions。FlowService、ExecutionIdentity 和 reconcile 显式使用该目录，不再调用全局注册表；Worker 的 workflow 导入仍由 register_workflows 单独负责。工作流装饰器引用 definition.entrypoint；所有 API 与固定 Worker 保持同一发布制品，执行版本校验不因多进程而放宽。
 
@@ -594,7 +597,7 @@ Flow 默认启用，真实模型接入默认可用，权限判断使用 Casbin�
 
 ## 6. 任务设施与模块目录规范
 
-本节的公共任务设施及三类维护迁移已实现；FlowPackage、多角色模型、数组文件路径、素材粗选和 Flow runtime/ 目录仍待后续。完整接口及四个场景见[任务执行与模块规范设计](execution-design.md)，FlowPackage 与业务阶段衔接见 [Flow 第 8 节](domains/flow.md#8-目标设计尚未实现)，业务接入步骤见[扩展说明第 9 节](extending.md#9-任务与模块规范)。
+本节的公共任务设施、三类维护迁移和模块目录归位已实现；FlowPackage、多角色模型、数组文件路径与素材粗选仍待后续。完整接口及四个场景见[任务执行与模块规范设计](execution-design.md)，FlowPackage 与业务阶段衔接见 [Flow 第 8 节](domains/flow.md#8-目标设计尚未实现)，业务接入步骤见[扩展说明第 9 节](extending.md#9-任务与模块规范)。
 
 ### 6.1 概念与执行范围
 
@@ -612,22 +615,32 @@ Flow 默认启用，真实模型接入默认可用，权限判断使用 Casbin�
 
 ```text
 core/execution/                    # 公共声明、投递、计划、Step 保护、生命周期和制品版本
-platform/<module>/
-  controllers/  schemas/  models/  services/
-  policies/                        # 按需，无 I/O 的业务判断
-  adapters/                        # 按需，SDK/协议/存储等技术实现
-  tasks/definitions.py             # 轻量声明
-  tasks/workflows.py               # 原生 DBOS workflow/step 与窄依赖绑定
-  workflows/                       # 按需，业务流程
-platform/flow/runtime/             # 后续整合目标，当前 host/engine 等仍在模块根目录
-businesses/<module>/               # 相同职责规则；独立 Flow 包可只有流程/规则/适配
+platform/<module>/ 或 businesses/<module>/
+  __init__.py                      # 包说明
+  catalog.py                       # 按需：权限与审计静态声明
+  controllers/ schemas/ models/ services/
+  adapters/                        # 按需：SDK/协议/存储/技术协调
+  tasks/definitions.py             # 轻量任务声明
+  tasks/workflows.py               # 原生 DBOS 执行适配
+  workflows/                       # 按需：业务流程及执行接入
+platform/flow/
+  schemas/definitions.py           # Definition 与定义集合校验
+  services/identity.py             # 原 Run 身份及当前授权
+  services/resources.py            # 输入与受权文件操作
+  services/outputs.py              # 输出文件引用保留
+  adapters/dbos.py                 # DBOSClient 查询/提交/取消适配
+  workflows/context.py             # 宿主句柄、活动授权/取消作用域
+  workflows/agent_model.py         # Agent 与 DBOS 模型执行接入
+  workflows/bootstrap.py           # 绑定宿主、原实例恢复准备及就绪
 worker/                            # 进程启动、身份、排空与健康
 composition.py                     # 显式装配，不扫描或在线安装代码
 ```
 
-Controller/执行适配 → Service → Model/技术适配器。普通 Service、Model、Schema、协议适配器不直接导入 DBOS；tasks/、workflows/ 和 Flow runtime 可以使用 DBOS。无需增加 Module 基类、通用 Repository、TaskContext 或任务业务表。现有 Model Access inference/billing 拆分保留，目标收在 adapters/ 下；根目录混合文件按内容逐一拆分，不强制预建空目录。
+Controller/执行适配 → Service → Model/Adapter。普通 Service、Model、Schema 不导入 DBOS；tasks/、workflows/ 使用原生执行接口，adapters/dbos.py 只包装 DBOSClient，不注册执行器。Model Access inference/billing 已收在 adapters/ 下；Flow 宿主的领域 SQL 和文件操作归 Service，活动作用域与资源释放顺序归 workflows/context.py。无需增加 Module 基类、通用 Repository、TaskContext 或任务业务表。
 
-公共执行设施不反向导入业务或 composition；由 composition 传入完整声明和执行清单。执行制品哈希已移到 core/execution/version.py，由 composition.execution_version() 显式传入包清单并缓存；费用任务及文件维护不再依赖 Flow catalog 取版本。
+架构检查递归覆盖平台与业务模块，拒绝根目录实现、未知分层、缺少包入口、Controller 访问 ORM、Schema/Adapter 反向依赖 Service 或领域模型，以及普通 Service 经 core/execution/ 实现包绕过 DBOS 边界。脚手架输出也执行同一检查；新增层必须先明确职责并更新规范与检查。
+
+公共执行设施不反向导入业务或 composition；由 composition 传入完整声明和执行清单。执行制品哈希位于 core/execution/version.py，由 composition.execution_version() 显式传入包清单并缓存；费用任务及文件维护不依赖 Flow 定义取版本。Runtime 保存装配层注入的版本查询函数，通过 runtime.flow_service(identity) 创建 FlowService；执行身份及协调服务使用同一查询来源。普通模块不能反向导入 composition、bootstrap、entrypoints、model_registry 或上层 use_cases。受理、执行授权与补投仍在原边界重新查询并校验制品版本，查询函数不会进入 Run 或 DBOS 参数。
 
 ### 6.3 声明、调度与事实边界
 

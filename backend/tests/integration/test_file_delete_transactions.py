@@ -27,8 +27,8 @@ from keystone.platform.audit.services import writer as audit
 from keystone.platform.files.models import File
 from keystone.platform.files.services.files import FileService
 from keystone.platform.files.services.references import FileReferences, FileReferenceService
-from keystone.platform.identity.access import AccessContext
-from keystone.platform.identity.policy import Credential
+from keystone.platform.identity.schemas.credentials import Credential
+from keystone.platform.identity.services.access import AccessContext
 
 pytestmark = pytest.mark.postgres
 

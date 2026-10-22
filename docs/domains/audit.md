@@ -110,7 +110,7 @@ details 由每种操作按白名单构造。例如角色删除保存角色 key�
 
 AccessContext 成功取得授权上下文后，失败或拒绝日志与成功日志一样保留已认证 PAT 的 credential_id，仍写在 details 中；correlation_id 和实际用户身份保持不变。无效或未认证凭据只按现有匿名规则记录，不从客户端提供的令牌推测编号或所属人。余额刷新离开预检事务后的失败路径也传递此前认证取得的编号，不增加审计字段或额外身份查询。
 
-平台 ACTIONS 保留平台动作，业务在自身 catalog.py 声明动作及详情字段白名单，由 composition.py 合并成应用级不可变目录并显式绑定 Database。writer 从调用方事务的 session.info 读取目录，未绑定目录或动作未声明时拒绝写入；不同应用的目录不会互相覆盖。业务沿用下述事务、身份、关联编号、递归字段校验和 8 KiB 大小限制，不增加业务审计表；具体声明见[业务接入规范](../architecture.md#55-业务权限审计与模型接入)。
+平台动作由各所属模块的 catalog.py 声明，Worker 生命周期动作位于 worker/catalog.py；业务同样在自身 catalog.py 声明动作及详情字段白名单。composition.py 检查重复动作后合并成应用级不可变目录并显式绑定 Database，审计 writer 不保存全平台 ACTIONS。writer 从调用方事务的 session.info 读取目录，未绑定目录或动作未声明时拒绝写入；不同应用的目录不会互相覆盖。业务沿用下述事务、身份、关联编号、递归字段校验和 8 KiB 大小限制，不增加业务审计表；具体声明见[业务接入规范](../architecture.md#55-业务权限审计与模型接入)。
 
 代码位于 backend/src/keystone/platform/audit/，表为 keystone.audit_logs，由 audit 领域初始迁移创建。record 接受调用方事务；成功日志写入失败时抛错并回滚整个业务操作。HTTP 用例服务的权限拒绝、业务冲突和执行失败在回滚后尝试独立写日志，失败审计不可用只记录脱敏运行告警，不覆盖原始错误。请求 Schema 校验和 CSRF 边界拒绝不自动解析请求正文生成领域审计。Flow 内部步骤失败通过运行终态的 flow.complete 及安全错误码留痕，不逐步骤复制失败审计。
 

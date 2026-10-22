@@ -16,8 +16,8 @@ from test_identity import PASSWORD, assign, bearer, create_user, login, query, r
 from keystone.core.errors import ServiceError
 from keystone.entrypoints import cli
 from keystone.platform.audit.services import writer as audit
-from keystone.platform.identity.access import AccessContext
-from keystone.platform.identity.policy import Credential
+from keystone.platform.identity.schemas.credentials import Credential
+from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.services.entries import ModelEntryService
@@ -630,7 +630,7 @@ def test_inflight_completion_after_user_revocation_and_channel_disable(client, m
 
 def test_missing_key_file_never_sends(client):
     entry(client, channel(client))
-    from keystone.platform.model_access.credentials import KEY_FILE
+    from keystone.platform.model_access.adapters.credentials import KEY_FILE
 
     (client.app.state.runtime.settings.file_coordination_root / KEY_FILE).unlink()
     assert invoke(client).json()["code"] == "model_credential_unavailable"
@@ -638,7 +638,7 @@ def test_missing_key_file_never_sends(client):
 
 
 def test_channel_credentials_are_write_only_and_missing_master_key_is_not_replaced(client):
-    from keystone.platform.model_access.credentials import KEY_FILE
+    from keystone.platform.model_access.adapters.credentials import KEY_FILE
     from keystone.platform.model_access.models import Channel
 
     row = channel(client)

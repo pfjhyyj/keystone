@@ -30,7 +30,7 @@ def test_platform_module_contract_and_dependencies(domain):
         tree = ast.parse(file.read_text(encoding="utf-8"))
         dependencies = list(imports(tree, package))
         layer = file.relative_to(root).parts[0]
-        if layer in {"controllers", "services", "schemas", "models", "policies", "adapters"}:
+        if layer in {"controllers", "services", "schemas", "models"}:
             assert not any(d.startswith(("dbos", "keystone.worker")) for d in dependencies), file
         if layer == "controllers":
             assert not any(
@@ -104,27 +104,184 @@ def test_platform_and_business_modules_share_execution_boundaries():
         ("tasks/definitions.py", "from ..services.records import RecordService"),
         ("tasks/definitions.py", "from keystone.core.execution import dispatch"),
         ("controllers/records.py", "from ..models import Record"),
+        ("services/records.py", "from .. import tasks"),
+        ("services/records.py", "import keystone.platform.files.tasks as tasks"),
+        ("services/records.py", "from ..tasks.definitions_runtime import register"),
+        (
+            "services/records.py",
+            "from keystone.core import execution\n"
+            "from keystone.core.execution.contracts import TaskDefinition",
+        ),
+        (
+            "services/records.py",
+            "import keystone.core.execution as execution\n"
+            "from keystone.core.execution import contracts",
+        ),
+        ("tasks/definitions.py", "from keystone.core import execution"),
+        ("tasks/definitions.py", "from ..adapters.billing import Client"),
+        ("tasks/definitions.py", "from openai import AsyncOpenAI"),
     ],
 )
 def test_business_module_checks_reject_execution_and_layer_bypasses(tmp_path, file, source):
     module = tmp_path / "probe"
     target = module / file
     target.parent.mkdir(parents=True)
+    for parent in target.parents:
+        if parent == tmp_path:
+            break
+        (parent / "__init__.py").write_text("", encoding="utf8")
     target.write_text(source, encoding="utf8")
     with pytest.raises(AssertionError):
         check_module_layers(module, "keystone.businesses.probe")
 
 
-def test_module_checks_allow_lightweight_contracts_and_normal_service_symbols(tmp_path):
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "from keystone.core.execution.contracts import TaskDefinition",
+        "from keystone.core.execution import contracts",
+        "from ..tasks import definitions",
+    ],
+)
+def test_module_checks_allow_lightweight_contracts_and_normal_service_symbols(
+    tmp_path, declaration
+):
     module = tmp_path / "probe"
     file = module / "services" / "records.py"
     file.parent.mkdir(parents=True)
+    (file.parent / "__init__.py").write_text("", encoding="utf8")
     file.write_text(
-        "from keystone.core.execution.contracts import TaskDefinition\n"
-        "from ..services.features import workflows_enabled\n",
+        declaration + "\nfrom ..services.features import workflows_enabled\n",
         encoding="utf8",
     )
     check_module_layers(module, "keystone.businesses.probe")
+
+
+@pytest.mark.parametrize(
+    "file,source,message",
+    [
+        ("helpers.py", "def run(): pass", "Implementation must live"),
+        ("catalog.py", "from .services.records import RecordService", "lightweight declarations"),
+        (
+            "catalog.py",
+            "from keystone.core.catalog import Catalog\nCATALOG = Catalog()\nload()",
+            "lightweight declarations",
+        ),
+        ("__init__.py", "def hidden_service(): pass", "lightweight declarations"),
+        ("schemas/records.py", "from sqlalchemy import select", "runtime infrastructure"),
+        ("adapters/sdk.py", "from ..services.records import save", "business Service"),
+        ("adapters/sdk.py", "from ..models import Record", "domain persistence"),
+        ("adapters/sdk.py", "from dbos import DBOS", "execution implementation"),
+        (
+            "services/records.py",
+            "from ..controllers.dependencies import access_context",
+            "HTTP/controller",
+        ),
+        ("workflows/internal/workflow.py", "from ...models import Record", "domain persistence"),
+        (
+            "controllers/records.py",
+            "from keystone.core.database import Database",
+            "imports persistence",
+        ),
+        (
+            "schemas/records.py",
+            "from keystone.core.models import WorkerRegistration",
+            "runtime infrastructure",
+        ),
+        ("models/record.py", "from ..adapters.storage import Client", "runtime adapter"),
+        (
+            "services/records.py",
+            "from keystone.core.http import Page",
+            "HTTP/controller",
+        ),
+        (
+            "workflows/internal/workflow.py",
+            "from keystone.core.models import WorkerRegistration",
+            "domain persistence",
+        ),
+        (
+            "services/records.py",
+            "from keystone.composition import execution_version",
+            "application assembly",
+        ),
+        (
+            "services/records.py",
+            "from keystone import bootstrap",
+            "application assembly",
+        ),
+    ],
+)
+def test_mvc_structure_rejects_root_implementations_and_reverse_dependencies(
+    tmp_path,
+    file,
+    source,
+    message,
+):
+    root = tmp_path / "probe"
+    target = root / file
+    target.parent.mkdir(parents=True)
+    for parent in target.parents:
+        if parent == tmp_path:
+            break
+        (parent / "__init__.py").write_text("", encoding="utf8")
+    target.write_text(source, encoding="utf8")
+    with pytest.raises(AssertionError, match=message):
+        check_module_layers(root, "keystone.businesses.probe")
+
+
+def test_module_metadata_is_lightweight_and_engine_adapter_uses_only_client(tmp_path):
+    root = tmp_path / "probe"
+    root.mkdir()
+    (root / "__init__.py").write_text('"""Module package."""', encoding="utf8")
+    (root / "catalog.py").write_text(
+        "from keystone.core.catalog import Catalog\n"
+        "CATALOG = Catalog(audit_actions={'probe.record.save': set()})",
+        encoding="utf8",
+    )
+    adapters = root / "adapters"
+    adapters.mkdir()
+    (adapters / "__init__.py").write_text("", encoding="utf8")
+    (adapters / "dbos.py").write_text("from dbos import DBOSClient", encoding="utf8")
+    check_module_layers(root, "keystone.businesses.probe")
+
+
+def test_flow_definitions_and_module_metadata_do_not_load_runtime_implementations():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import importlib, sys\n"
+            f"for name in {DOMAINS!r}:\n"
+            "    importlib.import_module(f'keystone.platform.{name}.catalog')\n"
+            "import keystone.platform.flow.schemas.definitions\n"
+            "for name in sys.modules:\n"
+            "    assert not name.startswith(('dbos', 'sqlalchemy', 'pydantic_ai')), name\n"
+            "    assert '.services' not in name and '.models' not in name, name\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_flow_services_import_without_application_assembly_or_executor():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import importlib, sys\n"
+            "for name in ('runs', 'identity', 'reconciliation', 'artifacts', 'resources'):\n"
+            "    importlib.import_module(f'keystone.platform.flow.services.{name}')\n"
+            "for name in sys.modules:\n"
+            "    assert not name.startswith(('keystone.composition', 'keystone.bootstrap', "
+            "'keystone.entrypoints', 'keystone.worker', 'dbos')), name\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_relative_imports_cannot_bypass_layers():
@@ -135,8 +292,8 @@ def test_relative_imports_cannot_bypass_layers():
 
 
 def test_context_does_not_expose_identity_administration():
-    from keystone.platform.flow.identity import ExecutionIdentity
-    from keystone.platform.identity.access import AccessContext
+    from keystone.platform.flow.services.identity import ExecutionIdentity
+    from keystone.platform.identity.services.access import AccessContext
 
     assert issubclass(ExecutionIdentity, AccessContext)
     for method in ("login", "create_user", "save_role", "issue_token", "reset_password"):
@@ -154,7 +311,11 @@ def test_model_access_protocols_and_services_are_independent_of_dbos():
         layer = file.relative_to(root).parts[0]
         if layer != "tasks":
             assert not any(d.startswith(("dbos", "keystone.worker")) for d in dependencies), file
-        if layer in {"billing", "inference"}:
+        if (
+            layer == "adapters"
+            and len(file.relative_to(root).parts) > 2
+            and file.relative_to(root).parts[1] in {"billing", "inference"}
+        ):
             assert not any(
                 d.startswith("sqlalchemy")
                 or d.startswith("keystone.platform.model_access.services")
@@ -162,9 +323,10 @@ def test_model_access_protocols_and_services_are_independent_of_dbos():
                 or d.startswith("keystone.platform.model_access.controllers")
                 for d in dependencies
             ), file
-            other = "inference" if layer == "billing" else "billing"
+            other = "inference" if file.relative_to(root).parts[1] == "billing" else "billing"
             assert not any(
-                d.startswith(f"keystone.platform.model_access.{other}") for d in dependencies
+                d.startswith(f"keystone.platform.model_access.adapters.{other}")
+                for d in dependencies
             ), file
         if layer == "services":
             assert not any(d.startswith(("openai", "httpx2")) for d in dependencies), file

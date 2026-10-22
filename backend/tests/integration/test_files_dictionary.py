@@ -21,14 +21,14 @@ from keystone.core.migrations import migration_config
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.dictionary.services import dictionaries
-from keystone.platform.files.leases import initialize, unavailable
+from keystone.platform.files.adapters.leases import initialize, unavailable
 from keystone.platform.files.models import File
 from keystone.platform.files.services.cleanup import cleanup
 from keystone.platform.files.services.grants import FileGrantService
 from keystone.platform.files.services.references import FileReferences
-from keystone.platform.identity.policy import identity_lock, load_authorization
+from keystone.platform.identity.adapters.security import Passwords
 from keystone.platform.identity.schemas import UserCreate
-from keystone.platform.identity.security import Passwords
+from keystone.platform.identity.services.authorization import identity_lock, load_authorization
 from keystone.platform.identity.services.initialize import initialize_admin
 
 pytestmark = pytest.mark.postgres
@@ -554,7 +554,7 @@ def test_reference_wins_or_deletion_wins_without_partial_business_commit(client)
                 await finish.wait()
 
         async def deletion():
-            from keystone.platform.files.policy import locked
+            from keystone.platform.files.services.access import locked
             from keystone.platform.files.services.references import require_unreferenced
 
             await bound.wait()
@@ -644,8 +644,8 @@ def test_local_lease_is_cross_process_and_native_io_finishes_before_cancellation
     import subprocess
     import sys
 
-    from keystone.platform.files.leases import LocalLeases
-    from keystone.platform.files.storage import blocking
+    from keystone.platform.files.adapters.leases import LocalLeases
+    from keystone.platform.files.adapters.storage import blocking
 
     initialize(tmp_path / "store")
     storage = LocalLeases(tmp_path / "store")
@@ -654,7 +654,7 @@ def test_local_lease_is_cross_process_and_native_io_finishes_before_cancellation
             [
                 sys.executable,
                 "-c",
-                "from keystone.platform.files.leases import LocalLeases; import sys; "
+                "from keystone.platform.files.adapters.leases import LocalLeases; import sys; "
                 'LocalLeases(sys.argv[1]).lease("one").__enter__()',
                 str(storage.root),
             ],

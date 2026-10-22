@@ -152,8 +152,8 @@ def transport(provider):
 
 def install(monkeypatch=None):
     """Inject deterministic HTTP responses in tests, including isolated child processes."""
-    from keystone.platform.model_access.http import HttpClient
-    from keystone.platform.model_access.inference import client as gateway
+    from keystone.platform.model_access.adapters.http import HttpClient
+    from keystone.platform.model_access.adapters.inference import client as gateway
 
     def set_value(obj, name, value):
         if monkeypatch is None:
@@ -161,7 +161,7 @@ def install(monkeypatch=None):
         else:
             monkeypatch.setattr(obj, name, value)
 
-    from keystone.platform.model_access.billing.registry import PROVIDERS
+    from keystone.platform.model_access.adapters.billing.registry import PROVIDERS
 
     set_value(PROVIDERS["aliyun_bailian"], "balance_path", "/mock/QueryAccountBalance")
     for provider in ("deepseek", "aliyun_bailian"):

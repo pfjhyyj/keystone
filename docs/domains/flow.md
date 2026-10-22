@@ -372,6 +372,31 @@ Worker 持续上报[心跳与就绪](../development.md#worker-健康检查排障
 
 ### 代码组织
 
+模块根目录只保留包说明与 catalog.py（Flow 权限、审计动作和字段白名单）。原先混合承担定义职责的 catalog 已拆为 schemas/definitions.py，提供 Definition/build_definitions；文件路径与小值约束分别在 schemas/files.py、schemas/values.py。它们只处理轻量契约，不导入 Service、ORM 或执行器。
+
+```text
+flow/
+  catalog.py                  # 本模块权限与审计声明
+  controllers/ schemas/ models/
+  services/
+    runs.py                   # 受理、查询、取消和幂等
+    identity.py               # ExecutionIdentity、原身份授权
+    reconciliation.py         # 补投/取消准备与状态投影事务
+    resources.py              # 输入、受权文件读写和产物访问
+    outputs.py                # 输出文件引用保留
+    artifacts.py              # 产物查询和业务事务内校验
+  adapters/dbos.py            # DBOSClient 包装与安全错误投影
+  tasks/                     # 维护任务声明、Step 和同步编排
+  workflows/
+    context.py                # 宿主句柄、活动授权/取消作用域
+    agent_model.py            # Agent 模型请求持久适配
+    bootstrap.py              # 绑定上下文、原 Worker 实例恢复准备
+```
+
+业务代码使用 `from keystone.platform.flow.workflows import context as host`。context 不再查询领域表；受权操作由 FlowResourceService 通过原身份调用 Files/Artifact Service。长传输仍按槽位 → 活动执行作用域 → 文件读取锁/临时文件嵌套，取消后先关闭句柄、删除临时副本，结束作用域，最后释放槽位。稳定产物键、引用原子保存与返回前授权复查不变。DBOS workflow/step 名称及参数协议保持原值，目录移动仍改变执行制品哈希，旧在途运行按原制品收尾。
+
+Flow Service 不反向导入 composition 获取版本：装配层通过 Runtime 注入只读版本查询，API 与跨模块用例统一使用 runtime.flow_service(identity)，ExecutionIdentity 与协调器使用相同来源。每次授权仍在身份锁内校验原 Run 的版本；历史版本不匹配时不提交新执行，已完成运行的事实仍按原快照投影。版本查询函数只作为进程内依赖，不进入持久参数。
+
 Flow 同步由 `tasks/definitions.py` 声明、`tasks/workflows.py` 编排，状态事务位于 `services/reconciliation.py`。批次认领、准备和重新观察后的投影分别建立 Step；逐 Run 的内部子 workflow 记录 15 秒超时/失败，下一轮仍按领域待办扫描。引擎投递与取消位于 Step 外，继续使用独立 `flow:<run_id>`，不建立维护任务到业务 Flow 的递归取消关系。恢复时投递前重新检查原身份；投影重新检查版本/入口且不覆盖终态，完成事实仍可在发起人撤权后落库。
 
 FlowRun 独立于 models/flow_run.py，接口和用例分别位于 controllers/runs.py、services/runs.py。ExecutionIdentity 继承 AccessContext，只提供 Run 执行授权。Flow 不直接读写文件引用、渠道配置或模型调用表：模型选择/恢复、文件引用保留通过所属领域的内部服务完成，仍保持原事务、Worker 身份锁、受控 owner/slot 和取消授权规则。响应字段在 schemas/runs.py 明确列出。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。

@@ -8,9 +8,9 @@ from sqlalchemy import delete, select, text
 from keystone.core.errors import ServiceError
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor, record
-from keystone.platform.files import policy
 from keystone.platform.files.models import File, FileReference
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.files.services import access as policy
+from keystone.platform.identity.services.access import AccessContext
 
 
 async def require_unreferenced(session, identifier):

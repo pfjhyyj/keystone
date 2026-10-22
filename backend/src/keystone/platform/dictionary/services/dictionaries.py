@@ -7,7 +7,7 @@ from sqlalchemy import select
 from keystone.core.errors import ServiceError
 from keystone.platform.dictionary.models import Dictionary, DictionaryItem
 from keystone.platform.dictionary.schemas import ItemCreate, ItemEdit, item_view, view
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.identity.services.access import AccessContext
 
 
 async def locked_dictionary(session, *, identifier=None, key=None):

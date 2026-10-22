@@ -211,7 +211,7 @@ async def test_failure_stops_before_publication_and_exposes_only_safe_code(
 
 
 async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
-    from keystone.platform.flow import agent_model
+    from keystone.platform.flow.workflows import agent_model
 
     run_id = str(uuid4())
     request = AsyncMock(return_value="accepted")

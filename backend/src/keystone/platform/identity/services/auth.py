@@ -7,15 +7,15 @@ from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.identity.adapters.security import digest
 from keystone.platform.identity.models import (
     LoginSession,
     User,
     UserRole,
 )
-from keystone.platform.identity.policy import identity_lock
 from keystone.platform.identity.schemas import user_view
-from keystone.platform.identity.security import digest
+from keystone.platform.identity.services.access import AccessContext
+from keystone.platform.identity.services.authorization import identity_lock
 from keystone.platform.identity.services.credentials import revoke_user_credentials
 
 

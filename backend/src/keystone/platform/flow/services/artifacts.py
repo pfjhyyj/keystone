@@ -7,8 +7,8 @@ from sqlalchemy import select
 from keystone.core.errors import ServiceError
 from keystone.platform.files.services.files import FileService
 from keystone.platform.files.services.references import registered_file_ids, require_registered_file
-from keystone.platform.flow.identity import ExecutionIdentity, authorize_execution
 from keystone.platform.flow.models import FlowRun
+from keystone.platform.flow.services.identity import ExecutionIdentity, authorize_execution
 from keystone.platform.flow.services.runs import scope
 
 
@@ -44,7 +44,12 @@ class FlowArtifactService:
             raise ServiceError(404, "flow_not_found", "流程不存在或不可访问")
         if execution:
             # Never widen a Run's frozen PAT scope using the caller's session auth.
-            auth = await authorize_execution(session, run, self.identity.flow_definitions)
+            auth = await authorize_execution(
+                session,
+                run,
+                self.identity.flow_definitions,
+                execution_version=self.identity.execution_version(),
+            )
         auth.require("file:content_read")
         return auth
 

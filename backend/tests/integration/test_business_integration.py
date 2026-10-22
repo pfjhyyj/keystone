@@ -30,8 +30,9 @@ from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.services import writer as audit
-from keystone.platform.identity.access import AccessContext
-from keystone.platform.identity.policy import Credential, load_authorization
+from keystone.platform.identity.schemas.credentials import Credential
+from keystone.platform.identity.services.access import AccessContext
+from keystone.platform.identity.services.authorization import load_authorization
 
 READ = "test_notes.note:read"
 WRITE = "test_notes.note:write"
@@ -105,17 +106,19 @@ def test_flow_permissions_must_be_in_application_catalog(monkeypatch):
 def test_all_flow_definitions_are_validated_and_directory_is_frozen():
     from support.flow_fixture.contracts import definition
 
-    from keystone.platform.flow.catalog import build_definitions
-    from keystone.platform.identity.policy import PERMISSIONS
+    from keystone.composition import PLATFORM_CATALOG
+    from keystone.platform.flow.schemas.definitions import build_definitions
 
     with pytest.raises(ValueError, match="duplicate"):
-        build_definitions((definition, replace(definition, name="Duplicate")), PERMISSIONS)
+        build_definitions(
+            (definition, replace(definition, name="Duplicate")), PLATFORM_CATALOG.permissions
+        )
     with pytest.raises(ValueError, match="undeclared"):
         build_definitions(
             (definition, replace(definition, key="second", required_permissions=(READ,))),
-            PERMISSIONS,
+            PLATFORM_CATALOG.permissions,
         )
-    directory = build_definitions((definition,), PERMISSIONS)
+    directory = build_definitions((definition,), PLATFORM_CATALOG.permissions)
     with pytest.raises(TypeError):
         directory[definition.key] = replace(definition, name="Changed")
 
@@ -125,7 +128,7 @@ def test_flow_directory_isolation_in_api_execution_and_reconciliation(monkeypatc
     from support.flow_fixture import contracts
 
     from keystone.core.schemas import Input
-    from keystone.platform.flow.identity import ExecutionIdentity
+    from keystone.platform.flow.services.identity import ExecutionIdentity
     from keystone.platform.flow.tasks.workflows import reconcile_one
 
     class EmptyInput(Input):
@@ -208,8 +211,8 @@ def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_byte
 
     from keystone.core.schemas import Input
     from keystone.platform.files.models import FileReference
-    from keystone.platform.flow.catalog import small_json
     from keystone.platform.flow.models import FlowRun
+    from keystone.platform.flow.schemas.values import small_json
     from keystone.platform.model_access.services.entries import select_model
 
     padding = ""

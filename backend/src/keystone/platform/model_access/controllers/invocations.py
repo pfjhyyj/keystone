@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from keystone.core.http import Page
-from keystone.platform.identity.dependencies import access_context
+from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.services.entries import ModelEntryService
 from keystone.platform.model_access.services.invocations import InvocationService

@@ -16,9 +16,9 @@ from test_processes import python, ready, stopped, tree
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.flow import host
-from keystone.platform.flow.engine import Engine
+from keystone.platform.flow.adapters.dbos import Engine
 from keystone.platform.flow.models import FlowRun
+from keystone.platform.flow.workflows import context as host
 
 pytestmark = pytest.mark.postgres
 

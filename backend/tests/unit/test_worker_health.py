@@ -51,6 +51,7 @@ def test_probe_queries_database_without_starting_executor(monkeypatch, capsys):
     monkeypatch.setattr(worker, "Database", lambda *args, **kwargs: database)
     monkeypatch.setattr(worker, "worker_status", query)
     monkeypatch.setattr(worker, "Settings", lambda: Settings(config_file=None))
+    monkeypatch.setattr(worker, "configure_logging", lambda _: None)
     monkeypatch.setattr(worker, "build_runtime", lambda _: pytest.fail("Probe started executor"))
     monkeypatch.setattr("sys.argv", ["keystone-worker", "--check"])
     for status in ("ready", "unready", "offline", "unknown"):
@@ -180,8 +181,7 @@ async def test_executor_readiness_and_failure_are_observed(monkeypatch, runtime,
     assert runtime.flow_engine.close.await_count == int(flow_enabled)
 
 
-async def test_stale_maintenance_does_not_restart_an_idle_process(tmp_path, monkeypatch, runtime):
-    monkeypatch.setattr(worker_health, "MAX_AGE_SECONDS", 0.05)
+async def test_stale_maintenance_does_not_restart_an_idle_process(tmp_path, runtime):
     stop = asyncio.Event()
     settings = Settings(
         config_file=None,
@@ -195,10 +195,16 @@ async def test_stale_maintenance_does_not_restart_an_idle_process(tmp_path, monk
 
         runtime.health.require_task("files")
         runtime.health.checked_task("files", True)
-        await asyncio.sleep(0.06)
-        assert runtime.observations[-1] == "ready"
+        healthy, checked_at = runtime.health.task_checks["files"]
+        # Expire only the shared maintenance observation. A 50 ms global age
+        # threshold also expires process checks under ordinary scheduler delays.
+        runtime.health.task_checks["files"] = (
+            healthy,
+            checked_at - worker_health.MAX_AGE_SECONDS - 1,
+        )
         count = len(runtime.observations)
         await wait_until(lambda: len(runtime.observations) >= count + 2)
+        assert set(runtime.observations[count:]) == {"ready"}
     finally:
         stop.set()
         await asyncio.wait_for(task, 3)

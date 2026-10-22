@@ -1,9 +1,9 @@
 from sqlalchemy import and_, false, or_, select
 
 from keystone.core.errors import ServiceError
-from keystone.platform.identity.access import AccessContext
+from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.inference.client import SUPPORTED_TARGETS
+from keystone.platform.model_access.adapters.inference.client import SUPPORTED_TARGETS
 from keystone.platform.model_access.models import Channel, ModelEntry
 from keystone.platform.model_access.services.queries import locked
 
