@@ -36,6 +36,18 @@ def transport(provider):
                     if inspected
                     else {}
                 )
+                if inspected:
+                    source = json.loads(
+                        next(
+                            m["content"]
+                            for m in body["messages"]
+                            if m.get("role") == "tool"
+                            and m.get("tool_call_id") == "call-inspect_document"
+                        )
+                    )
+                    args.update(
+                        source_file_id=source["source_file_id"], characters=source["characters"]
+                    )
                 return httpx2.Response(
                     200,
                     json={

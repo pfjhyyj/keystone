@@ -156,6 +156,61 @@ def test_real_worker_harness_model_and_report(client, tmp_path):
     assert client.delete(f"/api/v1/files/{file_id}").status_code == 409
 
 
+@pytest.mark.parametrize(
+    "scenario,status,error,count",
+    [
+        ("repair", "succeeded", None, 3),
+        ("invalid", "failed", "flow_invalid_output", 3),
+        ("budget", "failed", "flow_budget_exceeded", 4),
+    ],
+)
+def test_example_acceptance_and_budget_in_real_worker(
+    client, tmp_path, scenario, status, error, count
+):
+    file_id = upload(client, b"Review this source.").json()["id"]
+    run = start(client, file_id).json()
+    # Only model response contents change. SDK, DBOS and accounting stay real.
+    code = (
+        f"SCENARIO = {scenario!r}\n"
+        + """
+from pydantic_ai.messages import ToolCallPart
+from keystone.platform.flow.agent_model import FlowModel
+submissions = 0
+original_request = FlowModel.request
+
+async def edited_request(self, *args, **kwargs):
+    global submissions
+    response = await original_request(self, *args, **kwargs)
+    function = next(part for part in response.parts if isinstance(part, ToolCallPart))
+    if function.tool_name == 'submit_review':
+        submissions += 1
+        if SCENARIO == 'budget':
+            function.tool_name, function.args = 'inspect_document', {}
+        elif SCENARIO == 'invalid' or submissions == 1:
+            values = function.args_as_dict()
+            function.args = {**values, 'characters': values['characters'] + 1}
+    return response
+
+FlowModel.request = edited_request
+from keystone.entrypoints.worker import main
+main()
+"""
+    )
+    with worker(client, tmp_path, code=code) as (process, log):
+        done = wait_run(client, run["id"], process, log)
+    assert (done["status"], done["error_code"]) == (status, error), done
+    calls = client.get(f"/api/v1/model-invocations?flow_run_id={run['id']}").json()
+    assert len(calls) == count and all(call["status"] == "succeeded" for call in calls)
+    assert len({call["id"] for call in calls}) == count
+    assert len({call["flow_context"]["agent_call_id"] for call in calls}) == 1
+    assert len(client.get("/api/v1/files").json()) == (2 if status == "succeeded" else 1)
+    if status == "succeeded":
+        assert done["result"]["source_file_id"] == file_id
+        assert done["result"]["characters"] == len("Review this source.")
+    else:
+        assert done["result"] is None
+
+
 @pytest.mark.parametrize("credential_kind", ["session", "pat"])
 def test_start_and_input_reference_audits_share_request_id(client, credential_kind):
     file_id = upload(client).json()["id"]
@@ -394,7 +449,13 @@ def test_original_output_contract_and_retention_after_revocation(client):
                 "version": row["execution_version"],
                 "name": "keystone.document.review",
                 "error_code": None,
-                "result": {"verdict": "reviewed", "summary": "ok", "report_file_id": file_id},
+                "result": {
+                    "source_file_id": file_id,
+                    "characters": 5,
+                    "verdict": "reviewed",
+                    "summary": "ok",
+                    "report_file_id": file_id,
+                },
             }
 
     client.portal.call(reconcile_one, client.app.state.runtime, Finished(), UUID(row["id"]))
@@ -421,7 +482,13 @@ def test_unregistered_output_file_rejected_and_old_version_not_dispatched(client
                 "version": row["execution_version"],
                 "name": "keystone.document.review",
                 "error_code": None,
-                "result": {"verdict": "reviewed", "summary": "ok", "report_file_id": unregistered},
+                "result": {
+                    "source_file_id": file_id,
+                    "characters": 5,
+                    "verdict": "reviewed",
+                    "summary": "ok",
+                    "report_file_id": unregistered,
+                },
             }
 
     client.portal.call(reconcile_one, client.app.state.runtime, Finished(), UUID(row["id"]))

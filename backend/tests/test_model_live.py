@@ -72,6 +72,18 @@ def upstream_reply(method, path, headers, body):
             inspected = any(m["role"] == "tool" for m in request["messages"])
             name = "submit_review" if inspected else "inspect_document"
             args = {"verdict": "reviewed", "summary": "Local fixture review."} if inspected else {}
+            if inspected:
+                source = json.loads(
+                    next(
+                        m["content"]
+                        for m in request["messages"]
+                        if m.get("role") == "tool"
+                        and m.get("tool_call_id") == "call-inspect_document"
+                    )
+                )
+                args.update(
+                    source_file_id=source["source_file_id"], characters=source["characters"]
+                )
             message.update(
                 content=None,
                 tool_calls=[

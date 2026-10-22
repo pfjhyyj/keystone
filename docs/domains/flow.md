@@ -332,7 +332,7 @@ execution_version 是实际加载的后端包、打包资源和 uv.lock 的内�
 
 输入/结果 JSON 上限 64 KiB，按紧凑 JSON 的 UTF-8 字节数计算，恰好 65536 字节允许。输入先检查原始请求，在默认值填充、字段序列化和模型选择解析完成后、创建 FlowRun 前，再检查最终保存的 inputs；超限沿用 `422 flow_value_too_large`，事务不保存 Run 或引用，并记录失败审计。原始请求的幂等摘要及重试规则不变，不增加逐流程配置。FlowRun 输入只承载参数、业务对象 ID、文件 ID 和少量文本；大段正文或文件内容由文件模块或业务实体保存，通过 ID 引用。
 
-SDK 请求体上限 256 KiB。测试夹具中的文件审查任务只读 16 KiB 以内 UTF-8 文本，单流程超时 300 秒，Agent 超时 180 秒、最多 4 次模型请求、2 次普通工具调用、16000 tokens；每次模型输出最多 1024 tokens。业务调整执行预算须显式修改代码并形成新制品。
+SDK 请求体上限 256 KiB。可复用文件审查示例只读 16 KiB 以内 UTF-8 文本，流程时限 180 秒，最多 4 次模型请求、3 次普通工具调用、16000 tokens，输出修正最多一次；每次模型输出最多 2048 tokens。FlowModel 默认输出上限为 1024，可信业务可显式配置 1～4096。业务调整执行预算须修改代码并形成新制品，具体约定见[业务 Flow 开发](../flow-development.md)。
 
 Worker 全生命周期持有共享本地卷上的 OS 文件锁，第二个同卷 Worker 拒绝启动。此锁用于支持范围内的单实例约束，不是分布式选主。只在持锁后的启动阶段，将旧执行器遗留的 Flow 模型 running 记录转为 unknown；不处理仍可能由 API 执行的普通调用，也不按时间猜测请求已终止。停止先关闭领取、有限等待 5 秒，再取消剩余协程并释放客户端/数据库/文件锁；未完成运行保留恢复依据。DBOS 关闭其采用的线程池后，为剩余资源清理提供独立线程池。
 
@@ -340,7 +340,7 @@ Worker 入口持续向 PostgreSQL 上报[心跳与就绪状态](../development.m
 
 ### 7.3 普通步骤与 Harness Agent
 
-仅测试夹具为 backend/tests/flow_fixture（仅测试）：准备文件 → Agent 调用 inspect_document 工具 → 结构化审查结果 → 保存报告。Harness 加载打包的 review-text Skill，Pydantic AI 执行模型/工具循环；DBOSDurability 持久化每轮模型请求，普通工具的文件 I/O 显式放在 DBOS step 内。不在 agent.run 外再套可重试的大步骤。
+可复用示例位于 backend/src/keystone/examples/document_review，默认不注册；backend/tests/flow_fixture 直接复用这份代码。流程为准备可信源信息 → Agent 调用摘要/分段读取工具 → 结构化审查及业务验收 → 保存报告。Harness 加载打包的 review-text Skill，Pydantic AI 执行模型/工具循环；DBOSDurability 持久化每轮模型请求，普通工具的文件 I/O 显式放在 DBOS step 内。不在 agent.run 外再套可重试的大步骤。输出验收、可信预算、工具摘要约定及显式接入方法见[业务 Flow 开发](../flow-development.md)。
 
 该示例的 required_permissions 为 file:content_read/create/inspect/manage 与 model:invoke，另按平台规则要求 flow:start。inspect/manage 用于报告上传恢复时复用原文件，沿用文件服务已有的重试检查，在受理时明确声明；对象授权仍逐文件检查，不因这些功能权限获得他人文件。
 
@@ -364,7 +364,7 @@ Worker 入口持续向 PostgreSQL 上报[心跳与就绪状态](../development.m
 
 FlowRun 独立于 models/flow_run.py，接口和用例分别位于 controllers/runs.py、services/runs.py。ExecutionIdentity 继承 AccessContext，只提供 Run 执行授权。Flow 不直接读写文件引用、渠道配置或模型调用表：模型选择/恢复、文件引用保留通过所属领域的内部服务完成，仍保持原事务、Worker 独占锁、受控 owner/slot 和取消授权规则。响应字段在 schemas/runs.py 明确列出。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
-ExecutionIdentity 只覆盖身份授权，共用 AccessContext 的事务、锁、失败审计及冲突转译；session_only 仍会拒绝执行身份。host.read_file 返回 bytes，要求调用方提供 max_bytes；host.upload 显式接收 content_type。UTF-8 解码、16 KiB 限制及相应业务错误留在测试夹具。Files 校验受控上传并原子保留引用，Flow 只传固定 owner/slot 和文件 ID；输出协调将 file_reference_invalid 转为 flow_invalid_output，不改公开错误契约。
+ExecutionIdentity 只覆盖身份授权，共用 AccessContext 的事务、锁、失败审计及冲突转译；session_only 仍会拒绝执行身份。host.read_file 返回 bytes，要求调用方提供 max_bytes；host.upload 显式接收 content_type。UTF-8 解码、16 KiB 限制及相应业务错误由具体流程负责，可复用示例位于 examples/document_review。Files 校验受控上传并原子保留引用，Flow 只传固定 owner/slot 和文件 ID；输出协调将 file_reference_invalid 转为 flow_invalid_output，不改公开错误契约。
 
 FlowModel 通过 ModelRuntime.invoke_sdk 传入固定模型选择、稳定调用 ID、FlowContext 和 SDK 回调，直接取得 Agent 响应对象，不再构造 model_key=internal 或占位文本。与普通/流式调用共用发送登记、授权、费用收尾及异常分类；Pydantic AI 包装后的 HTTP 402/429 保留相同的安全错误码和 failed 状态，未知结果仍禁止重发。
 

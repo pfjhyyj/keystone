@@ -20,6 +20,9 @@ from keystone.platform.flow.engine import Engine
         "upstream_model_not_found",
         "model_rate_limited",
         "execution_not_authorized",
+        "flow_invalid_output",
+        "flow_budget_exceeded",
+        "flow_timeout",
     ],
 )
 async def test_flow_preserves_safe_execution_errors(code):

@@ -12,6 +12,8 @@ ERRORS = {
     "flow_cancelled",
     "execution_version_unavailable",
     "flow_invalid_output",
+    "flow_budget_exceeded",
+    "flow_timeout",
     "model_result_unavailable",
     "model_not_found",
     "model_disabled",
