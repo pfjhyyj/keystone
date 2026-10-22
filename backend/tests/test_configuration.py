@@ -79,6 +79,24 @@ def test_backend_dotenv_is_no_longer_loaded(tmp_path, monkeypatch):
     assert Settings().port == 8000
 
 
+def test_file_capacity_defaults_preserve_platform_configuration():
+    settings = Settings(config_file=None)
+    assert settings.file_min_free_bytes == 1024**3
+    assert settings.file_max_bytes == 16 * 1024**2
+    assert settings.browser_origins == [
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:8080",
+        "http://localhost:8080",
+    ]
+
+
+@pytest.mark.parametrize("floor", [-1, 1024**4 + 1])
+def test_invalid_file_capacity_floor_is_rejected(floor):
+    with pytest.raises(ValidationError):
+        Settings(config_file=None, file_min_free_bytes=floor)
+
+
 def test_example_is_complete_and_uses_config_directory(monkeypatch, tmp_path):
     example = Path(__file__).parents[1] / "keystone.toml.example"
     monkeypatch.chdir(tmp_path)

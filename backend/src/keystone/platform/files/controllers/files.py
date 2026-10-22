@@ -49,7 +49,7 @@ async def detail(identifier: UUID, request: Request):
 
 @router.api_route("/{identifier}/content", methods=["GET", "HEAD"])
 async def content(identifier: UUID, request: Request):
-    return ContentResponse(_service(request).open_content(identifier), request)
+    return ContentResponse(_service(request).open_content(identifier, wait_for_slot=True), request)
 
 
 @router.patch("/{identifier}")

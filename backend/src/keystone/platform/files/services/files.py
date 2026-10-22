@@ -106,7 +106,11 @@ class FileService:
             raise ValueError("Invalid reference key")
         reference = (owner, slot) if owner is not None else None
         async with self.storage.transfers.stage(
-            chunks, data.expected_size, data.checksum_sha256, _slot=_transfer_slot
+            chunks,
+            data.expected_size,
+            data.checksum_sha256,
+            _slot=_transfer_slot,
+            destination=self.storage.get(data.storage_key).root / "files",
         ) as staged:
             return await self._upload_content(data, staged, reference=reference)
 
@@ -356,42 +360,51 @@ class FileService:
                 return file.name, content
 
     @asynccontextmanager
-    async def open_content(self, identifier, *, _transfer_slot=None, max_bytes=None):
+    async def open_content(
+        self, identifier, *, _transfer_slot=None, max_bytes=None, wait_for_slot=False
+    ):
         """Hold the object lease until transport/Worker closes the reader; no DB I/O lock."""
         async with self.identity.access("file:content_read") as (session, auth):
             await policy.require(session, auth, await session.get(File, identifier), "content_read")
-        slot = self.storage.transfers.slot() if _transfer_slot is None else nullcontext()
-        with slot, self.storage.lease(identifier, shared=True):
-            async with self.identity.access("file:content_read") as (session, auth):
-                file = await session.get(File, identifier)
-                await policy.require(session, auth, file, "content_read")
-                source = self.storage.get(file.storage_key)
-                metadata = file.name, file.content_type, file.size_bytes, file.checksum_sha256
-                fingerprint, key = file.storage_fingerprint, file.object_key
-                if max_bytes is not None and file.size_bytes > max_bytes:
-                    raise ServiceError(413, "file_too_large", "文件超过读取上限")
-
-            cancelled = Event()
-
-            def acquire():
-                if source.config.driver == "filesystem":
-                    return source.open_local(fingerprint, key, metadata[2], metadata[3], cancelled)
-                # Preserve the existing bounded S3 path; cloud streaming is stage 0B.
-                from io import BytesIO
-
-                if metadata[2] > 64 * 1024 * 1024:
-                    raise ServiceError(413, "file_too_large", "此存储源保留 64 MiB 读取限制")
-                body = source.read(fingerprint, key, metadata[2])
-                if hashlib.sha256(body).hexdigest() != metadata[3]:
-                    raise ServiceError(503, "file_corrupt", "文件内容校验失败")
-                return BytesIO(body)
-
-            async with opened(acquire, on_cancel=cancelled.set) as stream:
+        slot = (
+            self.storage.transfers.read_slot(timeout=3 if wait_for_slot else 0)
+            if _transfer_slot is None
+            else nullcontext()
+        )
+        async with slot:
+            with self.storage.lease(identifier, shared=True):
                 async with self.identity.access("file:content_read") as (session, auth):
-                    await policy.require(
-                        session, auth, await session.get(File, identifier), "content_read"
-                    )
-                yield ContentReader(*metadata, stream)
+                    file = await session.get(File, identifier)
+                    await policy.require(session, auth, file, "content_read")
+                    source = self.storage.get(file.storage_key)
+                    metadata = file.name, file.content_type, file.size_bytes, file.checksum_sha256
+                    fingerprint, key = file.storage_fingerprint, file.object_key
+                    if max_bytes is not None and file.size_bytes > max_bytes:
+                        raise ServiceError(413, "file_too_large", "文件超过读取上限")
+
+                cancelled = Event()
+
+                def acquire():
+                    if source.config.driver == "filesystem":
+                        return source.open_local(
+                            fingerprint, key, metadata[2], metadata[3], cancelled
+                        )
+                    # Preserve the existing bounded S3 path; cloud streaming is stage 0B.
+                    from io import BytesIO
+
+                    if metadata[2] > 64 * 1024 * 1024:
+                        raise ServiceError(413, "file_too_large", "此存储源保留 64 MiB 读取限制")
+                    body = source.read(fingerprint, key, metadata[2])
+                    if hashlib.sha256(body).hexdigest() != metadata[3]:
+                        raise ServiceError(503, "file_corrupt", "文件内容校验失败")
+                    return BytesIO(body)
+
+                async with opened(acquire, on_cancel=cancelled.set) as stream:
+                    async with self.identity.access("file:content_read") as (session, auth):
+                        await policy.require(
+                            session, auth, await session.get(File, identifier), "content_read"
+                        )
+                    yield ContentReader(*metadata, stream)
 
     async def edit(self, identifier, data):
         async with self.identity.access(

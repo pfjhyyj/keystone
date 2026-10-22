@@ -6,34 +6,14 @@ import json
 import os
 import re
 from collections import OrderedDict
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager, nullcontext
 
 import opendal
 
+from keystone.core.asyncio import blocking as blocking
 from keystone.core.errors import ServiceError
 from keystone.core.storage_config import StorageConfig
 from keystone.platform.files import leases
-
-
-async def blocking(function, *args, on_cancel=None):
-    # Cancellation must not release the coordination lock while native I/O still runs.
-    task = asyncio.create_task(asyncio.to_thread(function, *args))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        if on_cancel is not None:
-            on_cancel()
-        while not task.done():
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                # Native cleanup/abort errors must not replace the caller's cancellation.
-                pass
-        if not task.cancelled():
-            task.exception()
-        raise
 
 
 @asynccontextmanager
@@ -59,6 +39,7 @@ class Storage:
         self.root = self.config.root
         self.volume = leases.LocalLeases(self.root)
         self._verified = OrderedDict()
+        self.capacity = None
 
     def fingerprint(self):
         if self.config.driver == "filesystem":
@@ -106,38 +87,66 @@ class Storage:
 
     def write(self, fingerprint, key, data):
         try:
-            from keystone.platform.files.transfers import CHUNK_BYTES, StagedUpload
+            from keystone.platform.files.transfers import StagedUpload
 
             op = self.operator(fingerprint, key)
-            if isinstance(data, StagedUpload):
-                if self.config.driver != "filesystem":
-                    raise leases.unavailable()
-                # Only uploading/failed objects can reach here, under their file lease.
-                # A failed partial write stays unreadable and uses existing cleanup/retry.
-                checksum, size = hashlib.sha256(), 0
-                with data.path.open("rb") as source, (self.root / key).open("wb") as target:
-                    while chunk := source.read(CHUNK_BYTES):
-                        if data.cancelled.is_set():
-                            raise leases.unavailable()
-                        size += len(chunk)
-                        if size > data.size:
-                            raise leases.unavailable()
-                        target.write(chunk)
-                        checksum.update(chunk)
-                    target.flush()
-                    os.fsync(target.fileno())
-                if (
-                    size != data.size
-                    or checksum.hexdigest() != data.checksum
-                    or (self.root / key).stat().st_size != size
-                ):
-                    raise leases.unavailable()
+            if self.config.driver == "filesystem" and self.capacity is not None:
+                self._write_local(key, data)
                 return
+            if isinstance(data, StagedUpload):
+                raise leases.unavailable()
             op.write(key, data)
             if op.stat(key).content_length != len(data):
                 raise leases.unavailable()
+        except ServiceError:
+            raise
+        except OSError as error:
+            from keystone.platform.files.capacity import io_error
+
+            raise io_error(error) from None
         except Exception:
             raise leases.unavailable() from None
+
+    def _write_local(self, key, data):
+        from keystone.platform.files.transfers import CHUNK_BYTES, StagedUpload
+
+        staged = isinstance(data, StagedUpload)
+        existing = data.capacity if staged else None
+        # Streamed uploads already reserved both copies before reading the body.
+        # Small in-memory/internal uploads reserve their destination before opening it.
+        with ExitStack() as stack:
+            allocation = stack.enter_context(
+                nullcontext(existing)
+                if existing is not None
+                else self.capacity.reserve([(self.root / "files", len(data))])
+            )
+            if staged:
+                source = stack.enter_context(data.path.open("rb"))
+                chunks = iter(lambda: source.read(CHUNK_BYTES), b"")
+            else:
+                content = memoryview(data)
+                chunks = (
+                    content[offset : offset + CHUNK_BYTES]
+                    for offset in range(0, len(content), CHUNK_BYTES)
+                )
+            checksum, size = hashlib.sha256(), 0
+            target = stack.enter_context((self.root / key).open("wb"))
+            for chunk in chunks:
+                if staged and data.cancelled.is_set():
+                    raise leases.unavailable()
+                size += len(chunk)
+                if size > len(data):
+                    raise leases.unavailable()
+                allocation.write(target, chunk)
+                checksum.update(chunk)
+            target.flush()
+            os.fsync(target.fileno())
+            if (
+                size != len(data)
+                or (self.root / key).stat().st_size != size
+                or (staged and checksum.hexdigest() != data.checksum)
+            ):
+                raise leases.unavailable()
 
     def open_local(self, fingerprint, key, expected_size, checksum, cancelled=None):
         """Return a verified local reader. Cache only unchanged filesystem identities.
@@ -218,6 +227,8 @@ class StorageRegistry:
         from keystone.platform.files.transfers import Transfers
 
         self.transfers = Transfers(self.coordination, settings)
+        for source in self.sources.values():
+            source.capacity = self.transfers.capacity
 
     def get(self, key=None):
         storage = self.sources.get(key if key is not None else self.default_key)

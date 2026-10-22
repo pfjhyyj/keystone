@@ -121,11 +121,12 @@ async def materialize_file(run_id, identifier):
                 UUID(identifier), _transfer_slot=number, max_bytes=transfers.limit
             ) as reader,
         ):
-            async with transfers.temporary(reader.size, _slot=number) as path:
+            async with transfers.workspace(reader.size, _slot=number) as workspace:
+                path = workspace.path
                 digest = hashlib.sha256()
                 async with opened(path.open, "xb") as target:
                     async for chunk in reader.chunks():
-                        await blocking(target.write, chunk)
+                        await blocking(workspace.capacity.write, target, chunk)
                         digest.update(chunk)
                 if digest.hexdigest() != reader.checksum:
                     raise ServiceError(503, "file_corrupt", "文件内容校验失败")

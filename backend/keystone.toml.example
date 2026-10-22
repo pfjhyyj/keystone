@@ -25,6 +25,8 @@ file_max_bytes = 16777216
 file_transfer_slots = 4
 # Shared API/Worker scratch budget: each slot gets an equal share (here 16 GiB).
 file_temp_bytes = 68719476736
+# Per-filesystem free-space floor, shared by API and all Workers (1 GiB).
+file_min_free_bytes = 1073741824
 file_upload_timeout_seconds = 3600
 flow_worker_concurrency = 2
 

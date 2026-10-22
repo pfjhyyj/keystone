@@ -43,6 +43,7 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 | `file_max_bytes` | `KEYSTONE_FILE_MAX_BYTES` | 默认 16 MiB；本地可配置到 1 TiB，同时受临时配额和代理限制；S3 保留 64 MiB 上限 |
 | `file_transfer_slots` | `KEYSTONE_FILE_TRANSFER_SLOTS` | 默认 4，范围 1–32；API/Worker 共用本地传输与临时文件槽位 |
 | `file_temp_bytes` | `KEYSTONE_FILE_TEMP_BYTES` | 默认 64 GiB；每槽临时文件上限为总额除以槽数，同时不能超过 file_max_bytes |
+| `file_min_free_bytes` | `KEYSTONE_FILE_MIN_FREE_BYTES` | 默认 1 GiB，范围 0–1 TiB；协调卷、临时卷及本地正式存储各自保留的最低可用空间 |
 | `file_upload_timeout_seconds` | `KEYSTONE_FILE_UPLOAD_TIMEOUT_SECONDS` | 默认 3600 秒，范围 1–86400；包含 API 槽位排队、上传接收与确认的总期限 |
 | `flow_worker_concurrency` | `KEYSTONE_FLOW_WORKER_CONCURRENCY` | 默认 2，范围 1–16；单 Worker 的持久队列并发 |
 | `flow_enabled` | `KEYSTONE_FLOW_ENABLED` | `true`，API 与 Worker 保持一致 |
@@ -52,9 +53,11 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 
 后端镜像默认监听 `0.0.0.0:8000`，配置在运行时挂载，真实 `keystone.toml` 不进入构建上下文，详见[打包与发布](deployment.md)。
 
-本地媒体可从 `file_max_bytes = 17179869184`（16 GiB）、4 个槽位、64 GiB 临时预算开始配置。这个预算限制 `.transfers` 工作副本，不包含正式文件容量；上传确认期间还需正式存储的一份空间。临时副本在整个上下文中占槽，处理期间再上传文件会占第二个槽，因此应按业务并发留出余量，满载会明确返回 `503 file_transfer_busy`。磁盘预检不足返回 `507 file_temporary_full`，每槽配额不足返回 `413 file_temporary_limit`。
+本地媒体可从 `file_max_bytes = 17179869184`（16 GiB）、4 个槽位、64 GiB 临时预算开始配置。这个预算限制 `.transfers` 工作副本，不包含正式文件容量；流式上传在读取正文前同时预留临时副本和正式副本，同盘累计、异盘分别检查，并为协调卷保留最低可用空间。预留由共享本地目录中的 OS 锁协调，不按 PID 或超时猜测进程存活；已写入并刷新的顺序写入会扣减预留，外部工具写入则在上下文结束前保留完整预留，并监测空间和产物大小。进程崩溃后的预留及临时残留仅在对应锁已释放时回收。
 
-API/Worker 必须保持相同协调目录、槽位数、临时预算和大小限制；调整槽位前停止全部旧进程，再清理已退出进程遗留的 `.transfers` 普通临时文件。不要清理 `.locks` 或受管 `files`。字节可放 filesystem/NAS，协调目录仍须是同宿主可靠本地卷。当前 Nginx 文件路由为 16 GiB 上限、3600 秒上游期限，关闭请求/响应完整缓存；放大文件和时间限制时同时调整代理。上限是配置边界，实际 NAS 吞吐及容量须部署时实测。
+临时副本在整个上下文中占槽，处理期间再上传文件会占第二个槽，因此应按业务并发留出余量。普通上传和 Worker 默认满载返回 `503 file_transfer_busy`；HTTP 文件内容读取最多等待 3 秒，取得槽位后重新校验当前身份、文件状态及授权，客户端断开会取消等待。空间不足或系统报告磁盘/配额已满返回 `507 file_capacity_full`，容量账本不可用返回 `503 file_capacity_unavailable`，容量锁等待超过 5 秒返回 `503 file_capacity_busy`；每槽配额不足返回 `413 file_temporary_limit`。预留只协调本平台进程，不能阻止其他程序占用磁盘，也不为远端 S3 容量作保证。
+
+API/Worker 必须保持相同协调目录、槽位数、临时预算、磁盘保底和大小限制；升级或调整配置前停止全部旧进程，不允许不支持容量预留的旧进程混跑。不要手动清理 `.capacity`、`.locks` 或受管 `files`。字节可放 filesystem/NAS，协调目录仍须是同宿主可靠本地卷。当前 Nginx 文件路由为 16 GiB 上限、3600 秒上游期限，关闭请求/响应完整缓存；放大文件和时间限制时同时调整代理。上限是配置边界，实际 NAS 吞吐及容量须部署时实测。
 
 ## 3. 配置变更
 

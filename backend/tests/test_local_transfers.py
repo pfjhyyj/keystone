@@ -112,6 +112,29 @@ async def test_cancel_releases_scratch_and_slot(tmp_path):
             stack.enter_context(storage.transfers.slot())
 
 
+async def test_read_slot_wait_is_bounded_and_cancellable(tmp_path):
+    storage = registry(tmp_path, file_transfer_slots=1)
+    with storage.transfers.slot():
+        with pytest.raises(ServiceError) as busy:
+            async with storage.transfers.read_slot(timeout=0.05):
+                pytest.fail("Read exceeded the shared capacity")
+        assert busy.value.code == "file_transfer_busy"
+        entered = asyncio.Event()
+
+        async def waiting():
+            entered.set()
+            async with storage.transfers.read_slot(timeout=3):
+                pytest.fail("Cancelled reader acquired a slot")
+
+        task = asyncio.create_task(waiting())
+        await entered.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    with storage.transfers.slot():
+        pass
+
+
 async def test_cancel_during_open_waits_and_closes_handle(tmp_path):
     entered, release = Event(), Event()
     handles = []
