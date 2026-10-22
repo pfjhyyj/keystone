@@ -85,6 +85,7 @@ async def test_empty_database_migration_and_transaction_rollback(empty_database_
                 "model_invocations",
                 "flow_runs",
                 "worker_heartbeats",
+                "worker_registrations",
             }
         with pytest.raises(RuntimeError, match="rollback-test"):
             async with runtime.database.transaction() as session:
@@ -174,9 +175,76 @@ def test_initial_schema_is_complete_reversible_and_preserves_dbos(empty_database
             assert set(inspect(engine).get_table_names(schema="keystone")) == expected
         command.upgrade(config, "head")
         assert set(inspect(engine).get_table_names(schema="keystone")) == tables | {
-            "alembic_version"
+            "alembic_version",
+            "worker_registrations",
         }
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 42
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.postgres
+def test_cost_migration_preserves_known_and_unknown_without_borrowing_current_key(
+    empty_database_url,
+):
+    config = migration_config(Settings(config_file=None, database_url=empty_database_url))
+    config.attributes["create_schema"] = True
+    engine = create_engine(empty_database_url)
+    try:
+        command.upgrade(config, "core")
+        with engine.begin() as connection:
+            connection.execute(
+                text("""
+                INSERT INTO keystone.model_channels
+                  (id,name,provider,api_base,api_key_encrypted,is_active,balance_check_status)
+                VALUES ('00000000-0000-4000-8000-000000000001', 'original', 'openrouter',
+                        'https://openrouter.ai/api/v1', 'opaque-current-key', true, 'never')
+            """)
+            )
+            connection.execute(
+                text("""
+                INSERT INTO keystone.model_entries (id,key,channel_id,provider_model,is_active)
+                VALUES ('00000000-0000-4000-8000-000000000002', 'chat',
+                        '00000000-0000-4000-8000-000000000001', 'original-model', true)
+            """)
+            )
+            for index, cost in enumerate(["0.002656", None], 3):
+                connection.execute(
+                    text("""
+                    INSERT INTO keystone.model_invocations
+                      (id,model_entry_id,channel_id,provider_model,upstream_request_id,status,
+                       finished_at,cost_amount,cost_unit,cost_source,error_code)
+                    VALUES (:id,'00000000-0000-4000-8000-000000000002',
+                            '00000000-0000-4000-8000-000000000001','original-model',
+                            'original-request','unknown', now(), :cost, :unit, :source,
+                            'model_interrupted')
+                """),
+                    {
+                        "id": f"00000000-0000-4000-8000-{index:012d}",
+                        "cost": cost,
+                        "unit": "credits" if cost else None,
+                        "source": "query" if cost else "unknown",
+                    },
+                )
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text("""
+                SELECT cost_amount,cost_source,status,error_code,cost_check_status,
+                       cost_check_reason,cost_context,cost_next_check_at
+                FROM keystone.model_invocations ORDER BY id
+            """)
+            ).all()
+            assert str(rows[0].cost_amount) == "0.002656000000000000"
+            assert rows[0].cost_source == "query" and rows[0].cost_check_status == "confirmed"
+            assert rows[1].cost_amount is None and rows[1].cost_check_status == "unavailable"
+            assert rows[1].cost_check_reason == "legacy_scope_unknown"
+            for row in rows:
+                assert row.status == "unknown" and row.error_code == "model_interrupted"
+                assert row.cost_context is None and row.cost_next_check_at is None
+        command.downgrade(config, "core")
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT count(*) FROM keystone.model_invocations")) == 2
     finally:
         engine.dispose()

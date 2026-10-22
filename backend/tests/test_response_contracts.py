@@ -38,7 +38,9 @@ CASES = [
         invocation_view,
         """id user_id flow_context model_entry_id channel_id provider_model
                         upstream_request_id status finished_at usage cost_amount cost_unit
-                        cost_source cost_note error_code created_at updated_at""",
+                        cost_source cost_note cost_check_status cost_check_reason
+                        cost_check_rounds cost_check_errors cost_checked_at cost_next_check_at
+                        cost_deadline_at error_code created_at updated_at""",
     ),
     (
         run_view,
@@ -63,7 +65,14 @@ class Row(SimpleNamespace):
 @pytest.mark.parametrize("project,contract", CASES, ids=[p.__module__ for p, _ in CASES])
 def test_projection_ignores_new_internal_fields(project, contract):
     expected = set(contract.split())
-    row = Row(**dict.fromkeys(expected), future_secret="never return this")
+    row = Row(
+        **dict.fromkeys(expected),
+        future_secret="never return this",
+        cost_context={"scope": "internal"},
+        cost_evidence={"request_id": "internal"},
+        cost_checkpoint={"page": 2},
+        receipt_ids={"body_id": "internal"},
+    )
     result = project(row)
     assert set(result) == expected
     assert "future_secret" not in result

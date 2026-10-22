@@ -31,10 +31,12 @@ def configuration(empty_database_url, tmp_path):
     )
 
 
+@pytest.mark.parametrize("flow_enabled", [False, True])
 def test_init_prepares_all_dependencies_and_preserves_existing_accounts(
-    empty_database_url, tmp_path
+    empty_database_url, tmp_path, flow_enabled
 ):
     settings = configuration(empty_database_url, tmp_path)
+    settings.flow_enabled = flow_enabled
     initialize(settings, non_interactive=True)
     marker = (tmp_path / ".keystone-storage").read_bytes()
     # Changing/removing the bootstrap password must never reset an existing account.
@@ -79,7 +81,7 @@ def test_init_prepares_all_dependencies_and_preserves_existing_accounts(
                 )
                 assert (
                     await session.scalar(text("SELECT version_num FROM keystone.alembic_version"))
-                    == "core"
+                    == "worker_registration"
                 )
         finally:
             await database.close()

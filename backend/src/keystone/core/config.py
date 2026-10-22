@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -32,6 +33,14 @@ class Settings(BaseSettings):
     file_min_free_bytes: int = Field(default=1024**3, ge=0, le=1024**4)
     file_upload_timeout_seconds: int = Field(default=3600, ge=1, le=86400)
     flow_worker_concurrency: int = Field(default=2, ge=1, le=16)
+    flow_global_concurrency: int = Field(default=4, ge=1, le=64)
+    worker_id: str = "keystone-worker"
+    # Compatibility input for the one-time registration migration, never runtime admission.
+    worker_ids: list[str] | None = Field(default=None, exclude=True)
+    worker_shutdown_seconds: int = Field(default=10, ge=1, le=600)
+    model_cost_concurrency: int = Field(default=2, ge=1, le=8)
+    model_inference_concurrency: int = Field(default=4, ge=1, le=32)
+    model_scope_concurrency: int = Field(default=4, ge=1, le=16)
     initial_admin_password: SecretStr | None = Field(default=None, repr=False)
     flow_enabled: bool = True
     session_hours: int = Field(default=8, ge=1, le=168)
@@ -81,6 +90,24 @@ class Settings(BaseSettings):
                 for key, source in sources.items()
             }
         return values
+
+    @model_validator(mode="after")
+    def valid_workers(self):
+        if (
+            not re.fullmatch(r"[a-z][a-z0-9_-]{2,63}", self.worker_id)
+            or self.worker_ids is not None
+            and (
+                not 1 <= len(self.worker_ids) <= 4
+                or len(set(self.worker_ids)) != len(self.worker_ids)
+                or any(not re.fullmatch(r"[a-z][a-z0-9_-]{2,63}", v) for v in self.worker_ids)
+            )
+            or self.flow_worker_concurrency > self.flow_global_concurrency
+            or self.model_scope_concurrency > self.model_inference_concurrency
+        ):
+            raise ValueError(
+                "Configure a valid fixed worker identity and shared concurrency limits"
+            )
+        return self
 
     @model_validator(mode="after")
     def valid_storage_sources(self):

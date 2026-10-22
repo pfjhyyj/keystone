@@ -16,6 +16,7 @@ def migration_config(settings: Settings) -> Config:
             "Migration files missing; deploy the backend with its migrations directory"
         )
     config = Config()
+    config.attributes["legacy_worker_ids"] = settings.worker_ids or []
     config.set_main_option("script_location", str(directory.resolve()).replace("%", "%%"))
     if settings.database_url:
         config.set_main_option(

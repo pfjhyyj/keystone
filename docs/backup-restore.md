@@ -51,7 +51,7 @@ docker compose -p keystone-recovery -f deploy/compose.yaml exec -T postgres \
     pg_restore -U keystone -d keystone --exit-on-error --single-transaction < "$BACKUP/database.dump"
 ```
 
-启动应用前修改恢复目录 `backend/keystone.toml` 的数据库 URL，指向新数据库端口 55433，并核对文件路径、原秘密与浏览器 Origin；使用原版本源码和锁文件，在本机按 [README](../README.md#本机启动linuxmacos) 分别启动 API、Worker、前端。先验证原版本，再按发布流程升级。
+启动应用前修改恢复目录 `backend/keystone.toml` 的数据库 URL，指向新数据库端口 55433，并核对文件路径、原秘密与浏览器 Origin；使用原版本源码和锁文件，在本机按 README 的 [Quickstart](../README.md#quickstart) 分别启动 API、Worker、前端。先验证原版本，再按发布流程升级。
 
 核对原文件与报告的字节和权限、认证和字典、模型原调用记录、Flow 原 ID 与 DBOS 步骤。只恢复数据库而使用新的文件卷标识会使原文件读取失败；恢复时必须保留原文件标识和锁文件。会话/PAT 也回到备份时点，上游模型费用或副作用不会随数据库回滚，未知调用不能自动重发。
 

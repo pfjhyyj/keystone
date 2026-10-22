@@ -340,7 +340,7 @@ it('uses the official address and no fake upstream model when configuring live m
   fakeApi((path) => (path === '/model-access/options' ? { providers: ['openrouter'] } : []))
   const wrapper = mount(ModelManager)
   await flushPromises()
-  expect(wrapper.text()).toContain('真实发送（仅 OpenRouter）')
+  expect(wrapper.text()).toContain('真实发送（OpenRouter、Openlux、Yunwu）')
   await button(wrapper, '新建渠道').trigger('click')
   await flushPromises()
   expect(selectControl(wrapper, '服务商').text()).not.toContain('DeepSeek')

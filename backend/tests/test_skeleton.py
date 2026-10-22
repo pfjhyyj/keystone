@@ -61,7 +61,9 @@ def test_liveness_does_not_imply_database_or_domain_readiness():
     assert live.status_code == 200
     assert ready.status_code == 503
     assert worker_state.status_code == 200
-    assert worker_state.json() == {"status": "unknown", "last_heartbeat_at": None}
+    assert worker_state.json()["status"] == "unknown"
+    assert worker_state.json()["last_heartbeat_at"] is None
+    assert worker_state.json()["instances"] == []
     assert ready.json()["checks"] == {
         "database": "unconfigured",
         "schema": "unavailable",
@@ -138,6 +140,11 @@ async def test_worker_stop_closes_database(monkeypatch):
             return {"status": "unavailable", "checks": {"database": "unconfigured"}}
 
     monkeypatch.setattr(worker, "build_runtime", lambda _: FakeRuntime())
+
+    async def executor(runtime, stop, *, ready, health):
+        await stop.wait()
+
+    monkeypatch.setattr(worker, "run_executor", executor)
     task = asyncio.create_task(worker.run(settings(flow_enabled=False), stopped))
     await asyncio.wait_for(entered.wait(), timeout=2)
     stopped.set()

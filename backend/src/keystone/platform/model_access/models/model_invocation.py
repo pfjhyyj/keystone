@@ -24,8 +24,26 @@ class ModelInvocation(Base):
         ),
         Index("ix_model_invocations_user_time", "user_id", "created_at", "id"),
         Index("ix_model_invocations_time", "created_at", "id"),
+        CheckConstraint(
+            "cost_check_status IN ('pending','confirmed','blocked','unavailable','exhausted')",
+            name="invocation_cost_check_status",
+        ),
+        CheckConstraint(
+            "cost_check_rounds >= 0 AND cost_check_errors >= 0", name="invocation_cost_counts"
+        ),
+        Index("ix_model_invocations_cost_due", "cost_check_status", "cost_next_check_at", "id"),
+        Index("ix_invocation_worker_running", "worker_id", "status"),
+        CheckConstraint(
+            "(worker_id IS NULL AND worker_instance_id IS NULL AND execution_version IS NULL) OR "
+            "(worker_id IS NOT NULL AND worker_instance_id IS NOT NULL "
+            "AND execution_version IS NOT NULL)",
+            name="invocation_worker_owner",
+        ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    worker_id: Mapped[str | None] = mapped_column(String(64))
+    worker_instance_id: Mapped[UUID | None] = mapped_column()
+    execution_version: Mapped[str | None] = mapped_column(String(64))
     user_id: Mapped[UUID | None] = mapped_column(ForeignKey("keystone.users.id"))
     flow_context: Mapped[dict | None] = mapped_column(JSONB)
     model_entry_id: Mapped[UUID] = mapped_column(ForeignKey("keystone.model_entries.id"))
@@ -40,5 +58,17 @@ class ModelInvocation(Base):
     cost_source: Mapped[str] = mapped_column(String(16), default="unknown")
     cost_note: Mapped[str | None] = mapped_column(String(100))
     error_code: Mapped[str | None] = mapped_column(String(64))
+    cost_check_status: Mapped[str] = mapped_column(
+        String(16), default="unavailable", server_default="unavailable"
+    )
+    cost_check_reason: Mapped[str | None] = mapped_column(String(64))
+    cost_check_rounds: Mapped[int] = mapped_column(default=0, server_default="0")
+    cost_check_errors: Mapped[int] = mapped_column(default=0, server_default="0")
+    cost_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cost_next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cost_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cost_context: Mapped[dict | None] = mapped_column(JSONB)
+    receipt_ids: Mapped[dict | None] = mapped_column(JSONB)
+    cost_evidence: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -3,14 +3,14 @@ from sqlalchemy import and_, false, or_, select
 from keystone.core.errors import ServiceError
 from keystone.platform.identity.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.gateway import SUPPORTED_TARGETS
+from keystone.platform.model_access.inference.client import SUPPORTED_TARGETS
 from keystone.platform.model_access.models import Channel, ModelEntry
 from keystone.platform.model_access.services.queries import locked
 
 
 class ModelEntryService:
-    def __init__(self, identity: AccessContext, gateway):
-        self.identity, self.gateway = identity, gateway
+    def __init__(self, identity: AccessContext, clients):
+        self.identity, self.clients = identity, clients
 
     async def catalog(self, offset, limit):
         return {

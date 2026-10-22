@@ -114,6 +114,16 @@ watch(form, (value) => {
     clearBilling.value = false
   }
 })
+watch(provider, (value) => {
+  if (form.value === 'channel' && !editingChannel.value) {
+    const bases: Record<string, string> = {
+      openrouter: 'https://openrouter.ai/api/v1',
+      openlux: 'https://api.openlux.ai/v1',
+      yunwu: 'https://yunwu.ai/v1',
+    }
+    apiBase.value = bases[value] ?? ''
+  }
+})
 onMounted(() => {
   if (can('model:manage')) void loadOptions()
 })
@@ -137,7 +147,7 @@ onMounted(() => {
         optionsError
       }}</el-alert>
       <div class="row-actions">
-        <span>真实发送（仅 OpenRouter）</span
+        <span>真实发送（OpenRouter、Openlux、Yunwu）</span
         ><el-button :disabled="busy" @click="run(loadOptions)" native-type="button" type="default"
           >刷新服务商</el-button
         >
@@ -375,9 +385,13 @@ onMounted(() => {
               maxlength="4096"
               :placeholder="editingChannel?.has_api_key ? '已设置，留空保留' : '请输入 API Key'"
           /></label>
-          <p>
+          <p v-if="provider === 'openrouter'">
             OpenRouter 地址固定为 https://openrouter.ai/api/v1。推理使用普通 API
             Key；可选的账户余额查询使用同一账户的 Management Key。
+          </p>
+          <p v-else-if="provider === 'openlux' || provider === 'yunwu'">
+            Openlux 地址为 https://api.openlux.ai/v1，Yunwu 地址为 https://yunwu.ai/v1。
+            费用自动使用原推理 Key 查询；更换 Token 或站点请新建渠道，保留旧渠道用于历史查费。
           </p>
           <label
             >账务 API Key<el-input
@@ -399,9 +413,7 @@ onMounted(() => {
               maxlength="128"
               :disabled="!!editingChannel?.upstream_account_ref"
           /></label>
-          <p>
-            密钥保存后不回显；编辑时留空保留原值，填写新值即可更新。已确定的账户标识不能更换，换账户须新建渠道。
-          </p>
+          <p>密钥保存后不回显；编辑时留空保留原值。已确定的账户标识不能更换，换账户须新建渠道。</p>
         </template>
         <template v-else
           ><label

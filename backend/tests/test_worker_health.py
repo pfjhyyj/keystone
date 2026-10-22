@@ -8,7 +8,6 @@ from keystone.core import worker_health
 from keystone.core.config import Settings
 from keystone.core.worker_health import WorkerHealth
 from keystone.entrypoints import worker
-from keystone.platform.flow import worker as flow_worker
 
 
 def test_liveness_and_readiness_are_separate_and_old_checks_expire(monkeypatch):
@@ -23,6 +22,27 @@ def test_liveness_and_readiness_are_separate_and_old_checks_expire(monkeypatch):
     assert health.observation() == "unready"
     health.checked(False)
     assert health.observation() == "unready"
+
+
+def test_process_readiness_does_not_require_personally_executing_shared_tasks(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(worker_health.time, "monotonic", lambda: now[0])
+    health = WorkerHealth(None)
+    health.require_task("files")
+    health.require_task("flow")
+    health.checked(True)
+    assert health.observation() == "ready"
+    health.checked_task("files", True)
+    health.checked_task("flow", True)
+    assert health.observation() == "ready"
+    now[0] += 31
+    health.checked(True)
+    health.checked_task("flow", True)
+    assert health.observation() == "ready"
+    health.checked_task("files", False)
+    assert health.observation() == "ready"
+    health.checked_task("files", True)
+    assert health.observation() == "ready"
 
 
 @pytest.mark.parametrize("status", ["ready", "unready", "offline", "unknown"])
@@ -67,8 +87,17 @@ def runtime(monkeypatch):
     monkeypatch.setattr(worker, "build_runtime", lambda _: result)
     monkeypatch.setattr(worker, "POLL_SECONDS", 0.01)
     monkeypatch.setattr(worker, "HEARTBEAT_SECONDS", 0.01)
-    monkeypatch.setattr(worker, "cleanup", AsyncMock())
     monkeypatch.setattr(worker, "register_workflows", lambda: None)
+
+    async def executor(runtime, stop, *, ready, health):
+        result.health = health
+        ready.set()
+        try:
+            await stop.wait()
+        finally:
+            ready.clear()
+
+    monkeypatch.setattr(worker, "run_executor", executor)
     return result
 
 
@@ -102,9 +131,10 @@ async def test_heartbeats_continue_while_starting_unready_and_recovering(tmp_pat
         assert runtime.observations[-1] == "unready"
         runtime.readiness.return_value = {"status": "ready", "checks": {"database": "ok"}}
         await wait_until(lambda: runtime.observations[-1] == "ready")
-        worker.cleanup.side_effect = RuntimeError("cleanup failed")
-        await wait_until(lambda: runtime.observations[-1] == "unready")
-        worker.cleanup.side_effect = None
+        runtime.health.require_task("files")
+        runtime.health.checked_task("files", False)
+        await wait_until(lambda: runtime.observations[-1] == "ready")
+        runtime.health.checked_task("files", True)
         await wait_until(lambda: runtime.observations[-1] == "ready")
     finally:
         release.set()
@@ -114,10 +144,11 @@ async def test_heartbeats_continue_while_starting_unready_and_recovering(tmp_pat
     runtime.database.close.assert_awaited_once()
 
 
-async def test_flow_readiness_and_failure_are_observed(monkeypatch, runtime):
+@pytest.mark.parametrize("flow_enabled", [False, True])
+async def test_executor_readiness_and_failure_are_observed(monkeypatch, runtime, flow_enabled):
     entered, initialized, failure, stop = (asyncio.Event() for _ in range(4))
 
-    async def fake_flow(runtime, stop, *, ready):
+    async def fake_executor(runtime, stop, *, ready, health):
         entered.set()
         try:
             await initialized.wait()
@@ -127,8 +158,10 @@ async def test_flow_readiness_and_failure_are_observed(monkeypatch, runtime):
         finally:
             ready.clear()
 
-    monkeypatch.setattr(flow_worker, "run", fake_flow)
-    task = asyncio.create_task(worker.run(Settings(config_file=None), stop))
+    monkeypatch.setattr(worker, "run_executor", fake_executor)
+    task = asyncio.create_task(
+        worker.run(Settings(config_file=None, flow_enabled=flow_enabled), stop)
+    )
     try:
         await entered.wait()
         await wait_until(lambda: len(runtime.observations) >= 2)
@@ -142,12 +175,12 @@ async def test_flow_readiness_and_failure_are_observed(monkeypatch, runtime):
             await asyncio.wait_for(task, 3)
     assert runtime.observations[-1] == "stopped"
     runtime.database.close.assert_awaited_once()
-    runtime.flow_engine.close.assert_awaited_once()
+    assert runtime.flow_engine.close.await_count == int(flow_enabled)
 
 
-async def test_slow_maintenance_keeps_heartbeat_but_loses_readiness(tmp_path, monkeypatch, runtime):
+async def test_stale_maintenance_does_not_restart_an_idle_process(tmp_path, monkeypatch, runtime):
     monkeypatch.setattr(worker_health, "MAX_AGE_SECONDS", 0.05)
-    stop, release = asyncio.Event(), asyncio.Event()
+    stop = asyncio.Event()
     settings = Settings(
         config_file=None,
         flow_enabled=False,
@@ -158,15 +191,13 @@ async def test_slow_maintenance_keeps_heartbeat_but_loses_readiness(tmp_path, mo
     try:
         await wait_until(lambda: "ready" in runtime.observations)
 
-        async def slow_cleanup(*args):
-            await release.wait()
-
-        worker.cleanup.side_effect = slow_cleanup
-        await wait_until(lambda: runtime.observations[-1] == "unready")
+        runtime.health.require_task("files")
+        runtime.health.checked_task("files", True)
+        await asyncio.sleep(0.06)
+        assert runtime.observations[-1] == "ready"
         count = len(runtime.observations)
         await wait_until(lambda: len(runtime.observations) >= count + 2)
     finally:
-        release.set()
         stop.set()
         await asyncio.wait_for(task, 3)
     assert runtime.observations[-1] == "stopped"
@@ -190,3 +221,15 @@ async def test_failed_heartbeat_write_retries_without_exposing_driver_details(mo
     assert attempts == ["ready", "ready"]
     assert "worker_heartbeat_failed" in caplog.text
     assert "hidden-heartbeat-secret" not in caplog.text
+
+
+async def test_stalled_identity_connection_stops_executor(monkeypatch, runtime):
+    async def stalled():
+        await asyncio.Event().wait()
+
+    runtime.worker_lease = stalled
+    monkeypatch.setattr(worker, "LEASE_CHECK_SECONDS", 0.02)
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(worker.run(Settings(config_file=None), asyncio.Event()), 1)
+    assert runtime.observations[-1] == "stopped"
+    runtime.database.close.assert_awaited_once()

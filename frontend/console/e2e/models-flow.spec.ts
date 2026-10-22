@@ -25,6 +25,8 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
       '服务商',
       { openrouter: 'OpenRouter', deepseek: 'DeepSeek', aliyun_bailian: '阿里云百炼' }[provider]!,
     )
+    // The backend fixture maps these simulated providers to this single mock target.
+    await dialog.getByLabel('服务地址', { exact: true }).fill('https://openrouter.ai/api/v1')
     await dialog.getByLabel('推理 API Key', { exact: true }).fill('fake-inference')
     await dialog.getByLabel('账务 API Key', { exact: true }).fill('fake-billing')
     await dialog.getByRole('button', { name: '保存渠道', exact: true }).click()

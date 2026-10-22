@@ -1,6 +1,6 @@
 # 开发与测试
 
-日常运行顺序见 [README](../README.md#本机启动linuxmacos)：Compose 启动 PostgreSQL，本机终端分别启动 API、Worker 和前端。数据库的默认值与 `backend/keystone.toml.example` 一致；平台初始化与服务启动均不要求模型凭据，渠道和模型由操作者之后手动配置。
+日常运行顺序见 README 的 [Quickstart](../README.md#quickstart)：Compose 启动 PostgreSQL，本机终端分别启动 API、Worker 和前端。数据库的默认值与 `backend/keystone.toml.example` 一致；平台初始化与服务启动均不要求模型凭据，渠道和模型由操作者之后手动配置。
 
 ## 开发配置
 
@@ -72,19 +72,26 @@ backend/.venv/bin/python scripts/check.py
 
 ## Worker 健康检查（排障）
 
-Worker 默认每 5 秒向现有 PostgreSQL 写入一次心跳，无需环境变量、文件探针或额外服务。启动中、依赖失败及维护未就绪时仍会上报；就绪需要依赖检查、文件维护循环及已启用的 Flow 执行器都正常。检查结果超过 30 秒没有更新会撤销就绪，心跳本身仍可继续，避免“进程在线”被误认为“任务处理正常”。
+Worker 每 5 秒向 PostgreSQL 上报心跳，启动、依赖失败和排空期间也继续报告。每个固定 worker_id 按登记所指向的当前 instance_id 展示状态，执行版本和公共配置须一致；默认运行一个实例。数据库时间判断心跳与维护检查是否超过 30 秒，旧实例迟到的退出不遮蔽新进程。
 
-控制台“平台状态”每 5 秒刷新 Worker 就绪状态和最近心跳时间。API 的 `GET /api/v1/worker/status` 返回 `ready`、`unready`、`offline` 或 `unknown`，以及 `last_heartbeat_at`。正常退出保留最后心跳并标记离线；异常退出超过 30 秒判为离线。数据库不可访问、迁移未完成或查询失败时返回无法确认，不猜测离线。时间戳与过期判断统一使用数据库时钟。
+API 按未退役身份登记计算预期数量并自动发现新 Worker，无需同步 worker_ids 或重启 API/已有 Worker。普通停止、心跳过期与历史观测清理不移除登记；永久缩容先停止目标进程，再执行 keystone retire-worker --worker-id ID。退役拒绝仍在运行或有待恢复工作的身份；恢复退役身份须先执行 reactivate-worker。同身份互斥、故障恢复与操作步骤见[部署说明](deployment.md#44-固定槽位调整与故障恢复)。
 
-API 的 `/api/v1/ready` 继续只检查自身数据库、迁移版本和存储；Worker 状态不会影响该接口或登录。API/Worker 使用同一个数据库，API 查询所有实例中仍有新鲜心跳的 Worker；旧实例停止上报或退出不会覆盖新实例。该机制只提供运行观测，不替代 Flow 的单 Worker 执行约束、权限检查或工作流恢复机制。
+进程健康与共享维护分开：进程检查依赖、DBOS 和队列；共享维护聚合实际执行过的文件清理、Flow 协调及费用扫描结果。任一同版本实例成功扫描即可更新共享结果，空闲实例不因未亲自扫描误报。普通心跳不能刷新陈旧的任务结果，依赖检查也不能掩盖共享维护故障。供应商待出账、限流或 Token 失效保留为费用状态，不等同 Worker 故障。
 
-需要命令行探针时，从 `backend/` 执行：
+GET /api/v1/worker/status 返回总体 status、last_heartbeat_at、instances、maintenance、ready_workers 和 expected_workers，控制台每 5 秒刷新并分开展示。未退役身份缺失、不同版本、过期或未就绪时，不能被另一个 ready 实例掩盖；退役身份单独展示且不计入预期数量，没有登记成员时总体为 offline。API /api/v1/ready 只检查自身数据库、schema 与存储，不受 Worker 观测影响。
+
+从 backend/ 执行，探针与运行 Worker 使用同一身份环境；以下为 Linux/macOS 示例：
 
 ```bash
-uv run --locked keystone-worker --check
+KEYSTONE_WORKER_ID=keystone-worker uv run --locked keystone-worker --check
+uv run --locked keystone-worker --inspect
 ```
 
-探针只查询当前主机的最近心跳，不启动执行器、创建记录或刷新心跳；就绪时退出 0，其余状态退出 1。记录按进程实例区分，正常退出保留最近时间，Worker 上报时清理超过 24 小时的旧记录。心跳表是运行观测数据，不作为业务或任务完成依据；从备份恢复的旧记录也必须通过新鲜度检查。
+--check 只查询当前主机的指定身份，不启动执行器或刷新心跳；进程就绪退出 0，其余退出 1。共享维护异常单独告警，不能据此重启所有正常进程。--inspect 额外列出有界的 DBOS 活动队列/身份/版本/状态计数，不读取输入输出、不启动执行器；unknown 或 truncated 时不能据此认定队列已排空。
+
+三类扫描仍使用独立串行维护队列，费用 HTTP 使用独立查询队列。排障检查 file_cleanup_failed、flow_reconcile_failed、flow_sync_deferred、cost_scan_failed、cost_reconcile_failed，以及 worker_failed 的安全错误码。worker_deployment_conflict 表示主机、版本或公共配置冲突；不要随机更换身份绕过。共享维护扫描停止时查看 DBOS 的 PENDING，故障/旧版本记录可能占住全局容量；先按原身份/版本恢复或走[停机发布核对](deployment.md#4-多-worker-部署与发布)，不删 DBOS 历史。
+
+SIGINT/SIGTERM 触发 draining，停止领取后按 worker_shutdown_seconds 有限等待，再关闭并报告 stopped。超时仍需保留原槽位恢复路径；心跳过期不是外部请求停止证明。只清理超过 24 小时的 stopped 观测，未处理故障记录继续保留。历史无归属 Flow 调用需要明确停机确认的专项入口，不允许新 Worker 启动时全局收尾；命令及首次迁移顺序见部署文档。
 
 
 ## 本地媒体专项验收

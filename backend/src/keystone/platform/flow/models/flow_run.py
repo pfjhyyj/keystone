@@ -24,6 +24,7 @@ class FlowRun(Base):
         CheckConstraint("(status = 'succeeded') = (result IS NOT NULL)", name="flow_result"),
         Index("ix_flow_scan", "status", "observed_at", "id"),
         Index("ix_flow_owner", "actor_id", "created_at", "id"),
+        Index("ix_flow_reconcile_attempt", "status", "reconcile_attempted_at", "id"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     definition_key: Mapped[str] = mapped_column(String(100))
@@ -43,3 +44,4 @@ class FlowRun(Base):
     cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reconcile_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

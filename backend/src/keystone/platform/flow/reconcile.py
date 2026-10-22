@@ -2,7 +2,7 @@ import asyncio
 import logging
 
 from jsonschema import Draft202012Validator, FormatChecker
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from keystone.core.errors import ServiceError
 from keystone.core.logging import safe_exception
@@ -117,12 +117,22 @@ async def reconcile_one(runtime, engine, identifier):
 
 
 async def reconcile(runtime, engine, cursor=None):
-    # Keyset cursor prevents old-version runs starving later rows, without extra fields.
+    # Fairness belongs to the domain, independent of which Worker receives this pass.
     async with runtime.database.transaction() as session:
-        query = select(FlowRun.id).where(FlowRun.status.not_in(TERMINAL))
-        if cursor:
-            query = query.where(FlowRun.id > cursor)
-        ids = list(await session.scalars(query.order_by(FlowRun.id).limit(25)))
+        rows = list(
+            await session.scalars(
+                select(FlowRun)
+                .where(FlowRun.status.not_in(TERMINAL))
+                .order_by(
+                    func.coalesce(FlowRun.reconcile_attempted_at, FlowRun.created_at), FlowRun.id
+                )
+                .limit(25)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        ids = [row.id for row in rows]
+        for row in rows:
+            row.reconcile_attempted_at = utcnow()
     for identifier in ids:
         try:
             async with asyncio.timeout(15):

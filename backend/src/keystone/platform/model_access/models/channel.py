@@ -12,7 +12,8 @@ class Channel(Base):
     __tablename__ = "model_channels"
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('deepseek','openrouter','aliyun_bailian')", name="channel_provider"
+            "provider IN ('deepseek','openrouter','aliyun_bailian','openlux','yunwu')",
+            name="channel_provider",
         ),
         CheckConstraint(
             "balance_check_status IN ('never','ok','error','unavailable')",
@@ -31,6 +32,11 @@ class Channel(Base):
     balance_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     balance_last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     balance_check_status: Mapped[str] = mapped_column(String(16), default="never")
+    cost_scope: Mapped[str | None] = mapped_column(String(64), index=True)
+    cost_context: Mapped[dict | None] = mapped_column(JSONB)
+    cost_checkpoint: Mapped[dict | None] = mapped_column(JSONB)
+    cost_block_reason: Mapped[str | None] = mapped_column(String(64))
+    cost_next_allowed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_by: Mapped[UUID | None]
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

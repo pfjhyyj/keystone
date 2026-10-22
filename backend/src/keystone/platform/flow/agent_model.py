@@ -51,6 +51,7 @@ class FlowModel(Model):
                 agent_call_id=UUID(self.deps["agent_call_id"]),
             ),
             sdk_request=request,
+            worker_identity=host.runtime().worker_identity,
         )
 
 

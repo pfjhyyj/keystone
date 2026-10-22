@@ -1,5 +1,7 @@
 """Write-only channel credentials, encrypted with a key in the shared coordination volume."""
 
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -71,4 +73,13 @@ class ChannelCredentials:
                 raise ValueError("Invalid credential binding")
             return payload["value"]
         except (OSError, ValueError, TypeError, KeyError, InvalidToken, ServiceError):
+            raise unavailable() from None
+
+    def scope(self, origin, secret):
+        """Keyed opaque identity: duplicate Channels share a scope without exposing keys."""
+        try:
+            self.cipher()  # Verify the initialized volume and key before reading it.
+            key = (self.root / KEY_FILE).read_bytes()
+            return hmac.new(key, (origin + "\0" + secret).encode(), hashlib.sha256).hexdigest()
+        except (OSError, ValueError, TypeError, ServiceError):
             raise unavailable() from None

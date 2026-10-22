@@ -8,7 +8,7 @@ from uuid import UUID
 
 import pytest
 from dbos import DBOS
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
 from test_identity import assign, bearer, create_user, login, query, role, token
@@ -18,6 +18,7 @@ from keystone.core.errors import ServiceError
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.files.models import FileReference
+from keystone.platform.flow.catalog import execution_version
 from keystone.platform.flow.engine import Engine
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.reconcile import reconcile_one
@@ -55,7 +56,7 @@ def start(client, file_id, key="review", **overrides):
 
 
 @contextmanager
-def worker(client, tmp_path, *, code=None, stub=True):
+def worker(client, tmp_path, *, code=None, stub=True, worker_id=None):
     settings = client.app.state.runtime.settings
     env = {
         **{
@@ -63,13 +64,33 @@ def worker(client, tmp_path, *, code=None, stub=True):
             for key, value in os.environ.items()
             if not key.startswith("KEYSTONE_FILE_STORAGES")
         },
-        "PYTHONPATH": str(__import__("pathlib").Path(__file__).parent),
+        "PYTHONPATH": os.pathsep.join(
+            filter(
+                None, [str(__import__("pathlib").Path(__file__).parent), os.getenv("PYTHONPATH")]
+            )
+        ),
         "KEYSTONE_ENV": "test",
-        "KEYSTONE_FLOW_ENABLED": "true",
+        "KEYSTONE_FLOW_ENABLED": str(settings.flow_enabled).lower(),
+        "KEYSTONE_WORKER_ID": worker_id or settings.worker_id,
+        "KEYSTONE_WORKER_IDS": __import__("json").dumps(settings.worker_ids),
         "KEYSTONE_DATABASE_URL": settings.database_url.get_secret_value(),
         "KEYSTONE_FILE_COORDINATION_ROOT": str(settings.file_coordination_root),
         "KEYSTONE_FILE_DEFAULT_STORAGE": settings.file_default_storage,
     }
+    for name in (
+        "flow_worker_concurrency",
+        "flow_global_concurrency",
+        "model_cost_concurrency",
+        "model_inference_concurrency",
+        "model_scope_concurrency",
+        "worker_shutdown_seconds",
+        "file_max_bytes",
+        "file_transfer_slots",
+        "file_temp_bytes",
+        "file_min_free_bytes",
+        "file_upload_timeout_seconds",
+    ):
+        env["KEYSTONE_" + name.upper()] = str(getattr(settings, name))
     for key, source in settings.file_storages.items():
         for field, value in source.model_dump(mode="json", exclude_none=True).items():
             if field in {"access_key", "secret_key"}:
@@ -318,12 +339,12 @@ def test_worker_crash_recovery_never_repeats_paid_request(client, tmp_path, poin
     if point == "registered":
         injection = """
 import httpx2
-from keystone.platform.model_access.gateway import Gateway
+from keystone.platform.model_access.http import HttpClient
 def transport(self, provider):
     async def crash(request):
         os._exit(71)
     return httpx2.MockTransport(crash)
-Gateway.transport = transport
+HttpClient.transport = transport
 """
     elif point == "response":
         injection = """
@@ -583,14 +604,14 @@ def test_cancel_during_model_send_preserves_inflight_receipt(client, tmp_path):
     code = """
 import asyncio
 import httpx2
-from keystone.platform.model_access.gateway import Gateway
+from keystone.platform.model_access.http import HttpClient
 import model_stub as mock
 def transport(self, provider):
     async def respond(request):
         await asyncio.sleep(4)
         return await mock.transport(provider).handle_async_request(request)
     return httpx2.MockTransport(respond)
-Gateway.transport = transport
+HttpClient.transport = transport
 from keystone.entrypoints.worker import main
 main()
 """
@@ -615,9 +636,15 @@ main()
 
 
 def test_recovery_only_closes_flow_calls_not_live_api_calls(client):
+    from uuid import uuid4
+
     from test_model_access import invoke
 
+    from keystone.core.worker_identity import WorkerIdentity
+    from keystone.core.worker_registration import identity_lease
     from keystone.platform.model_access.services.recovery import recover_interrupted_calls
+
+    owner = WorkerIdentity("keystone-worker", uuid4(), execution_version())
 
     first = invoke(client).json()["invocation_id"]
     second = invoke(client).json()["invocation_id"]
@@ -627,14 +654,25 @@ def test_recovery_only_closes_flow_calls_not_live_api_calls(client):
         await session.execute(
             update(ModelInvocation)
             .where(ModelInvocation.id == UUID(second))
-            .values(flow_context={"flow_run_id": str(UUID(int=1))})
+            .values(
+                flow_context={"flow_run_id": str(UUID(int=1))},
+                worker_id=owner.worker_id,
+                worker_instance_id=uuid4(),
+                execution_version=owner.execution_version,
+            )
         )
 
     query(client, prepare)
-    client.portal.call(recover_interrupted_calls, client.app.state.runtime.database)
+
+    async def recover():
+        runtime = client.app.state.runtime
+        async with identity_lease(runtime.database, runtime.storage, owner.worker_id) as lease:
+            return await recover_interrupted_calls(runtime.database, owner, lease=lease)
+
+    assert client.portal.call(recover) == 1
     assert client.get("/api/v1/model-invocations/" + first).json()["status"] == "running"
     assert client.get("/api/v1/model-invocations/" + second).json()["status"] == "unknown"
-    assert client.portal.call(recover_interrupted_calls, client.app.state.runtime.database) == 0
+    assert client.portal.call(recover) == 0
     logs = client.get("/api/v1/audit-logs?action=model.invocation.recover").json()
     assert len(logs) == 1 and logs[0]["target_id"] == second
     assert logs[0]["actor_type"] == "system"
@@ -787,3 +825,105 @@ run(main())
         assert process.wait(timeout=20) == 0, log.read_text(encoding="utf8")
         assert "worker_stopped" in log.read_text(encoding="utf8")
         assert client.get("/api/v1/worker/status").json()["status"] == "offline"
+
+
+def test_common_dbos_runtime_without_flow_keeps_other_tasks_and_recovery(client, tmp_path):
+    # A persisted Flow queue must not be consumed just because DBOS is now always on.
+    runtime = client.app.state.runtime
+    file_id = upload(client).json()["id"]
+    identifier = start(client, file_id).json()["id"]
+    definition = runtime.flow_definitions["document.review"]
+
+    async def enqueue(session):
+        return await session.get(FlowRun, UUID(identifier))
+
+    row = query(client, enqueue)
+    client.portal.call(runtime.flow_engine.enqueue, row, definition)
+    code = """
+import asyncio
+from dbos import DBOS, SetWorkflowID
+from keystone.bootstrap import build_runtime
+from keystone.core.asyncio import run
+from keystone.core.config import Settings
+from keystone.core.worker_health import worker_status
+from keystone.entrypoints import worker
+
+entered = asyncio.Event()
+cancelled = asyncio.Event()
+
+@DBOS.workflow(name='test.common_runtime.blocked')
+async def blocked():
+    entered.set()
+    try:
+        await asyncio.Event().wait()
+    finally:
+        cancelled.set()
+
+async def main():
+    settings = Settings()
+    settings.flow_enabled = False
+    def unexpected_registration():
+        raise AssertionError('Disabled Flow registered business execution code')
+    worker.register_workflows = unexpected_registration
+    runtime = build_runtime(settings)
+    stop = asyncio.Event()
+    task = asyncio.create_task(worker.run(settings, stop))
+    other = None
+    try:
+        async with asyncio.timeout(25):
+            while (await worker_status(runtime.database))['status'] != 'ready':
+                if task.done():
+                    await task
+                await asyncio.sleep(.1)
+        assert DBOS.executor_id == 'keystone-worker'
+        # This sibling is created after DBOS launch; it is not owned by the runtime.
+        other = asyncio.create_task(asyncio.Event().wait())
+        with SetWorkflowID('test:common-runtime:pending'):
+            await DBOS.start_workflow_async(blocked)
+        await asyncio.wait_for(entered.wait(), 5)
+        stop.set()
+        await asyncio.wait_for(task, 20)
+        assert cancelled.is_set(), 'Runtime left its in-flight workflow alive'
+        assert not other.done(), 'Runtime cancelled a task owned by another component'
+        assert await asyncio.to_thread(lambda: 'usable') == 'usable'
+        print('common_runtime_verified', flush=True)
+    finally:
+        stop.set()
+        if other is not None:
+            other.cancel()
+            await asyncio.gather(other, return_exceptions=True)
+        await asyncio.gather(task, return_exceptions=True)
+        await runtime.database.close()
+
+run(main())
+"""
+    with worker(client, tmp_path, code=code) as (process, log):
+        assert process.wait(timeout=50) == 0, log.read_text(encoding="utf8")
+        assert "common_runtime_verified" in log.read_text(encoding="utf8")
+    assert client.get(f"/api/v1/flow-runs/{identifier}").json()["status"] == "pending"
+    assert client.get(f"/api/v1/model-invocations?flow_run_id={identifier}").json() == []
+
+    async def state():
+        return await runtime.flow_engine.client.list_workflows_async(
+            workflow_ids=[f"flow:{identifier}", "test:common-runtime:pending"]
+        )
+
+    rows = client.portal.call(state)
+    assert {row.workflow_id: row.status for row in rows} == {
+        f"flow:{identifier}": "ENQUEUED",
+        "test:common-runtime:pending": "PENDING",
+    }
+
+
+def test_missing_dbos_schema_stops_worker_even_with_flow_disabled(client, tmp_path):
+    # Older installations with Flow disabled may never have initialized DBOS.
+    query(client, lambda session: session.execute(text("DROP SCHEMA dbos CASCADE")))
+    code = """
+import os
+os.environ['KEYSTONE_FLOW_ENABLED'] = 'false'
+from keystone.entrypoints.worker import main
+main()
+"""
+    with worker(client, tmp_path, code=code) as (process, log):
+        assert process.wait(timeout=25) != 0, log.read_text(encoding="utf8")
+    assert client.get("/api/v1/worker/status").json()["status"] == "offline"

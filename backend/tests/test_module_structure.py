@@ -107,3 +107,40 @@ def test_context_does_not_expose_identity_administration():
     for method in ("login", "create_user", "save_role", "issue_token", "reset_password"):
         assert not hasattr(AccessContext, method)
         assert not hasattr(ExecutionIdentity, method)
+
+
+def test_model_access_protocols_and_services_are_independent_of_dbos():
+    root = ROOT / "platform" / "model_access"
+    for old in ("gateway.py", "providers.py", "billing.py", "transport.py", "jobs.py"):
+        assert not (root / old).exists()
+    for file in root.rglob("*.py"):
+        package = ".".join(file.relative_to(ROOT.parent).with_suffix("").parts[:-1])
+        dependencies = list(imports(ast.parse(file.read_text(encoding="utf8")), package))
+        assert not any(d.startswith(("dbos", "keystone.worker")) for d in dependencies), file
+        layer = file.relative_to(root).parts[0]
+        if layer in {"billing", "inference"}:
+            assert not any(
+                d.startswith("sqlalchemy")
+                or d.startswith("keystone.platform.model_access.services")
+                or d.startswith("keystone.platform.model_access.models")
+                or d.startswith("keystone.platform.model_access.controllers")
+                for d in dependencies
+            ), file
+            other = "inference" if layer == "billing" else "billing"
+            assert not any(
+                d.startswith(f"keystone.platform.model_access.{other}") for d in dependencies
+            ), file
+        if layer == "services":
+            assert not any(d.startswith(("openai", "httpx2")) for d in dependencies), file
+
+
+def test_system_task_adapters_do_not_own_domain_persistence():
+    for name in ("files", "flow", "model_costs"):
+        file = ROOT / "worker" / "tasks" / f"{name}.py"
+        assert file.is_file()
+        package = "keystone.worker.tasks"
+        dependencies = list(imports(ast.parse(file.read_text(encoding="utf8")), package))
+        assert not any(d.startswith("sqlalchemy") or ".models" in d for d in dependencies)
+    file = ROOT / "core" / "dbos_runtime.py"
+    dependencies = list(imports(ast.parse(file.read_text(encoding="utf8")), "keystone.core"))
+    assert not any(d.startswith("keystone.platform") for d in dependencies)

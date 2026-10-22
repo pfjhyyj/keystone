@@ -15,6 +15,18 @@ export interface Readiness {
 export interface WorkerStatus {
   status: 'ready' | 'unready' | 'offline' | 'unknown'
   last_heartbeat_at: string | null
+  ready_workers?: number
+  expected_workers?: number
+  instances?: {
+    worker_id: string
+    instance_id: string | null
+    status: 'ready' | 'unready' | 'offline' | 'unknown'
+    state: string
+    execution_version: string | null
+    last_heartbeat_at: string | null
+    expected: boolean
+  }[]
+  maintenance?: Record<string, { status: 'ready' | 'unready'; last_checked_at: string | null }>
 }
 
 async function getStatus(path: string, allowUnavailable = false): Promise<unknown> {
@@ -82,6 +94,36 @@ export async function getWorkerStatus(): Promise<WorkerStatus> {
         Number.isFinite(Date.parse(value.last_heartbeat_at)))
     ) ||
     (value.status === 'ready' && value.last_heartbeat_at === null)
+  )
+    throw new Error('无效的 Worker 状态响应')
+  const timestamp = (v: unknown) =>
+    v === null || (typeof v === 'string' && Number.isFinite(Date.parse(v)))
+  if (
+    (value.ready_workers !== undefined &&
+      (!Number.isInteger(value.ready_workers) || Number(value.ready_workers) < 0)) ||
+    (value.expected_workers !== undefined &&
+      (!Number.isInteger(value.expected_workers) || Number(value.expected_workers) < 0)) ||
+    (value.instances !== undefined &&
+      (!Array.isArray(value.instances) ||
+        value.instances.some(
+          (item: unknown) =>
+            !record(item) ||
+            typeof item.worker_id !== 'string' ||
+            typeof item.state !== 'string' ||
+            !(item.instance_id === null || typeof item.instance_id === 'string') ||
+            !(item.execution_version === null || typeof item.execution_version === 'string') ||
+            !['ready', 'unready', 'offline', 'unknown'].includes(String(item.status)) ||
+            !timestamp(item.last_heartbeat_at) ||
+            typeof item.expected !== 'boolean',
+        ))) ||
+    (value.maintenance !== undefined &&
+      (!record(value.maintenance) ||
+        Object.values(value.maintenance).some(
+          (item) =>
+            !record(item) ||
+            !['ready', 'unready'].includes(String(item.status)) ||
+            !timestamp(item.last_checked_at),
+        )))
   )
     throw new Error('无效的 Worker 状态响应')
   return value as unknown as WorkerStatus

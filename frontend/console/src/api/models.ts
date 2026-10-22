@@ -35,6 +35,13 @@ export interface Invocation {
   cost_unit: string | null
   cost_source: string
   cost_note: string | null
+  cost_check_status?: string
+  cost_check_reason?: string | null
+  cost_check_rounds?: number
+  cost_check_errors?: number
+  cost_checked_at?: string | null
+  cost_next_check_at?: string | null
+  cost_deadline_at?: string | null
   created_at: string
   finished_at: string | null
   error_code: string | null
@@ -42,6 +49,7 @@ export interface Invocation {
   flow_context: Record<string, unknown> | null
 }
 export interface Costs {
+  cost_checks?: Record<string, number>
   attempts_by_status: Record<string, number>
   unknown_cost_attempts: number
   known_costs: { channel_id: string; unit: string; amount: string; attempts: number }[]
@@ -75,8 +83,17 @@ export const balanceStates: Record<string, string> = {
 }
 export const providers = {
   openrouter: 'OpenRouter',
+  openlux: 'Openlux',
+  yunwu: 'Yunwu',
   deepseek: 'DeepSeek',
   aliyun_bailian: '阿里云百炼',
+}
+export const costCheckStates: Record<string, string> = {
+  pending: '等待核对',
+  confirmed: '费用已确认',
+  blocked: '需要处理',
+  unavailable: '无法查询',
+  exhausted: '自动核对已结束',
 }
 export const money = (value: string) =>
   value.includes('.') ? value.replace(/0+$/, '').replace(/\.$/, '') : value

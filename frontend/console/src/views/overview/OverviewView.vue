@@ -11,6 +11,20 @@ let alive = true
 let timer: ReturnType<typeof setInterval> | undefined
 const checked = ref('尚未检查')
 const workerLabels = { ready: '就绪', unready: '未就绪', offline: '离线', unknown: '无法确认' }
+const processLabels: Record<string, string> = {
+  starting: '启动中',
+  ready: '就绪',
+  unready: '未就绪',
+  draining: '正在排空',
+  stopped: '已停止',
+  missing: '尚未启动',
+  retired: '已退役',
+}
+const taskLabels: Record<string, string> = {
+  files: '文件清理',
+  flow: '流程协调',
+  model_costs: '费用扫描',
+}
 const labels: Record<string, string> = {
   ok: '正常',
   unconfigured: '未配置',
@@ -30,7 +44,10 @@ const cards = computed(() => [
     icon: Cpu,
     value: workerLabels[worker.value?.status ?? 'unknown'],
     good: worker.value?.status === 'ready',
-    note: '独立心跳检查，超过 30 秒未上报视为离线',
+    note:
+      worker.value?.expected_workers !== undefined
+        ? `${worker.value.ready_workers ?? 0} / ${worker.value.expected_workers} 个进程就绪；共享维护另行检查`
+        : '独立心跳检查，超过 30 秒未上报视为离线',
   },
   ...(
     [
@@ -89,6 +106,50 @@ onScopeDispose(() => {
         <p>{{ card.note }}</p></el-card
       >
     </div>
+    <el-card v-if="worker?.instances?.length" shadow="never" class="overview-detail">
+      <template #header><h2>Worker 实例</h2></template>
+      <el-table :data="worker.instances" row-key="worker_id">
+        <el-table-column prop="worker_id" label="固定身份" />
+        <el-table-column label="进程状态"
+          ><template #default="{ row }"
+            >{{ workerLabels[row.status as keyof typeof workerLabels] }} ·
+            {{ processLabels[row.state] ?? row.state }}</template
+          ></el-table-column
+        >
+        <el-table-column label="当前实例"
+          ><template #default="{ row }">{{
+            row.instance_id?.slice(0, 8) ?? '—'
+          }}</template></el-table-column
+        >
+        <el-table-column label="执行版本"
+          ><template #default="{ row }">{{
+            row.execution_version?.slice(0, 12) ?? '—'
+          }}</template></el-table-column
+        >
+        <el-table-column label="最近心跳"
+          ><template #default="{ row }">{{
+            row.last_heartbeat_at
+              ? new Date(row.last_heartbeat_at).toLocaleString('zh-CN')
+              : '暂无记录'
+          }}</template></el-table-column
+        >
+        <el-table-column label="身份登记"
+          ><template #default="{ row }">{{
+            row.expected ? '已登记' : row.state === 'retired' ? '已退役' : '未登记'
+          }}</template></el-table-column
+        >
+      </el-table>
+      <div v-if="worker.maintenance" class="overview-note">
+        <el-tag
+          v-for="(task, name) in worker.maintenance"
+          :key="name"
+          :type="task.status === 'ready' ? 'success' : 'warning'"
+          effect="plain"
+          disable-transitions
+          >{{ taskLabels[String(name)] ?? name }}：{{ workerLabels[task.status] }}</el-tag
+        >
+      </div>
+    </el-card>
     <el-card shadow="never" class="overview-detail"
       ><template #header><h2>运行配置</h2></template
       ><el-descriptions :column="1" border

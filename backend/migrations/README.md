@@ -11,8 +11,17 @@
 | `model_access.py` / `model_access` | 模型接入 | model_channels、model_entries、model_invocations |
 | `flow.py` / `flow` | Flow | flow_runs |
 | `core.py` / `core` | Core 运行观测 | worker_heartbeats |
+| `model_costs.py` / `model_costs` | 自动费用核对 | 扩展 model_channels、model_invocations；保留既有金额与结果 |
+| `multi_workers.py` / `multi_workers` | Worker 归属与运行观测 | 扩展 model_invocations、flow_runs、worker_heartbeats；不推断历史发送归属 |
+| `worker_registration.py` / `worker_registration` | 固定身份登记 | 新增 worker_registrations，保留原身份与恢复依据 |
 
-文件均位于 `versions/`，通过 `down_revision` 按上表顺序连接，只有一个 head：`core`。文件多源字段合入 files，渠道凭据密文字段合入 model_access，不再经过历史版本转换。17 张表均位于 `keystone` schema，Alembic 另维护一张版本表。
+文件均位于 `versions/`，通过 `down_revision` 按上表顺序连接，只有一个 head：`worker_registration`。初始基线到 core，之后追加语义迁移。文件多源字段合入 files，渠道凭据密文字段合入 model_access。18 张表均位于 `keystone` schema，Alembic 另维护一张版本表。
+
+model_costs 保留旧费用与调用状态；已知费用初始化为 confirmed，原范围不明的未知费用为 unavailable/legacy_scope_unknown，不使用当前 Key 回填。回滚删除新增字段前会检查 Yunwu/Openlux 数据，存在新 provider 时拒绝降级，避免丢失或篡改业务归属。
+
+multi_workers 增加可信发送归属、Flow 协调尝试时间以及固定 Worker/版本/共享维护观测。旧模型调用归属保持空值，不从 FlowRun 或当前 Worker 推断；无归属的遗留 Flow running 记录会阻止 Worker 启动，须在停机迁移后执行[专项离线收尾](../../docs/deployment.md#43-首次从单-worker-升级)。增量迁移不改原费用、调用结果或 DBOS 检查点；Worker 上报和恢复都不自动迁移。
+
+worker_registration 导入每个身份的最新心跳、仍 running 模型调用的已知 Worker 归属，以及初始化时提供的旧 worker_ids。正常停止、离线和从未启动的旧成员均保留为未退役登记；迁移不猜测退役，不改变调用状态。当前实例指针与正常停止时间独立保存，心跳清理不会删除身份或恢复依据。旧清单仅在首次执行该迁移时导入，重复 init 不覆盖登记或重新激活退役身份。切换后新增 Worker 自动登记，API 动态读取成员；永久缩容走显式退役命令，不删除心跳或 DBOS 历史。
 
 ## 初始化
 

@@ -2,6 +2,8 @@
 
 模型接入使用真实 OpenRouter 服务，Flow/Agent 直接复用相同 ModelRuntime，不新增执行分支或 FlowRun 字段。API/Worker 从数据库读取控制台维护的模型 Key；发起表单提示真实调用可能计费，取消不撤销已发生的调用。边界见[OpenRouter 接入](model-access.md#77-openrouter-接入)。
 
+Worker 同时承载业务 Flow、系统自动任务和定时任务，支持同宿主、同版本的固定身份，见[整体架构第 3 节](../architecture.md#3-api-与-worker-的分工)。公共 DBOS 生命周期在 Worker，Flow 补投和状态同步由定时任务触发；关闭 Flow 后公共 DBOS、文件维护和自动查费仍运行。本领域保留业务职责，第 7 节记录身份、并发和按实例恢复规则；跨宿主及自动接管未实现。
+
 [范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项) · [当前实现](#7-当前实现)
 
 ## 1. 范围与边界
@@ -12,10 +14,13 @@ Flow 为业务提供普通代码与 Agent 混合的流程编排，支持模型�
 |---|---|
 | 业务流程代码 | 输入输出、步骤顺序、分支、业务规则、结果采用 |
 | Keystone Flow | 流程目录、发起人和访问权限、运行记录与平台能力接入 |
+| Worker 公共启动代码 | DBOS 生命周期、Worker 身份、队列、定时计划与进程健康；不拥有 FlowRun |
 | Agent 运行库与 Harness | 多轮模型/工具循环、Skills、上下文、结构化输出与执行限制 |
 | DBOS | 排队、持久执行、检查点、等待、恢复和执行状态 |
 
 执行成功不等于业务批准；审批通过/驳回等结论属于业务输出。文件清理等内部维护可以使用执行机制，但不必都注册成用户可见流程。普通业务可以直接调用 model_access 服务而不经过 Flow；实际 SDK 仍封装在模型模块，不能绕过其授权、调用记录和费用边界。
+
+flow 保留 Definition、FlowRun、受理与原身份授权、补投、取消、引擎状态投影、结果校验和文件引用。公共 DBOS 初始化、启动关闭、固定身份配置和进程互斥位于 Worker 公共启动；Flow 的 worker.py 保留恢复准备和业务队列注册，worker/tasks/flow.py 以 DBOS 定时任务调用原有界协调服务。费用核对归 model_access，文件维护归 files，二者通过各自的 Worker 任务入口接入，不依赖 FlowRun。多 Worker 仍沿用稳定 `flow:<run_id>` 和结果幂等规则，具体调整以整体架构第 3.7 节为准。
 
 Agent 使用 Pydantic AI＋Harness，持久执行使用 DBOS。不自行重写 Agent 循环，也不额外引入另一套图执行框架。
 
@@ -182,7 +187,7 @@ Agent 在代码中声明稳定 agent_key、提示词、输出类型、工具、S
 
 API 仅在首次接受非终态 Run 的取消请求时设置 cancel_requested_at，并同事务记录实际取消人的审计。重复取消不覆盖时间、不重复生成首次取消请求日志；对已经终态的 Run，在完成当前授权检查后直接返回现有状态，不写新的取消意图、不重新打开运行。
 
-Worker 再调用 DBOS；通知失败可以重试，查询到 DBOS 取消状态后同步为 cancelled。尚未提交的运行由同一个协调循环核实未入队后取消，不再投递。若运行已经完成，保留实际完成结果。取消不能保证正在执行的步骤或已发出的外部请求立即停止，也不撤销已发生的业务写入或费用。该幂等行为参考 Ether 的 request_cancel，Keystone 额外明确独立 flow:cancel 权限。
+Worker 再调用 DBOS；通知失败可以重试，查询到 DBOS 取消状态后同步为 cancelled。尚未提交的运行由同一个定时协调任务核实未入队后取消，不再投递。若运行已经完成，保留实际完成结果。取消不能保证正在执行的步骤或已发出的外部请求立即停止，也不撤销已发生的业务写入或费用。该幂等行为参考 Ether 的 request_cancel，Keystone 额外明确独立 flow:cancel 权限。
 
 ### 3.3 恢复、业务写入与外部副作用
 
@@ -326,7 +331,9 @@ composition.py 集中声明轻量 Definition，bootstrap 加载该目录；只�
 
 ### 7.2 Worker 与执行预算
 
-固定 executor 为 keystone-worker，队列为 keystone-flows，默认并发 2，可通过 flow_worker_concurrency 配置为 1–16，满载保留在持久队列。每轮按 ID 游标扫描最多 25 条非终态 Run，单条协调上限 15 秒；缺少原版本时不重新解释原输入、不分发给新版本，保留运行并记录脱敏告警。成功查询引擎才更新 observed_at。受理键承诺至少保留 7 天，当前完全不自动清理，因此原 Run 仍在时持续去重。
+默认一个 Worker，可按共同清单配置同宿主同版本的固定身份。原身份授权、稳定 Flow ID、取消与结果同步保持不变；身份、共享预算和首次迁移见[整体架构](../architecture.md#37-现有实现与调整点)及部署文档，不能复制同身份进程。
+
+executor_id 使用配置的固定 worker_id，第一个槽位保留 keystone-worker。业务队列 keystone-flows 默认每进程并发 2、全局 4，分别由 flow_worker_concurrency / flow_global_concurrency 控制，满载保留在队列。worker/tasks/flow.py 注册同一个 `keystone.flow.reconcile` 计划，每 5 秒触发、启动立即扫描；实际协调在独立全局串行队列运行，活动触发合并去重，不占业务执行和文件清理容量。每轮按持久 reconcile_attempted_at/创建时间最多选 25 条，单条协调上限 15 秒，进程轮换或重启不重置公平扫描依据。停机不逐个补跑旧时间点。缺少原版本时保留运行并告警，不将输入交给新版本解释；成功查询才更新 observed_at，与扫描尝试分开。受理键至少保留 7 天，当前完全不自动清理，原 Run 仍在时持续去重。
 
 execution_version 是实际加载的后端包、打包资源和 uv.lock 的内容摘要；源码换行统一后计算，API/Worker 必须交付同一制品。wheel 安装时核验已安装包，不使用部署目录中另一份源码副本。后端资源包括 Python、Markdown、JSON、文本。外部执行包通过 composition.EXECUTION_PACKAGES 显式声明包名及必需资源路径；核验所有包内代码和资源（包含二进制资源、媒体子进程），排除字节码缓存，缺包或必需资源时启动失败。API 只定位包文件，不导入执行模块。定义快照仍只有 output_schema 和 output_file_fields。发布前处理未完成运行，或保留原制品用于恢复；不做多版本同时调度。
 
@@ -334,9 +341,9 @@ execution_version 是实际加载的后端包、打包资源和 uv.lock 的内�
 
 SDK 请求体上限 256 KiB。可复用文件审查示例只读 16 KiB 以内 UTF-8 文本，流程时限 180 秒，最多 4 次模型请求、3 次普通工具调用、16000 tokens，输出修正最多一次；每次模型输出最多 2048 tokens。FlowModel 默认输出上限为 1024，可信业务可显式配置 1～4096。业务调整执行预算须修改代码并形成新制品，具体约定见[业务 Flow 开发](../flow-development.md)。
 
-Worker 全生命周期持有共享本地卷上的 OS 文件锁，第二个同卷 Worker 拒绝启动。此锁用于支持范围内的单实例约束，不是分布式选主。只在持锁后的启动阶段，将旧执行器遗留的 Flow 模型 running 记录转为 unknown；不处理仍可能由 API 执行的普通调用，也不按时间猜测请求已终止。停止先关闭领取、有限等待 5 秒，再取消剩余协程并释放客户端/数据库/文件锁；未完成运行保留恢复依据。DBOS 关闭其采用的线程池后，为剩余资源清理提供独立线程池。
+Worker 全生命周期持有按身份的 OS 与 PostgreSQL 锁，同身份双开拒绝；原 keystone-flow-worker 以共享锁持有，排斥旧单实例制品。prepare 绑定当前服务，只收尾自身旧 instance 的 Flow running 模型调用，再启动 DBOS；每次实际发送由可信适配提供当前 worker_id、instance_id 和 execution_version，不能从旧输入恢复。无归属的历史调用阻止启动，须在停机迁移后专项收尾。普通 API 调用仍独立离线处理，不按心跳或时间推断请求已终止。公共运行时位于 core/dbos_runtime.py，停止领取后上报 draining，按 worker_shutdown_seconds 有限等待再清理本进程 DBOS 协程，保留恢复依据；不取消其他组件的独立协程，剩余资源清理仍有独立线程池。
 
-Worker 入口持续向 PostgreSQL 上报[心跳与就绪状态](../development.md#worker-健康检查排障)。Flow 在 DBOS 队列注册完成后置位进程内就绪事件，退出时清除；未初始化或任务退出时会上报未就绪。该机制不修改 FlowRun 字段和业务状态，也不把单个 Run 长期 pending 自动改判为失败。
+Worker 持续上报[心跳与就绪](../development.md#worker-健康检查排障)，实例依赖/执行器健康和共享维护结果分开；空闲实例不必亲自完成每种维护。共享扫描失败或超过 30 秒未更新会反映为整体未就绪，但心跳继续。关闭 Flow 时暂停共享协调计划，不注册业务 workflow、不做 Flow 收尾或协调；监听不含 keystone-flows 和 keystone-flow-maintenance，禁用前须处理在途 Flow，所有进程使用一致开关。重新启用恢复原计划，不创建副本；公共 DBOS、文件维护和查费继续运行。扫描尝试字段不改变业务终态，也不把长期 pending 自动改判失败。
 
 ### 7.3 普通步骤与 Harness Agent
 
@@ -362,7 +369,7 @@ Worker 入口持续向 PostgreSQL 上报[心跳与就绪状态](../development.m
 
 ### 代码组织
 
-FlowRun 独立于 models/flow_run.py，接口和用例分别位于 controllers/runs.py、services/runs.py。ExecutionIdentity 继承 AccessContext，只提供 Run 执行授权。Flow 不直接读写文件引用、渠道配置或模型调用表：模型选择/恢复、文件引用保留通过所属领域的内部服务完成，仍保持原事务、Worker 独占锁、受控 owner/slot 和取消授权规则。响应字段在 schemas/runs.py 明确列出。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
+FlowRun 独立于 models/flow_run.py，接口和用例分别位于 controllers/runs.py、services/runs.py。ExecutionIdentity 继承 AccessContext，只提供 Run 执行授权。Flow 不直接读写文件引用、渠道配置或模型调用表：模型选择/恢复、文件引用保留通过所属领域的内部服务完成，仍保持原事务、Worker 身份锁、受控 owner/slot 和取消授权规则。响应字段在 schemas/runs.py 明确列出。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
 ExecutionIdentity 只覆盖身份授权，共用 AccessContext 的事务、锁、失败审计及冲突转译；session_only 仍会拒绝执行身份。host.read_file 返回 bytes，要求调用方提供 max_bytes；host.upload 显式接收 content_type。UTF-8 解码、16 KiB 限制及相应业务错误由具体流程负责，可复用示例位于 examples/document_review。Files 校验受控上传并原子保留引用，Flow 只传固定 owner/slot 和文件 ID；输出协调将 file_reference_invalid 转为 flow_invalid_output，不改公开错误契约。
 
@@ -383,7 +390,7 @@ DBOS 错误投影沿用 Ether 的显式安全码白名单边界。补齐模型�
 
 媒体步骤可以使用 `async with host.materialize_file(run_id, file_id) as path` 取得经授权、校验的受限本地副本；退出删除副本，不能把 path/句柄作为 DBOS 检查点保存。`host.upload_file(run_id, key, path, name=..., content_type=...)` 分块校验并上传业务产生的本地文件，以运行和产物键幂等，确认时保留 artifact 引用。两者在扫描字节前取得容量槽位并检查大小，复用既有身份、存储指纹、文件锁和授权；原有有界 read_file/upload 字节入口继续可用。
 
-新增文件上下文在持有资源期间每秒检查运行是否取消或执行身份失效；取消触发当前异步任务退出，分块校验/复制停止后续块，等待当前原生 I/O 结束后清理句柄、临时文件和槽位。资源释放不依赖引擎取消调用成功；引擎取消仍由协调循环统一处理，明确的 flow_cancelled 错误在存在取消请求时归为 cancelled，不掩盖其他业务失败。DBOS 自身的步骤边界取消机制继续保留。业务必须让处理保持可取消：同步重活放线程/子进程，子进程在自身 finally 中终止并等待退出，FFmpeg 参数与工作目录由业务管理。
+新增文件上下文在持有资源期间每秒检查运行是否取消或执行身份失效；取消触发当前异步任务退出，分块校验/复制停止后续块，等待当前原生 I/O 结束后清理句柄、临时文件和槽位。资源释放不依赖引擎取消调用成功；引擎取消仍由定时协调任务统一处理，明确的 flow_cancelled 错误在存在取消请求时归为 cancelled，不掩盖其他业务失败。DBOS 自身的步骤边界取消机制继续保留。业务必须让处理保持可取消：同步重活放线程/子进程，子进程在自身 finally 中终止并等待退出，FFmpeg 参数与工作目录由业务管理。
 
 Definition 的可信代码字段 `timeout_seconds` 默认 300，可设 1–86400 秒并形成新执行制品；客户端不能任意放大执行期限。它控制 DBOS 运行预算，队列并发控制同时执行数量，临时槽位和文件限额控制本地 I/O 资源，不引入新的媒体调度器。
 

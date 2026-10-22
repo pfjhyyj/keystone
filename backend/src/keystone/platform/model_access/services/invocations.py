@@ -3,17 +3,17 @@ from decimal import localcontext
 from sqlalchemy import func, select
 
 from keystone.core.errors import ServiceError
-from keystone.core.time import utcnow
+from keystone.platform.audit.services.writer import Actor
 from keystone.platform.identity.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.models import Channel, ModelInvocation
-from keystone.platform.model_access.providers import PROVIDERS
-from keystone.platform.model_access.services.queries import history_filters, history_scope, locked
+from keystone.platform.model_access.models import ModelInvocation
+from keystone.platform.model_access.services.costs import CostService
+from keystone.platform.model_access.services.queries import history_filters, history_scope
 
 
 class InvocationService:
-    def __init__(self, identity: AccessContext, gateway):
-        self.identity, self.gateway = identity, gateway
+    def __init__(self, identity: AccessContext, clients):
+        self.identity, self.clients = identity, clients
 
     async def invocations(self, offset, limit, **filters):
         async with self.identity.access("model_invocation:read") as (session, auth):
@@ -47,6 +47,7 @@ class InvocationService:
                         ModelInvocation.status,
                         ModelInvocation.channel_id,
                         ModelInvocation.cost_unit,
+                        ModelInvocation.cost_check_status,
                         func.sum(ModelInvocation.cost_amount),
                         func.count(),
                     )
@@ -55,11 +56,13 @@ class InvocationService:
                         ModelInvocation.status,
                         ModelInvocation.channel_id,
                         ModelInvocation.cost_unit,
+                        ModelInvocation.cost_check_status,
                     )
                 )
             ).all()
-            statuses, known, unknown = {}, {}, 0
-            for status, channel, unit, total, count in groups:
+            statuses, known, unknown, checks = {}, {}, 0, {}
+            for status, channel, unit, check, total, count in groups:
+                checks[check] = checks.get(check, 0) + count
                 statuses[status] = statuses.get(status, 0) + count
                 if unit is None:
                     unknown += count
@@ -78,6 +81,7 @@ class InvocationService:
                 "attempts_by_status": statuses,
                 "unknown_cost_attempts": unknown,
                 "known_costs": list(known.values()),
+                "cost_checks": checks,
             }
 
     async def refresh_cost(self, identifier):
@@ -91,41 +95,13 @@ class InvocationService:
                 raise ServiceError(404, "not_found", "调用记录不存在或不可访问")
             if row.status == "running":
                 raise ServiceError(409, "model_call_running", "请等待当前调用结束")
-            channel = await session.get(Channel, row.channel_id)
-            config = (channel.provider, channel.api_base, channel.api_key_encrypted, channel.id)
-            upstream_id = row.upstream_request_id
-        provider, base, encrypted, channel_id = config
-        adapter, cost, note = PROVIDERS[provider], None, "cost_query_unavailable"
-        if adapter.supports_cost_query and upstream_id:
-            try:
-                path, params = adapter.cost_query(upstream_id)
-                payload = await self.gateway.query(
-                    provider,
-                    base,
-                    path,
-                    self.gateway.secret(encrypted, channel_id),
-                    params=params,
-                )
-                cost = adapter.queried_cost(payload, upstream_id)
-                note = None if cost is not None else "cost_not_reported"
-            except Exception:
-                note = "cost_query_failed"
-        async with self.identity.database.transaction() as session:
-            row = await locked(session, ModelInvocation, identifier)
-            channel = await locked(session, Channel, row.channel_id)
-            if (
-                channel.provider,
-                channel.api_base,
-                channel.api_key_encrypted,
-                channel.id,
-            ) != config:
-                raise ServiceError(
-                    409, "model_configuration_changed", "渠道配置已改变，旧费用结果已丢弃"
-                )
-            if cost is not None:
-                row.cost_amount, row.cost_unit, row.cost_source = cost, adapter.cost_unit, "query"
-                row.cost_note = None
-            elif row.cost_amount is None:
-                row.cost_note = note
-            row.updated_at = utcnow()
+            scope = row.cost_context.get("scope") if row.cost_context else None
+            actor = Actor("user", auth.user.id)
+        if scope and row.upstream_request_id:
+            await CostService(self.identity.database, self.clients).reconcile(
+                scope,
+                force_id=identifier,
+                actor=actor,
+                correlation_id=self.identity.correlation_id,
+            )
         return await self.invocation(identifier)

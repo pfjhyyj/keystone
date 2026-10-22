@@ -27,6 +27,10 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --wait
 
 ## 2. 应用参数
 
+日常启动沿用示例配置即可；增加 Worker 只在新进程指定独立的 KEYSTONE_WORKER_ID，自动登记，API 和已有 Worker 无需重启。并发和退出等待都有内置默认值，下表相应字段仅用于按需调优，不必逐项抄入 TOML。查费默认共享并发为 2，保留独立限流，部署者无需单独设置；新增任务也不意味着必须新增一项部署配置。
+
+旧静态清单环境需先按[切换说明](deployment.md#47-当前版本操作与切换)完成一次停机迁移；worker_ids 仅兼容首次迁移，不再限制运行时成员。
+
 TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大写：
 
 | TOML 字段 | 环境变量 | 默认值或用途 |
@@ -46,7 +50,14 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 | `file_min_free_bytes` | `KEYSTONE_FILE_MIN_FREE_BYTES` | 默认 1 GiB，范围 0–1 TiB；协调卷、临时卷及本地正式存储各自保留的最低可用空间 |
 | `file_upload_timeout_seconds` | `KEYSTONE_FILE_UPLOAD_TIMEOUT_SECONDS` | 默认 3600 秒，范围 1–86400；包含 API 槽位排队、上传接收与确认的总期限 |
 | `flow_worker_concurrency` | `KEYSTONE_FLOW_WORKER_CONCURRENCY` | 默认 2，范围 1–16；单 Worker 的持久队列并发 |
-| `flow_enabled` | `KEYSTONE_FLOW_ENABLED` | `true`，API 与 Worker 保持一致 |
+| `flow_global_concurrency` | `KEYSTONE_FLOW_GLOBAL_CONCURRENCY` | 默认 4，范围 1–64；全部 Worker 的 Flow 总并发，不小于单进程预算 |
+| `worker_ids` | `KEYSTONE_WORKER_IDS` | 默认不设置；仅兼容首次登记迁移导入旧清单，不参与准入或共享摘要；修改它不改变数据库成员 |
+| `worker_id` | `KEYSTONE_WORKER_ID` | 默认 `keystone-worker`；每个 Worker 单独指定合法固定身份，重启保留；探针使用同一身份，未退役名额由数据库限制为 4 |
+| `worker_shutdown_seconds` | `KEYSTONE_WORKER_SHUTDOWN_SECONDS` | 默认 10，范围 1–600；停止领取后的有界等待，超时未完成执行仍需原身份恢复；进程管理器终止宽限期须另留收尾时间 |
+| `model_cost_concurrency` | `KEYSTONE_MODEL_COST_CONCURRENCY` | 默认 2，范围 1–8；覆盖 API 手动补查和全部 Worker 的查费总预算 |
+| `model_inference_concurrency` | `KEYSTONE_MODEL_INFERENCE_CONCURRENCY` | 默认 4，范围 1–32；API 与 Worker 共享的模型发送总预算 |
+| `model_scope_concurrency` | `KEYSTONE_MODEL_SCOPE_CONCURRENCY` | 默认 4，范围 1–16，且不超过发送总预算；相同推理站点/真实 Token 共用上限 |
+| `flow_enabled` | `KEYSTONE_FLOW_ENABLED` | `true`，API 与 Worker 保持一致；关闭后暂停 Flow 协调计划、不执行 Flow，公共 DBOS 与已配置的文件清理仍运行；重新启用恢复计划 |
 | `initial_admin_password` | `KEYSTONE_INITIAL_ADMIN_PASSWORD` | 可选，仅供空安装非交互初始化；默认交互输入，已有用户时忽略 |
 
 嵌套环境变量用双下划线 `__` 分隔层级。例如 `KEYSTONE_FILE_STORAGES__LOCAL__ROOT=/data/files` 只覆盖 `local` 源的根目录。源名称以小写字母开头，可包含数字、单下划线和连字符，不使用连续双下划线；环境变量中的名称使用大写。数组在 TOML 中直接填写；通过环境变量覆盖 `browser_origins` 时使用 JSON 数组，例如 `KEYSTONE_BROWSER_ORIGINS='["https://console.example.com"]'`。
@@ -62,6 +73,12 @@ API/Worker 必须保持相同协调目录、槽位数、临时预算、磁盘保
 ## 3. 配置变更
 
 模型配置仍在控制台手动完成，步骤见 [README](../README.md#模型配置手动)。API Key 加密保存到数据库，编辑时留空保留原值，保存后 API 与 Worker 直接使用，无需重启。加密密钥首次保存时自动写入已有共享协调目录；`keystone init` 不创建模型配置或模型加密密钥。
+
+支持 OpenRouter、Openlux、Yunwu 的固定推理地址。Openlux/Yunwu 自动查费使用原推理 Key，不需额外账务 Key 或环境变量；更换 Token/站点须新建渠道，旧渠道保留历史查费凭据。费用扫描每 5 秒运行，关闭 Flow 不关闭查费。默认仍为单 Worker；多实例仅限同宿主、同版本和固定身份，步骤见[部署说明](deployment.md#4-多-worker-部署与发布)。升级先执行 init 应用 multi_workers 迁移。
+
+Flow 开关、队列预算、共享模型预算及文件/协调配置进入公共声明校验；固定身份和成员数量不进入共享摘要。新身份经锁保护和兼容性校验后加入，不要求完整本地清单。修改共享执行参数仍先停止旧进程再统一发布，不能由新成员覆盖共享队列/计划。历史故障身份与公共配置冲突时需按部署流程核对，不能清理锁、删除登记或随机换身份绕过。模型发送和查费容量已共享；供应商 RPM/TPM 规则尚未提供，不能把并发值当作每分钟或 Token 配额。
+
+SDK 另有每进程 4 个调用槽位，在取得共享推理许可之前限制本地资源占用。model_inference_concurrency 设置的是全部进程的共享上限，提高它不改变 SDK 本地上限，也不保证达到该吞吐量。
 
 更改开发数据库密码或宿主端口时，同步修改 `keystone.toml` 的 `database_url` 或对应环境变量；URL 特殊字符需编码。`POSTGRES_PASSWORD` 仅初始化空数据库卷，已有数据库改密须执行实际数据库操作。修改浏览器入口或 API 地址时同步 Origin 与 Vite 代理。
 
@@ -113,4 +130,4 @@ driver = "filesystem"
 root = "../.data/files"
 ```
 
-已有文件数据时保留原目录、源名称和卷标识。补齐后重新执行 `uv run --locked keystone init`，已有迁移、数据和管理员不会重置。需要恢复默认开发配置时按 [README 重置步骤](../README.md#已有旧环境重新测试可选) 操作；重置配置与清空数据是独立操作。
+已有文件数据时保留原目录、源名称和卷标识。补齐后重新执行 `uv run --locked keystone init`，已有迁移、数据和管理员不会重置。需要恢复默认开发配置时，对照[配置示例](../backend/keystone.toml.example)逐项调整，保留现有数据对应的连接与存储信息。

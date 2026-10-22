@@ -7,21 +7,21 @@ from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
 from keystone.platform.identity.access import AccessContext
-from keystone.platform.model_access import gateway, schemas
-from keystone.platform.model_access.gateway import refresh_lock
+from keystone.platform.model_access import schemas
+from keystone.platform.model_access.inference.client import SUPPORTED_TARGETS
 from keystone.platform.model_access.models import Channel
-from keystone.platform.model_access.providers import PROVIDERS
+from keystone.platform.model_access.services.cost_context import bind_channel
 from keystone.platform.model_access.services.queries import balance_config, locked
 
 
 class ChannelService:
-    def __init__(self, identity: AccessContext, gateway):
-        self.identity, self.gateway = identity, gateway
+    def __init__(self, identity: AccessContext, clients):
+        self.identity, self.clients = identity, clients
 
     async def options(self):
         async with self.identity.access("model:manage"):
             return {
-                "providers": list(gateway.SUPPORTED_TARGETS),
+                "providers": list(SUPPORTED_TARGETS),
             }
 
     async def update_keys(self, session, row, data):
@@ -41,7 +41,7 @@ class ChannelService:
             for field, purpose in (("api_key", "inference"), ("billing_api_key", "billing")):
                 value = getattr(data, field)
                 if value is not None:
-                    encrypted = self.gateway.credentials.encrypt(
+                    encrypted = self.clients.credentials.encrypt(
                         value, row.id, purpose, create=existing is None
                     )
                     setattr(row, field + "_encrypted", encrypted)
@@ -78,6 +78,21 @@ class ChannelService:
             )
             if identifier:
                 row = await locked(session, Channel, identifier)
+                if self.clients.billing.adapter(row.provider).cost_query_mode == "logs" and (
+                    data.api_base != row.api_base
+                    or (
+                        data.api_key is not None
+                        and data.api_key.get_secret_value()
+                        != self.clients.credentials.decrypt(
+                            row.api_key_encrypted, row.id, "inference"
+                        )
+                    )
+                ):
+                    raise ServiceError(
+                        409,
+                        "channel_query_scope_fixed",
+                        "换站点或 Token 请新建渠道，原渠道保留历史查费凭据",
+                    )
                 if (
                     row.upstream_account_ref is not None
                     and row.upstream_account_ref != data.upstream_account_ref
@@ -103,6 +118,7 @@ class ChannelService:
                 )
                 await self.update_keys(session, row, data)
                 session.add(row)
+            bind_channel(row, self.clients)
             await session.flush()
             await self.identity.log(
                 session,
@@ -147,24 +163,26 @@ class ChannelService:
     async def _refresh_balance(self, identifier, actor, audit_details):
         action = "model.balance.refresh"
         async with (
-            self.gateway.balance_slots,
-            refresh_lock(self.identity.database, identifier) as still_owned,
+            self.clients.coordination.balance_slots,
+            self.clients.coordination.scope(identifier) as still_owned,
         ):
             async with self.identity.access("model:manage") as (session, _):
                 channel = await session.get(Channel, identifier)
                 config = balance_config(channel)
             provider, base, encrypted, _ = config
-            adapter = PROVIDERS[provider]
+            adapter = self.clients.billing.adapter(provider)
             attempted = utcnow()
             snapshot = None
             status = "unavailable"
             try:
                 if encrypted:
-                    secret = self.gateway.secret(
-                        encrypted, identifier, billing=adapter.uses_billing_key
+                    secret = self.clients.credentials.decrypt(
+                        encrypted,
+                        identifier,
+                        "billing" if adapter.uses_billing_key else "inference",
                     )
-                    payload = await self.gateway.query(provider, base, adapter.balance_path, secret)
-                    snapshot, status = adapter.balance(payload), "ok"
+                    snapshot = await self.clients.billing.balance(provider, base, secret)
+                    status = "ok"
             except Exception as error:
                 status = (
                     "unavailable"
@@ -177,8 +195,7 @@ class ChannelService:
                     }
                     else "error"
                 )
-            await still_owned()
-            async with self.identity.database.transaction() as session:
+            async with still_owned.transaction() as session:
                 channel = await locked(session, Channel, identifier)
                 if balance_config(channel) != config:
                     raise ServiceError(

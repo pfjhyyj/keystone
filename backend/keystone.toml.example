@@ -28,7 +28,10 @@ file_temp_bytes = 68719476736
 # Per-filesystem free-space floor, shared by API and all Workers (1 GiB).
 file_min_free_bytes = 1073741824
 file_upload_timeout_seconds = 3600
-flow_worker_concurrency = 2
+
+# No identity inventory is required. Start extra Workers with distinct fixed identities.
+# The default worker_id is "keystone-worker"; override KEYSTONE_WORKER_ID per extra process.
+# Concurrency and shutdown use built-in defaults. Optional tuning: docs/configuration.md.
 
 # Model channels/keys are configured manually in the console after startup.
 flow_enabled = true

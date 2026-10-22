@@ -79,6 +79,48 @@ def test_backend_dotenv_is_no_longer_loaded(tmp_path, monkeypatch):
     assert Settings().port == 8000
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"worker_ids": ["keystone-worker", "keystone-worker"]},
+        {"worker_id": "../invalid-worker"},
+        {"worker_ids": ["../invalid-worker"]},
+        {"worker_ids": ["keystone-worker", "worker02", "worker03", "worker04", "worker05"]},
+        {"flow_worker_concurrency": 5, "flow_global_concurrency": 4},
+        {"model_inference_concurrency": 2, "model_scope_concurrency": 3},
+    ],
+)
+def test_fixed_worker_inventory_and_shared_capacity_reject_invalid_configuration(values):
+    with pytest.raises(ValidationError):
+        Settings(config_file=None, **values)
+
+
+def test_worker_identity_is_independent_of_legacy_inventory():
+    from keystone.core.worker_identity import config_digest
+
+    original = Settings(config_file=None)
+    extra = Settings(
+        config_file=None, worker_id="keystone-worker-02", worker_ids=["keystone-worker"]
+    )
+    assert config_digest(original) == config_digest(extra)
+    assert "worker_ids" not in extra.model_dump()
+
+
+def test_worker_shared_config_digest_checks_storage_secrets_without_exposing_them(tmp_path):
+    from pydantic import SecretStr
+
+    from keystone.core.worker_identity import config_digest
+
+    settings = Settings(config_file=write_config(tmp_path))
+    before = config_digest(settings)
+    settings.worker_id = "keystone-worker-02"
+    settings.port = 8300
+    assert config_digest(settings) == before
+    settings.file_storages["cloud"].secret_key = SecretStr("different-storage-secret")
+    assert config_digest(settings) != before
+    assert "different-storage-secret" not in config_digest(settings)
+
+
 def test_file_capacity_defaults_preserve_platform_configuration():
     settings = Settings(config_file=None)
     assert settings.file_min_free_bytes == 1024**3
@@ -95,6 +137,20 @@ def test_file_capacity_defaults_preserve_platform_configuration():
 def test_invalid_file_capacity_floor_is_rejected(floor):
     with pytest.raises(ValidationError):
         Settings(config_file=None, file_min_free_bytes=floor)
+
+
+@pytest.mark.parametrize("floor", [0, 1024**4])
+def test_file_capacity_floor_toml_environment_and_worker_digest(tmp_path, monkeypatch, floor):
+    from keystone.core.worker_identity import config_digest
+
+    config = tmp_path / "keystone.toml"
+    config.write_text("file_min_free_bytes = 512\n", encoding="utf-8")
+    original = Settings(config_file=config)
+    assert original.file_min_free_bytes == 512
+    monkeypatch.setenv("KEYSTONE_FILE_MIN_FREE_BYTES", str(floor))
+    overridden = Settings(config_file=config)
+    assert overridden.file_min_free_bytes == floor
+    assert config_digest(overridden) != config_digest(original)
 
 
 def test_example_is_complete_and_uses_config_directory(monkeypatch, tmp_path):

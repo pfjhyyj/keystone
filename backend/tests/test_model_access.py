@@ -249,7 +249,7 @@ def internal_service(client, secret):
 
 def install_transport(client, monkeypatch, handler):
     monkeypatch.setattr(
-        client.app.state.runtime.models,
+        client.app.state.runtime.models.http,
         "transport",
         lambda provider: httpx2.MockTransport(lambda request: handler(provider, request)),
     )

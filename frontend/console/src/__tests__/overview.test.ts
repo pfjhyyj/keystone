@@ -5,6 +5,44 @@ import { fakeApi } from './support'
 
 afterEach(() => vi.useRealTimers())
 
+it('accepts an empty registration set and displays retired identities without reporting readiness', async () => {
+  fakeApi((path) => {
+    if (path === '/health') return { status: 'ok', service: 'keystone-api', version: '0.1.0' }
+    if (path === '/ready')
+      return {
+        status: 'ready',
+        checks: { database: 'ok', schema: 'ok', storage: 'ok' },
+        flow_enabled: true,
+      }
+    if (path === '/worker/status')
+      return {
+        status: 'offline',
+        last_heartbeat_at: null,
+        ready_workers: 0,
+        expected_workers: 0,
+        instances: [
+          {
+            worker_id: 'keystone-worker-02',
+            instance_id: null,
+            execution_version: null,
+            status: 'offline',
+            state: 'retired',
+            expected: false,
+            last_heartbeat_at: null,
+          },
+        ],
+        maintenance: {},
+      }
+    throw new Error(path)
+  })
+  const wrapper = mount(OverviewView)
+  await flushPromises()
+  expect(wrapper.text()).toContain('0 / 0 个进程就绪')
+  expect(wrapper.text()).toContain('已退役')
+  expect(wrapper.text()).toContain('身份登记')
+  wrapper.unmount()
+})
+
 it('polls Worker readiness and heartbeat independently and stops polling after leaving', async () => {
   vi.useFakeTimers()
   let worker = { status: 'unready', last_heartbeat_at: '2026-10-19T16:00:00Z' }
@@ -62,4 +100,52 @@ it('does not report offline when the Worker status query fails', async () => {
   expect(card.text()).toContain('无法确认')
   expect(wrapper.text()).toContain('在线')
   expect(wrapper.text()).toContain('无法读取')
+})
+
+it('shows a missing fixed Worker and shared maintenance separately from the live instance', async () => {
+  fakeApi((path) => {
+    if (path === '/health') return { status: 'ok', service: 'keystone-api', version: '0.1.0' }
+    if (path === '/ready')
+      return {
+        status: 'ready',
+        checks: { database: 'ok', schema: 'ok', storage: 'ok' },
+        flow_enabled: true,
+      }
+    if (path === '/worker/status')
+      return {
+        status: 'unready',
+        last_heartbeat_at: '2026-10-19T16:00:00Z',
+        ready_workers: 1,
+        expected_workers: 2,
+        instances: [
+          {
+            worker_id: 'keystone-worker',
+            instance_id: 'live-instance',
+            status: 'ready',
+            state: 'ready',
+            execution_version: 'version-one',
+            last_heartbeat_at: '2026-10-19T16:00:00Z',
+            expected: true,
+          },
+          {
+            worker_id: 'keystone-worker-02',
+            instance_id: null,
+            status: 'offline',
+            state: 'missing',
+            execution_version: null,
+            last_heartbeat_at: null,
+            expected: true,
+          },
+        ],
+        maintenance: { model_costs: { status: 'ready', last_checked_at: '2026-10-19T16:00:00Z' } },
+      }
+    throw new Error(path)
+  })
+  const wrapper = mount(OverviewView)
+  await flushPromises()
+  expect(wrapper.text()).toContain('1 / 2 个进程就绪')
+  expect(wrapper.text()).toContain('keystone-worker-02')
+  expect(wrapper.text()).toContain('尚未启动')
+  expect(wrapper.text()).toContain('费用扫描：就绪')
+  wrapper.unmount()
 })

@@ -6,12 +6,13 @@ from dataclasses import dataclass
 from fastapi import FastAPI, Response
 
 from keystone import __version__
-from keystone.composition import build_catalog, build_flow_definitions
+from keystone.composition import build_catalog, build_flow_definitions, build_model_clients
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.http import install_errors
 from keystone.core.migrations import expected_heads
 from keystone.core.worker_health import worker_status
+from keystone.core.worker_identity import WorkerIdentity
 from keystone.model_registry import load_models
 from keystone.platform.audit.controllers import router as audit_router
 from keystone.platform.dictionary.controllers import router as dictionary_router
@@ -23,8 +24,8 @@ from keystone.platform.flow.controllers import router as flow_router
 from keystone.platform.flow.services.runs import FlowService
 from keystone.platform.identity.controllers import router as identity_router
 from keystone.platform.identity.security import LoginLimiter, Passwords
+from keystone.platform.model_access.clients import ModelClients
 from keystone.platform.model_access.controllers import router as models_router
-from keystone.platform.model_access.gateway import Gateway
 from keystone.platform.model_access.services.invocations import InvocationService
 from keystone.use_cases import FlowCosts, RoleDeletion
 
@@ -35,9 +36,11 @@ class Runtime:
     database: Database
     heads: set[str]
     storage: StorageRegistry
-    models: Gateway
+    models: ModelClients
     flow_definitions: Mapping[str, Definition]
     flow_engine: object | None = None
+    worker_identity: WorkerIdentity | None = None
+    worker_lease: object | None = None
 
     def role_deletion(self, identity):
         return RoleDeletion(identity, FileGrantService(identity.context))
@@ -65,12 +68,13 @@ def build_runtime(settings: Settings) -> Runtime:
         execution_version()
     load_models()
     heads = expected_heads(settings)
+    database = Database(settings, catalog=catalog)
     runtime = Runtime(
         settings,
-        Database(settings, catalog=catalog),
+        database,
         heads,
         StorageRegistry(settings),
-        Gateway(settings),
+        build_model_clients(settings, database),
         definitions,
     )
     if settings.flow_enabled and settings.database_url:
@@ -114,7 +118,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/worker/status", tags=["health"])
     async def worker_state():
-        return await worker_status(app.state.runtime.database)
+        return await worker_status(
+            app.state.runtime.database, settings=settings, application_version=execution_version()
+        )
 
     app.include_router(identity_router)
     app.include_router(audit_router)

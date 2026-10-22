@@ -20,10 +20,11 @@ from test_flow import start, wait_run, worker
 from test_identity import token
 from test_model_access import BILLING, SECRET, channel, entry, internal_service, invoke
 
-from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
 from keystone.platform.flow.engine import Engine
-from keystone.platform.model_access import gateway, schemas
+from keystone.platform.model_access import schemas
+from keystone.platform.model_access.http import HttpClient
+from keystone.platform.model_access.inference import client as gateway
 from keystone.platform.model_access.services.runtime import ModelRuntime
 
 NETWORK_TRANSPORT = httpx2.AsyncHTTPTransport
@@ -202,12 +203,14 @@ def configure(client, **changes):
 
 
 def test_real_transport_is_the_default_without_mode_configuration():
-    settings = Settings(config_file=None)
+    from keystone.core.config import Settings
+
     assert "model_mode" not in Settings.model_fields
-    transport = gateway.Gateway(settings).transport("openrouter")
+    transport = gateway.InferenceClient(HttpClient()).transport("openrouter")
     assert isinstance(transport, httpx2.AsyncHTTPTransport)
-    with pytest.raises(ServiceError, match="OpenRouter"):
-        gateway.Gateway(settings).transport("deepseek")
+    with pytest.raises(ServiceError) as unsupported:
+        gateway.InferenceClient(HttpClient()).transport("deepseek")
+    assert unsupported.value.code == "model_provider_unavailable"
 
 
 @pytest.mark.postgres
@@ -272,7 +275,9 @@ def test_live_rejects_untrusted_targets_and_unsupported_providers_before_send(cl
             (gateway.OPENROUTER_BASE, "/chat/completions"),
         ]:
             with pytest.raises(ServiceError):
-                await client.app.state.runtime.models.query("openrouter", base, path, BILLING)
+                client.app.state.runtime.models.billing.adapter("openrouter").check_target(
+                    base, path
+                )
 
     client.portal.call(invalid_query)
     assert calls == []

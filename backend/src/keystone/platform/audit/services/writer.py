@@ -12,6 +12,9 @@ from keystone.platform.audit.models import AuditLog
 
 # Each action has a deliberately small, explicit allowlist; no model/request serialization.
 ACTIONS = {
+    "worker.retire": set(),
+    "worker.reactivate": set(),
+    "model.cost.recheck": {"previous_status"},
     "flow.start": {"definition_key"},
     "flow.cancel": set(),
     "flow.complete": {"status", "error_code"},

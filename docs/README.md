@@ -1,6 +1,8 @@
 # Keystone 文档
 
-Keystone 是模块化单体平台。API、单 Worker 与 CLI 共用一个 Python 工程和镜像，控制台使用 Vue 与 Element Plus。Flow 默认启用，真实模型接入默认可用，权限判断使用 Casbin。
+Keystone 是模块化单体平台。API、Worker 与 CLI 共用一个 Python 工程和镜像，控制台使用 Vue 与 Element Plus。默认一个 Worker，可配置同宿主同版本的固定身份。Flow 默认启用，真实模型接入默认可用，权限判断使用 Casbin。
+
+[整体架构第 3 节](architecture.md#3-api-与-worker-的分工)说明自动任务、定时任务和多 Worker 的职责。DBOS 公共生命周期、文件清理、Flow 协调及自动查费已实现；关闭 Flow 后公共运行时、文件维护和查费仍运行。Yunwu/Openlux 分页查费规则见[模型接入](domains/model-access.md#36-自动费用核对)。升级时重新执行 `keystone init`，应用最新 worker_registration 迁移和 DBOS schema。默认一个 Worker；同宿主、同版本固定身份支持动态登记与显式退役，新增进程无需重启 API 或已有 Worker，步骤见[部署说明](deployment.md#4-多-worker-部署与发布)。
 
 ## 阅读入口
 
@@ -9,7 +11,7 @@ Keystone 是模块化单体平台。API、单 Worker 与 CLI 共用一个 Python
 | 首次启动 | [仓库说明](../README.md) |
 | 源码开发与测试 | [开发说明](development.md) |
 | 业务 Flow 示例、输出验收、预算与工具摘要 | [业务 Flow 开发](flow-development.md) |
-| 模块边界、代码规范与业务接入 | [整体架构](architecture.md) |
+| 模块边界、Worker/Flow/系统任务、多 Worker 机制与代码规范 | [整体架构](architecture.md) |
 | 后端、前端和部署环境变量 | [配置说明](configuration.md) |
 | Dockerfile 打包与发布 | [打包说明](deployment.md) |
 | 联合备份与恢复 | [操作手册](backup-restore.md) |
@@ -31,4 +33,4 @@ Keystone 是模块化单体平台。API、单 Worker 与 CLI 共用一个 Python
 - 架构文档维护模块和跨领域边界；领域文档维护字段、权限及生命周期；操作命令集中在仓库说明与部署手册。
 - 新业务按[接入规范](architecture.md#55-业务权限审计与模型接入)显式声明权限、审计、模型和流程，不增加动态插件层。
 - 各领域明确对象授权、审计及删除规则，不统一套用管理员绕过、审计字段或软删除。
-- 文档只保留当前规则和操作说明，不记录逐批实施、测试清单或验收结果。
+- 已确定的目标架构与当前实现须明确区分；尚未实现的配置或部署方式不得写成可执行操作说明。不记录逐批实施、测试日志或验收结果。

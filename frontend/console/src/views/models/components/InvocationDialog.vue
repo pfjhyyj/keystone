@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { can } from '../../../stores/session'
 import { request } from '../../../api/client'
-import { callStates, money, type Invocation } from '../../../api/models'
+import { callStates, costCheckStates, money, type Invocation } from '../../../api/models'
 import { useAction } from '../../../composables/useAction'
 import AppDialog from '../../../components/AppDialog.vue'
 const props = defineProps<{ id: string }>()
@@ -51,6 +51,19 @@ onMounted(() => run(load))
           {{ row.cost_amount === null ? '未知' : `${money(row.cost_amount)} ${row.cost_unit}` }} ·
           来源 {{ row.cost_source }}<br />{{ row.cost_note ?? '无补充说明' }}
         </dd>
+        <template v-if="row.cost_check_status">
+          <dt>费用核对</dt>
+          <dd>
+            {{ costCheckStates[row.cost_check_status] ?? row.cost_check_status }}
+            <span v-if="row.cost_check_reason"> · {{ row.cost_check_reason }}</span>
+            <br />最近核对：{{
+              row.cost_checked_at ? new Date(row.cost_checked_at).toLocaleString() : '无'
+            }}
+            <span v-if="row.cost_next_check_at">
+              <br />下次核对：{{ new Date(row.cost_next_check_at).toLocaleString() }}
+            </span>
+          </dd>
+        </template>
       </dl>
       <h3>用量</h3>
       <pre class="audit-details">{{ JSON.stringify(row.usage, null, 2) }}</pre>

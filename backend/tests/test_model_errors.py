@@ -6,7 +6,7 @@ from openai import APIStatusError
 from pydantic_ai.exceptions import ModelHTTPError
 
 from keystone.core.errors import ServiceError
-from keystone.platform.model_access.services.runtime import classify_error
+from keystone.platform.model_access.inference.errors import classify_error
 
 
 @pytest.mark.parametrize(

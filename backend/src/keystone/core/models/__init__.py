@@ -1,1 +1,2 @@
 from .worker_heartbeat import WorkerHeartbeat as WorkerHeartbeat
+from .worker_registration import WorkerRegistration as WorkerRegistration
