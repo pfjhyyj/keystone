@@ -4,9 +4,10 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
+from keystone.core.http import Page
 from keystone.platform.identity.dependencies import access_context
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.services.entries import ModelEntryService
@@ -64,8 +65,7 @@ async def summary(
 @router.get("/model-invocations")
 async def invocations(
     request: Request,
-    offset: int = Query(0, ge=0, le=100000),
-    limit: int = Query(50, ge=1, le=100),
+    page: Page,
     since: datetime | None = None,
     until: datetime | None = None,
     channel_id: UUID | None = None,
@@ -73,8 +73,8 @@ async def invocations(
     status: Literal["running", "succeeded", "failed", "unknown"] | None = None,
 ):
     return await _service(request).invocations(
-        offset,
-        limit,
+        page.offset,
+        page.limit,
         since=since,
         until=until,
         channel_id=channel_id,

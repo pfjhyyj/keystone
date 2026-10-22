@@ -1,7 +1,8 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Request
 
+from keystone.core.http import Page
 from keystone.platform.identity import schemas
 from keystone.platform.identity.dependencies import (
     access_context,
@@ -16,10 +17,8 @@ def _service(request: Request) -> TokenService:
 
 
 @router.get("/auth/tokens")
-async def tokens(
-    request: Request, offset: int = Query(0, ge=0, le=100000), limit: int = Query(50, ge=1, le=100)
-):
-    return await _service(request).list_tokens(offset, limit)
+async def tokens(request: Request, page: Page):
+    return await _service(request).list_tokens(page.offset, page.limit)
 
 
 @router.post("/auth/tokens", status_code=201)

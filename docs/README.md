@@ -11,6 +11,7 @@ Keystone 是模块化单体平台。API、Worker 与 CLI 共用一个 Python 工
 | 首次启动 | [仓库说明](../README.md) |
 | 源码开发与测试 | [开发说明](development.md) |
 | 业务 Flow 示例、输出验收、预算与工具摘要 | [业务 Flow 开发](flow-development.md) |
+| 新增业务、权限、迁移、路由与可选 Flow | [新增业务](extending.md) |
 | 模块边界、Worker/Flow/系统任务、多 Worker 机制与代码规范 | [整体架构](architecture.md) |
 | 后端、前端和部署环境变量 | [配置说明](configuration.md) |
 | Dockerfile 打包与发布 | [打包说明](deployment.md) |

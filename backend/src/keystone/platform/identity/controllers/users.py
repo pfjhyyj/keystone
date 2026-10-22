@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request
 
+from keystone.core.http import Page
 from keystone.platform.identity import schemas
 from keystone.platform.identity.dependencies import (
     access_context,
@@ -16,13 +17,8 @@ def _service(request: Request) -> UserService:
 
 
 @router.get("/users")
-async def users(
-    request: Request,
-    offset: int = Query(0, ge=0, le=100000),
-    limit: int = Query(50, ge=1, le=100),
-    q: str = Query("", max_length=128),
-):
-    return await _service(request).list_users(offset, limit, q)
+async def users(request: Request, page: Page, q: str = Query("", max_length=128)):
+    return await _service(request).list_users(page.offset, page.limit, q)
 
 
 @router.post("/users", status_code=201)

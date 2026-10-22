@@ -18,3 +18,4 @@ keystone.toml
 **/*.tsbuildinfo
 .DS_Store
 Thumbs.db
+.tmp

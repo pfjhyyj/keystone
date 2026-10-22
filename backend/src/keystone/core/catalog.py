@@ -1,8 +1,12 @@
-"""Immutable declarations shared by one application's database sessions."""
+"""Immutable declarations and validation shared by one application's database sessions."""
 
-from collections.abc import Mapping, Set
+import re
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, field
 from types import MappingProxyType
+
+NAMESPACE = re.compile(r"[a-z][a-z0-9_]{0,47}")
+FIELD = re.compile(r"[a-z][a-z0-9_]*")
 
 
 @dataclass(frozen=True)
@@ -21,3 +25,37 @@ class Catalog:
                 {key: frozenset(fields) for key, fields in self.audit_actions.items()}
             ),
         )
+
+
+def merge_catalogs(platform: Catalog, businesses: Sequence[tuple[str, Catalog]]) -> Catalog:
+    """Merge validated business declarations without allowing platform overrides."""
+    permissions, actions = dict(platform.permissions), dict(platform.audit_actions)
+    reserved = {key.split(":")[0] for key in permissions} | {key.split(".")[0] for key in actions}
+    seen = set()
+    for namespace, catalog in businesses:
+        permission_pattern = re.compile(
+            rf"{namespace}\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*:[a-z][a-z0-9_]*"
+        )
+        audit_pattern = re.compile(rf"{namespace}\.[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+")
+        if not NAMESPACE.fullmatch(namespace) or namespace in reserved | seen:
+            raise ValueError("Invalid or duplicate business namespace")
+        seen.add(namespace)
+        for key, description in catalog.permissions.items():
+            if (
+                not permission_pattern.fullmatch(key)
+                or len(key) > 100
+                or not description.strip()
+                or key in permissions
+            ):
+                raise ValueError("Invalid or duplicate business permission")
+            permissions[key] = description
+        for key, fields in catalog.audit_actions.items():
+            if (
+                not audit_pattern.fullmatch(key)
+                or len(key) > 100
+                or key in actions
+                or any(not FIELD.fullmatch(name) for name in fields)
+            ):
+                raise ValueError("Invalid or duplicate business audit action")
+            actions[key] = fields
+    return Catalog(permissions, actions)

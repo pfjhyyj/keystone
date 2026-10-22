@@ -1,8 +1,9 @@
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Request
 
+from keystone.core.http import Page
 from keystone.platform.flow.schemas import Start
 from keystone.platform.flow.services.runs import FlowService
 from keystone.platform.identity.dependencies import access_context
@@ -27,11 +28,10 @@ async def start(data: Start, request: Request):
 @router.get("/flow-runs")
 async def listing(
     request: Request,
-    offset: int = Query(0, ge=0, le=100000),
-    limit: int = Query(50, ge=1, le=100),
+    page: Page,
     status: Literal["pending", "running", "succeeded", "failed", "cancelled"] | None = None,
 ):
-    return await _service(request).listing(offset, limit, status)
+    return await _service(request).listing(page.offset, page.limit, status)
 
 
 @router.get("/flow-runs/{identifier}")

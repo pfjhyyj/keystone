@@ -103,5 +103,6 @@ API 和 Worker 共用[后端镜像](backend/Dockerfile)，分别执行 `keystone
 | 测试和 Worker 排障 | [开发说明](docs/development.md) |
 | 发布、扩容及故障恢复 | [部署说明](docs/deployment.md) |
 | 数据与文件联合备份 | [备份与恢复](docs/backup-restore.md) |
-| 架构和业务接入 | [架构说明](docs/architecture.md) |
+| 架构与平台边界 | [架构说明](docs/architecture.md) |
+| 新增业务、权限、迁移和 Flow | [新增业务](docs/extending.md) |
 | 身份、文件、模型和 Flow | [领域索引](docs/README.md#按领域阅读) |

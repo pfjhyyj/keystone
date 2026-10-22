@@ -2,9 +2,10 @@
 
 import logging
 from http import HTTPStatus
+from typing import Annotated
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.datastructures import MutableHeaders
@@ -12,6 +13,20 @@ from starlette.exceptions import HTTPException
 
 from keystone.core.errors import ServiceError
 from keystone.core.logging import safe_exception
+
+
+class Pagination:
+    """One bounded page contract for every list endpoint."""
+
+    def __init__(
+        self,
+        offset: int = Query(0, ge=0, le=100000),
+        limit: int = Query(50, ge=1, le=100),
+    ):
+        self.offset, self.limit = offset, limit
+
+
+Page = Annotated[Pagination, Depends()]
 
 
 def failure(request: Request, status: int, code: str, detail: str, headers=None):

@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Request
 
 from keystone.core.errors import ServiceError
+from keystone.core.http import Page
 from keystone.platform.files import schemas
 from keystone.platform.files.controllers.streaming import ContentResponse
 from keystone.platform.files.services.files import FileService
@@ -18,10 +19,8 @@ def _service(request: Request) -> FileService:
 
 
 @router.get("")
-async def listing(
-    request: Request, offset: int = Query(0, ge=0, le=100000), limit: int = Query(50, ge=1, le=100)
-):
-    return await _service(request).listing(offset, limit)
+async def listing(request: Request, page: Page):
+    return await _service(request).listing(page.offset, page.limit)
 
 
 @router.get("/options")

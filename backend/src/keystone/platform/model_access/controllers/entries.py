@@ -1,7 +1,8 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Request
 
+from keystone.core.http import Page
 from keystone.platform.identity.dependencies import access_context
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.services.entries import ModelEntryService
@@ -14,10 +15,8 @@ def _service(request: Request) -> ModelEntryService:
 
 
 @router.get("/model-entries")
-async def entries(
-    request: Request, offset: int = Query(0, ge=0, le=100000), limit: int = Query(50, ge=1, le=100)
-):
-    return await _service(request).entries(offset, limit)
+async def entries(request: Request, page: Page):
+    return await _service(request).entries(page.offset, page.limit)
 
 
 @router.post("/model-entries", status_code=201)
@@ -31,7 +30,5 @@ async def edit_entry(identifier: UUID, data: schemas.EntryEdit, request: Request
 
 
 @router.get("/models")
-async def catalog(
-    request: Request, offset: int = Query(0, ge=0, le=100000), limit: int = Query(50, ge=1, le=100)
-):
-    return await _service(request).catalog(offset, limit)
+async def catalog(request: Request, page: Page):
+    return await _service(request).catalog(page.offset, page.limit)
