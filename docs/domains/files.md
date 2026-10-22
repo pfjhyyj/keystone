@@ -267,6 +267,8 @@ authenticated 仅能选择 inspect/content_read，不能选择 manage。可用�
 
 组合调用时，调用方从 `AccessContext.access()` 取得 session/auth，先授权业务对象、冻结并复核释放和删除范围，将全部受影响文件（包括只解除引用而保留内容的输入文件）按 ID 排序加锁，再释放引用并受理删除，最后与业务成功审计一起提交。遇到异常或取消必须回滚整个调用方事务。两个入口均不提交、不另开事务、不访问存储、不投递任务；原文件维护计划继续处理本地/S3 删除、读取租约、失败重试、授权清除及墓碑残留，不改变维护队列、容量预算或业务配置。
 
+`references.registered_file_ids(session, owner, slot)` 为已经授权 owner/slot 的可信领域返回精确引用的文件 ID，最多返回两个以判定单产物键歧义。`require_registered_file(session, auth, owner, slot, file_id)` 在调用方事务内锁定文件，复核唯一引用、active 状态及当前内容读取授权，不提交、不读取存储、不修改授权或引用。Flow 在自己的产物服务中封装这两个内部入口；业务使用 Flow 服务，不直接查询文件引用模型。公开引用查看的管理权限与现有写入、终态保留规则不变。
+
 `FileGrantService.grant_in_transaction(session, auth, file_id, data, grant_id=...)` 在调用方当前身份事务内新增或撤销授权，仍检查功能权限、文件 manage 范围、目标主体与生命周期。调用方从 `AccessContext.access()` 取得 session/auth，完成业务对象授权后传入；内部不提交、不另开事务。与 `FileReferences`、业务记录及 `FlowService.start_in_transaction` 一起提交或回滚，成功审计在同一事务；HTTP 原入口继续自管事务。
 
 整文件字节读取入口 `FileService.content` 默认限制为 64 MiB，显式 max_bytes 也必须为非负上限；媒体调用使用流式读取或 Worker 落盘入口，上传容量扩展不会自动放大内存读取上限。

@@ -15,6 +15,7 @@ from keystone.platform.files.storage import blocking, opened
 from keystone.platform.files.transfers import CHUNK_BYTES, checksum
 from keystone.platform.flow.identity import ExecutionIdentity
 from keystone.platform.flow.models import FlowRun
+from keystone.platform.flow.services.artifacts import FlowArtifactService, artifact_location
 
 _runtime = None
 
@@ -88,7 +89,8 @@ async def read_file(run_id, identifier, *, max_bytes):
 
 
 async def upload(run_id, key, name, content, *, content_type, storage_key=None):
-    request_key = f"flow:{run_id}:{key}"
+    owner, slot = artifact_location(run_id, key)
+    request_key = f"{owner}:{key}"
     result = await FileService(identity(run_id), runtime().storage).upload_referenced(
         Upload(
             storage_key=storage_key,
@@ -99,10 +101,17 @@ async def upload(run_id, key, name, content, *, content_type, storage_key=None):
             checksum_sha256=hashlib.sha256(content).hexdigest(),
         ),
         content,
-        owner=f"flow:{run_id}",
-        slot=f"artifact.{key}",
+        owner=owner,
+        slot=slot,
     )
     return str(result["id"])
+
+
+async def artifact(run_id, key, *, max_bytes=None):
+    """Find this execution's verified artifact without exposing file-reference tables."""
+    return await FlowArtifactService(identity(run_id), runtime().storage).find(
+        run_id, key, max_bytes=max_bytes
+    )
 
 
 @asynccontextmanager
@@ -135,6 +144,7 @@ async def materialize_file(run_id, identifier):
 
 async def upload_file(run_id, key, path, *, name, content_type, storage_key=None):
     """Stream a trusted business-produced local file; retain the artifact before receipt."""
+    owner, slot = artifact_location(run_id, key)
     service = FileService(identity(run_id), runtime().storage)
     transfers = runtime().storage.transfers
     with transfers.slot() as number:
@@ -163,11 +173,11 @@ async def upload_file(run_id, key, path, *, name, content_type, storage_key=None
                     content_type=content_type,
                     expected_size=size,
                     checksum_sha256=digest,
-                    request_key=f"flow:{run_id}:{key}",
+                    request_key=f"{owner}:{key}",
                 ),
                 chunks(),
-                owner=f"flow:{run_id}",
-                slot=f"artifact.{key}",
+                owner=owner,
+                slot=slot,
                 _transfer_slot=number,
             )
             return str(result["id"])

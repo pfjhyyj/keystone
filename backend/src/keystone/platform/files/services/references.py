@@ -20,6 +20,33 @@ async def require_unreferenced(session, identifier):
         raise ServiceError(409, "file_referenced", "文件仍被业务引用，不能删除")
 
 
+async def registered_file_ids(session, owner, slot):
+    """Trusted, exact reference lookup. Two IDs are enough to detect an ambiguous slot.
+
+    The calling domain authorizes owner/slot; this is not an arbitrary-owner API.
+    Return IDs only, without exposing storage locations or reference ORM rows.
+    """
+    return tuple(
+        await session.scalars(
+            select(FileReference.file_id)
+            .where(FileReference.owner == owner, FileReference.slot == slot)
+            .order_by(FileReference.file_id)
+            .limit(2)
+        )
+    )
+
+
+async def require_registered_file(session, auth, owner, slot, identifier):
+    """Caller holds its identity/business locks; serialize with file/reference changes.
+
+    For several files call in file-ID order. No commit, storage I/O or grant changes.
+    """
+    file = await policy.locked(session, identifier)
+    if await registered_file_ids(session, owner, slot) != (identifier,):
+        raise ServiceError(409, "file_reference_invalid", "文件没有当前业务的唯一使用记录")
+    await policy.require(session, auth, file, "content_read")
+
+
 class FileReferences:
     def __init__(self, session, auth, namespace, *, correlation_id=None):
         if not namespace or ":" in namespace or len(namespace) > 32:

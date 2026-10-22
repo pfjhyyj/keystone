@@ -373,6 +373,12 @@ DBOS 错误投影沿用 Ether 的显式安全码白名单边界。补齐模型�
 
 ### 7.3 人工素材库接入入口
 
+`FlowArtifactService(identity, storage)` 将运行产物查询与发布前的引用校验收敛到 Flow 服务，业务不再直接查询 `FileReference`。Worker 使用 `await host.artifact(run_id, key, max_bytes=...)`，或直接调用服务的 `find`；返回通过当前授权与存储完整性校验的文件 ID，只有未登记该键时返回 `None`。停用、损坏、撤权、存储失败或同键对应多个文件均明确报错，不触发缺失产物重建。普通 `AccessContext` 需要运行可见性、`flow:read`、`file:content_read` 和文件对象读取授权，可查询已结束或旧版本运行；`ExecutionIdentity` 只能查询自身仍有效的运行，并复核原 PAT 范围、版本与取消状态。存储 I/O 期间不持有数据库事务，完成后重新检查授权与精确引用。
+
+`await service.require_in_transaction(session, auth, run_id, {key: file_id})` 在调用方当前身份与业务事务中校验运行归属、精确且唯一的产物引用、文件 active 状态与内容读取授权；文件按 ID 顺序锁定至调用方事务结束。此入口不扫描存储字节、不提交、不增加引用或授权，采用文件与成功审计仍由业务事务一起提交或回滚。业务在事务外查询/校验内容，再在发布事务内调用本入口；规格、完整产物集合、多个产物是否必须不同及可否发布都由业务决定。
+
+产物键是 1–86 字符的逻辑标识，不允许控制字符，与现有上传统一映射为 `flow:<规范 UUID>` / `artifact.<key>`；已有稳定上传请求键不变。单次事务最多校验 100 个键；引用不匹配返回 `flow_invalid_artifact`，同键多文件返回 `flow_artifact_ambiguous`。这些均为可信内部服务入口，不开放客户端自定义 owner/slot 或任意引用查询接口。
+
 `FlowService.start_in_transaction(session, auth, Start(...))` 接收调用方从 `AccessContext.access()` 取得的当前身份事务。业务先验证自身对象，再在同一事务中保存业务记录、授权/引用、FlowRun 和成功审计；内部沿用权限、幂等和契约校验，不提交也不做外部 I/O。调用方中途失败则全部回滚。提交后 Worker 扫描 pending，即使受理 API 已退出也能补投，无需额外 outbox。事务内入口只供可信业务代码，不能接受客户端自造的 auth 或 owner/slot。
 
 媒体步骤可以使用 `async with host.materialize_file(run_id, file_id) as path` 取得经授权、校验的受限本地副本；退出删除副本，不能把 path/句柄作为 DBOS 检查点保存。`host.upload_file(run_id, key, path, name=..., content_type=...)` 分块校验并上传业务产生的本地文件，以运行和产物键幂等，确认时保留 artifact 引用。两者在扫描字节前取得容量槽位并检查大小，复用既有身份、存储指纹、文件锁和授权；原有有界 read_file/upload 字节入口继续可用。
