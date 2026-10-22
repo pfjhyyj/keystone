@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import logging
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from threading import Event
 from uuid import UUID
@@ -18,6 +19,7 @@ from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.services.artifacts import FlowArtifactService, artifact_location
 
 _runtime = None
+_execution = ContextVar("flow_execution_scope", default=None)
 
 
 def bind(runtime):
@@ -36,20 +38,43 @@ def identity(run_id):
 
 
 @asynccontextmanager
-async def _active_run(run_id):
-    """DBOS cancellation is cooperative between steps; interrupt held local resources too."""
+async def execution_scope(run_id, *, permissions=()):
+    """Keep this Run's original authority live across a long operation, outside SQL I/O.
+
+    Extra permissions are trusted business declarations. Yield a fresh check for
+    critical boundaries, and recheck on normal exit; never replace business failures.
+    Nested scopes for this Run retain the outer permission requirements.
+    """
+    if isinstance(permissions, str):
+        raise ValueError("Permissions must be a sequence of permission keys")
+    permissions = tuple(permissions)
+    if any(not isinstance(p, str) or not p for p in permissions):
+        raise ValueError("Permissions must be a sequence of permission keys")
+    run_id = UUID(str(run_id))
+    outer = _execution.get()
+    if outer and outer[0] != run_id:
+        raise ServiceError(404, "flow_not_found", "不能在其他运行的作用域中执行")
+    required = frozenset(permissions) | (outer[1] if outer else frozenset())
+    context = identity(run_id)
     parent = asyncio.current_task()
     reason = None
+
+    async def check():
+        async with context.access() as (_, auth):
+            for permission in sorted(required):
+                auth.require(permission)
+
+    await check()
+    token = _execution.set((run_id, required))
 
     async def monitor():
         nonlocal reason
         while True:
             await asyncio.sleep(1)
             try:
-                async with identity(run_id).access():
-                    pass
+                await check()
             except ServiceError as error:
-                if error.code in {
+                if error.status in {401, 403, 404} or error.code in {
                     "flow_cancelled",
                     "flow_not_found",
                     "execution_not_authorized",
@@ -58,22 +83,50 @@ async def _active_run(run_id):
                     reason = error
                     parent.cancel()
                     return
+                logging.getLogger(__name__).warning("execution_monitor_retry type=ServiceError")
             except Exception as error:
                 # A dependency outage must not silently terminate the cancellation monitor.
                 logging.getLogger(__name__).warning(
-                    "local_transfer_monitor_retry type=%s", type(error).__name__
+                    "execution_monitor_retry type=%s", type(error).__name__
                 )
 
     task = asyncio.create_task(monitor())
+    failed = False
     try:
-        yield
+        yield check
+        await check()
     except asyncio.CancelledError:
         if reason is not None:
             raise reason from None
         raise
+    except BaseException:
+        failed = True
+        raise
     finally:
+        _execution.reset(token)
         task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        draining = asyncio.gather(task, return_exceptions=True)
+        interrupted = False
+        while not draining.done():
+            try:
+                await asyncio.shield(draining)
+            except asyncio.CancelledError:
+                interrupted = True
+        if interrupted and not failed:
+            raise reason or asyncio.CancelledError()
+
+
+async def run_process(run_id, arguments, *, permissions=(), **options):
+    """Run a trusted argv within fresh Run authorization; None uses the active scope."""
+    from keystone.core.processes import run_process as execute
+
+    if run_id is None:
+        current = _execution.get()
+        if current is None:
+            raise RuntimeError("A process requires an explicit Run or active execution scope")
+        run_id = current[0]
+    async with execution_scope(run_id, permissions=permissions):
+        return await execute(arguments, **options)
 
 
 async def inputs(run_id):
@@ -125,7 +178,7 @@ async def materialize_file(run_id, identifier):
     transfers = runtime().storage.transfers
     with transfers.slot() as number:
         async with (
-            _active_run(run_id),
+            execution_scope(run_id),
             service.open_content(
                 UUID(identifier), _transfer_slot=number, max_bytes=transfers.limit
             ) as reader,
@@ -148,7 +201,7 @@ async def upload_file(run_id, key, path, *, name, content_type, storage_key=None
     service = FileService(identity(run_id), runtime().storage)
     transfers = runtime().storage.transfers
     with transfers.slot() as number:
-        async with _active_run(run_id), opened(Path(path).open, "rb") as source:
+        async with execution_scope(run_id), opened(Path(path).open, "rb") as source:
             size = await blocking(source.seek, 0, 2)
             await service.prepare_upload(size, storage_key)
             if size > transfers.limit:
