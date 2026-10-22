@@ -403,7 +403,7 @@ def test_lost_scope_connection_cannot_write_old_fee(client, billing, monkeypatch
         "import os; os.environ['KEYSTONE_MODEL_COST_CONCURRENCY']='3'",
         "import socket; socket.gethostname=lambda:'unsupported-other-host'",
         "import keystone.entrypoints.worker as w; w.execution_version=lambda:'other-release'",
-        "from keystone.platform.files.adapters.leases import LocalLeases; "
+        "from keystone.core.local_leases import LocalLeases; "
         "LocalLeases.fingerprint=lambda self:'0'*64",
     ],
 )

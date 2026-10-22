@@ -4,7 +4,6 @@ from sqlalchemy import exists, literal, or_, select
 
 from keystone.core.errors import ServiceError
 from keystone.platform.files.models import File, FileGrant
-from keystone.platform.identity.models import UserRole
 
 
 def scope(auth, action):
@@ -16,9 +15,7 @@ def scope(auth, action):
             FileGrant.action == action,
             or_(
                 FileGrant.user_id == auth.user.id,
-                FileGrant.role_id.in_(
-                    select(UserRole.role_id).where(UserRole.user_id == auth.user.id)
-                ),
+                FileGrant.role_id.in_(auth.role_ids),
                 FileGrant.subject_type == "authenticated",
             ),
         )

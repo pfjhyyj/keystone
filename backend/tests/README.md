@@ -12,9 +12,13 @@
 
 `unit/test_architecture.py` 通过 `support/module_checks.py` 递归检查平台和业务模块：根目录只允许包说明与权限/审计声明，一级职责目录固定，MVC + Service、协议适配和 DBOS 执行边界不可反向依赖。负例覆盖相对导入和嵌套执行文件；轻量 Flow 定义及模块声明另用独立进程验证不会加载 ORM/执行器。脚手架生成结果接受同一结构检查，`unit/test_catalog.py` 检查声明合并时拒绝覆盖权限或审计动作。
 
+跨模块归属检查拒绝其他模块 Model/Adapter 导入、平台反向导入具体业务和 core 反向导入领域/组装代码；负例覆盖包别名、相对导入和嵌套文件。DBOSClient 仅在 platform/flow/adapters/dbos.py 放行；同名业务 Adapter 和其他 Flow Adapter 均拒绝。
+
 导入例外逐条判断，负例还覆盖任务包入口、近似 definitions 名称、同文件混入合法契约、core ORM/HTTP 包装及模块反向依赖装配层。Flow Service 用独立进程验证无需导入应用装配或执行器，版本查询注入另验证应用隔离及每次授权的实时复查。
 
 `unit/test_file_settlement.py` 验证重复取消必须等待已知的上传失败事务；`integration/test_disk_capacity_api.py` 通过延迟落库稳定触发磁盘监控取消，检查 failed 状态、原文件 ID 重试及容量释放。
+
+integration/test_file_boundaries.py 验证空权限角色的文件授权、PAT 范围、角色撤销、停用主体及缺失主体语义和授权审计回滚，并通过公开传输接口验证独立于 Flow 的落盘、引用上传幂等及作用域资源释放。现有媒体、取消与恢复测试继续使用相同的 host 接口。
 
 ## 运行
 

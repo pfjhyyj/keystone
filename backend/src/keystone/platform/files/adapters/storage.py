@@ -7,13 +7,19 @@ import os
 import re
 from collections import OrderedDict
 from contextlib import ExitStack, asynccontextmanager, nullcontext
+from pathlib import Path
 
 import opendal
 
+from keystone.core import local_leases as leases
 from keystone.core.asyncio import blocking as blocking
 from keystone.core.errors import ServiceError
 from keystone.core.storage_config import StorageConfig
-from keystone.platform.files.adapters import leases
+
+
+def initialize(root):
+    leases.initialize(root)
+    (Path(root).resolve() / "files").mkdir(exist_ok=True)
 
 
 @asynccontextmanager
@@ -250,7 +256,7 @@ class StorageRegistry:
         roots = {self.coordination.root}
         roots.update(source.root for source in self.sources.values() if source.root is not None)
         for root in sorted(roots, key=lambda path: len(path.parts)):
-            leases.initialize(root)
+            initialize(root)
 
     async def readiness(self):
         if not self.sources:

@@ -47,7 +47,7 @@ Keystone 是模块化单体平台。API、Worker 与 CLI 共用后端工程和�
 
 主要依赖方向：`Controller / 执行适配 → Service → 本模块 Model / Adapter`；Controller 和 Service 均可使用 Schema。
 
-- 跨模块通过公开 Service、Schema 或轻量任务声明协作，不直接访问其他模块的表或内部实现。跨领域事务由上层明确用例协调；事务内服务方法明确 session、授权及锁前提，不自行提交。
+- 跨模块通过公开 Service、Schema 或轻量任务声明协作，不导入其他模块的 Model 或 Adapter。角色成员信息使用当前 Authorization.role_ids，授权主体校验调用 Identity Service；文件传输使用 FileService.transfer()，共用卷身份和锁使用 core/local_leases.py。跨领域事务由上层明确用例协调；事务内服务方法明确 session、授权及锁前提，不自行提交。
 - 纯业务判断就近放在 services/，复杂后可拆 services/policies/；不在模块根目录新增 helper.py、policy.py、host.py 等零散实现。
 - Flow 定义位于 `flow/schemas/definitions.py`，业务流程位于 `workflows/<flow>/`；`catalog.py` 始终指权限/审计声明，避免混用概念。
 - 技术适配的例外保持明确：Adapter 可使用 core 的 Worker 登记与锁完成技术协调；`flow/adapters/dbos.py` 仅适配 DBOSClient，不注册执行器，不借例外承担领域事实。

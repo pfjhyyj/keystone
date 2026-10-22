@@ -1,4 +1,4 @@
-"""Single-host coordination, independent of the source holding the file bytes."""
+"""Shared single-host volume identity and permanent OS locks; no domain state."""
 
 import hashlib
 import re
@@ -32,7 +32,6 @@ def initialize(root):
         except FileExistsError:
             pass
     (root / ".locks").mkdir(exist_ok=True)
-    (root / "files").mkdir(exist_ok=True)
     LocalLeases(root).fingerprint()
 
 

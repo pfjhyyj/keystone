@@ -40,6 +40,7 @@ class Authorization:
     enforcer: Enforcer
     permissions: set[str]
     declared_permissions: frozenset[str]
+    role_ids: frozenset[UUID]
 
     def require(self, permission):
         if permission not in self.permissions or not self.enforcer.enforce(
@@ -92,6 +93,7 @@ async def load_authorization(session, user_id: UUID, *, pat_id: UUID | None = No
         enforcer,
         grants,
         frozenset(permission_catalog(session)),
+        frozenset(roles),
     )
 
 

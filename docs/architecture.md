@@ -486,6 +486,7 @@ flowchart LR
 - 每个 models/*.py 只定义一个持久化实体，关联实体也独立；models/__init__.py 显式导出实体，供迁移元数据注册。Schema 按资源归组，显式列出响应字段，不因增加 ORM 列扩大接口；费用 Decimal 字符串、UTC 时间和最小回执保持不变。
 - AuthService/UserService/RoleService/TokenService 组合 services/access.py 的 AccessContext；只有密码相关服务接收 Passwords。其他领域复用上下文，不依赖身份管理服务。ExecutionIdentity 只重写执行授权，共用事务、身份锁、会话限制、失败审计及冲突转译，不继承账户管理能力。
 - 权限、事务和成功审计一起提交；上传预检与实际写入均校验授权，费用查询保留前后授权复查。role_grants 共用一次联表读取，PAT、停用、强制改密及最后管理员保护保持不变，不缓存授权。
+- 跨模块禁止导入其他模块的 models/ 或 adapters/，平台不得依赖具体 businesses/，core 不反向依赖领域与应用组装。架构检查覆盖相对导入、包别名及嵌套文件；DBOSClient 的导入例外仅限 platform/flow/adapters/dbos.py，不能按 adapters/ 整层放行。
 - 跨模块协调使用明确 Service。RoleDeletion、FlowCosts 仍由 use_cases.py 和 bootstrap 装配；事务内方法显式接收 session 和 auth，说明授权及锁前提，不自行提交。Flow 不直接读写 Files 或 Model Access 表。
 - Flow 模型选择由 model_access/services/entries.py 执行；原实例中断收尾仍由 services/recovery.py 在 Worker 身份锁内执行。文件引用及有效使用检查归 files/services/references.py，Flow 只提取输出 ID 并固定 owner/slot。
 - 服务保留调用授权、发送前登记、结果未知不重发和费用事实写回；SDK/账务协议进入 adapters/inference 和 adapters/billing。错误安全分类、固定目标、无隐藏重试及原单位不变。历史时间窗口继续共用 core/time_range.py，应用 UTC 时间来自 core/time.py。
@@ -502,7 +503,11 @@ flowchart LR
 | Flow | runs/reconciliation/identity/resources/outputs/artifacts；定义归 schemas，宿主与 Agent 执行接入归 workflows |
 | Audit | writer/query，写入不反向依赖身份服务；审计动作在各所属模块声明 |
 
-Flow 的 workflows/context.py 保留执行作用域与取消监测，services/resources.py 承担输入和受权文件操作，adapters/dbos.py 负责引擎客户端及安全错误投影。传输槽位 → 活动执行作用域 → 文件锁/句柄/临时文件的获取和释放顺序保持不变。稳定产物请求键、文件引用原子保存、撤权后事实收尾及返回前重新授权仍有效。
+Identity 在当前授权上下文提供不可变 role_ids，复用原 role_grants 联表查询并包含空权限角色；Files 据此匹配自身 FileGrant，不查询 Identity 表。services/subjects.py 的 require_subjects 在调用方身份锁及事务内检查用户/角色存在性，不返回 ORM、不提交，也不排除停用用户。PAT 范围、功能权限及对象权限仍分别检查，角色信息不跨授权事务缓存。
+
+共用协调卷身份与永久文件锁位于 core/local_leases.py，Files 和 Model Access 凭据适配共同使用；Files 的内容目录初始化仍归 adapters/storage.py。标记、锁键、错误码和单宿主前提不变。
+
+Flow 的 workflows/context.py 保留执行作用域与取消监测，services/resources.py 承担输入、产物键与公开 Files 服务组合，adapters/dbos.py 负责引擎客户端及安全错误投影。FileService.transfer() 取得槽位并提供作用域内的 FileTransferService，由 Files 封装落盘、校验、容量及本地文件上传；Flow 不访问其 Adapter 或原始槽位。传输槽位 → 活动执行作用域 → 文件锁/句柄/临时文件的获取和释放顺序保持不变。稳定产物请求键、文件引用原子保存、撤权后事实收尾及返回前重新授权仍有效。
 
 ### 5.4.1 Model Access 分层
 
@@ -550,7 +555,7 @@ Flow 的轻量目录同样按应用隔离：bootstrap 把显式定义列表交�
 | 功能权限 | catalog.py 中的权限键与说明 | composition.BUSINESS_CATALOGS；Identity 共用合并后的目录 |
 | 审计动作 | catalog.py 中的动作键、允许记录的详情字段 | 同一 Catalog 的 audit_actions；继续写 AuditLog |
 | 持久化实体 | models/ 中一实体一文件，models/__init__.py 显式导出 | model_registry.load_models() 显式导入；bootstrap 与 Alembic 共用 |
-| HTTP 与 Flow | controllers/、services/ 和按需增加的 flows/ | bootstrap 显式注册；API 加载轻量定义，Worker 导入执行代码 |
+| HTTP 与 Flow | controllers/、services/ 和按需增加的 workflows/ | bootstrap 显式注册；API 加载轻量定义，Worker 导入执行代码 |
 
 以下仅展示将来业务的声明方式，不创建示例业务：
 

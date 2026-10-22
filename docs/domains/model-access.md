@@ -562,7 +562,7 @@ SDK/Pydantic AI 错误和网络异常在适配边界转换为安全分类，Serv
 
 services/costs.py 负责扫描到期范围、加载原查询快照、选择账务能力、固定窗口、跨页匹配、冲突检查、写前配置与所有权复核，并以短事务提交费用、证据和进度。HTTP 查询留在业务事务外。原 Token 不能被当前新 Key 替代，相同真实 Token 的多个 Channel 共用协调范围；这些规则由 Service 执行，不交给账务适配器更新渠道记录。
 
-services/cost_policy.py 保留纯规则：首次等待、未出账间隔、暂时失败预算、Retry-After 与截止时间的约束、费用状态转换。它不查询供应商、不访问数据库、不注册定时任务，也不按供应商名称决定口径。adapters/credentials.py 只提供加解密与 HMAC 范围标识等技术能力；adapters/coordination.py 提供会话锁和所有权检查。Service 决定何时取得锁、如何处理范围变化及何时写回，不把这些数据库协调实现继续放在 HTTP gateway 中。
+services/cost_policy.py 保留纯规则：首次等待、未出账间隔、暂时失败预算、Retry-After 与截止时间的约束、费用状态转换。它不查询供应商、不访问数据库、不注册定时任务，也不按供应商名称决定口径。adapters/credentials.py 只提供加解密与 HMAC 范围标识等技术能力，共享卷身份校验使用 core/local_leases.py，不依赖 Files 内部 Adapter；adapters/coordination.py 提供会话锁和所有权检查。Service 决定何时取得锁、如何处理范围变化及何时写回，不把这些数据库协调实现继续放在 HTTP gateway 中。
 
 ### 8.4 Worker、DBOS 与手动入口
 

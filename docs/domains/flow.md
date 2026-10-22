@@ -393,7 +393,7 @@ flow/
     bootstrap.py              # 绑定上下文、原 Worker 实例恢复准备
 ```
 
-业务代码使用 `from keystone.platform.flow.workflows import context as host`。context 不再查询领域表；受权操作由 FlowResourceService 通过原身份调用 Files/Artifact Service。长传输仍按槽位 → 活动执行作用域 → 文件读取锁/临时文件嵌套，取消后先关闭句柄、删除临时副本，结束作用域，最后释放槽位。稳定产物键、引用原子保存与返回前授权复查不变。DBOS workflow/step 名称及参数协议保持原值，目录移动仍改变执行制品哈希，旧在途运行按原制品收尾。
+业务代码使用 `from keystone.platform.flow.workflows import context as host`。context 不再查询领域表；受权操作由 FlowResourceService 通过原身份调用 Files/Artifact Service；FlowResourceService 只保留输入、产物 owner/slot 与稳定请求键，落盘及本地上传由 FileService.transfer() 提供的短期 FileTransferService 完成，Flow 不访问 Files Adapter、workspace、容量或原始槽位。长传输仍按槽位 → 活动执行作用域 → 文件读取锁/临时文件嵌套，取消后先关闭句柄、删除临时副本，结束作用域，最后释放槽位。稳定产物键、引用原子保存与返回前授权复查不变。DBOS workflow/step 名称及参数协议保持原值，目录移动仍改变执行制品哈希，旧在途运行按原制品收尾。
 
 Flow Service 不反向导入 composition 获取版本：装配层通过 Runtime 注入只读版本查询，API 与跨模块用例统一使用 runtime.flow_service(identity)，ExecutionIdentity 与协调器使用相同来源。每次授权仍在身份锁内校验原 Run 的版本；历史版本不匹配时不提交新执行，已完成运行的事实仍按原快照投影。版本查询函数只作为进程内依赖，不进入持久参数。
 

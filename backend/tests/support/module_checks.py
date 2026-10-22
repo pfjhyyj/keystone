@@ -24,6 +24,43 @@ def _domain_layer(dependency, layer):
     )
 
 
+def _module_dependencies(dependencies, namespace, file):
+    for dependency in dependencies:
+        if namespace.startswith("keystone.platform."):
+            assert not _under(dependency, "keystone.businesses"), (
+                f"Platform imports concrete business: {file}"
+            )
+        parts = dependency.split(".")
+        if len(parts) >= 4 and parts[:2] in (
+            ["keystone", "platform"],
+            ["keystone", "businesses"],
+        ):
+            owner = ".".join(parts[:3])
+            assert owner == namespace or parts[3] not in {"models", "adapters"}, (
+                f"Module imports another module's persistence/adapter: {file} -> {dependency}"
+            )
+
+
+def check_core_dependencies(root):
+    for file in root.rglob("*.py"):
+        package = ".".join(("keystone.core", *file.relative_to(root).parts[:-1]))
+        dependencies = imports(ast.parse(file.read_text(encoding="utf8")), package)
+        assert not any(
+            _under(dependency, prefix)
+            for dependency in dependencies
+            for prefix in (
+                "keystone.platform",
+                "keystone.businesses",
+                "keystone.composition",
+                "keystone.bootstrap",
+                "keystone.entrypoints",
+                "keystone.model_registry",
+                "keystone.use_cases",
+                "keystone.worker",
+            )
+        ), f"Core imports domain/application implementation: {file}"
+
+
 def _execution_dependencies(tree, package, *, allow_client=False):
     """Evaluate exceptions per import, never grant them to another statement."""
     execution = "keystone.core.execution"
@@ -108,6 +145,7 @@ def check_module_layers(root, namespace):
             _lightweight_root(file, tree, dependencies)
             continue
         layer = relative.parts[0]
+        _module_dependencies(dependencies, namespace, file)
         assert not any(
             _under(d, root)
             for d in dependencies
@@ -121,7 +159,12 @@ def check_module_layers(root, namespace):
         ), f"Module imports application assembly: {file}"
         if layer in {"controllers", "services", "schemas", "models", "adapters"}:
             forbidden = list(
-                _execution_dependencies(tree, package, allow_client=layer == "adapters")
+                _execution_dependencies(
+                    tree,
+                    package,
+                    allow_client=namespace == "keystone.platform.flow"
+                    and relative.as_posix() == "adapters/dbos.py",
+                )
             )
             assert not forbidden, f"Module layer imports execution implementation: {file}"
         if layer == "controllers":

@@ -150,25 +150,24 @@ async def artifact(run_id, key, *, max_bytes=None):
 @asynccontextmanager
 async def materialize_file(run_id, identifier):
     # Preserve slot -> live execution scope -> authorized reader/workspace nesting.
-    with runtime().storage.transfers.slot() as number:
+    resource = resources(run_id)
+    with resource.files.transfer() as transfer:
         async with (
             execution_scope(run_id),
-            resources(run_id).materialize_file(
-                identifier,
-                _transfer_slot=number,
-            ) as path,
+            transfer.materialize_file(UUID(identifier)) as path,
         ):
             yield path
 
 
 async def upload_file(run_id, key, path, *, name, content_type, storage_key=None):
-    with runtime().storage.transfers.slot() as number:
+    resource = resources(run_id)
+    with resource.files.transfer() as transfer:
         async with execution_scope(run_id):
-            return await resources(run_id).upload_file(
+            return await resource.upload_file(
                 key,
                 path,
                 name=name,
                 content_type=content_type,
                 storage_key=storage_key,
-                _transfer_slot=number,
+                transfer=transfer,
             )

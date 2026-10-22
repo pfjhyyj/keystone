@@ -236,6 +236,8 @@ def test_batched_role_grants_preserve_account_and_token_rules(client):
         await session.flush()
         auth = await load_authorization(session, target.id, pat_id=pat.id)
         assert auth.permissions == {"dictionary:read"}
+        assert auth.role_ids == frozenset(UUID(value["id"]) for value in roles)
+        assert (await load_authorization(session, UUID(unassigned["id"]))).role_ids == frozenset()
         auth.require("dictionary:read")
         with pytest.raises(ServiceError):
             auth.require("audit:read")

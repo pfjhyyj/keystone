@@ -315,6 +315,6 @@ Cookie 使用 HttpOnly、SameSite=Lax、Path=/，生产环境使用 Secure 和 _
 
 AccessContext.access 统一处理事务、共享/排他身份锁、权限、会话限制、失败审计和 IntegrityError → conflict。ExecutionIdentity 只覆盖 authorize(session)，按 Run 检查当前身份和执行资格；不另写事务上下文，也不接收后忽略调用参数。
 
-参考 Ether user/rbac/engine.py 的 user_grants，role_grants 用一次联表读取角色及已声明权限，保留空角色、内置管理员展开和未知权限过滤。load_authorization 与管理目标检查共用该读取；前者仍检查用户/PAT 状态、凭据范围和强制改密，后者仍保留停用或待改密目标的原角色范围用于防越权管理。权限不跨请求缓存。utcnow 移到 core/time.py，各领域直接引用，不通过身份授权服务获取通用时间工具。
+参考 Ether user/rbac/engine.py 的 user_grants，role_grants 用一次联表读取角色及已声明权限，保留空角色、内置管理员展开和未知权限过滤。load_authorization 与管理目标检查共用该读取；前者仍检查用户/PAT 状态、凭据范围和强制改密，后者仍保留停用或待改密目标的原角色范围用于防越权管理。Authorization.role_ids 从同次 role_grants 结果生成不可变集合，保留空权限角色，供其他领域匹配自己的对象授权；不另查成员表，不扩大 PAT 权限，也不跨授权事务缓存。services/subjects.py 的 require_subjects 在调用方 AccessContext 身份锁及事务内检查用户/角色存在性，包括停用用户；不返回 ORM、不提交，缺失仍返回 404 not_found。其他领域不直接查询 Identity 模型。权限不跨请求缓存。utcnow 移到 core/time.py，各领域直接引用，不通过身份授权服务获取通用时间工具。
 
 用户、角色列表先完成搜索、排序和分页，再用当前页 ID 一次读取 UserRole 或 RolePermission；空页不查询关联表，查询次数不随页内记录数增长。未分配角色的用户返回空 role_ids，空角色返回空 permissions，内置 admin 展开当前权限目录，未知权限仍被过滤。读取和响应投影分离，不增加缓存、Repository 或总数查询。

@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
 import json
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass
 from threading import Event
 from uuid import uuid4
@@ -18,6 +18,7 @@ from keystone.platform.files.models import File, FileGrant
 from keystone.platform.files.schemas import view
 from keystone.platform.files.services import access as policy
 from keystone.platform.files.services.references import require_unreferenced, retain_artifact
+from keystone.platform.files.services.transfers import FileTransferService
 from keystone.platform.identity.services.access import AccessContext
 
 
@@ -49,6 +50,16 @@ class ContentReader:
 class FileService:
     def __init__(self, identity: AccessContext, storage):
         self.identity, self.storage = identity, storage
+
+    @contextmanager
+    def transfer(self):
+        """Acquire before a caller's execution scope; release after all I/O and cleanup."""
+        with self.storage.transfers.slot() as number:
+            transfer = FileTransferService(self, number)
+            try:
+                yield transfer
+            finally:
+                transfer.close()
 
     async def options(self):
         async with self.identity.access("file:create"):

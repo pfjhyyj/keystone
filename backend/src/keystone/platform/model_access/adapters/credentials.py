@@ -10,7 +10,7 @@ from uuid import uuid4
 from cryptography.fernet import Fernet, InvalidToken
 
 from keystone.core.errors import ServiceError
-from keystone.platform.files.adapters.leases import LocalLeases
+from keystone.core.local_leases import LocalLeases
 
 KEY_FILE = ".model-credentials.key"
 

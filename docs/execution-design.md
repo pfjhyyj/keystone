@@ -87,7 +87,7 @@ keystone/
 | workflows | 业务编排、步骤、Agent、工具与资源 | 允许 DBOS；通过公开服务或 FlowContext 使用能力 |
 | catalog.py | 模块权限与审计动作字段白名单 | 只依赖 core.catalog，不导入运行实现 |
 
-Controller/执行适配 → Service → 本模块 Model/技术适配器。跨模块调用公开 Service、Schema 或任务声明，不绕过权限直接查询其他模块的表。普通 Service 可被 HTTP 与 Step 共用。不增加 Module 基类、BaseService、通用 Repository、纯转发 public.py 或目录自动发现。
+Controller/执行适配 → Service → 本模块 Model/技术适配器。跨模块调用公开 Service、Schema 或任务声明，禁止导入其他模块的 Model/Adapter。平台不依赖具体业务，core 不依赖领域和应用组装；DBOSClient 例外仅限 flow/adapters/dbos.py。Identity 通过当前 Authorization.role_ids 和事务内 require_subjects 提供成员及主体校验；Files 通过 FileService.transfer() 提供有生命周期的传输服务，Flow 不访问其槽位、容量或 workspace 实现。协调卷标记与锁归 core/local_leases.py，供 Files 与模型凭据共同使用。普通 Service 可被 HTTP 与 Step 共用。不增加 Module 基类、BaseService、通用 Repository、纯转发 public.py 或目录自动发现。
 
 ## 3. 任务、计划与投递接口
 
@@ -440,6 +440,6 @@ composition 创建依赖并汇总声明；core/execution/ 不反向导入 compos
 
 三类维护、tick 和内部步骤只保留最新实现，执行入口不附加版本后缀，不保留旧签名的兼容分支；计划名、队列名和 execution_key 前缀保留。执行版本继续由制品指纹判断，不依赖入口名后缀；目录移动也改变当前制品哈希；切换前处理旧在途执行，或用原制品和原身份恢复收尾。计划名、队列名和逻辑任务键尽量稳定，旧参数格式与检查点不能被新代码冒充兼容。保留旧导入/函数名不足以跨版本恢复，更不能通过新 Run/调用 ID 重发未知模型请求。不直接删除 DBOS 执行来释放容量。
 
-架构检查递归覆盖 platform/ 和 businesses/：普通 Service 等分层不能直接或经 core/execution 的实现包依赖 DBOS/Worker，嵌套任务适配也不能直接访问 ORM，轻量任务声明不依赖服务或执行实现，core/execution/ 不反向导入 composition 或领域。同一检查还覆盖根目录纯声明、允许的一级目录、MVC 依赖方向、协议适配器隔离及脚手架输出；Flow 宿主与协议目录已完成归位。
+架构检查递归覆盖 platform/ 和 businesses/：普通 Service 等分层不能直接或经 core/execution 的实现包依赖 DBOS/Worker，嵌套任务适配也不能直接访问 ORM，轻量任务声明不依赖服务或执行实现，core/execution/ 不反向导入 composition 或领域。同一检查还覆盖根目录纯声明、允许的一级目录、MVC 依赖方向、跨模块 Model/Adapter 隔离、平台与 core 的依赖方向、DBOSClient 精确例外及脚手架输出；Flow 宿主与协议目录已完成归位。
 
 验收至少覆盖多 Worker 共用计划/预算、活动去重与执行 ID 分离、扫描中断恢复、慢清理不阻塞协调、旧观察不覆盖终态、禁用残留触发、原身份撤权、未知模型结果、输入输出/文件数量上限。采用人工衔接的业务另验收资源变更、跨操作者重复批准、相反决定竞争、批准与 B 受理同事务回滚、提交响应丢失及 B 失败后的显式重试。结构检查、受控执行和真实业务质量分别记录，不能相互替代。

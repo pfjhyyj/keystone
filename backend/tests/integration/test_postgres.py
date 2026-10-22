@@ -10,7 +10,7 @@ from keystone.bootstrap import build_runtime
 from keystone.core.config import Settings
 from keystone.core.database import Base
 from keystone.core.migrations import migration_config
-from keystone.platform.files.adapters.leases import initialize
+from keystone.platform.files.adapters.storage import initialize
 
 
 @pytest.mark.postgres

@@ -260,7 +260,11 @@ authenticated 仅能选择 inspect/content_read，不能选择 manage。可用�
 
 ### 代码组织
 
-根目录 catalog.py 仅声明文件权限与审计动作，三个实体各自位于 models/ 下的独立文件。原文件访问策略含 ORM 与对象权限检查，归 services/access.py；存储、LocalLeases、磁盘容量及分块传输分别归 adapters/storage.py、leases.py、capacity.py、transfers.py。适配器不反向调用业务 Service 或领域模型，文件请求键、对象键、存储指纹、锁和容量释放顺序不变。services/files.py 管生命周期，grants.py 管授权，references.py 管引用及受控产物保留，cleanup.py 保留原有界清理服务，files/tasks/workflows.py 只负责 DBOS 计划、投递和维护健康检查。Flow 通过 references 内部入口写引用，调用方保留原事务与锁，不能绕过有效使用记录检查；目录与字段响应遵循整体架构规范。统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
+根目录 catalog.py 仅声明文件权限与审计动作，三个实体各自位于 models/ 下的独立文件。原文件访问策略含 ORM 与对象权限检查，归 services/access.py；存储、磁盘容量及分块传输分别归 adapters/storage.py、capacity.py、transfers.py；共享协调卷的 LocalLeases 位于 core/local_leases.py，内容目录初始化仍归 Files。适配器不反向调用业务 Service 或领域模型，文件请求键、对象键、存储指纹、锁和容量释放顺序不变。services/files.py 管生命周期，grants.py 管授权，references.py 管引用及受控产物保留，cleanup.py 保留原有界清理服务，files/tasks/workflows.py 只负责 DBOS 计划、投递和维护健康检查。Flow 通过 references 内部入口写引用，调用方保留原事务与锁，不能绕过有效使用记录检查；目录与字段响应遵循整体架构规范。统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
+
+文件对象权限只查询本模块 FileGrant，并使用当前 Authorization.role_ids 匹配角色授权；成员集合由 Identity 在同一授权事务中读取，包含空权限角色，不扩大 PAT 功能范围。FileGrantService 调用 Identity services/subjects.py 的 require_subjects 验证主体存在性，沿用当前 session 和身份锁、保留对停用用户的授权及 404 not_found 语义；不直接导入 Identity 模型。
+
+FileService.transfer() 取得本机跨进程槽位，返回仅在该作用域内有效的 FileTransferService。materialize_file 保留文件读取授权、完整性验证和临时容量约束，退出后清除临时副本；upload_file 对可信本地路径计算大小和校验和，通过原上传服务保存稳定请求键及 owner/slot 引用。同一传输作用域拒绝嵌套/并发文件操作；从物化文件复制上传时另取一个作用域，避免复用同一 scratch 路径。Flow 保留槽位 → 原身份执行作用域 → 文件资源的顺序，作用域退出前等待 I/O 和清理；路径与传输服务不进入持久参数。
 
 内部 content 接口可指定 max_bytes，授权后在读取存储前检查文件大小，仍执行完整性和读取后授权检查。超限返回 file_too_large，引用资格错误返回 file_reference_invalid；具体业务自行转换为业务错误，Files 不声明 Flow 错误码。公开 HTTP 上传新增可选 storage_key，详情新增 storage_key；内容下载契约不变。
 

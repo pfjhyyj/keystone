@@ -13,8 +13,7 @@ from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
 from keystone.core.storage_config import StorageConfig
 from keystone.core.time import utcnow
-from keystone.platform.files.adapters.leases import initialize
-from keystone.platform.files.adapters.storage import Storage, StorageRegistry
+from keystone.platform.files.adapters.storage import Storage, StorageRegistry, initialize
 from keystone.platform.files.models import File
 
 

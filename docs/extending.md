@@ -232,6 +232,10 @@ Flow 定义使用 `from keystone.platform.flow.schemas.definitions import Defini
 
 依赖方向为 Controller/执行适配 → Service → Model/Adapter。Controller 不访问 ORM 或开启事务，Schema 不调用 Service/Adapter，Adapter 不调用 Service 或领域 ORM，Service 不依赖 HTTP/协议 SDK/DBOS 实现。tasks/workflows 只编排服务，不直接查询领域表。架构检查递归覆盖 platform 和 businesses，也检查脚手架生成结果；新增文件或层不能绕过检查。
 
+跨模块只使用公开 Service、Schema 或轻量任务声明，禁止导入其他模块的 models/、adapters/；平台不导入具体业务，core 不导入领域或应用组装。DBOSClient 例外仅限 platform/flow/adapters/dbos.py。文件对象授权使用当前 Authorization.role_ids；需要验证用户/角色引用时，在 AccessContext.access() 提供的 session 中调用 Identity 的 require_subjects，不自行查询身份表。
+
+本地文件操作通过 FileService.transfer() 取得短期 FileTransferService，再调用 materialize_file 或 upload_file；同一作用域只允许一个活动操作，复制物化文件时另取上传作用域。调用方必须等待操作和清理完成，不能保存传输对象或把路径写入 DBOS 检查点。Flow 继续使用 host.materialize_file/upload_file，其宿主负责原身份与取消，Files 负责槽位、临时文件和受控上传。共享协调卷标记及锁能力使用 core/local_leases.py，不跨模块引用 Files Adapter。
+
 模块不导入 composition/bootstrap 等上层装配代码。需组合 Flow 的业务由装配层传入 `runtime.flow_service(identity)` 创建的服务，再调用原有 start_in_transaction 等入口；自行装配 FlowService 时显式传入 `execution_version` 查询函数。执行身份和协调器使用当前 Runtime 注入的同一版本来源，不能绕过校验或把版本、身份回调作为持久任务输入。架构检查逐条判断导入例外；同文件导入轻量 contracts 不会放行另一个执行实现导入，definitions 也不会匹配 definitions_runtime 等近似名称。
 
 后台任务接入顺序：

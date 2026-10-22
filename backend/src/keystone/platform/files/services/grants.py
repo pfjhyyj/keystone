@@ -4,8 +4,8 @@ from keystone.core.errors import ServiceError
 from keystone.platform.files.models import File, FileGrant
 from keystone.platform.files.schemas import grant_view
 from keystone.platform.files.services import access as policy
-from keystone.platform.identity.models import Role, User
 from keystone.platform.identity.services.access import AccessContext
+from keystone.platform.identity.services.subjects import require_subjects
 
 
 class FileGrantService:
@@ -49,10 +49,7 @@ class FileGrantService:
         # Revocation also allowed for failed/uploading files, but deletion owns its grants.
         if data:
             policy.editable(file)
-            if data.user_id:
-                await self.identity.existing(session, User, data.user_id)
-            if data.role_id:
-                await self.identity.existing(session, Role, data.role_id)
+            await require_subjects(session, user_id=data.user_id, role_id=data.role_id)
             row = await session.scalar(
                 select(FileGrant).where(
                     FileGrant.file_id == identifier,

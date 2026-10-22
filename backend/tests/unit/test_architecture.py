@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from support.ast_support import imports
-from support.module_checks import check_module_layers
+from support.module_checks import check_core_dependencies, check_module_layers
 
 ROOT = Path(__file__).parents[2] / "src" / "keystone"
 DOMAINS = ("audit", "dictionary", "files", "flow", "identity", "model_access")
@@ -91,6 +91,111 @@ def test_platform_and_business_modules_share_execution_boundaries():
         for module in (ROOT / family).iterdir():
             if module.is_dir() and module.name != "__pycache__":
                 check_module_layers(module, f"keystone.{family}.{module.name}")
+
+
+def test_core_does_not_import_domains_or_application_assembly():
+    check_core_dependencies(ROOT / "core")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from keystone.platform.files.services.files import FileService",
+        "from keystone import businesses",
+        "from ..platform.files import schemas",
+        "from keystone import composition",
+        "from keystone.worker import lifecycle",
+    ],
+)
+def test_core_rejects_upward_dependencies(tmp_path, source):
+    (tmp_path / "probe.py").write_text(source, encoding="utf8")
+    with pytest.raises(AssertionError, match="Core imports"):
+        check_core_dependencies(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "namespace,file,source,message",
+    [
+        (
+            "keystone.platform.files",
+            "services/probe.py",
+            "from keystone.platform.identity.models import User",
+            "another module",
+        ),
+        (
+            "keystone.platform.files",
+            "services/probe.py",
+            "from ...identity import models",
+            "another module",
+        ),
+        (
+            "keystone.businesses.probe",
+            "services/probe.py",
+            "import keystone.platform.files.adapters.storage as storage",
+            "another module",
+        ),
+        (
+            "keystone.platform.flow",
+            "services/probe.py",
+            "from ...files import adapters",
+            "another module",
+        ),
+        (
+            "keystone.businesses.probe",
+            "models/record.py",
+            "from keystone.businesses.other.models import Record",
+            "another module",
+        ),
+        (
+            "keystone.platform.files",
+            "services/probe.py",
+            "from keystone.businesses.probe.services.records import RecordService",
+            "concrete business",
+        ),
+        (
+            "keystone.platform.files",
+            "services/probe.py",
+            "from keystone import businesses",
+            "concrete business",
+        ),
+        (
+            "keystone.businesses.probe",
+            "adapters/dbos.py",
+            "from dbos import DBOSClient",
+            "execution implementation",
+        ),
+        (
+            "keystone.platform.flow",
+            "adapters/client.py",
+            "from dbos import DBOSClient",
+            "execution implementation",
+        ),
+        (
+            "keystone.platform.flow",
+            "adapters/nested/dbos.py",
+            "from dbos import DBOSClient",
+            "execution implementation",
+        ),
+        (
+            "keystone.platform.flow",
+            "adapters/dbos.py",
+            "from dbos import DBOSClient\nfrom dbos import DBOS",
+            "execution implementation",
+        ),
+    ],
+)
+def test_module_ownership_and_client_exception_are_enforced(
+    tmp_path, namespace, file, source, message
+):
+    target = tmp_path / file
+    target.parent.mkdir(parents=True)
+    for parent in target.parents:
+        if parent == tmp_path:
+            break
+        (parent / "__init__.py").write_text("", encoding="utf8")
+    target.write_text(source, encoding="utf8")
+    with pytest.raises(AssertionError, match=message):
+        check_module_layers(tmp_path, namespace)
 
 
 @pytest.mark.parametrize(
@@ -242,7 +347,7 @@ def test_module_metadata_is_lightweight_and_engine_adapter_uses_only_client(tmp_
     adapters.mkdir()
     (adapters / "__init__.py").write_text("", encoding="utf8")
     (adapters / "dbos.py").write_text("from dbos import DBOSClient", encoding="utf8")
-    check_module_layers(root, "keystone.businesses.probe")
+    check_module_layers(root, "keystone.platform.flow")
 
 
 def test_flow_definitions_and_module_metadata_do_not_load_runtime_implementations():

@@ -17,11 +17,12 @@ from keystone.core.asyncio import new_event_loop, run
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.errors import ServiceError
+from keystone.core.local_leases import unavailable
 from keystone.core.migrations import migration_config
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.dictionary.services import dictionaries
-from keystone.platform.files.adapters.leases import initialize, unavailable
+from keystone.platform.files.adapters.storage import initialize
 from keystone.platform.files.models import File
 from keystone.platform.files.services.cleanup import cleanup
 from keystone.platform.files.services.grants import FileGrantService
@@ -644,7 +645,7 @@ def test_local_lease_is_cross_process_and_native_io_finishes_before_cancellation
     import subprocess
     import sys
 
-    from keystone.platform.files.adapters.leases import LocalLeases
+    from keystone.core.local_leases import LocalLeases
     from keystone.platform.files.adapters.storage import blocking
 
     initialize(tmp_path / "store")
@@ -654,7 +655,7 @@ def test_local_lease_is_cross_process_and_native_io_finishes_before_cancellation
             [
                 sys.executable,
                 "-c",
-                "from keystone.platform.files.adapters.leases import LocalLeases; import sys; "
+                "from keystone.core.local_leases import LocalLeases; import sys; "
                 'LocalLeases(sys.argv[1]).lease("one").__enter__()',
                 str(storage.root),
             ],
