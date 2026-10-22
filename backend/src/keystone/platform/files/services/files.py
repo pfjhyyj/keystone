@@ -430,11 +430,21 @@ class FileService:
         async with self.identity.access(
             "file:manage", action="file.delete.request", target="file", target_id=identifier
         ) as (session, auth):
-            file = await policy.locked(session, identifier)
-            await policy.require(session, auth, file, "manage")
-            if file.status not in {"deleting", "deleted"}:
-                await require_unreferenced(session, identifier)
-                file.status = "deleting"
-                self.identity.touch(file, auth)
-                await self.identity.log(session, auth, "file.delete.request", "file", identifier)
-            return {"id": file.id}
+            return await self.request_delete_in_transaction(session, auth, identifier)
+
+    async def request_delete_in_transaction(self, session, auth, identifier):
+        """Accept deletion in the caller's current authorized business transaction.
+
+        Release approved references first, locking the complete affected file set in
+        ID order. Any error must roll back the caller's transaction. No commit, storage
+        I/O or task dispatch; existing maintenance owns physical deletion and grants.
+        """
+        auth.require("file:manage")
+        file = await policy.locked(session, identifier)
+        await policy.require(session, auth, file, "manage")
+        if file.status not in {"deleting", "deleted"}:
+            await require_unreferenced(session, identifier)
+            file.status = "deleting"
+            self.identity.touch(file, auth)
+            await self.identity.log(session, auth, "file.delete.request", "file", identifier)
+        return {"id": file.id}

@@ -261,6 +261,12 @@ authenticated 仅能选择 inspect/content_read，不能选择 manage。可用�
 
 ### 事务组合入口
 
+`FileReferenceService(identity).release_in_transaction(session, auth, references)` 接收可信业务已经授权的精确 `(owner, slot, file_id)` 清单，按文件 ID 排序锁定后解除引用。只删除三个键都匹配的使用记录，去重及重复调用不重复审计，不按 owner 前缀清空。每条实际移除的引用记录 `file.reference` 成功审计，并保留用户、PAT 与 correlation_id。与 `FileReferences.release` 一样，解除已授权业务自身的使用记录不要求重新取得内容读取或对象管理授权；它不授予文件访问权。owner、slot 和文件清单必须由业务服务核对，不能从客户端直接透传，也不开放 HTTP 引用释放接口。
+
+`FileService.request_delete_in_transaction(session, auth, file_id)` 在当前身份事务内检查 `file:manage`、文件对象管理授权及剩余引用，再标记 `deleting` 并记录删除受理审计。原 HTTP 删除复用同一入口，权限、上传中/失败文件的删除、重复受理及 deleted 墓碑行为保持不变，不提供跳过文件授权的参数。已删除文件的业务回执恢复应由调用方根据自己冻结的业务清单确认，不把它变成通用文件授权例外。
+
+组合调用时，调用方从 `AccessContext.access()` 取得 session/auth，先授权业务对象、冻结并复核释放和删除范围，将全部受影响文件（包括只解除引用而保留内容的输入文件）按 ID 排序加锁，再释放引用并受理删除，最后与业务成功审计一起提交。遇到异常或取消必须回滚整个调用方事务。两个入口均不提交、不另开事务、不访问存储、不投递任务；原文件维护计划继续处理本地/S3 删除、读取租约、失败重试、授权清除及墓碑残留，不改变维护队列、容量预算或业务配置。
+
 `FileGrantService.grant_in_transaction(session, auth, file_id, data, grant_id=...)` 在调用方当前身份事务内新增或撤销授权，仍检查功能权限、文件 manage 范围、目标主体与生命周期。调用方从 `AccessContext.access()` 取得 session/auth，完成业务对象授权后传入；内部不提交、不另开事务。与 `FileReferences`、业务记录及 `FlowService.start_in_transaction` 一起提交或回滚，成功审计在同一事务；HTTP 原入口继续自管事务。
 
 整文件字节读取入口 `FileService.content` 默认限制为 64 MiB，显式 max_bytes 也必须为非负上限；媒体调用使用流式读取或 Worker 落盘入口，上传容量扩展不会自动放大内存读取上限。

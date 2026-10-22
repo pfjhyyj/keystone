@@ -76,6 +76,48 @@ class FileReferenceService:
     def __init__(self, identity: AccessContext):
         self.identity = identity
 
+    async def release_in_transaction(self, session, auth, references):
+        """Release exact (owner, slot, file_id) claims approved by trusted business code.
+
+        The caller supplies current AccessContext auth and authorizes every owner;
+        these are never client-controlled selectors. Lock all affected files in ID
+        order before other file locks, including retained input files. No content or
+        manage grant is needed merely to release one's authorized business usage.
+        No commit, storage I/O or deletion; missing claims are idempotent no-ops.
+        """
+        claims = set()
+        for owner, slot, identifier in references:
+            if (
+                not isinstance(owner, str)
+                or not 1 <= len(owner) <= 160
+                or not isinstance(slot, str)
+                or not 1 <= len(slot) <= 100
+            ):
+                raise ValueError("Invalid reference key")
+            claims.add((owner, slot, UUID(str(identifier))))
+        for identifier in sorted({claim[2] for claim in claims}):
+            await policy.locked(session, identifier)
+        removed = 0
+        for owner, slot, identifier in sorted(claims):
+            result = await session.execute(
+                delete(FileReference).where(
+                    FileReference.owner == owner,
+                    FileReference.slot == slot,
+                    FileReference.file_id == identifier,
+                )
+            )
+            if result.rowcount:
+                removed += result.rowcount
+                await self.identity.log(
+                    session,
+                    auth,
+                    "file.reference",
+                    "file",
+                    identifier,
+                    {"owner": owner, "slot": slot, "added": False},
+                )
+        return removed
+
     async def listing(self, identifier, offset=0, limit=50):
         async with self.identity.access("file:manage") as (session, auth):
             await policy.require(session, auth, await session.get(File, identifier), "manage")
