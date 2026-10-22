@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onScopeDispose, ref } from 'vue'
 import { can } from '../../stores/session'
-import { downloadFile, request, uploadFile } from '../../api/client'
+import { request } from '../../api/client'
+import { downloadFile, uploadFile, type UploadProgress } from '../../api/files'
 import { fileApi, fileStatus, uuidPattern, type StoredFile } from '../../api/files'
 import { usePagedList } from '../../composables/usePagedList'
 import { useAction } from '../../composables/useAction'
@@ -26,8 +27,14 @@ const storageKeys = ref<string[]>([]),
   optionsLoading = ref(false),
   optionsError = ref('')
 let alive = true
+let uploadController: AbortController | null = null
+const uploadProgress = ref<UploadProgress | null>(null)
+function cancelUpload() {
+  uploadController?.abort()
+}
 onScopeDispose(() => {
   alive = false
+  uploadController?.abort()
 })
 const selected = ref<StoredFile | null>(null),
   mode = ref<'edit' | 'delete'>('edit'),
@@ -49,11 +56,23 @@ async function upload() {
   await run(async () => {
     if (!chosen.value || !can('file:create')) return
     if (chosen.value.size > maxBytes.value) throw new Error('文件超过上传上限')
-    const result = await uploadFile(chosen.value, requestKey.value, storageKey.value)
-    notice.value = result.status === 'active' ? '文件已上传' : '上传请求已处理，请查看文件状态'
-    chosen.value = null
-    if (input.value) input.value.value = ''
-    search()
+    uploadController = new AbortController()
+    try {
+      const result = await uploadFile(chosen.value, requestKey.value, storageKey.value, {
+        signal: uploadController.signal,
+        onProgress: (value) => {
+          if (alive) uploadProgress.value = value
+        },
+      })
+      if (!alive) return
+      notice.value = result.status === 'active' ? '文件已上传' : '上传请求已处理，请查看文件状态'
+      chosen.value = null
+      if (input.value) input.value.value = ''
+      search()
+    } finally {
+      uploadController = null
+      if (alive) uploadProgress.value = null
+    }
   })
 }
 function edit(row: StoredFile, operation: 'edit' | 'delete') {
@@ -172,6 +191,23 @@ onMounted(() => void loadOptions())
           type="primary"
           >上传文件</el-button
         >
+        <template v-if="uploadProgress">
+          <span role="status"
+            >{{
+              uploadProgress.phase === 'hashing'
+                ? '正在校验文件'
+                : uploadProgress.phase === 'confirming'
+                  ? '正在等待服务器确认'
+                  : '正在上传文件'
+            }}
+            {{
+              uploadProgress.total
+                ? Math.floor((uploadProgress.loaded / uploadProgress.total) * 100)
+                : 0
+            }}%</span
+          >
+          <el-button native-type="button" @click="cancelUpload">取消上传</el-button>
+        </template>
         <el-button
           :disabled="busy || optionsLoading"
           @click="loadOptions"

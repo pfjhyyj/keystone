@@ -1,5 +1,5 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FileLibrary from '../views/files/FilesView.vue'
 import FileGrantsDialog from '../views/files/components/FileGrantsDialog.vue'
 import FileReferencesDialog from '../views/files/components/FileReferencesDialog.vue'
@@ -7,6 +7,7 @@ import SubjectPicker from '../views/files/components/SubjectPicker.vue'
 import DictionaryManager from '../views/dictionary/DictionaryView.vue'
 import DictionaryItems from '../views/dictionary/components/DictionaryItems.vue'
 import { authorize, deferred, fakeApi, chooseSelect, selectControl } from './support'
+import { FakeXHR, installTransferFakes } from './transfer-support'
 const id = '11111111-1111-4111-8111-111111111111',
   target = '22222222-2222-4222-8222-222222222222'
 const stamp = '2026-01-01T00:00:00Z'
@@ -53,6 +54,29 @@ const failure = (detail: string) =>
   new Response(JSON.stringify({ code: 'denied', detail }), { status: 404 })
 
 describe('file grants and references', () => {
+  beforeEach(() => installTransferFakes(true))
+  it('aborts an active upload on page disposal and ignores its late acknowledgement', async () => {
+    authorize(['file:create'])
+    const receipt = deferred<unknown>()
+    fakeApi((path) =>
+      path === '/files/options'
+        ? { max_file_bytes: 1024, storage_keys: ['local'], default_storage: 'local' }
+        : receipt.promise,
+    )
+    const wrapper = mount(FileLibrary)
+    await flushPromises()
+    Object.defineProperty(wrapper.get('input[type=file]').element, 'files', {
+      value: [new File(['x'], 'x.txt')],
+    })
+    await wrapper.get('input[type=file]').trigger('change')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    const xhr = FakeXHR.last
+    wrapper.unmount()
+    expect(xhr.abort).toHaveBeenCalledOnce()
+    receipt.resolve(file)
+    await flushPromises()
+  })
   it('retries failed upload options without showing a zero limit or losing the chosen file', async () => {
     authorize(['file:create'])
     let attempts = 0

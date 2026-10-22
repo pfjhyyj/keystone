@@ -24,7 +24,14 @@ const filtered = computed(() => {
       <span>显示 {{ filtered.length }} / {{ definitions.length }} 个流程</span>
     </div>
     <div class="table-scroll">
-      <el-table :data="filtered" row-key="key" class="data-table" table-layout="auto">
+      <el-table
+        :fit="false"
+        native-scrollbar
+        :data="filtered"
+        row-key="key"
+        class="data-table"
+        table-layout="auto"
+      >
         <el-table-column label="流程" min-width="180">
           <template #default="{ row }"
             ><strong>{{ row.name }}</strong

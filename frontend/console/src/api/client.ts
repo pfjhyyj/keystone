@@ -172,69 +172,6 @@ export async function invokeModel(
     work.close()
   }
 }
-export async function uploadFile(file: File, requestKey: string, storageKey?: string) {
-  const work = sessionWork(undefined, 65000)
-  try {
-    const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-    const checksum = Array.from(new Uint8Array(digest), (byte) =>
-      byte.toString(16).padStart(2, '0'),
-    ).join('')
-    work.assert()
-    const params = new URLSearchParams({
-      name: file.name,
-      expected_size: String(file.size),
-      content_type: file.type || 'application/octet-stream',
-      request_key: requestKey,
-      checksum_sha256: checksum,
-    })
-    if (storageKey) params.set('storage_key', storageKey)
-    const response = await fetch(`/api/v1/files?${params}`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      cache: 'no-store',
-      signal: work.signal,
-      headers: {
-        'Content-Type': 'application/octet-stream',
-        'X-Keystone-Request': '1',
-        'X-CSRF-Token': csrf,
-      },
-      body: file,
-    })
-    await check(response, work)
-    const result = await response.json()
-    work.assert()
-    return result
-  } catch (error) {
-    return work.rethrow(error)
-  } finally {
-    work.close()
-  }
-}
-
-export async function downloadFile(id: string, name: string) {
-  const work = sessionWork(undefined, 65000)
-  try {
-    const response = await fetch(`/api/v1/files/${id}/content`, {
-      credentials: 'same-origin',
-      cache: 'no-store',
-      signal: work.signal,
-    })
-    await check(response, work)
-    const blob = await response.blob()
-    await check(response, work)
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = name
-    link.click()
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-  } catch (error) {
-    return work.rethrow(error)
-  } finally {
-    work.close()
-  }
-}
-
 export async function request<T>(
   path: string,
   method = 'GET',
