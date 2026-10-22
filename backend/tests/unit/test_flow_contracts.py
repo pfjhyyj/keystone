@@ -4,21 +4,23 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
-from flow_fixture.contracts import definition
 from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ConfigDict, Field, field_serializer
+from support.flow_fixture.contracts import definition
 
 from keystone.core.schemas import Input
 from keystone.platform.flow.catalog import build_definitions, file_ids
+from keystone.platform.flow.engine import Engine
 from keystone.platform.identity.policy import PERMISSIONS
 
 
-@pytest.mark.parametrize(
-    "changes,message",
-    [
+def test_invalid_flow_declarations_fail_during_assembly():
+    for changes, message in (
         ({"entrypoint": ""}, "entrypoint"),
         ({"entrypoint": "   "}, "entrypoint"),
         ({"timeout_seconds": 0}, "timeout"),
@@ -30,33 +32,9 @@ from keystone.platform.identity.policy import PERMISSIONS
         ({"output_file_fields": ("missing",)}, "file paths"),
         ({"file_fields": ("source_file_id", "source_file_id")}, "file paths"),
         ({"file_fields": ("source_file_id.child",)}, "file paths"),
-    ],
-)
-def test_invalid_flow_declarations_fail_during_assembly(changes, message):
-    with pytest.raises(ValueError, match=message):
-        build_definitions((replace(definition, **changes),), PERMISSIONS)
-
-
-def test_distinct_definitions_cannot_share_an_entrypoint():
-    with pytest.raises(ValueError, match="duplicate Flow entrypoint"):
-        build_definitions((definition, replace(definition, key="second")), PERMISSIONS)
-
-
-def test_platform_starts_with_an_empty_flow_directory(monkeypatch):
-    from fastapi.testclient import TestClient
-
-    from keystone import composition
-    from keystone.bootstrap import create_app
-    from keystone.core.asyncio import new_event_loop
-    from keystone.core.config import Settings
-
-    monkeypatch.setattr(composition, "FLOW_DEFINITIONS", ())
-    with TestClient(
-        create_app(Settings(config_file=None, database_url=None)),
-        backend_options={"loop_factory": new_event_loop},
-    ) as client:
-        assert client.get("/api/v1/health").status_code == 200
-        assert not client.app.state.runtime.flow_definitions
+    ):
+        with pytest.raises(ValueError, match=message):
+            build_definitions((replace(definition, **changes),), PERMISSIONS)
 
 
 class Attachments(Input):
@@ -71,13 +49,18 @@ class FileInput(Input):
     mixed: str | int
 
 
-@pytest.mark.parametrize(
-    "path", ["count", "mixed", "rows", "rows.primary", "rows.*.primary", "attachments..primary"]
-)
-def test_file_paths_reject_wrong_types_and_unsupported_traversal(path):
-    invalid = replace(definition, input_type=FileInput, model_field=None, file_fields=(path,))
-    with pytest.raises(ValueError, match="file paths"):
-        build_definitions((invalid,), PERMISSIONS)
+def test_file_paths_reject_wrong_types_and_unsupported_traversal():
+    for path in (
+        "count",
+        "mixed",
+        "rows",
+        "rows.primary",
+        "rows.*.primary",
+        "attachments..primary",
+    ):
+        invalid = replace(definition, input_type=FileInput, model_field=None, file_fields=(path,))
+        with pytest.raises(ValueError, match="file paths"):
+            build_definitions((invalid,), PERMISSIONS)
 
 
 def test_nested_nullable_files_and_terminal_lists_match_extraction():
@@ -134,10 +117,10 @@ def test_worker_imports_register_every_declared_entrypoint(omit_registration):
     # Fresh imports exercise the real public decorator. No DBOS launch, DB or private registry.
     code = (
         f"OMIT_REGISTRATION = {omit_registration!r}\n"
-        + f"import sys; sys.path.insert(0, {str(Path(__file__).parent)!r})\n"
+        + f"import sys; sys.path.insert(0, {str(Path(__file__).parents[1])!r})\n"
         + """
 import sys
-from flow_fixture import install
+from support.flow_fixture import install
 install()
 from keystone.bootstrap import build_runtime
 from keystone.composition import register_workflows
@@ -170,3 +153,47 @@ assert expected <= registered, f'Missing Worker entrypoints: {expected - registe
         assert result.returncode != 0 and "Missing Worker entrypoints" in result.stderr
     else:
         assert result.returncode == 0, result.stderr
+
+
+def engine_with_error(error):
+    engine = Engine.__new__(Engine)
+    engine.client = SimpleNamespace(
+        list_workflows_async=AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    status="ERROR",
+                    output=None,
+                    error=RuntimeError(error),
+                    app_version="test",
+                    name="document_review",
+                )
+            ]
+        )
+    )
+    return engine
+
+
+async def test_flow_preserves_safe_execution_errors():
+    for code in (
+        "model_not_found",
+        "model_target_changed",
+        "model_input_too_large",
+        "model_response_too_large",
+        "model_stream_incomplete",
+        "model_interrupted",
+        "model_invalid_request",
+        "upstream_model_not_found",
+        "model_rate_limited",
+        "execution_not_authorized",
+        "flow_invalid_output",
+        "flow_budget_exceeded",
+        "flow_timeout",
+    ):
+        assert (await engine_with_error(code).state(uuid4()))["error_code"] == code
+
+
+async def test_flow_never_projects_unknown_codes_or_exception_messages():
+    for error in ("unknown_code", "model_invalid_request: secret body"):
+        assert (await engine_with_error(error).state(uuid4()))[
+            "error_code"
+        ] == "flow_execution_failed"

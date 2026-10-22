@@ -347,7 +347,7 @@ Worker 持续上报[心跳与就绪](../development.md#worker-健康检查排障
 
 ### 7.3 普通步骤与 Harness Agent
 
-可复用示例位于 backend/src/keystone/examples/document_review，默认不注册；backend/tests/flow_fixture 直接复用这份代码。流程为准备可信源信息 → Agent 调用摘要/分段读取工具 → 结构化审查及业务验收 → 保存报告。Harness 加载打包的 review-text Skill，Pydantic AI 执行模型/工具循环；DBOSDurability 持久化每轮模型请求，普通工具的文件 I/O 显式放在 DBOS step 内。不在 agent.run 外再套可重试的大步骤。输出验收、可信预算、工具摘要约定及显式接入方法见[业务 Flow 开发](../flow-development.md)。
+可复用示例位于 backend/src/keystone/examples/document_review，默认不注册；backend/tests/support/flow_fixture 直接复用这份代码。流程为准备可信源信息 → Agent 调用摘要/分段读取工具 → 结构化审查及业务验收 → 保存报告。Harness 加载打包的 review-text Skill，Pydantic AI 执行模型/工具循环；DBOSDurability 持久化每轮模型请求，普通工具的文件 I/O 显式放在 DBOS step 内。不在 agent.run 外再套可重试的大步骤。输出验收、可信预算、工具摘要约定及显式接入方法见[业务 Flow 开发](../flow-development.md)。
 
 该示例的 required_permissions 为 file:content_read/create/inspect/manage 与 model:invoke，另按平台规则要求 flow:start。inspect/manage 用于报告上传恢复时复用原文件，沿用文件服务已有的重试检查，在受理时明确声明；对象授权仍逐文件检查，不因这些功能权限获得他人文件。
 

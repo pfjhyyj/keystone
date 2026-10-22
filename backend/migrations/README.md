@@ -33,7 +33,7 @@ worker_registration 导入每个身份的最新心跳、仍 running 模型调用
 
 新增结构继续追加同一条 Alembic 迁移链，按领域和变更含义命名，revision 与文件名一致，`down_revision` 指向当前 head；不为领域另建分支或版本表。部署仍通过 `keystone init` 更新，不增加启动步骤。
 
-平台与业务模型由 `keystone.model_registry.load_models()` 显式加载，bootstrap 和 `env.py` 共用该入口。业务实体共享 Base/keystone schema，表名带业务前缀；模型注册不导入 API、workflow 或初始化数据。接入检查见 `tests/test_business_models.py`。
+平台与业务模型由 `keystone.model_registry.load_models()` 显式加载，bootstrap 和 `env.py` 共用该入口。业务实体共享 Base/keystone schema，表名带业务前缀；模型注册不导入 API、workflow 或初始化数据。接入检查见 `tests/unit/test_architecture.py`。
 
 Alembic 连接固定 `search_path=public`，只管理 `keystone` schema。DBOS 的表及数据由执行引擎管理，业务迁移和回滚不修改它们。
 

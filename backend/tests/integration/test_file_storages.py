@@ -4,7 +4,7 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import update
-from storage_support import s3_endpoint
+from support.storage_support import s3_endpoint
 from test_files_dictionary import clean, upload
 from test_files_dictionary import client as client
 from test_identity import bearer, query, token

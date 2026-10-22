@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT.parent / "scripts/new_business.py"
 VERSIONS = ROOT / "migrations/versions"
 REVISION = re.compile(r'^revision = "([^"]+)"', re.MULTILINE)

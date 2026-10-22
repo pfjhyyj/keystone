@@ -45,23 +45,25 @@ def test_process_readiness_does_not_require_personally_executing_shared_tasks(mo
     assert health.observation() == "ready"
 
 
-@pytest.mark.parametrize("status", ["ready", "unready", "offline", "unknown"])
-def test_probe_queries_database_without_starting_executor(monkeypatch, capsys, status):
+def test_probe_queries_database_without_starting_executor(monkeypatch, capsys):
     database = SimpleNamespace(close=AsyncMock())
-    query = AsyncMock(return_value={"status": status})
+    query = AsyncMock()
     monkeypatch.setattr(worker, "Database", lambda *args, **kwargs: database)
     monkeypatch.setattr(worker, "worker_status", query)
     monkeypatch.setattr(worker, "Settings", lambda: Settings(config_file=None))
     monkeypatch.setattr(worker, "build_runtime", lambda _: pytest.fail("Probe started executor"))
     monkeypatch.setattr("sys.argv", ["keystone-worker", "--check"])
-    with pytest.raises(SystemExit) as result:
-        worker.main()
-    assert result.value.code == (0 if status == "ready" else 1)
-    assert capsys.readouterr().out.strip() == (
-        "Worker healthy" if status == "ready" else "Worker unavailable"
-    )
-    assert query.call_args.kwargs["host_id"]
-    database.close.assert_awaited_once()
+    for status in ("ready", "unready", "offline", "unknown"):
+        query.return_value = {"status": status}
+        with pytest.raises(SystemExit) as result:
+            worker.main()
+        assert result.value.code == (0 if status == "ready" else 1)
+        assert capsys.readouterr().out.strip() == (
+            "Worker healthy" if status == "ready" else "Worker unavailable"
+        )
+        assert query.call_args.kwargs["host_id"]
+        database.close.assert_awaited_once()
+        database.close.reset_mock()
 
 
 async def wait_until(condition):

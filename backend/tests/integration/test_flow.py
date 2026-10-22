@@ -4,6 +4,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -29,11 +30,11 @@ pytestmark = pytest.mark.postgres
 
 @pytest.fixture(autouse=True)
 def configuration(client, monkeypatch):
-    from model_stub import install
+    from support.model_stub import install
 
     install(monkeypatch)
     runtime = client.app.state.runtime
-    from flow_fixture.contracts import definition
+    from support.flow_fixture.contracts import definition
 
     runtime.flow_definitions = {definition.key: definition}
     settings = runtime.settings
@@ -66,7 +67,12 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None):
         },
         "PYTHONPATH": os.pathsep.join(
             filter(
-                None, [str(__import__("pathlib").Path(__file__).parent), os.getenv("PYTHONPATH")]
+                None,
+                [
+                    str(Path(__file__).parents[1]),
+                    str(Path(__file__).parent),
+                    os.getenv("PYTHONPATH"),
+                ],
             )
         ),
         "KEYSTONE_ENV": "test",
@@ -103,8 +109,8 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None):
                 sys.executable,
                 "-c",
                 (
-                    "from model_stub import install; install(); "
-                    "from flow_fixture import install; install(); "
+                    "from support.model_stub import install; install(); "
+                    "from support.flow_fixture import install; install(); "
                     if stub
                     else ""
                 )
@@ -605,7 +611,7 @@ def test_cancel_during_model_send_preserves_inflight_receipt(client, tmp_path):
 import asyncio
 import httpx2
 from keystone.platform.model_access.http import HttpClient
-import model_stub as mock
+from support import model_stub as mock
 def transport(self, provider):
     async def respond(request):
         await asyncio.sleep(4)

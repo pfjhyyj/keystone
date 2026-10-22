@@ -2,12 +2,13 @@
 
 
 def register():
-    from flow_fixture import workflow  # noqa: F401
+    from . import workflow  # noqa: F401
 
 
 def install():
-    from flow_fixture.contracts import definition
     from keystone import composition
+
+    from .contracts import definition
 
     composition.FLOW_DEFINITIONS = (definition,)
     composition.register_workflows = register

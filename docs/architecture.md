@@ -339,7 +339,7 @@ keystone/
 │   │   ├── worker/tasks/       # 系统任务的 DBOS 入口，调用领域服务
 │   │   └── businesses/         # 具体业务模块
 │   ├── migrations/             # 一条 Keystone 业务迁移链
-│   └── tests/                  # 按模块和跨模块场景组织
+│   └── tests/                  # unit、integration 与 support 分层
 ├── frontend/
 │   ├── console/                # 首版平台控制台
 │   │   ├── Dockerfile          # 控制台构建与 Nginx 入口

@@ -112,20 +112,16 @@ class Deployment:
                 entrypoint = "api" if service == "api" else "worker"
                 script = (
                     "import sys; sys.path.insert(0, '/test-support'); "
-                    "from model_stub import install; install(); "
-                    "from flow_fixture import install; install(); "
+                    "from support.model_stub import install; install(); "
+                    "from support.flow_fixture import install; install(); "
                     f"from keystone.entrypoints.{entrypoint} import main; main()"
                 )
                 lines += [
                     "    command: " + json.dumps(["python", "-c", script]),
                     "    volumes:",
                     "      - type: bind",
-                    "        source: " + json.dumps(str(ROOT / "backend/tests/model_stub.py")),
-                    "        target: /test-support/model_stub.py",
-                    "        read_only: true",
-                    "      - type: bind",
-                    "        source: " + json.dumps(str(ROOT / "backend/tests/flow_fixture")),
-                    "        target: /test-support/flow_fixture",
+                    "        source: " + json.dumps(str(ROOT / "backend/tests/support")),
+                    "        target: /test-support/support",
                     "        read_only: true",
                 ]
             if service == "api":

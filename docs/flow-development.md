@@ -2,7 +2,7 @@
 
 可复用示例位于 `backend/src/keystone/examples/document_review/`。它使用现有
 Pydantic AI、Harness、DBOS、文件服务和 ModelRuntime，不引入额外执行框架或业务表。
-集成测试通过 `backend/tests/flow_fixture/` 直接执行这份代码，不维护第二份示例。
+集成测试通过 `backend/tests/support/flow_fixture/` 直接执行这份代码，不维护第二份示例。
 
 ## 1. 接入与目录
 
@@ -111,9 +111,9 @@ ModelInvocation 和原查费机制维护，不按 token 估算成已确认费用
 在 backend 目录运行：
 
 ```sh
-uv run --locked pytest -q tests/test_document_review.py tests/test_flow_catalog.py tests/test_flow_errors.py
+uv run --locked pytest -q tests/unit/test_document_review.py tests/unit/test_flow_contracts.py
 # 按 development.md 配置专用 keystone_test 数据库后：
-uv run --locked pytest --require-postgres -q tests/test_flow.py tests/test_model_live.py tests/test_review_recovery.py
+uv run --locked pytest --require-postgres -q tests/integration/test_flow.py tests/integration/test_model_live.py tests/integration/test_review_recovery.py
 ```
 
 单元检查覆盖错误源/计数及空白摘要禁止上传、真实 Agent 修正与预算、Unicode 摘要和

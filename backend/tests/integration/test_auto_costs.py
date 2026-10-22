@@ -8,10 +8,10 @@ from threading import Event
 from uuid import UUID, uuid4
 
 import httpx2
-import model_stub
 import pytest
 from dbos import DBOS
 from sqlalchemy import event, func, select
+from support import model_stub
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
 from test_flow import start, wait_run, worker
@@ -569,7 +569,7 @@ def test_cost_and_checkpoint_rollback_together(client, billing):
 def test_flow_completion_or_cancel_and_channel_disable_preserve_billing(
     client, billing, tmp_path, cancel
 ):
-    from flow_fixture.contracts import definition
+    from support.flow_fixture.contracts import definition
 
     config = configure(client)
     runtime = client.app.state.runtime
@@ -583,7 +583,8 @@ def test_flow_completion_or_cancel_and_channel_disable_preserve_billing(
     code = f"""
 import asyncio, json
 from pathlib import Path
-import httpx2, model_stub
+import httpx2
+from support import model_stub
 from keystone.platform.model_access.http import HttpClient
 original = HttpClient.transport
 records = Path({str(records)!r})

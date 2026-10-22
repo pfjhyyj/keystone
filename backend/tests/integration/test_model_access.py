@@ -7,9 +7,9 @@ from threading import Event
 from uuid import UUID, uuid4
 
 import httpx2
-import model_stub as mock
 import pytest
 from sqlalchemy import event, update
+from support import model_stub as mock
 from test_files_dictionary import client as client
 from test_identity import PASSWORD, assign, bearer, create_user, login, query, role, token
 

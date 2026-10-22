@@ -68,7 +68,16 @@ export KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone:keystone_local_
 backend/.venv/bin/python scripts/check.py
 ```
 
-只运行非数据库检查时使用 `scripts/check.py --unit`。需要验证 Dockerfile、完整测试栈及备份恢复时使用 `scripts/check.py --deploy`；完整容器栈定义在 `tests/deploy/compose.yaml`，只供隔离测试，不参与默认开发启动。
+测试按 `unit/`、`integration/`、`support/` 分层：
+
+```bash
+cd backend
+.venv/bin/python -m pytest tests/unit                              # 不连接数据库
+KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone:keystone_local_only@127.0.0.1:55432/keystone_test' \
+  .venv/bin/python -m pytest tests/integration --require-postgres
+```
+
+只运行非数据库检查时使用 `scripts/check.py --unit`。需要验证 Dockerfile、完整测试栈及备份恢复时使用 `scripts/check.py --deploy`；完整容器栈定义在 `tests/deploy/compose.yaml`，只供隔离测试，不参与默认开发启动。测试目录和夹具约定见[后端测试](../backend/tests/README.md)。
 
 ## Worker 健康检查（排障）
 

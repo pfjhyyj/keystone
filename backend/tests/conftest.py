@@ -1,4 +1,6 @@
 import os
+import sys
+from pathlib import Path
 from uuid import uuid4
 
 import psycopg
@@ -7,6 +9,11 @@ from psycopg import sql
 from sqlalchemy.engine import make_url
 
 from keystone.core.asyncio import new_event_loop
+
+ROOT = Path(__file__).parent
+for directory in (ROOT, ROOT / "unit", ROOT / "integration"):
+    if str(directory) not in sys.path:
+        sys.path.insert(0, str(directory))
 
 
 def pytest_addoption(parser):

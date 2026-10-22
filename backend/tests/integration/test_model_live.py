@@ -406,7 +406,7 @@ def test_live_mode_real_dbos_worker_uses_same_send_boundary(
             {},
         )
     runtime = client.app.state.runtime
-    from flow_fixture.contracts import definition
+    from support.flow_fixture.contracts import definition
 
     runtime.flow_definitions = {definition.key: definition}
     runtime.settings.flow_enabled = True
@@ -418,7 +418,7 @@ def test_live_mode_real_dbos_worker_uses_same_send_boundary(
     code = (
         f"import sys, os; sys.path.insert(0, {str(Path(__file__).parent)!r}); "
         "import httpx2; from test_model_live import local_transport; "
-        "from flow_fixture import install; install(); "
+        "from support.flow_fixture import install; install(); "
         f"httpx2.AsyncHTTPTransport = local_transport({port}); "
         "from keystone.entrypoints.worker import main; main()"
     )

@@ -1,26 +1,17 @@
 """Recursive architecture checks, including relative imports and internal adapters."""
 
 import ast
-from importlib.util import resolve_name
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+from support.ast_support import imports
 
-ROOT = Path(__file__).parents[1] / "src" / "keystone"
+ROOT = Path(__file__).parents[2] / "src" / "keystone"
 DOMAINS = ("audit", "dictionary", "files", "flow", "identity", "model_access")
 LAYERS = ("controllers", "services", "models", "schemas")
-
-
-def imports(tree, package):
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            if node.level:
-                module = resolve_name("." * node.level + module, package)
-            yield module
-            yield from (f"{module}.{alias.name}" for alias in node.names)
-        elif isinstance(node, ast.Import):
-            yield from (alias.name for alias in node.names)
 
 
 @pytest.mark.parametrize("domain", DOMAINS)
@@ -144,3 +135,88 @@ def test_system_task_adapters_do_not_own_domain_persistence():
     file = ROOT / "core" / "dbos_runtime.py"
     dependencies = list(imports(ast.parse(file.read_text(encoding="utf8")), "keystone.core"))
     assert not any(d.startswith("keystone.platform") for d in dependencies)
+
+
+TESTS = Path(__file__).parents[1]
+MODELS_ROOT = Path(__file__).parents[2] / "src" / "keystone"
+CHECK = """
+from pathlib import Path
+from support.business_model_checks import check_business_models
+check_business_models(Path(ROOT))
+"""
+
+
+def execute_check(root, setup=""):
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join((str(TESTS), str(MODELS_ROOT.parent))),
+    }
+    return subprocess.run(
+        [sys.executable, "-c", f"ROOT = {str(root)!r}\n" + setup + CHECK],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_business_model_registration_and_layers():
+    result = execute_check(MODELS_ROOT)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "case,message",
+    [
+        ("valid", None),
+        ("missing_registration", "Model missing from load_models"),
+        ("missing_export", "Model not exported"),
+        ("wrong_schema", "metadata/schema"),
+        ("wrong_prefix", "prefix mismatch"),
+        ("service_import", "crosses layers"),
+        ("controller_import", "crosses layers"),
+    ],
+)
+def test_business_model_check_detects_mistakes(tmp_path, case, message):
+    # An overlay exists only in pytest's temporary directory, never in production businesses/.
+    root = tmp_path / "keystone"
+    models = root / "businesses" / "probe" / "models"
+    models.mkdir(parents=True)
+    (models.parent / "__init__.py").write_text("", encoding="utf-8")
+    (models / "__init__.py").write_text(
+        "" if case == "missing_export" else "from .record import Record\n", encoding="utf-8"
+    )
+    table = "other_records" if case == "wrong_prefix" else "probe_records"
+    schema = "public" if case == "wrong_schema" else "keystone"
+    extra = {
+        "service_import": "from ..services import save\n",
+        "controller_import": "from ..controllers import router\n",
+    }.get(case, "")
+    (models / "record.py").write_text(
+        extra + "from keystone.core.database import Base\n"
+        "from sqlalchemy.orm import Mapped, mapped_column\n"
+        "class Record(Base):\n"
+        f"    __tablename__ = {table!r}\n"
+        f"    __table_args__ = {{'schema': {schema!r}}}\n"
+        "    id: Mapped[int] = mapped_column(primary_key=True)\n",
+        encoding="utf-8",
+    )
+    # Forbidden dependencies are not imported by the fake loader, letting the layer check report.
+    register = case not in {"missing_registration", "service_import", "controller_import"}
+    setup = f"""
+import keystone.businesses
+import keystone.model_registry
+keystone.businesses.__path__.insert(0, {str(root / "businesses")!r})
+original = keystone.model_registry.load_models
+def load():
+    metadata = original()
+    if {register!r}:
+        import keystone.businesses.probe.models.record
+    return metadata
+keystone.model_registry.load_models = load
+"""
+    result = execute_check(root, setup)
+    if message is None:
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode != 0 and message in result.stderr, result.stderr

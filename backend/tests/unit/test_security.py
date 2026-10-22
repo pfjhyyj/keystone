@@ -41,21 +41,18 @@ async def test_missing_or_empty_catalog_cannot_inherit_platform_authority(info):
     session.flush.assert_not_awaited()
 
 
-@pytest.mark.parametrize(
-    "schema,extra",
-    [
+def test_new_password_length_without_complexity_requirements():
+    # UserCreate is also used by the administrator initialization command.
+    for schema, extra in (
         (UserCreate, {"username": "alice", "display_name": "Alice"}),
         (PasswordReset, {}),
         (PasswordChange, {"current_password": "old-password"}),
-    ],
-)
-def test_new_password_length_without_complexity_requirements(schema, extra):
-    # UserCreate is also used by the administrator initialization command.
-    for password in ("12345678", "aaaaaaaa", " abcdef ", "x" * 128):
-        assert schema(password=password, **extra).password.get_secret_value() == password
-    for password in ("1234567", "x" * 129):
-        with pytest.raises(ValidationError):
-            schema(password=password, **extra)
+    ):
+        for password in ("12345678", "aaaaaaaa", " abcdef ", "x" * 128):
+            assert schema(password=password, **extra).password.get_secret_value() == password
+        for password in ("1234567", "x" * 129):
+            with pytest.raises(ValidationError):
+                schema(password=password, **extra)
 
 
 def test_production_requires_https_origins_and_csrf_is_session_bound():

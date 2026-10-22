@@ -5,9 +5,9 @@ from threading import Event
 from uuid import UUID, uuid4
 
 import pytest
-from local_media_stub import definition
 from sqlalchemy import delete, update
-from storage_support import s3_endpoint
+from support.local_media_stub import definition
+from support.storage_support import s3_endpoint
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
 from test_identity import bearer, create_user, query, token

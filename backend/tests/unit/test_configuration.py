@@ -154,7 +154,7 @@ def test_file_capacity_floor_toml_environment_and_worker_digest(tmp_path, monkey
 
 
 def test_example_is_complete_and_uses_config_directory(monkeypatch, tmp_path):
-    example = Path(__file__).parents[1] / "keystone.toml.example"
+    example = Path(__file__).parents[2] / "keystone.toml.example"
     monkeypatch.chdir(tmp_path)
     settings = Settings(config_file=example)
     assert settings.database_url is not None

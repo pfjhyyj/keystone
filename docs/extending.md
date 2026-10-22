@@ -155,13 +155,13 @@ async def create(self, data: NoteCreate):
 
 至少覆盖：
 
-1. `pytest backend/tests/test_business_models.py`：模型注册、导出、表前缀和依赖方向。
+1. `pytest backend/tests/unit/test_architecture.py`：模型注册、导出、表前缀和依赖方向。
 2. 迁移：在随机库执行 `upgrade head`，确认与 ORM 元数据无差异。
 3. 用例：功能权限、对象权限、审计字段、事务回滚、重复请求和边界输入。
 4. 若接入 Flow：契约校验、发起幂等、取消、结果采用和文件引用。
 5. 若增加前端：Vitest 覆盖页面状态与请求参数；需要时再加 Playwright。
 
-可以参考 `backend/tests/test_business_integration.py` 的装配方式。Flow 的测试夹具位于 `backend/tests/flow_fixture/`，不要把测试夹具放进生产 `businesses/`。
+可以参考 `backend/tests/integration/test_business_integration.py` 的装配方式。Flow 的测试夹具位于 `backend/tests/support/flow_fixture/`，不要把测试夹具放进生产 `businesses/`。
 
 ## 6. 接入 Flow / Agent（可选）
 

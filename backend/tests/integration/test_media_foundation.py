@@ -9,9 +9,9 @@ from uuid import UUID
 import pytest
 from dbos import DBOS
 from fastapi import Request
-from local_media_stub import definition
 from sqlalchemy import func, select, update
 from starlette.requests import ClientDisconnect
+from support.local_media_stub import definition
 from test_files_dictionary import clean, upload
 from test_files_dictionary import client as client
 from test_flow import wait_run, worker
@@ -364,7 +364,7 @@ def test_model_free_worker_materialization_heartbeat_cancel_and_restart(media, t
     identifier = upload(client, data).json()["id"]
     gate = tmp_path / "continue"
     run_id = start(client, identifier, wait_for=str(gate)).json()["id"]
-    code = "from local_media_stub import install; install(); "
+    code = "from support.local_media_stub import install; install(); "
     if mode == "cancel_engine_unavailable":
         code = "import os; os.environ['KEYSTONE_ACCEPTANCE_CANCEL_FAIL']='1'; " + code
     if mode == "crash":
@@ -514,7 +514,7 @@ def test_worker_capacity_queues_then_cancel_releases_next_run(media, tmp_path):
     first_gate, second_gate = tmp_path / "first", tmp_path / "second"
     first = start(client, identifier, key="first", wait_for=str(first_gate)).json()["id"]
     code = (
-        "from local_media_stub import install; install(); "
+        "from support.local_media_stub import install; install(); "
         "from keystone.entrypoints.worker import main; main()"
     )
     with worker(client, tmp_path, code=code, stub=False) as (process, log):

@@ -3,7 +3,7 @@
 import ast
 from importlib import import_module
 
-from test_module_structure import imports
+from support.ast_support import imports
 
 
 def check_business_models(root):

@@ -4,8 +4,6 @@ from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
-import pytest
-
 from keystone.platform.dictionary.schemas import item_view
 from keystone.platform.dictionary.schemas import view as dictionary_view
 from keystone.platform.files.schemas import view as file_view
@@ -62,20 +60,20 @@ class Row(SimpleNamespace):
         raise AssertionError("An HTTP response must not enumerate ORM columns")
 
 
-@pytest.mark.parametrize("project,contract", CASES, ids=[p.__module__ for p, _ in CASES])
-def test_projection_ignores_new_internal_fields(project, contract):
-    expected = set(contract.split())
-    row = Row(
-        **dict.fromkeys(expected),
-        future_secret="never return this",
-        cost_context={"scope": "internal"},
-        cost_evidence={"request_id": "internal"},
-        cost_checkpoint={"page": 2},
-        receipt_ids={"body_id": "internal"},
-    )
-    result = project(row)
-    assert set(result) == expected
-    assert "future_secret" not in result
+def test_projection_ignores_new_internal_fields():
+    for project, contract in CASES:
+        expected = set(contract.split())
+        row = Row(
+            **dict.fromkeys(expected),
+            future_secret="never return this",
+            cost_context={"scope": "internal"},
+            cost_evidence={"request_id": "internal"},
+            cost_checkpoint={"page": 2},
+            receipt_ids={"body_id": "internal"},
+        )
+        result = project(row)
+        assert set(result) == expected
+        assert "future_secret" not in result
 
 
 def test_cost_decimal_and_run_timezone_keep_wire_semantics():

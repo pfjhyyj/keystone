@@ -30,27 +30,28 @@ def settings(**values):
     return Settings(config_file=None, database_url=None, **values)
 
 
-@pytest.mark.parametrize("failure", ["missing_storage", "driver_error"])
-def test_cli_reports_safe_configuration_hint_without_raw_exception(monkeypatch, caplog, failure):
-    def configuration():
-        if failure == "driver_error":
-            raise RuntimeError("password=hidden-cli-secret")
-        return settings()
+def test_cli_reports_safe_configuration_hint_without_raw_exception(monkeypatch, caplog):
+    for failure in ("missing_storage", "driver_error"):
 
-    monkeypatch.setattr(cli, "Settings", configuration)
-    monkeypatch.setattr(cli, "configure_logging", lambda _: None)
-    monkeypatch.setattr("sys.argv", ["keystone", "init-storage"])
-    with pytest.raises(SystemExit) as rejected:
-        cli.main()
-    assert rejected.value.code == 1
-    assert "hidden-cli-secret" not in caplog.text
-    if failure == "missing_storage":
-        assert "storage_unavailable" in caplog.text
-        assert "file_storages" in caplog.text
-        assert "keystone.toml" in caplog.text
-    else:
-        assert "invalid_configuration_or_database" in caplog.text
-        assert "detail=" in caplog.text
+        def configuration(failure=failure):
+            if failure == "driver_error":
+                raise RuntimeError("password=hidden-cli-secret")
+            return settings()
+
+        monkeypatch.setattr(cli, "Settings", configuration)
+        monkeypatch.setattr(cli, "configure_logging", lambda _: None)
+        monkeypatch.setattr("sys.argv", ["keystone", "init-storage"])
+        with pytest.raises(SystemExit) as rejected:
+            cli.main()
+        assert rejected.value.code == 1
+        assert "hidden-cli-secret" not in caplog.text
+        if failure == "missing_storage":
+            assert "storage_unavailable" in caplog.text
+            assert "file_storages" in caplog.text
+            assert "keystone.toml" in caplog.text
+        else:
+            assert "invalid_configuration_or_database" in caplog.text
+            assert "detail=" in caplog.text
 
 
 def test_liveness_does_not_imply_database_or_domain_readiness():
