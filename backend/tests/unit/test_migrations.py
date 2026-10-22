@@ -1,7 +1,9 @@
+import re
 import shutil
 from pathlib import Path
 
 import pytest
+from alembic.script import ScriptDirectory
 
 from keystone.core import migrations
 from keystone.core.config import Settings
@@ -17,6 +19,7 @@ def test_source_migrations_are_independent_of_working_directory(tmp_path, monkey
     settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == source
+    assert config.get_main_option("recursive_version_locations") == "true"
     assert migrations.expected_heads(settings) == {"worker_registration"}
 
 
@@ -43,3 +46,41 @@ def test_missing_migration_files_fail_before_database_access(tmp_path, monkeypat
 
     with pytest.raises(RuntimeError, match="Migration files missing"):
         migrations.migration_config(Settings(config_file=None))
+
+
+def test_module_paths_and_global_sequence_follow_the_native_revision_chain():
+    config = migrations.migration_config(Settings(config_file=None))
+    script = ScriptDirectory.from_config(config)
+    root = Path(script.dir) / "versions"
+    chain = list(reversed(list(script.walk_revisions())))
+    legacy = (
+        "identity",
+        "audit",
+        "dictionary",
+        "files",
+        "model_access",
+        "flow",
+        "core",
+        "model_costs",
+        "multi_workers",
+        "worker_registration",
+    )
+    assert len(chain) >= len(legacy)
+    assert len(script.get_heads()) == 1 and len(script.get_bases()) == 1
+    assert {Path(revision.path) for revision in chain} == set(root.rglob("*.py"))
+    previous = None
+    for number, revision in enumerate(chain, 1):
+        path = Path(revision.path)
+        parts = path.relative_to(root).parts
+        assert (len(parts) == 2 and parts[0] == "core") or (
+            len(parts) == 3 and parts[0] in {"platform", "businesses"}
+        ), path
+        assert re.fullmatch(rf"{number:04d}_{path.parent.name}_[a-z][a-z0-9_]*\.py", path.name), (
+            path
+        )
+        assert revision.down_revision == previous
+        assert revision.revision == (
+            legacy[number - 1] if number <= len(legacy) else f"{number:04d}"
+        )
+        assert not revision.branch_labels and not revision.dependencies
+        previous = revision.revision

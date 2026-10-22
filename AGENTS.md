@@ -52,6 +52,7 @@ Keystone 是模块化单体平台。API、Worker 与 CLI 共用后端工程和�
 - Flow 定义位于 `flow/schemas/definitions.py`，业务流程位于 `workflows/<flow>/`；`catalog.py` 始终指权限/审计声明，避免混用概念。
 - 技术适配的例外保持明确：Adapter 可使用 core 的 Worker 登记与锁完成技术协调；`flow/adapters/dbos.py` 仅适配 DBOSClient，不注册执行器，不借例外承担领域事实。
 - 结构规范由架构检查和脚手架共同执行。调整规则时覆盖违规导入、相对导入、嵌套目录及例外绕过，不能只检查正常示例。
+- 迁移在 `backend/migrations/versions/` 按 `platform/<module>/`、`businesses/<namespace>/` 和 `core/` 归档，文件使用全局连续的 `NNNN_<module>_<change>.py`。共用一条 Alembic 线性链，新 revision 使用四位序号；历史内容和 revision 不重写。目录与序号由测试及脚手架检查，详细规则见[迁移说明](backend/migrations/README.md)。
 
 ## 业务模块、Task、Flow 与 DBOS
 

@@ -18,6 +18,7 @@ def migration_config(settings: Settings) -> Config:
     config = Config()
     config.attributes["legacy_worker_ids"] = settings.worker_ids or []
     config.set_main_option("script_location", str(directory.resolve()).replace("%", "%%"))
+    config.set_main_option("recursive_version_locations", "true")
     if settings.database_url:
         config.set_main_option(
             "sqlalchemy.url", settings.database_url.get_secret_value().replace("%", "%%")

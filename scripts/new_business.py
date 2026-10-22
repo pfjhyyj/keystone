@@ -9,6 +9,7 @@ model-registry edits so the business stays a visible application declaration.
 """
 
 import argparse
+import ast
 import re
 import subprocess
 import sys
@@ -20,22 +21,64 @@ MIGRATIONS = ROOT / "backend/migrations/versions"
 
 NAMESPACE = re.compile(r"[a-z][a-z0-9_]{0,47}")
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*")
-REVISION = re.compile(r'^revision = "([^"]+)"', re.MULTILINE)
-DOWN_REVISION = re.compile(r'^down_revision = "([^"]+)"', re.MULTILINE)
+MIGRATION_NAME = re.compile(r"([0-9]{4})_([a-z][a-z0-9_]*)\.py")
 
 
-def next_migration(versions: Path, namespace: str) -> tuple[str, str | None]:
-    revisions = {}
-    for path in sorted(versions.glob("*.py")):
-        text = path.read_text(encoding="utf-8")
-        revision = REVISION.search(text)
-        down = DOWN_REVISION.search(text)
-        if revision and down:
-            revisions[revision.group(1)] = down.group(1)
-    heads = set(revisions) - set(revisions.values())
-    if len(heads) > 1:
-        raise SystemExit(f"Expected exactly one migration head, found {sorted(heads)}")
-    return f"{namespace}_init", heads.pop() if heads else None
+def next_migration(versions: Path, namespace: str) -> tuple[Path, str, str | None]:
+    """Plan from static metadata without importing historical DDL or runtime models."""
+    history, revisions, numbers = [], set(), set()
+    for path in sorted(versions.rglob("*.py")):
+        relative = path.relative_to(versions)
+        match = MIGRATION_NAME.fullmatch(path.name)
+        valid_owner = (
+            len(relative.parts) == 2
+            and relative.parts[0] == "core"
+            or len(relative.parts) == 3
+            and relative.parts[0] in {"platform", "businesses"}
+        )
+        if (
+            not match
+            or not valid_owner
+            or not re.fullmatch(re.escape(path.parent.name) + r"_[a-z][a-z0-9_]*", match[2])
+        ):
+            raise SystemExit(f"Invalid migration path/name: {relative}")
+        number = int(match[1])
+        metadata = {
+            node.targets[0].id: ast.literal_eval(node.value)
+            for node in ast.parse(path.read_text(encoding="utf-8")).body
+            if isinstance(node, ast.Assign)
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id in {"revision", "down_revision", "branch_labels", "depends_on"}
+        }
+        revision, down = metadata.get("revision"), metadata.get("down_revision")
+        if (
+            not isinstance(revision, str)
+            or not 1 <= len(revision) <= 32
+            or "down_revision" not in metadata
+            or down is not None
+            and not isinstance(down, str)
+            or metadata.get("branch_labels") is not None
+            or metadata.get("depends_on") is not None
+        ):
+            raise SystemExit(f"Invalid linear migration metadata: {relative}")
+        if revision in revisions or number in numbers:
+            raise SystemExit(f"Duplicate migration revision/sequence: {relative}")
+        revisions.add(revision)
+        numbers.add(number)
+        history.append((number, revision, down))
+    head = None
+    for expected, (number, revision, down) in enumerate(sorted(history), 1):
+        if number != expected or down != head:
+            raise SystemExit("Migration sequence must be contiguous and match one linear chain")
+        head = revision
+    number = len(history) + 1
+    if number > 9999:
+        raise SystemExit("Migration sequence exhausted; revise the naming convention first")
+    revision = f"{number:04d}"
+    if revision in revisions:
+        raise SystemExit(f"Migration revision already exists: {revision}")
+    path = versions / "businesses" / namespace / f"{revision}_{namespace}_initial.py"
+    return path, revision, head
 
 
 def render(path: Path, template: str, values: dict[str, str]) -> None:
@@ -317,6 +360,7 @@ def main(argv=None) -> int:
     target = args.output / args.namespace
     if target.exists():
         raise SystemExit(f"{target} already exists; choose another namespace or remove it first")
+    plan = None if args.no_migration else next_migration(args.migrations, args.namespace)
     values = {
         "NAMESPACE": args.namespace,
         "ENTITY": args.entity,
@@ -332,13 +376,12 @@ def main(argv=None) -> int:
         render(path, template, values)
         generated.append(path)
 
-    if not args.no_migration:
-        revision, down = next_migration(args.migrations, args.namespace)
+    if plan is not None:
+        migration, revision, down = plan
         values |= {
             "REVISION": revision,
             "DOWN_REVISION": f'"{down}"' if down else "None",
         }
-        migration = args.migrations / f"{revision}.py"
         if migration.exists():
             raise SystemExit(f"{migration} already exists")
         render(migration, MIGRATION, values)

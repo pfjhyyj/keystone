@@ -360,7 +360,9 @@ keystone/
 
 backend/ 内维护唯一后端依赖与锁文件，frontend/ 下每个应用维护自己的依赖、锁文件、构建和测试。Dockerfile、.dockerignore 和镜像入口配置随各自工程维护，使用工程目录作为构建上下文。首版只创建 console，不创建占位业务前端、pnpm workspace 或共享前端包。业务前端数量与后端业务模块数量不要求一致。deploy/ 负责第三方依赖编排，不容纳领域规则；docs/ 是当前设计唯一维护位置。
 
-当前已实现 platform/identity、audit、files、dictionary、model_access、flow；默认不装配业务流程。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 以 init 统一初始化业务结构、Flow、存储和管理员，另提供 revision/check/init-admin/init-storage 及 retire-worker/reactivate-worker；console 提供账户、文件、字典、模型及 Flow 基本操作。初始结构按 identity、audit、dictionary、files、model_access、flow 和 core 七个领域/模型归属拆分，不使用数字前缀，保持一条迁移链和单一 head（worker_registration）；文件多源和渠道凭据密文直接包含在各自领域的初始结构中；keystone schema 包含十六张领域表和两张 Worker 运行观测/登记表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
+当前已实现 platform/identity、audit、files、dictionary、model_access、flow；默认不装配业务流程。API 显式注册路由和轻量流程目录；Worker 才导入执行代码，运行有界文件清理和 DBOS。CLI 以 init 统一初始化业务结构、Flow、存储和管理员，另提供 revision/check/init-admin/init-storage 及 retire-worker/reactivate-worker；console 提供账户、文件、字典、模型及 Flow 基本操作。
+
+迁移按 `versions/platform/<module>/`、`versions/businesses/<namespace>/` 和 `versions/core/` 归档，文件使用全局连续的 `NNNN_<module>_<change>.py`，由 Alembic 原生递归发现。文件序号对应线性依赖顺序，模块间仍保持一条链和单一 head（worker_registration）。现有十份迁移的 DDL、revision 与依赖均保持不变，旧库继续升级无需 stamp；新迁移 revision 使用四位序号。文件多源和渠道凭据密文直接包含在各自领域的初始结构中；keystone schema 包含十六张领域表和两张 Worker 运行观测/登记表，DBOS 自管 dbos schema。迁移对应关系与增量维护规则见[迁移说明](../backend/migrations/README.md)。业务前端仍按需建立。具体运行方式与部署边界见[仓库说明](../README.md)。
 
 CLI 另提供 recover-model-calls --confirm-api-stopped：操作者停止全部 API/普通调用进程后，显式将普通遗留 running 调用收尾为 unknown，保留费用与编号并记录系统审计。确认标志不代替进程检测；恢复期间保持 API 停止。Flow 调用由持有身份锁的 Worker 在启动 DBOS 前仅收尾自身旧实例，不使用后台超时扫描器。历史无归属 Flow 调用通过独立停机入口处理，不能在每次启动时全局兜底。详细边界见[模型离线收尾](domains/model-access.md#75-普通-api-调用离线收尾)。
 

@@ -42,9 +42,9 @@ businesses/<namespace>/
 | `--entity` | 同 namespace | 单数 snake_case，用于模型类名与表名后缀 |
 | `--resource` | entity + `s` | API 路径与 schemas/services 文件名 |
 | `--label` | entity | 权限说明中的中文名称 |
-| `--migrations` | `backend/migrations/versions` | 读取当前 head，生成 `<namespace>_init.py` |
+| `--migrations` | `backend/migrations/versions` | 递归读取完整历史，生成 `businesses/<namespace>/NNNN_<namespace>_initial.py` |
 
-脚手架只写文件，不改装配代码；生成后会打印需要手工完成的接入点。
+脚手架只写文件，不改装配代码；生成后会打印需要手工完成的接入点。临时空迁移目录仅用于独立评审或测试；实际接入或评审追加顺序时，应复制完整 `versions/` 历史后再指定 `--migrations`，不能把空目录生成的编号直接合入现有链。
 
 ## 1. 接入权限目录
 
@@ -93,7 +93,9 @@ from .note import Note as Note
 from keystone.businesses.notes import models as notes_models  # noqa: F401
 ```
 
-脚手架已按当前 head 生成一份迁移，包含建表与逆序回滚。迁移按领域/语义命名（如 `notes_init.py`），`revision` 与文件名一致，`down_revision` 指向生成时的 head。生成后评审字段、约束和索引，再执行：
+脚手架按当前 head 生成一份迁移，包含建表与逆序回滚。路径为 `backend/migrations/versions/businesses/<namespace>/NNNN_<namespace>_initial.py`；序号在所有平台、core 和业务模块间连续递增。以当前历史为例，notes 生成 `0011_notes_initial.py`，`revision = "0011"`、`down_revision = "worker_registration"`。历史语义 revision 保留原值；模块归档不拆分迁移链，执行仍由 Alembic 原生依赖决定。
+
+生成前校验目录、命名、重复序号/revision、序号连续性和线性依赖，失败时不写业务文件。后续手工增量迁移遵循同一规则，并行开发在合并前处理尚未发布的编号冲突。完整历史和命名规范见[迁移说明](../backend/migrations/README.md)。生成后评审字段、约束和索引，再执行：
 
 ```bash
 cd backend

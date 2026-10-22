@@ -20,6 +20,8 @@
 
 integration/test_file_boundaries.py 验证空权限角色的文件授权、PAT 范围、角色撤销、停用主体及缺失主体语义和授权审计回滚，并通过公开传输接口验证独立于 Flow 的落盘、引用上传幂等及作用域资源释放。现有媒体、取消与恢复测试继续使用相同的 host 接口。
 
+`unit/test_migrations.py` 使用 Alembic 原生发现检查模块路径、全局四位序号与单一依赖链一致，并验证不同工作目录和安装后部署。`unit/test_new_business.py` 验证跨业务连续编号、长命名空间和生成前拒绝重复编号/revision、断链、合并及错误路径；`integration/test_migration_layout.py` 验证旧平铺目录的数据库无需 stamp 即可升级、数据及 DBOS 表保留，以及脚手架生成业务迁移的发现、重复升级和回滚。
+
 ## 运行
 
 ```bash
