@@ -65,12 +65,12 @@ def test_generated_business_is_importable_and_migration_extends_head(tmp_path, m
         "services",
         "controllers",
     }
-    path = migrations / "0011_tiny_notes_initial.py"
+    path = migrations / "0008_tiny_notes_initial.py"
     migration = path.read_text(encoding="utf-8")
-    assert 'revision = "0011"' in migration
+    assert 'revision = "0008"' in migration
     assert f'down_revision = "{head}"' in migration
     assert '"tiny_notes_tiny_note"' in migration
-    assert migration_head(migrations) == "0011"
+    assert migration_head(migrations) == "0008"
 
     monkeypatch.syspath_prepend(str(businesses))
     from tiny_notes.catalog import CATALOG
@@ -174,32 +174,32 @@ def test_scaffold_continues_global_sequence_across_business_modules(tmp_path):
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    path = migrations / f"0012_{namespace}_initial.py"
+    path = migrations / f"0009_{namespace}_initial.py"
     value = path.read_text(encoding="utf8")
-    assert 'revision = "0012"' in value and 'down_revision = "0011"' in value
-    assert migration_head(migrations) == "0012"
+    assert 'revision = "0009"' in value and 'down_revision = "0008"' in value
+    assert migration_head(migrations) == "0009"
 
 
 def test_scaffold_reads_annotated_metadata_without_executing_migration(tmp_path):
     businesses, migrations = tmp_path / "businesses", tmp_path / "migrations"
     shutil.copytree(VERSIONS, migrations)
-    path = migrations / "0010_worker_registration.py"
+    path = migrations / "0007_worker_initial.py"
     content = (
         path.read_text(encoding="utf8")
-        .replace('revision = "worker_registration"', 'revision: str = "worker_registration"')
-        .replace('down_revision = "multi_workers"', 'down_revision: str | None = "multi_workers"')
+        .replace('revision = "0007"', 'revision: str = "0007"')
+        .replace('down_revision = "0006"', 'down_revision: str | None = "0006"')
         .replace("branch_labels = None", "branch_labels: tuple[str, ...] | None = None")
         .replace("depends_on = None", "depends_on: str | None = None")
     )
     path.write_text(content, encoding="utf8")
-    assert migration_head(migrations) == "worker_registration"
+    assert migration_head(migrations) == "0007"
     path.write_text(
         content + '\nraise RuntimeError("must not import historical DDL")\n', encoding="utf8"
     )
     result = invoke(businesses, migrations)
     assert result.returncode == 0, result.stderr
-    value = (migrations / "0011_tiny_notes_initial.py").read_text(encoding="utf8")
-    assert 'revision = "0011"' in value and 'down_revision = "worker_registration"' in value
+    value = (migrations / "0008_tiny_notes_initial.py").read_text(encoding="utf8")
+    assert 'revision = "0008"' in value and 'down_revision = "0007"' in value
 
 
 def test_scaffold_refuses_to_recreate_a_module_with_existing_migrations(tmp_path):
@@ -269,33 +269,31 @@ def test_scaffold_checks_postgresql_table_name_length_before_writing(
 def test_invalid_migration_history_fails_before_creating_business(tmp_path, mistake, message):
     businesses, migrations = tmp_path / "businesses", tmp_path / "migrations"
     shutil.copytree(VERSIONS, migrations)
-    path = migrations / "0010_worker_registration.py"
+    path = migrations / "0007_worker_initial.py"
     content = path.read_text(encoding="utf8")
     if mistake == "duplicate_sequence":
-        path.rename(path.with_name("0009_worker_registration.py"))
+        path.rename(path.with_name("0006_worker_initial.py"))
     elif mistake == "duplicate_revision":
         path.write_text(
-            content.replace('revision = "worker_registration"', 'revision = "core"'),
+            content.replace('revision = "0007"', 'revision = "0006"'),
             encoding="utf8",
         )
     elif mistake == "missing_sequence":
-        path.rename(path.with_name("0012_worker_registration.py"))
+        path.rename(path.with_name("0008_worker_initial.py"))
     elif mistake == "wrong_parent":
         path.write_text(
-            content.replace('down_revision = "multi_workers"', 'down_revision = "identity"'),
+            content.replace('down_revision = "0006"', 'down_revision = "0004"'),
             encoding="utf8",
         )
     elif mistake == "missing_module":
-        path.rename(path.with_name("0010_registration.py"))
+        path.rename(path.with_name("0007_registration.py"))
     elif mistake == "module_directory":
         target = migrations / "worker" / path.name
         target.parent.mkdir()
         path.rename(target)
     elif mistake == "merge":
         path.write_text(
-            content.replace(
-                'down_revision = "multi_workers"', 'down_revision = ("multi_workers", "flow")'
-            ),
+            content.replace('down_revision = "0006"', 'down_revision = ("0006", "0005")'),
             encoding="utf8",
         )
     elif mistake == "nested_category":
@@ -311,16 +309,14 @@ def test_invalid_migration_history_fails_before_creating_business(tmp_path, mist
         )
     elif mistake == "annotated_dependency":
         path.write_text(
-            content.replace("depends_on = None", 'depends_on: str | None = "identity"'),
+            content.replace("depends_on = None", 'depends_on: str | None = "0001"'),
             encoding="utf8",
         )
     elif mistake == "duplicate_metadata":
-        path.write_text(content + '\ndown_revision = "core"\n', encoding="utf8")
+        path.write_text(content + '\ndown_revision = "0006"\n', encoding="utf8")
     elif mistake == "dynamic_metadata":
         path.write_text(
-            content.replace(
-                'revision = "worker_registration"', 'revision = str("worker_registration")'
-            ),
+            content.replace('revision = "0007"', 'revision = str("0007")'),
             encoding="utf8",
         )
     elif mistake == "syntax_error":

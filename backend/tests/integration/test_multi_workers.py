@@ -30,7 +30,6 @@ FIRST, SECOND = "keystone-worker", "keystone-worker-02"
 @pytest.fixture
 def pair(client):
     settings = client.app.state.runtime.settings
-    settings.worker_ids = [FIRST, SECOND]
     settings.flow_worker_concurrency = 1
     return settings
 

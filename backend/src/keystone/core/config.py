@@ -35,8 +35,6 @@ class Settings(BaseSettings):
     flow_worker_concurrency: int = Field(default=2, ge=1, le=16)
     flow_global_concurrency: int = Field(default=4, ge=1, le=64)
     worker_id: str = "keystone-worker"
-    # Compatibility input for the one-time registration migration, never runtime admission.
-    worker_ids: list[str] | None = Field(default=None, exclude=True)
     worker_shutdown_seconds: int = Field(default=10, ge=1, le=600)
     model_cost_concurrency: int = Field(default=2, ge=1, le=8)
     model_inference_concurrency: int = Field(default=4, ge=1, le=32)
@@ -95,12 +93,6 @@ class Settings(BaseSettings):
     def valid_workers(self):
         if (
             not re.fullmatch(r"[a-z][a-z0-9_-]{2,63}", self.worker_id)
-            or self.worker_ids is not None
-            and (
-                not 1 <= len(self.worker_ids) <= 4
-                or len(set(self.worker_ids)) != len(self.worker_ids)
-                or any(not re.fullmatch(r"[a-z][a-z0-9_-]{2,63}", v) for v in self.worker_ids)
-            )
             or self.flow_worker_concurrency > self.flow_global_concurrency
             or self.model_scope_concurrency > self.model_inference_concurrency
         ):

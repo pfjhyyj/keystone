@@ -85,7 +85,7 @@ KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone:keystone_local_only@12
 
 Worker 每 5 秒向 PostgreSQL 上报心跳，启动、依赖失败和排空期间也继续报告。每个固定 worker_id 按登记所指向的当前 instance_id 展示状态，执行版本和公共配置须一致；默认运行一个实例。数据库时间判断心跳与维护检查是否超过 30 秒，旧实例迟到的退出不遮蔽新进程。
 
-API 按未退役身份登记计算预期数量并自动发现新 Worker，无需同步 worker_ids 或重启 API/已有 Worker。普通停止、心跳过期与历史观测清理不移除登记；永久缩容先停止目标进程，再执行 keystone retire-worker --worker-id ID。退役拒绝仍在运行或有待恢复工作的身份；恢复退役身份须先执行 reactivate-worker。同身份互斥、故障恢复与操作步骤见[部署说明](deployment.md#44-固定槽位调整与故障恢复)。
+API 按未退役身份登记计算预期数量并自动发现新 Worker，无需同步身份清单或重启 API/已有 Worker。普通停止、心跳过期与历史观测清理不移除登记；永久缩容先停止目标进程，再执行 keystone retire-worker --worker-id ID。退役拒绝仍在运行或有待恢复工作的身份；恢复退役身份须先执行 reactivate-worker。同身份互斥、故障恢复与操作步骤见[部署说明](deployment.md#44-固定槽位调整与故障恢复)。
 
 进程健康与共享维护分开：进程检查依赖、DBOS 和队列；共享维护聚合实际执行过的文件清理、Flow 协调及费用扫描结果。任一同版本实例成功扫描即可更新共享结果，空闲实例不因未亲自扫描误报。普通心跳不能刷新陈旧的任务结果，依赖检查也不能掩盖共享维护故障。供应商待出账、限流或 Token 失效保留为费用状态，不等同 Worker 故障。
 

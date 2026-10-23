@@ -78,7 +78,6 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None):
         "KEYSTONE_ENV": "test",
         "KEYSTONE_FLOW_ENABLED": str(settings.flow_enabled).lower(),
         "KEYSTONE_WORKER_ID": worker_id or settings.worker_id,
-        "KEYSTONE_WORKER_IDS": __import__("json").dumps(settings.worker_ids),
         "KEYSTONE_DATABASE_URL": settings.database_url.get_secret_value(),
         "KEYSTONE_FILE_COORDINATION_ROOT": str(settings.file_coordination_root),
         "KEYSTONE_FILE_DEFAULT_STORAGE": settings.file_default_storage,

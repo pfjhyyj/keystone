@@ -282,7 +282,7 @@ model_access/tasks/workflows.py 由 composition 显式装配：启动投递一�
 
 #### 3.6.6 费用状态与落库
 
-迁移 model_costs 在 core 后追加字段及到期索引，不重写初始迁移。内部 JSON 和范围不通过接口自动暴露。
+费用字段、到期索引及发送归属直接包含在 model_access 基线迁移中，不再单独追加。内部 JSON 和范围不通过接口自动暴露。
 
 | 归属 | 需要持久化的事实 |
 |---|---|
@@ -308,7 +308,7 @@ DBOS 投递去重不代替上述保护，进程内 Semaphore 只控制本地资�
 
 当前已实现回执选择及及时保存、分类查询结果、Yunwu/Openlux 账务适配、领域 CostService、费用状态和分页迁移；代码按第 8 节的 adapters/billing/adapters/inference/Service 分层，由 Worker 任务入口接入 DBOS。调用详情显示费用核对状态、原因及查询时间，费用汇总额外返回 cost_checks 分类数量。Worker 将费用扫描首次成功及持续推进纳入就绪，供应商待出账/限流/Token 失效保留为费用状态，不直接让整个 Worker 未就绪。最长未决时长和全局限流观测留待后续。
 
-迁移保留既有费用和调用状态：旧已知金额标为 confirmed，缺少原范围的未知记录标为 unavailable/legacy_scope_unknown，不把历史 unknown 改成零或默认为当前 Key。已有 Channel 在配置保存或下一次真实调用时绑定非秘密范围，不启动历史批量回填。multi_workers 另增可信发送归属和共享维护观测，不扩大图片推理或自动余额刷新范围。
+费用状态沿用既有语义：旧已知金额为 confirmed，缺少原范围的未知记录为 unavailable/legacy_scope_unknown，不把历史 unknown 改成零或默认为当前 Key。已有 Channel 在配置保存或下一次真实调用时绑定非秘密范围，不启动历史批量回填。可信发送归属和共享维护观测直接包含在基线结构中，不扩大图片推理或自动余额刷新范围。
 
 验收至少覆盖：真实样本得到 0.002656 USD；错误 request ID 不匹配；other 为 JSON 字符串；分页 id 变化和重复页不双记；未扫完不误判未找到；延迟写入由下一轮发现；查后写前中断可重读；新 Key 不误查旧 Token；429/鉴权/结构错误/窗口耗尽各有明确状态；失败和取消后仍保存原账务事实；手动与后台并发不覆盖新结果；整个过程不新增推理请求。固定多 Worker 还须验证共享并发、原身份重启、查询崩溃续页和旧响应拒绝写回；自动接管及 RPM/TPM 仍未实现。
 

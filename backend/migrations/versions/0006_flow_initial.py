@@ -7,8 +7,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "flow"
-down_revision = "model_access"
+revision = "0006"
+down_revision = "0005"
 branch_labels = None
 depends_on = None
 
@@ -39,6 +39,7 @@ def upgrade():
         sa.Column("cancel_requested_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("observed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("reconcile_attempted_at", sa.DateTime(timezone=True), nullable=True),
         sa.CheckConstraint("(status = 'succeeded') = (result IS NOT NULL)", name="flow_result"),
         sa.CheckConstraint(
             "(status IN ('succeeded','failed','cancelled')) = (finished_at IS NOT NULL)",
@@ -63,6 +64,13 @@ def upgrade():
         "ix_flow_owner",
         "flow_runs",
         ["actor_id", "created_at", "id"],
+        unique=False,
+        schema="keystone",
+    )
+    op.create_index(
+        "ix_flow_reconcile_attempt",
+        "flow_runs",
+        ["status", "reconcile_attempted_at", "id"],
         unique=False,
         schema="keystone",
     )

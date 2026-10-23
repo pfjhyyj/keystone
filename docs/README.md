@@ -2,7 +2,7 @@
 
 Keystone 是模块化单体平台。API、Worker 与 CLI 共用一个 Python 工程和镜像，控制台使用 Vue 与 Element Plus。默认一个 Worker，可配置同宿主同版本的固定身份。Flow 默认启用，真实模型接入默认可用，权限判断使用 Casbin。
 
-[整体架构第 3 节](architecture.md#3-api-与-worker-的分工)说明自动任务、定时任务和多 Worker 的职责。DBOS 公共生命周期、文件清理、Flow 协调及自动查费已实现；关闭 Flow 后公共运行时、文件维护和查费仍运行。Yunwu/Openlux 分页查费规则见[模型接入](domains/model-access.md#36-自动费用核对)。升级时重新执行 `keystone init`，应用最新 worker_registration 迁移和 DBOS schema。默认一个 Worker；同宿主、同版本固定身份支持动态登记与显式退役，新增进程无需重启 API 或已有 Worker，步骤见[部署说明](deployment.md#4-多-worker-部署与发布)。
+[整体架构第 3 节](architecture.md#3-api-与-worker-的分工)说明自动任务、定时任务和多 Worker 的职责。DBOS 公共生命周期、文件清理、Flow 协调及自动查费已实现；关闭 Flow 后公共运行时、文件维护和查费仍运行。Yunwu/Openlux 分页查费规则见[模型接入](domains/model-access.md#36-自动费用核对)。升级时重新执行 `keystone init`，应用最新基线迁移和 DBOS schema。默认一个 Worker；同宿主、同版本固定身份支持动态登记与显式退役，新增进程无需重启 API 或已有 Worker，步骤见[部署说明](deployment.md#4-多-worker-部署与发布)。
 
 ## 阅读入口
 

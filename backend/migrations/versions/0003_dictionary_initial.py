@@ -6,8 +6,8 @@ Tables: dictionaries, dictionary_items.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "dictionary"
-down_revision = "audit"
+revision = "0003"
+down_revision = "0002"
 branch_labels = None
 depends_on = None
 

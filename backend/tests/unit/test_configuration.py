@@ -82,28 +82,23 @@ def test_backend_dotenv_is_no_longer_loaded(tmp_path, monkeypatch):
 @pytest.mark.parametrize(
     "values",
     [
-        {"worker_ids": ["keystone-worker", "keystone-worker"]},
         {"worker_id": "../invalid-worker"},
-        {"worker_ids": ["../invalid-worker"]},
-        {"worker_ids": ["keystone-worker", "worker02", "worker03", "worker04", "worker05"]},
+        {"worker_ids": ["keystone-worker"]},
         {"flow_worker_concurrency": 5, "flow_global_concurrency": 4},
         {"model_inference_concurrency": 2, "model_scope_concurrency": 3},
     ],
 )
-def test_fixed_worker_inventory_and_shared_capacity_reject_invalid_configuration(values):
+def test_fixed_worker_identity_and_shared_capacity_reject_invalid_configuration(values):
     with pytest.raises(ValidationError):
         Settings(config_file=None, **values)
 
 
-def test_worker_identity_is_independent_of_legacy_inventory():
+def test_worker_identity_is_independent_of_shared_config_digest():
     from keystone.core.worker_identity import config_digest
 
     original = Settings(config_file=None)
-    extra = Settings(
-        config_file=None, worker_id="keystone-worker-02", worker_ids=["keystone-worker"]
-    )
+    extra = Settings(config_file=None, worker_id="keystone-worker-02")
     assert config_digest(original) == config_digest(extra)
-    assert "worker_ids" not in extra.model_dump()
 
 
 def test_worker_shared_config_digest_checks_storage_secrets_without_exposing_them(tmp_path):

@@ -19,7 +19,7 @@ def test_source_migrations_are_independent_of_working_directory(tmp_path, monkey
     settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == source
-    assert migrations.expected_heads(settings) == {"worker_registration"}
+    assert migrations.expected_heads(settings) == {"0007"}
 
 
 def test_installed_package_uses_migrations_beside_working_directory(tmp_path, monkeypatch):
@@ -34,7 +34,7 @@ def test_installed_package_uses_migrations_beside_working_directory(tmp_path, mo
     settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == app / "migrations"
-    assert migrations.expected_heads(settings) == {"worker_registration"}
+    assert migrations.expected_heads(settings) == {"0007"}
 
 
 def test_missing_migration_files_fail_before_database_access(tmp_path, monkeypatch):
@@ -52,19 +52,8 @@ def test_module_paths_and_global_sequence_follow_the_native_revision_chain():
     script = ScriptDirectory.from_config(config)
     root = Path(script.dir) / "versions"
     chain = list(reversed(list(script.walk_revisions())))
-    legacy = (
-        ("identity", "identity"),
-        ("audit", "audit"),
-        ("dictionary", "dictionary"),
-        ("files", "files"),
-        ("model_access", "model_access"),
-        ("flow", "flow"),
-        ("core", "worker"),
-        ("model_costs", "model_access"),
-        ("multi_workers", "worker"),
-        ("worker_registration", "worker"),
-    )
-    assert len(chain) >= len(legacy)
+    modules = ("identity", "audit", "dictionary", "files", "model_access", "flow", "worker")
+    assert len(chain) == len(modules)
     assert len(script.get_heads()) == 1 and len(script.get_bases()) == 1
     assert {Path(revision.path) for revision in chain} == set(root.rglob("*.py"))
     previous = None
@@ -72,12 +61,10 @@ def test_module_paths_and_global_sequence_follow_the_native_revision_chain():
         path = Path(revision.path)
         parts = path.relative_to(root).parts
         assert len(parts) == 1, path
-        assert re.fullmatch(rf"{number:04d}_[a-z][a-z0-9_]*_[a-z][a-z0-9_]*\.py", path.name), path
+        assert re.fullmatch(
+            rf"{number:04d}_{modules[number - 1]}_[a-z][a-z0-9_]*\.py", path.name
+        ), path
         assert revision.down_revision == previous
-        assert revision.revision == (
-            legacy[number - 1][0] if number <= len(legacy) else f"{number:04d}"
-        )
-        if number <= len(legacy):
-            assert path.name.startswith(f"{number:04d}_{legacy[number - 1][1]}_")
+        assert revision.revision == f"{number:04d}"
         assert not revision.branch_labels and not revision.dependencies
         previous = revision.revision

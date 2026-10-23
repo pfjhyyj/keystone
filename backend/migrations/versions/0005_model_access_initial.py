@@ -7,8 +7,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "model_access"
-down_revision = "files"
+revision = "0005"
+down_revision = "0004"
 branch_labels = None
 depends_on = None
 
@@ -28,6 +28,11 @@ def upgrade():
         sa.Column("balance_checked_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("balance_last_attempt_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("balance_check_status", sa.String(length=16), nullable=False),
+        sa.Column("cost_scope", sa.String(length=64), nullable=True),
+        sa.Column("cost_context", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("cost_checkpoint", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("cost_block_reason", sa.String(length=64), nullable=True),
+        sa.Column("cost_next_allowed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -47,9 +52,17 @@ def upgrade():
             name="channel_balance_status",
         ),
         sa.CheckConstraint(
-            "provider IN ('deepseek','openrouter','aliyun_bailian')", name="channel_provider"
+            "provider IN ('deepseek','openrouter','aliyun_bailian','openlux','yunwu')",
+            name="channel_provider",
         ),
         sa.PrimaryKeyConstraint("id"),
+        schema="keystone",
+    )
+    op.create_index(
+        "ix_keystone_model_channels_cost_scope",
+        "model_channels",
+        ["cost_scope"],
+        unique=False,
         schema="keystone",
     )
     op.create_table(
@@ -91,6 +104,9 @@ def upgrade():
     op.create_table(
         "model_invocations",
         sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("worker_id", sa.String(length=64), nullable=True),
+        sa.Column("worker_instance_id", sa.Uuid(), nullable=True),
+        sa.Column("execution_version", sa.String(length=64), nullable=True),
         sa.Column("user_id", sa.Uuid(), nullable=True),
         sa.Column("flow_context", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("model_entry_id", sa.Uuid(), nullable=False),
@@ -105,6 +121,21 @@ def upgrade():
         sa.Column("cost_source", sa.String(length=16), nullable=False),
         sa.Column("cost_note", sa.String(length=100), nullable=True),
         sa.Column("error_code", sa.String(length=64), nullable=True),
+        sa.Column(
+            "cost_check_status",
+            sa.String(length=16),
+            server_default="unavailable",
+            nullable=False,
+        ),
+        sa.Column("cost_check_reason", sa.String(length=64), nullable=True),
+        sa.Column("cost_check_rounds", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("cost_check_errors", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("cost_checked_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("cost_next_check_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("cost_deadline_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("cost_context", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("receipt_ids", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("cost_evidence", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -124,10 +155,23 @@ def upgrade():
             name="invocation_cost",
         ),
         sa.CheckConstraint(
+            "cost_check_status IN ('pending','confirmed','blocked','unavailable','exhausted')",
+            name="invocation_cost_check_status",
+        ),
+        sa.CheckConstraint(
+            "cost_check_rounds >= 0 AND cost_check_errors >= 0", name="invocation_cost_counts"
+        ),
+        sa.CheckConstraint(
             "(status = 'running') = (finished_at IS NULL)", name="invocation_finished"
         ),
         sa.CheckConstraint(
             "status IN ('running','succeeded','failed','unknown')", name="invocation_status"
+        ),
+        sa.CheckConstraint(
+            "(worker_id IS NULL AND worker_instance_id IS NULL AND execution_version IS NULL) OR "
+            "(worker_id IS NOT NULL AND worker_instance_id IS NOT NULL "
+            "AND execution_version IS NOT NULL)",
+            name="invocation_worker_owner",
         ),
         sa.ForeignKeyConstraint(
             ["channel_id"],
@@ -142,6 +186,20 @@ def upgrade():
             ["keystone.users.id"],
         ),
         sa.PrimaryKeyConstraint("id"),
+        schema="keystone",
+    )
+    op.create_index(
+        "ix_model_invocations_cost_due",
+        "model_invocations",
+        ["cost_check_status", "cost_next_check_at", "id"],
+        unique=False,
+        schema="keystone",
+    )
+    op.create_index(
+        "ix_invocation_worker_running",
+        "model_invocations",
+        ["worker_id", "status"],
+        unique=False,
         schema="keystone",
     )
     op.create_index(

@@ -81,7 +81,7 @@ def test_init_prepares_all_dependencies_and_preserves_existing_accounts(
                 )
                 assert (
                     await session.scalar(text("SELECT version_num FROM keystone.alembic_version"))
-                    == "worker_registration"
+                    == "0007"
                 )
         finally:
             await database.close()

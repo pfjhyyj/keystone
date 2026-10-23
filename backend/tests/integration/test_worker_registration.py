@@ -77,7 +77,6 @@ run_async(serve())
 
 def test_hot_add_without_api_or_existing_worker_restart(client, tmp_path):
     runtime = client.app.state.runtime
-    assert runtime.settings.worker_ids is None
     runtime.settings.flow_worker_concurrency = 1
     source = upload(client).json()["id"]
     code = held_model_code(tmp_path)
