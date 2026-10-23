@@ -15,19 +15,14 @@ VERSIONS = ROOT / "migrations/versions"
 
 
 def migration_head(directory):
-    script = ScriptDirectory(
-        str(directory.parent), version_locations=[str(directory)], recursive_version_locations=True
-    )
+    script = ScriptDirectory(str(directory.parent), version_locations=[str(directory)])
     heads = set(script.get_heads())
     assert len(heads) == 1, heads
     return heads.pop()
 
 
-def generate(tmp_path, *extra):
-    businesses = tmp_path / "businesses"
-    migrations = tmp_path / "migrations"
-    shutil.copytree(VERSIONS, migrations)
-    result = subprocess.run(
+def invoke(businesses, migrations, *extra):
+    return subprocess.run(
         [
             sys.executable,
             str(SCRIPT),
@@ -47,7 +42,13 @@ def generate(tmp_path, *extra):
         text=True,
         check=False,
     )
-    return result, businesses, migrations
+
+
+def generate(tmp_path, *extra):
+    businesses = tmp_path / "businesses"
+    migrations = tmp_path / "migrations"
+    shutil.copytree(VERSIONS, migrations)
+    return invoke(businesses, migrations, *extra), businesses, migrations
 
 
 def test_generated_business_is_importable_and_migration_extends_head(tmp_path, monkeypatch):
@@ -64,7 +65,7 @@ def test_generated_business_is_importable_and_migration_extends_head(tmp_path, m
         "services",
         "controllers",
     }
-    path = migrations / "businesses/tiny_notes/0011_tiny_notes_initial.py"
+    path = migrations / "0011_tiny_notes_initial.py"
     migration = path.read_text(encoding="utf-8")
     assert 'revision = "0011"' in migration
     assert f'down_revision = "{head}"' in migration
@@ -148,7 +149,7 @@ def test_scaffold_refuses_existing_package_and_invalid_namespace(tmp_path):
 def test_scaffold_can_skip_the_migration(tmp_path, extra):
     result, _, migrations = generate(tmp_path, *extra)
     assert result.returncode == 0, result.stderr
-    assert not (migrations / "businesses").exists()
+    assert not list(migrations.glob("*_tiny_notes_initial.py"))
 
 
 def test_scaffold_continues_global_sequence_across_business_modules(tmp_path):
@@ -173,10 +174,78 @@ def test_scaffold_continues_global_sequence_across_business_modules(tmp_path):
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    path = migrations / "businesses" / namespace / f"0012_{namespace}_initial.py"
+    path = migrations / f"0012_{namespace}_initial.py"
     value = path.read_text(encoding="utf8")
     assert 'revision = "0012"' in value and 'down_revision = "0011"' in value
     assert migration_head(migrations) == "0012"
+
+
+def test_scaffold_reads_annotated_metadata_without_executing_migration(tmp_path):
+    businesses, migrations = tmp_path / "businesses", tmp_path / "migrations"
+    shutil.copytree(VERSIONS, migrations)
+    path = migrations / "0010_worker_registration.py"
+    content = (
+        path.read_text(encoding="utf8")
+        .replace('revision = "worker_registration"', 'revision: str = "worker_registration"')
+        .replace('down_revision = "multi_workers"', 'down_revision: str | None = "multi_workers"')
+        .replace("branch_labels = None", "branch_labels: tuple[str, ...] | None = None")
+        .replace("depends_on = None", "depends_on: str | None = None")
+    )
+    path.write_text(content, encoding="utf8")
+    assert migration_head(migrations) == "worker_registration"
+    path.write_text(
+        content + '\nraise RuntimeError("must not import historical DDL")\n', encoding="utf8"
+    )
+    result = invoke(businesses, migrations)
+    assert result.returncode == 0, result.stderr
+    value = (migrations / "0011_tiny_notes_initial.py").read_text(encoding="utf8")
+    assert 'revision = "0011"' in value and 'down_revision = "worker_registration"' in value
+
+
+def test_scaffold_refuses_to_recreate_a_module_with_existing_migrations(tmp_path):
+    result, _, migrations = generate(tmp_path)
+    assert result.returncode == 0, result.stderr
+    before = {path: path.read_bytes() for path in migrations.rglob("*.py")}
+    output = tmp_path / "another-output"
+    result = invoke(output, migrations)
+    assert (
+        result.returncode != 0
+        and "Initial migration for tiny_notes already exists" in result.stderr
+    )
+    assert not output.exists()
+    assert {path: path.read_bytes() for path in migrations.rglob("*.py")} == before
+    result = invoke(output, migrations, "--no-migration")
+    assert result.returncode == 0, result.stderr
+    assert {path: path.read_bytes() for path in migrations.rglob("*.py")} == before
+
+
+@pytest.mark.parametrize("entity_length,valid", [(14, True), (15, False)])
+def test_scaffold_checks_postgresql_table_name_length_before_writing(
+    tmp_path, entity_length, valid
+):
+    output, migrations = tmp_path / "businesses", tmp_path / "migrations"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "n" * 48,
+            "--entity",
+            "e" * entity_length,
+            "--output",
+            str(output),
+            "--migrations",
+            str(migrations),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if valid:
+        assert result.returncode == 0, result.stderr
+        assert migration_head(migrations) == "0001"
+    else:
+        assert result.returncode != 0 and "table name must be at most 63" in result.stderr
+        assert not output.exists() and not migrations.exists()
 
 
 @pytest.mark.parametrize(
@@ -186,34 +255,42 @@ def test_scaffold_continues_global_sequence_across_business_modules(tmp_path):
         ("duplicate_revision", "Duplicate migration"),
         ("missing_sequence", "contiguous"),
         ("wrong_parent", "linear chain"),
-        ("wrong_owner", "Invalid migration path/name"),
-        ("flat_file", "Invalid migration path/name"),
+        ("missing_module", "Invalid migration path/name"),
+        ("module_directory", "Invalid migration path/name"),
         ("merge", "Invalid linear migration metadata"),
+        ("nested_category", "Invalid migration path/name"),
+        ("annotated_branch", "Invalid linear migration metadata"),
+        ("annotated_dependency", "Invalid linear migration metadata"),
+        ("duplicate_metadata", "Invalid static migration metadata"),
+        ("dynamic_metadata", "Invalid static migration metadata"),
+        ("syntax_error", "Invalid static migration metadata"),
     ],
 )
 def test_invalid_migration_history_fails_before_creating_business(tmp_path, mistake, message):
     businesses, migrations = tmp_path / "businesses", tmp_path / "migrations"
     shutil.copytree(VERSIONS, migrations)
-    path = migrations / "core/0010_core_worker_registration.py"
+    path = migrations / "0010_worker_registration.py"
     content = path.read_text(encoding="utf8")
     if mistake == "duplicate_sequence":
-        path.rename(path.with_name("0009_core_worker_registration.py"))
+        path.rename(path.with_name("0009_worker_registration.py"))
     elif mistake == "duplicate_revision":
         path.write_text(
             content.replace('revision = "worker_registration"', 'revision = "core"'),
             encoding="utf8",
         )
     elif mistake == "missing_sequence":
-        path.rename(path.with_name("0012_core_worker_registration.py"))
+        path.rename(path.with_name("0012_worker_registration.py"))
     elif mistake == "wrong_parent":
         path.write_text(
             content.replace('down_revision = "multi_workers"', 'down_revision = "identity"'),
             encoding="utf8",
         )
-    elif mistake == "wrong_owner":
-        path.rename(path.with_name("0010_files_worker_registration.py"))
-    elif mistake == "flat_file":
-        path.rename(migrations / path.name)
+    elif mistake == "missing_module":
+        path.rename(path.with_name("0010_registration.py"))
+    elif mistake == "module_directory":
+        target = migrations / "worker" / path.name
+        target.parent.mkdir()
+        path.rename(target)
     elif mistake == "merge":
         path.write_text(
             content.replace(
@@ -221,21 +298,33 @@ def test_invalid_migration_history_fails_before_creating_business(tmp_path, mist
             ),
             encoding="utf8",
         )
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT),
-            "tiny_notes",
-            "--entity",
-            "note",
-            "--output",
-            str(businesses),
-            "--migrations",
-            str(migrations),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    elif mistake == "nested_category":
+        target = migrations / "platform/worker" / path.name
+        target.parent.mkdir(parents=True)
+        path.rename(target)
+    elif mistake == "annotated_branch":
+        path.write_text(
+            content.replace(
+                "branch_labels = None", 'branch_labels: tuple[str, ...] | None = ("worker",)'
+            ),
+            encoding="utf8",
+        )
+    elif mistake == "annotated_dependency":
+        path.write_text(
+            content.replace("depends_on = None", 'depends_on: str | None = "identity"'),
+            encoding="utf8",
+        )
+    elif mistake == "duplicate_metadata":
+        path.write_text(content + '\ndown_revision = "core"\n', encoding="utf8")
+    elif mistake == "dynamic_metadata":
+        path.write_text(
+            content.replace(
+                'revision = "worker_registration"', 'revision = str("worker_registration")'
+            ),
+            encoding="utf8",
+        )
+    elif mistake == "syntax_error":
+        path.write_text(content + "\ninvalid = (\n", encoding="utf8")
+    result = invoke(businesses, migrations)
     assert result.returncode != 0 and message in result.stderr, result.stderr
     assert not businesses.exists()

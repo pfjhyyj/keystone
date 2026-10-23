@@ -19,7 +19,6 @@ def test_source_migrations_are_independent_of_working_directory(tmp_path, monkey
     settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == source
-    assert config.get_main_option("recursive_version_locations") == "true"
     assert migrations.expected_heads(settings) == {"worker_registration"}
 
 
@@ -54,16 +53,16 @@ def test_module_paths_and_global_sequence_follow_the_native_revision_chain():
     root = Path(script.dir) / "versions"
     chain = list(reversed(list(script.walk_revisions())))
     legacy = (
-        "identity",
-        "audit",
-        "dictionary",
-        "files",
-        "model_access",
-        "flow",
-        "core",
-        "model_costs",
-        "multi_workers",
-        "worker_registration",
+        ("identity", "identity"),
+        ("audit", "audit"),
+        ("dictionary", "dictionary"),
+        ("files", "files"),
+        ("model_access", "model_access"),
+        ("flow", "flow"),
+        ("core", "worker"),
+        ("model_costs", "model_access"),
+        ("multi_workers", "worker"),
+        ("worker_registration", "worker"),
     )
     assert len(chain) >= len(legacy)
     assert len(script.get_heads()) == 1 and len(script.get_bases()) == 1
@@ -72,15 +71,13 @@ def test_module_paths_and_global_sequence_follow_the_native_revision_chain():
     for number, revision in enumerate(chain, 1):
         path = Path(revision.path)
         parts = path.relative_to(root).parts
-        assert (len(parts) == 2 and parts[0] == "core") or (
-            len(parts) == 3 and parts[0] in {"platform", "businesses"}
-        ), path
-        assert re.fullmatch(rf"{number:04d}_{path.parent.name}_[a-z][a-z0-9_]*\.py", path.name), (
-            path
-        )
+        assert len(parts) == 1, path
+        assert re.fullmatch(rf"{number:04d}_[a-z][a-z0-9_]*_[a-z][a-z0-9_]*\.py", path.name), path
         assert revision.down_revision == previous
         assert revision.revision == (
-            legacy[number - 1] if number <= len(legacy) else f"{number:04d}"
+            legacy[number - 1][0] if number <= len(legacy) else f"{number:04d}"
         )
+        if number <= len(legacy):
+            assert path.name.startswith(f"{number:04d}_{legacy[number - 1][1]}_")
         assert not revision.branch_labels and not revision.dependencies
         previous = revision.revision

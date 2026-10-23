@@ -21,7 +21,33 @@ MIGRATIONS = ROOT / "backend/migrations/versions"
 
 NAMESPACE = re.compile(r"[a-z][a-z0-9_]{0,47}")
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*")
-MIGRATION_NAME = re.compile(r"([0-9]{4})_([a-z][a-z0-9_]*)\.py")
+MIGRATION_NAME = re.compile(r"([0-9]{4})_([a-z][a-z0-9_]*_[a-z][a-z0-9_]*)\.py")
+
+
+def migration_metadata(path: Path) -> dict:
+    """Read literal Alembic declarations, including annotated assignments."""
+    metadata = {}
+    try:
+        for node in ast.parse(path.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                targets = [node.target]
+            else:
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name) and target.id in {
+                    "revision",
+                    "down_revision",
+                    "branch_labels",
+                    "depends_on",
+                }:
+                    if target.id in metadata:
+                        raise ValueError(f"Duplicate declaration: {target.id}")
+                    metadata[target.id] = ast.literal_eval(node.value)
+    except (SyntaxError, ValueError, TypeError) as error:
+        raise SystemExit(f"Invalid static migration metadata: {path}: {error}") from None
+    return metadata
 
 
 def next_migration(versions: Path, namespace: str) -> tuple[Path, str, str | None]:
@@ -30,26 +56,10 @@ def next_migration(versions: Path, namespace: str) -> tuple[Path, str, str | Non
     for path in sorted(versions.rglob("*.py")):
         relative = path.relative_to(versions)
         match = MIGRATION_NAME.fullmatch(path.name)
-        valid_owner = (
-            len(relative.parts) == 2
-            and relative.parts[0] == "core"
-            or len(relative.parts) == 3
-            and relative.parts[0] in {"platform", "businesses"}
-        )
-        if (
-            not match
-            or not valid_owner
-            or not re.fullmatch(re.escape(path.parent.name) + r"_[a-z][a-z0-9_]*", match[2])
-        ):
+        if not match or len(relative.parts) != 1:
             raise SystemExit(f"Invalid migration path/name: {relative}")
         number = int(match[1])
-        metadata = {
-            node.targets[0].id: ast.literal_eval(node.value)
-            for node in ast.parse(path.read_text(encoding="utf-8")).body
-            if isinstance(node, ast.Assign)
-            and isinstance(node.targets[0], ast.Name)
-            and node.targets[0].id in {"revision", "down_revision", "branch_labels", "depends_on"}
-        }
+        metadata = migration_metadata(path)
         revision, down = metadata.get("revision"), metadata.get("down_revision")
         if (
             not isinstance(revision, str)
@@ -66,6 +76,11 @@ def next_migration(versions: Path, namespace: str) -> tuple[Path, str, str | Non
         revisions.add(revision)
         numbers.add(number)
         history.append((number, revision, down))
+        if match[2] == f"{namespace}_initial":
+            raise SystemExit(
+                f"Initial migration for {namespace} already exists; "
+                "use --no-migration to generate code without recreating its tables"
+            )
     head = None
     for expected, (number, revision, down) in enumerate(sorted(history), 1):
         if number != expected or down != head:
@@ -77,7 +92,7 @@ def next_migration(versions: Path, namespace: str) -> tuple[Path, str, str | Non
     revision = f"{number:04d}"
     if revision in revisions:
         raise SystemExit(f"Migration revision already exists: {revision}")
-    path = versions / "businesses" / namespace / f"{revision}_{namespace}_initial.py"
+    path = versions / f"{revision}_{namespace}_initial.py"
     return path, revision, head
 
 
@@ -352,6 +367,8 @@ def parse_args(argv=None):
     keys = [f"{args.namespace}.{args.entity}:{action}" for action in ("read", "write")]
     if max(map(len, keys)) > 100:
         parser.error("permission keys must be at most 100 characters")
+    if len(f"{args.namespace}_{args.entity}") > 63:
+        parser.error("table name must be at most 63 characters for PostgreSQL")
     return args
 
 

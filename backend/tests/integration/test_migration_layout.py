@@ -9,6 +9,7 @@ import pytest
 from alembic import command
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import DBAPIError
 
 from keystone.core.config import Settings
 from keystone.core.migrations import migration_config
@@ -18,7 +19,19 @@ BACKEND = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize(
-    "revision", ["core", "model_costs", "multi_workers", "worker_registration"]
+    "revision",
+    [
+        "identity",
+        "audit",
+        "dictionary",
+        "files",
+        "model_access",
+        "flow",
+        "core",
+        "model_costs",
+        "multi_workers",
+        "worker_registration",
+    ],
 )
 def test_database_from_flat_layout_upgrades_without_restamping(
     empty_database_url, tmp_path, revision
@@ -64,12 +77,32 @@ def test_database_from_flat_layout_upgrades_without_restamping(
             )
             assert connection.scalar(text("SELECT username FROM keystone.users")) == "preserved"
             assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 42
+        # The renamed scripts must also downgrade to every old revision. The old
+        # flat artifact can then read that version and apply its own upgrades.
+        command.downgrade(current, revision)
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
+                == revision
+            )
+            assert connection.scalar(text("SELECT username FROM keystone.users")) == "preserved"
+            assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 42
+        command.upgrade(legacy, "head")
+        command.upgrade(current, "head")
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
+                == "worker_registration"
+            )
+            assert connection.scalar(text("SELECT username FROM keystone.users")) == "preserved"
+            assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 42
     finally:
         engine.dispose()
 
 
+@pytest.mark.parametrize("namespace,entity", [("notes", "note"), ("n" * 48, "e" * 14)])
 def test_generated_business_migration_is_discovered_upgraded_and_reversible(
-    empty_database_url, tmp_path
+    empty_database_url, tmp_path, namespace, entity
 ):
     directory = tmp_path / "migrations"
     shutil.copytree(BACKEND / "migrations", directory, ignore=shutil.ignore_patterns("__pycache__"))
@@ -77,9 +110,9 @@ def test_generated_business_migration_is_discovered_upgraded_and_reversible(
         [
             sys.executable,
             str(BACKEND.parent / "scripts/new_business.py"),
-            "notes",
+            namespace,
             "--entity",
-            "note",
+            entity,
             "--output",
             str(tmp_path / "businesses"),
             "--migrations",
@@ -96,23 +129,24 @@ def test_generated_business_migration_is_discovered_upgraded_and_reversible(
     script = ScriptDirectory.from_config(config)
     assert script.get_heads() == ["0011"]
     assert script.get_revision("0011").down_revision == "worker_registration"
-    assert (directory / "versions/businesses/notes/0011_notes_initial.py").is_file()
+    assert (directory / "versions" / f"0011_{namespace}_initial.py").is_file()
+    table = f"{namespace}_{entity}"
     engine = create_engine(empty_database_url)
     try:
         command.upgrade(config, "head")
-        assert "notes_note" in inspect(engine).get_table_names(schema="keystone")
+        assert table in inspect(engine).get_table_names(schema="keystone")
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    "INSERT INTO keystone.notes_note (id,title,content) VALUES "
+                    f"INSERT INTO keystone.{table} (id,title,content) VALUES "
                     "('00000000-0000-4000-8000-000000000001','Original','Preserved')"
                 )
             )
         command.upgrade(config, "head")
         with engine.connect() as connection:
-            assert connection.scalar(text("SELECT content FROM keystone.notes_note")) == "Preserved"
+            assert connection.scalar(text(f"SELECT content FROM keystone.{table}")) == "Preserved"
         command.downgrade(config, "worker_registration")
-        assert "notes_note" not in inspect(engine).get_table_names(schema="keystone")
+        assert table not in inspect(engine).get_table_names(schema="keystone")
         assert "users" in inspect(engine).get_table_names(schema="keystone")
         command.upgrade(config, "head")
         with engine.connect() as connection:
@@ -120,5 +154,55 @@ def test_generated_business_migration_is_discovered_upgraded_and_reversible(
                 connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
                 == "0011"
             )
+    finally:
+        engine.dispose()
+
+
+def test_refused_downgrade_rolls_back_the_entire_chain_and_preserves_dbos(empty_database_url):
+    config = migration_config(Settings(config_file=None, database_url=empty_database_url))
+    config.attributes["create_schema"] = True
+    engine = create_engine(empty_database_url)
+    try:
+        command.upgrade(config, "head")
+        with engine.begin() as connection:
+            connection.execute(
+                text("""
+                INSERT INTO keystone.model_channels
+                  (id,name,provider,api_base,api_key_encrypted,cost_scope,is_active,balance_check_status)
+                VALUES ('00000000-0000-4000-8000-000000000001', 'preserved', 'openlux',
+                        'https://example.invalid', 'opaque-not-a-credential',
+                        'original-scope',true,'never')
+            """)
+            )
+            connection.execute(
+                text("""
+                INSERT INTO keystone.worker_registrations(worker_id,state,retired_at)
+                VALUES ('preserved-worker','retired',now())
+            """)
+            )
+            connection.execute(text("CREATE SCHEMA dbos"))
+            connection.execute(text("CREATE TABLE dbos.retention_probe (value integer)"))
+            connection.execute(text("INSERT INTO dbos.retention_probe VALUES (42)"))
+        with pytest.raises(DBAPIError, match="Remove new-provider data"):
+            command.downgrade(config, "core")
+        # Two later migrations have already executed their downgrade before the
+        # provider guard fails. All their DDL and the version write must roll back.
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
+                == "worker_registration"
+            )
+            assert (
+                connection.scalar(text("SELECT state FROM keystone.worker_registrations"))
+                == "retired"
+            )
+            assert connection.execute(
+                text("SELECT provider,cost_scope FROM keystone.model_channels")
+            ).one() == ("openlux", "original-scope")
+            assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 42
+        assert {"worker_id", "cost_check_status"} <= {
+            item["name"]
+            for item in inspect(engine).get_columns("model_invocations", schema="keystone")
+        }
     finally:
         engine.dispose()
