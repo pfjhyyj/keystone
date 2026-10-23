@@ -250,7 +250,7 @@ async def worker_status(
             required = [
                 "model_costs",
                 *(["files"] if settings.file_storages else []),
-                *(["flow"] if settings.flow_enabled else []),
+                "flow",
             ]
             for name in required:
                 checks = [

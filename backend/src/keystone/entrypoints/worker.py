@@ -82,15 +82,14 @@ async def run_executor(runtime, stop, *, ready, health):
         runtime.worker_identity = health.identity
         async with AsyncExitStack() as stack:
             queues, installers = register_maintenance(runtime, health)
-            if runtime.settings.flow_enabled:
-                from keystone.platform.flow.workflows import bootstrap as flow_worker
+            from keystone.platform.flow.workflows import bootstrap as flow_worker
 
-                register_workflows()
-                await stack.enter_async_context(flow_worker.prepare(runtime, lease=lease))
-                queues[flow_worker.QUEUE] = (
-                    runtime.settings.flow_worker_concurrency,
-                    runtime.settings.flow_global_concurrency,
-                )
+            register_workflows()
+            await stack.enter_async_context(flow_worker.prepare(runtime, lease=lease))
+            queues[flow_worker.QUEUE] = (
+                runtime.settings.flow_worker_concurrency,
+                runtime.settings.flow_global_concurrency,
+            )
             if stop.is_set():
                 return
             await stack.enter_async_context(
@@ -105,8 +104,7 @@ async def run_executor(runtime, stop, *, ready, health):
             # ownership while schedules install; lease transactions serialize checks.
             runtime.worker_lease = lease
             try:
-                if runtime.settings.flow_enabled:
-                    flow_worker.report_ready()
+                flow_worker.report_ready()
                 for install in installers:
                     await install()
                 async with asyncio.timeout(LEASE_CHECK_SECONDS):
@@ -126,7 +124,7 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
     runtime = build_runtime(settings)
     health = WorkerHealth(runtime.database, settings, execution_version())
     previous = None
-    log.info("worker_started flow_enabled=%s", settings.flow_enabled)
+    log.info("worker_started")
     executor_task = None
     executor_ready = asyncio.Event()
     heartbeat_task = None
@@ -178,7 +176,7 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
                     log.warning("worker_stop_heartbeat_failed")
         finally:
             try:
-                if settings.flow_enabled and runtime.flow_engine:
+                if runtime.flow_engine:
                     await runtime.flow_engine.close()
             finally:
                 await runtime.database.close()

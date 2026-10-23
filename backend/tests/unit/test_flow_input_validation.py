@@ -47,9 +47,7 @@ async def test_final_input_size_checks_defaults_and_serializers_before_persisten
             flush=AsyncMock(),
         )
         auth = SimpleNamespace(kind="session", user=SimpleNamespace(id=uuid4()), require=Mock())
-        identity = SimpleNamespace(
-            settings=SimpleNamespace(flow_enabled=True), correlation_id="unit", log=AsyncMock()
-        )
+        identity = SimpleNamespace(correlation_id="unit", log=AsyncMock())
         references = AsyncMock()
         monkeypatch.setattr(FileReferences, "replace", references)
         service = FlowService(identity, {flow.key: flow}, execution_version=lambda: "test")

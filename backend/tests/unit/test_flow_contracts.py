@@ -131,7 +131,7 @@ from keystone.bootstrap import build_runtime
 from keystone.composition import register_workflows
 from keystone.core.config import Settings
 
-runtime = build_runtime(Settings(config_file=None, database_url=None, flow_enabled=False))
+runtime = build_runtime(Settings(config_file=None, database_url=None))
 assert not any(name.startswith('keystone.businesses.') and name.endswith('.workflow')
                for name in sys.modules)
 from dbos import DBOS
@@ -242,7 +242,7 @@ async def test_flow_directory_uses_its_application_version_source():
     from keystone.bootstrap import build_runtime
     from keystone.core.config import Settings
 
-    runtime = build_runtime(Settings(config_file=None, database_url=None, flow_enabled=False))
+    runtime = build_runtime(Settings(config_file=None, database_url=None))
     other = replace(runtime, execution_version=lambda: "another-application")
 
     @asynccontextmanager

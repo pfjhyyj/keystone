@@ -372,8 +372,7 @@ def test_zero_and_legacy_yunwu_unit_are_explicit(client, billing):
 
 
 @pytest.mark.parametrize("restart", [False, True])
-def test_real_dbos_scheduler_queries_costs_with_flow_disabled(client, billing, tmp_path, restart):
-    client.app.state.runtime.settings.flow_enabled = False
+def test_real_dbos_scheduler_queries_costs(client, billing, tmp_path, restart):
     configure(client)
     identifier = call(client)
     due(client, identifier)
@@ -404,7 +403,6 @@ async def respond(request):
 HttpClient.transport = lambda self, provider: (
     httpx2.MockTransport(respond) if provider == 'openlux' else original(self, provider)
 )
-os.environ['KEYSTONE_FLOW_ENABLED']='false'
 from keystone.entrypoints.worker import main
 main()
 """
@@ -576,7 +574,6 @@ def test_flow_completion_or_cancel_and_channel_disable_preserve_billing(
 
     config = configure(client)
     runtime = client.app.state.runtime
-    runtime.settings.flow_enabled = True
     runtime.flow_definitions = {definition.key: definition}
     DBOS.migrate(runtime.settings.database_url.get_secret_value())
     runtime.flow_engine = Engine(runtime.settings)

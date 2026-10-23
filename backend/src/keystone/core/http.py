@@ -1,4 +1,4 @@
-"""Small safe error/correlation boundary, adapted from ether_api.errors."""
+"""Small safe error/correlation boundary."""
 
 import logging
 from http import HTTPStatus

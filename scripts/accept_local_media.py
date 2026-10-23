@@ -90,7 +90,6 @@ def exercise(root, database_url, channel):
         database_url=database_url,
         file_coordination_root=storage,
         file_storages={"local": {"driver": "filesystem", "root": storage}},
-        flow_enabled=False,
     )
     StorageRegistry(settings).initialize()
     config = migration_config(settings)
@@ -149,7 +148,6 @@ def exercise(root, database_url, channel):
             "KEYSTONE_ENV": "test",
             "KEYSTONE_DATABASE_URL": database_url,
             "KEYSTONE_FILE_COORDINATION_ROOT": str(storage),
-            "KEYSTONE_FLOW_ENABLED": "false",
             "KEYSTONE_FILE_STORAGES__LOCAL__DRIVER": "filesystem",
             "KEYSTONE_FILE_STORAGES__LOCAL__ROOT": str(storage),
             "KEYSTONE_FILE_MAX_BYTES": str(512 * 1024**2),

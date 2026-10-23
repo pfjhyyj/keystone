@@ -153,10 +153,6 @@ onScopeDispose(() => {
     <el-card shadow="never" class="overview-detail"
       ><template #header><h2>运行配置</h2></template
       ><el-descriptions :column="1" border
-        ><el-descriptions-item label="Flow 执行能力"
-          ><StatusTag :status="ready?.flow_enabled ? 'active' : 'disabled'">{{
-            ready ? (ready.flow_enabled ? '已启用' : '未启用') : '无法确认'
-          }}</StatusTag></el-descriptions-item
         ><el-descriptions-item label="Worker 最近心跳"
           ><time v-if="worker?.last_heartbeat_at" :datetime="worker.last_heartbeat_at">{{
             new Date(worker.last_heartbeat_at).toLocaleString('zh-CN')

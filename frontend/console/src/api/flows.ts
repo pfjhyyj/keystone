@@ -31,9 +31,7 @@ export interface Steps {
 }
 export const flowApi = {
   definitions: () =>
-    request<{ enabled: boolean; idempotency_days: number; items: FlowDefinition[] }>(
-      '/flow-definitions',
-    ),
+    request<{ idempotency_days: number; items: FlowDefinition[] }>('/flow-definitions'),
   runs: (offset: number, status: string) =>
     request<FlowRun[]>(
       `/flow-runs?${new URLSearchParams({ offset: String(offset), limit: '50', ...(status ? { status } : {}) })}`,

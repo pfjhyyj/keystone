@@ -1,4 +1,4 @@
-"""Current DB grants + ephemeral Casbin enforcer, adapted from Ether AuthorizationService."""
+"""Current DB grants + ephemeral Casbin enforcer."""
 
 from dataclasses import dataclass
 from uuid import UUID

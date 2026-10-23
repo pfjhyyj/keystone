@@ -376,7 +376,6 @@ def test_live_mode_real_dbos_worker_uses_same_send_boundary(client, live, tmp_pa
     from support.flow_fixture.contracts import definition
 
     runtime.flow_definitions = {definition.key: definition}
-    runtime.settings.flow_enabled = True
     DBOS.migrate(runtime.settings.database_url.get_secret_value(), schema="dbos")
     runtime.flow_engine = Engine(runtime.settings)
     file_id = upload(client, b"Local socket fixture for live mode.").json()["id"]

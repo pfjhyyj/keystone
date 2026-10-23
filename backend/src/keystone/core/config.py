@@ -40,7 +40,6 @@ class Settings(BaseSettings):
     model_inference_concurrency: int = Field(default=4, ge=1, le=32)
     model_scope_concurrency: int = Field(default=4, ge=1, le=16)
     initial_admin_password: SecretStr | None = Field(default=None, repr=False)
-    flow_enabled: bool = True
     session_hours: int = Field(default=8, ge=1, le=168)
     pat_max_days: int = Field(default=90, ge=1, le=365)
     browser_origins: list[str] = [

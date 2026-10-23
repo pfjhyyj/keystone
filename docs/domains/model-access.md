@@ -152,24 +152,24 @@ Agent 一次运行可能发起多次模型请求，每次实际请求都独立�
 
 余额刷新失败时保留上次成功快照，显示采集时间和本次失败状态。余额只是有时间戳的上游观察值，不用于保证下一次调用一定成功，也不用余额前后差计算单次费用。多个渠道共享同一上游账户时不能重复汇总，首版仅逐渠道展示。
 
-余额查询分为读取当前配置、事务外请求、短事务写回三段；同渠道刷新串行协调，并与影响查询的配置变更协调。写回前确认仍对应原查询配置，过期结果丢弃，不能覆盖新配置的快照；不为此增加刷新请求表、任务状态或版本字段。API 中断时不承诺请求已完成，保持最后已确认信息，可再次手动查询。渠道停用只禁止新推理，不禁止授权管理者查询历史、补查费用或刷新余额。已检查的 Ether 模型连接模块没有对应的渠道余额刷新实现，这部分是 Keystone 的简化规则，不声称直接迁移现成代码。
+余额查询分为读取当前配置、事务外请求、短事务写回三段；同渠道刷新串行协调，并与影响查询的配置变更协调。写回前确认仍对应原查询配置，过期结果丢弃，不能覆盖新配置的快照；不为此增加刷新请求表、任务状态或版本字段。API 中断时不承诺请求已完成，保持最后已确认信息，可再次手动查询。渠道停用只禁止新推理，不禁止授权管理者查询历史、补查费用或刷新余额。渠道余额刷新是本模块的简化规则，不声称复用现成实现。
 
 ### 3.3 渠道能力
 
-OpenRouter 等官方能力依据下列文档；Yunwu/Openlux 另有 EPStudio 实测依据。Keystone 回归使用隔离数据库和本地协议桩，没有发送付费模型请求。
+OpenRouter 等官方能力依据下列文档；Yunwu/Openlux 另有实测依据。Keystone 回归使用隔离数据库和本地协议桩，没有发送付费模型请求。
 
 | 渠道 | 单次调用费用 | 账户余额 | 首版处理 |
 |---|---|---|---|
-| DeepSeek | 已核对的对话响应提供用量，未提供单次金额 | `/user/balance` 提供分币种的总余额、赠送余额和充值余额 | 保存用量；费用未知；支持余额刷新 |
+| DeepSeek | 已核对的对话响应提供用量，未提供单次金额 | `/user/balance` 提供分币种的总余额、赠送余额和充值余额 | 保存用量；费用未知；首版不开放余额刷新（仅保留解析声明） |
 | OpenRouter | 响应 `usage.cost`；也可按 generation ID 查询 | `/api/v1/credits` 返回累计 credits 和使用量，需要 management key | 保存上游报告费用；必要时查询补全；支持余额刷新 |
-| 阿里云百炼 | 尚未确认可按推理请求 ID 查询单次实际金额的接口 | `QueryAccountBalance` 查询阿里云账户，区分可用额度和现金余额 | 保存用量；费用未知；有账务凭据时支持账户余额刷新 |
+| 阿里云百炼 | 尚未确认可按推理请求 ID 查询单次实际金额的接口 | `QueryAccountBalance` 查询阿里云账户，区分可用额度和现金余额 | 保存用量；费用未知；首版不开放账户余额查询（仅保留解析声明） |
 | Yunwu/Openlux | 原 Token 分页拉取日志，本地精确匹配 `other.request_id` 与 `x-api-request-id`，按站点口径解析 quota | 不提供余额查询，Token 用量不视为账户余额 | 已接入自动核对和手动补查；详见第 3.6 节 |
 
-DeepSeek 保留接口返回的币种，总余额已经包含赠送和充值部分，不重复相加。费用未知仅表示当前接入能力不足，不断言供应商永远没有相应能力。依据：[余额接口](https://api-docs.deepseek.com/api/get-user-balance/)、[对话响应](https://api-docs.deepseek.com/api/create-chat-completion/)。
+DeepSeek 的余额解析保留接口返回的币种，总余额已经包含赠送和充值部分，不重复相加；首版未开放查询，因此余额状态为 unavailable。费用未知仅表示当前接入能力不足，不断言供应商永远没有相应能力。依据：[余额接口](https://api-docs.deepseek.com/api/get-user-balance/)、[对话响应](https://api-docs.deepseek.com/api/create-chat-completion/)。
 
 OpenRouter 的 `usage.cost` 表示该账户被收取的 credits；流式用量在最后的 SSE 消息中。不要用 `upstream_inference_cost` 替换账户费用，尤其 BYOK 还涉及外部供应商收费。余额由 `total_credits - total_usage` 得到，保留 credits 口径，不能当作某个 API Key 的独享额度。依据：[用量与费用](https://openrouter.ai/docs/cookbook/administration/usage-accounting)、[余额与凭据要求](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits)。
 
-阿里云的 `AvailableAmount` 是可用额度，`AvailableCashAmount` 是现金余额，展示时分别标明。它们属于阿里云账户，可能同时供其他云产品消费，并非百炼专属余额。查询需要阿里云 OpenAPI 账务授权，不能直接使用 DashScope API Key。依据：[账户余额接口](https://help.aliyun.com/zh/user-center/developer-reference/api-bssopenapi-2017-12-14-queryaccountbalance)。
+阿里云余额接口的 `AvailableAmount` 是可用额度，`AvailableCashAmount` 是现金余额，展示时分别标明；首版仅有解析声明，不发起查询。它们属于阿里云账户，可能同时供其他云产品消费，并非百炼专属余额。查询需要阿里云 OpenAPI 账务授权，不能直接使用 DashScope API Key。依据：[账户余额接口](https://help.aliyun.com/zh/user-center/developer-reference/api-bssopenapi-2017-12-14-queryaccountbalance)。
 
 百炼账单存在出账延迟和聚合口径，出账也不等于即时扣款。首版不抓取控制台、不把聚合账单摊分成单次“实扣”；后续确认能够精确关联请求的官方数据后再补全。依据：[账单与费用管理](https://help.aliyun.com/zh/model-studio/bill-query-and-cost-management)。
 
@@ -195,7 +195,7 @@ Flow 的 request_digest 依据用户原始提交计算，不包含服务端解�
 
 该规则宁可在“已登记、尚未发出”时中断，也不在恢复时猜测可以重发。可靠的上游查询可以核实原请求结果或费用，但不能借查询重新发起推理。首版不增加发送意图表、额外状态或保存模型响应的字段，也不使用 File 保存防重发标记。
 
-这是 Keystone 复用现有调用表的设计选择，并非声称 Ether 已有同样实现，也不等于供应商侧 exactly-once 保证。实现时必须验证稳定请求身份、原子登记以及 DBOS/Agent 内部恢复边界；仍用于恢复防重发的调用记录不能提前清理。
+这是复用现有调用表的设计选择，不等于供应商侧 exactly-once 保证。实现时必须验证稳定请求身份、原子登记以及 DBOS/Agent 内部恢复边界；仍用于恢复防重发的调用记录不能提前清理。
 
 ### 3.6 自动费用核对
 
@@ -214,7 +214,7 @@ Flow 的 request_digest 依据用户原始提交计算，不包含服务端解�
 
 #### 3.6.2 Yunwu/Openlux 的已验证契约
 
-依据为 2026-10-21 EPStudio 的实际图片调用及只读查费探针；2026-10-22 复核了站点公开金额配置。Keystone 使用该协议实现并通过本地回归；上游真实出账时效和大流量容量仍需部署后观测。
+依据为 2026-10-21 的实际图片调用及只读查费探针；2026-10-22 复核了站点公开金额配置。Keystone 使用该协议实现并通过本地回归；上游真实出账时效和大流量容量仍需部署后观测。
 
 该渠道实际使用 `https://api.openlux.ai`。已验证查询如下，路径从受控账务 origin 构造，不能直接拼在推理 `/v1` 后面：
 
@@ -249,7 +249,7 @@ GET https://api.openlux.ai/api/log/token?key=<原调用API_KEY>&start_timestamp=
 
 调用结束的短事务同时保存回执和费用待办，API 不负责即时投递。只有已结束且费用核对 pending、next_check_at 到期的记录可被扫描；运行中的调用沿用原收尾机制，不能为了查费按时间改判 unknown。调用 succeeded、failed、unknown 均可能产生费用。
 
-model_access/tasks/workflows.py 由 composition 显式装配：启动投递一次，此后 DBOS 每 5 秒扫描；关闭 Flow 不关闭该能力。稳定计划名为 keystone.model_access.reconcile_costs。扫描使用 keystone-model-maintenance 串行队列，每轮最多投递 20 个到期范围；外部查询使用 keystone-system，默认全部 Worker 与 API 手动入口共享查费并发 2，同一查询范围串行，并与推理容量隔离。Worker 仅提供 DBOS 执行包装，费用扫描和核对规则由本模块 Service 提供，计划与容量语义保持不变。
+model_access/tasks/workflows.py 由 composition 显式装配：启动投递一次，此后 DBOS 每 5 秒扫描。稳定计划名为 keystone.model_access.reconcile_costs。扫描使用 keystone-model-maintenance 串行队列，每轮最多投递 20 个到期范围；外部查询使用 keystone-system，默认全部 Worker 与 API 手动入口共享查费并发 2，同一查询范围串行，并与推理容量隔离。Worker 仅提供 DBOS 执行包装，费用扫描和核对规则由本模块 Service 提供，计划与容量语义保持不变。
 
 请求直查按调用处理；日志查询按原 Token 范围和相近时间窗口合并，单页可确认多次调用。每次执行限制页数和总耗时，单次 HTTP 使用明确超时；未完成则保存固定起止窗口、下一页和本轮匹配范围，后续继续。该小型 checkpoint 归原 Channel，费用和进度协调写入，不新增分页任务表。下一页只在本页匹配结果提交后推进，崩溃后可安全重读同一页。
 
@@ -278,7 +278,7 @@ model_access/tasks/workflows.py 由 composition 显式装配：启动投递一�
 
 传输失败与未出账等待分开计数，暂时性错误最多自动重试 12 次，不含首次请求，并与 24 小时窗口共同约束；查询成功不重置累计错误预算。退避从 30 秒倍增至约 1 小时，附加 ±20% 抖动；有效 Retry-After 优先，支持秒数与 HTTP 日期。分页继续不重置截止时间，也不作为完整未找到轮次计数。24 小时是截止上限，不保证调度延迟后补跑最后一轮；迟于截止时间时直接 exhausted，晚于截止时间的 Retry-After 不引起越窗查询。SDK 不做隐藏重试；下一次业务查询由持久 cost_next_check_at 驱动，不为每笔费用建立长期 sleep 循环。所有重试仅查询账务，禁止重新推理。
 
-手动补查保留现有 model:manage 和记录读取权限，与自动核对共用范围互斥、适配器和保存规则，不另建一条可绕过凭据范围的路径。日志查询超出同步预算时保存待办并返回尚未确认的状态，不在 API 请求中扫描无限页。对 blocked/exhausted 的重新触发由授权管理者显式执行并记录原因，不因普通页面轮询无限重置预算。
+手动补查保留现有 model:manage 和记录读取权限，与自动核对共用范围互斥、适配器和保存规则，不另建一条可绕过凭据范围的路径。日志查询超出同步预算时保存待办并返回尚未确认的状态，不在 API 请求中扫描无限页。对 blocked/exhausted 的重新触发由授权管理者显式执行，不因普通页面轮询无限重置预算。
 
 #### 3.6.6 费用状态与落库
 
@@ -294,7 +294,7 @@ cost_check_status 与调用 status 分开，查到账务不改变 succeeded/fail
 
 重复结果只补全同一调用，不创建新 ModelInvocation、不累加金额或用量。保留 Numeric(38,18) 和 Decimal，不能经过二进制浮点估价；按渠道及单位汇总，不跨旧 Yunwu 自定义额度、Openlux USD、OpenRouter credits 或人民币参考值相加。查询失败不清空已知金额；新的可信实际查询替换原响应费用时保留前后证据，矛盾记录不能静默覆盖。
 
-外部 HTTP 在短业务事务之外；写回前检查原查询范围、配置、调用状态及本轮 checkpoint。费用、证据、进度和需要的审计同事务保存，旧查询或失去协调所有权的执行不得推进新轮次。常规自动确认保存在调用记录及必要证据中，不为每页或每次未找到复制管理审计；人工重启核对、异常覆盖等操作保留实际操作者和原因。
+外部 HTTP 在短业务事务之外；写回前检查原查询范围、配置、调用状态及本轮 checkpoint。费用、证据、进度和需要的审计同事务保存，旧查询或失去协调所有权的执行不得推进新轮次。常规自动确认保存在调用记录及必要证据中，不为每页或每次未找到复制管理审计；显式重查仍写 `model.cost.recheck`，保留实际操作者与原核对状态。
 
 确认后停止自动轮询，本阶段不自动推断退款、负数费用、冲正或长期账单修订。不明历史口径、矛盾记录和窗口耗尽均保留未决；不能把已知费用汇总称为全部调用的最终实扣。
 
@@ -308,7 +308,7 @@ DBOS 投递去重不代替上述保护，进程内 Semaphore 只控制本地资�
 
 当前已实现回执选择及及时保存、分类查询结果、Yunwu/Openlux 账务适配、领域 CostService、费用状态和分页迁移；代码按第 8 节的 adapters/billing/adapters/inference/Service 分层，由 Worker 任务入口接入 DBOS。调用详情显示费用核对状态、原因及查询时间，费用汇总额外返回 cost_checks 分类数量。Worker 将费用扫描首次成功及持续推进纳入就绪，供应商待出账/限流/Token 失效保留为费用状态，不直接让整个 Worker 未就绪。最长未决时长和全局限流观测留待后续。
 
-费用状态沿用既有语义：旧已知金额为 confirmed，缺少原范围的未知记录为 unavailable/legacy_scope_unknown，不把历史 unknown 改成零或默认为当前 Key。已有 Channel 在配置保存或下一次真实调用时绑定非秘密范围，不启动历史批量回填。可信发送归属和共享维护观测直接包含在基线结构中，不扩大图片推理或自动余额刷新范围。
+费用状态沿用既有语义：旧已知金额为 confirmed，缺少原范围的未知记录为 unavailable/cost_query_unavailable，不把历史 unknown 改成零或默认为当前 Key。已有 Channel 在配置保存或下一次真实调用时绑定非秘密范围，不启动历史批量回填。可信发送归属和共享维护观测直接包含在基线结构中，不扩大图片推理或自动余额刷新范围。
 
 验收至少覆盖：真实样本得到 0.002656 USD；错误 request ID 不匹配；other 为 JSON 字符串；分页 id 变化和重复页不双记；未扫完不误判未找到；延迟写入由下一轮发现；查后写前中断可重读；新 Key 不误查旧 Token；429/鉴权/结构错误/窗口耗尽各有明确状态；失败和取消后仍保存原账务事实；手动与后台并发不覆盖新结果；整个过程不新增推理请求。固定多 Worker 还须验证共享并发、原身份重启、查询崩溃续页和旧响应拒绝写回；自动接管及 RPM/TPM 仍未实现。
 
@@ -345,7 +345,7 @@ Channel、ModelEntry 是管理配置，保留四个审计字段。ModelInvocatio
 
 Channel、ModelEntry 不论是否已被引用，首版均不提供物理删除或软删除；管理变更、启停和凭据变更记录审计。配置只停用的规则不改变调用记录的保留策略：ModelInvocation 不提供普通用户修改/删除接口，仍承担 Flow 恢复防重发作用的记录必须保留，确认对应运行不再有恢复或协调义务后才能按保留期清理，不在这里扩展成归档领域。
 
-不为这三个对象增加 deleted_at、deleted_by。调用记录的保留期清理由任务日志记录范围、数量和结果，不模拟用户逐条删除，也不逐条增加删除字段；已有审计独立保留。Ether 的 模型连接删除 会保留连接行、设置 deleted 并清除秘密和授权；Keystone 首版不搬入该删除状态或相关协调机制。
+不为这三个对象增加 deleted_at、deleted_by。首版不提供调用记录的删除或归档入口，也不逐条增加删除字段；未来清理须记录任务范围、数量和结果，并保留仍有恢复义务的记录；已有审计独立保留。首版不采用保留连接行、设置 deleted 并清除秘密和授权的删除模型，也不引入相关协调机制。
 
 管理操作的审计日志与调用记录用途不同：前者追踪谁改了配置，后者记录调用发生及费用信息。两者都不保存秘密明文，调用记录默认不保存提示词和输出正文。
 
@@ -368,7 +368,7 @@ Channel、ModelEntry 不论是否已被引用，首版均不提供物理删除�
 
 本节记录当前实现约定，代码职责见第 8 节；自动核对的完整状态、分页 checkpoint、重试和迁移规则见第 3.6 节。手动与自动核对共用 CostService，不分别维护账务写入逻辑。
 
-代码位于 backend/src/keystone/platform/model_access/，model_access 领域初始迁移建立 model_channels、model_entries、model_invocations，渠道直接使用凭据密文字段。复用 Ether ai/runtime.py、dispatch.py、invocations.py 的受控发送、运行时凭据注入、响应观测和安全错误分类思路，按 Keystone 的发送前登记规则改写；没有复制路由池、配额、聊天会话或其他领域实体。
+代码位于 backend/src/keystone/platform/model_access/，model_access 领域初始迁移建立 model_channels、model_entries、model_invocations，渠道直接使用凭据密文字段。受控发送、运行时凭据注入、响应观测和安全错误分类按发送前登记规则实现；没有复制路由池、配额、聊天会话或其他领域实体。
 
 ### 7.1 配置
 
@@ -376,7 +376,7 @@ Channel、ModelEntry 不论是否已被引用，首版均不提供物理删除�
 
 加密使用 Fernet，绑定渠道 ID 与推理/账务用途，防止凭据密文跨渠道或用途替换。首次保存时在现有 FILE_COORDINATION_ROOT 自动原子生成 `.model-credentials.key`（Linux/macOS 文件权限为 0600），不增加配置项或初始化命令。API 与 Worker 共用该协调目录；已有密文而密钥丢失时拒绝密钥写入和调用，不静默重新生成。备份应保留完整协调目录。实现依据 [Fernet 文档](https://cryptography.io/en/latest/fernet/)。
 
-当前支持 OpenRouter、Openlux、Yunwu 的固定地址，普通目录只返回启用且支持发送的渠道模型；DeepSeek/阿里云既有配置仍可管理，但不能发送。缺少或撤销凭据时在发送前拒绝。启动或保存配置不会自动发起模型调用。
+当前支持 OpenRouter、Openlux、Yunwu 的固定地址，普通目录只返回启用且支持发送的渠道模型；DeepSeek/阿里云既有配置仍可管理，但不能发送，也不开放余额查询。缺少或撤销凭据时在发送前拒绝。启动或保存配置不会自动发起模型调用。
 
 确定性响应只通过测试目录中的 HTTP 传输替身注入，不随应用包或部署镜像发布。旧开发模拟数据不得用作真实调用的费用或恢复依据，应使用独立数据库和文件卷。
 
@@ -442,7 +442,7 @@ keystone recover-model-calls --confirm-api-stopped
 
 普通和流式响应的按钮统一为“发送真实请求”，提示可能计费，打开页面或保存配置不会自动调用。Flow 发起表单同样提示真实调用。停止接收只中断浏览器接收，不表示上游撤销或没有费用，不自动重发；离开页面中断接收并清空输入输出。HTTP 错误和流内 error 事件共用会话失效处理。配置变化后可手动刷新模型目录，实际发送仍复查当前配置和权限。
 
-参考 Ether ModelProbe 的操作隔离和失效结果处理，复用本后台 Element Plus 弹窗/详情抽屉、分页及请求代次控制；不搬入 Ether 的通用连接授权或多模态探测功能。
+操作隔离和失效结果处理沿用本后台的 Element Plus 弹窗/详情抽屉、分页及请求代次控制；不引入通用连接授权或多模态探测功能。
 
 ### 7.7 OpenRouter 接入
 
@@ -471,7 +471,7 @@ keystone recover-model-calls --confirm-api-stopped
 
 无归属历史 Flow 调用会阻止启动；迁移后在全部 API/Worker 停止期间使用 --legacy-flow --confirm-api-stopped --confirm-workers-stopped 专项收尾。该入口取得原全局排他锁，只处理无归属 Flow 调用并重置旧观测，不能当作在线恢复。审计仍为 model.invocation.recover，以 source=offline_api_recovery / flow_worker_recovery / offline_flow_recovery 区分；更新与日志同事务，重复执行不重复审计。
 
-错误分类统一由 adapters/inference/errors.py 的 classify_error 沿异常因果链处理；显式 ServiceError 优先，SDK APIStatusError 和 Pydantic AI ModelHTTPError 使用同一 HTTP 错误码映射。HTTP 402/429 在普通调用与 Agent 中均为 failed，并分别保留 model_insufficient_credits / model_rate_limited；上游 5xx、超时、取消及无法确认结果仍为 unknown。分类同时提供安全响应和调用状态，不从原始异常文本推断、不透传上游内容；费用未知仍为未知，失败不代表免费。参考 Ether ai/runtime.py 的安全包装，保留 Keystone 的发送前登记和拒绝重发规则。
+错误分类统一由 adapters/inference/errors.py 的 classify_error 沿异常因果链处理；显式 ServiceError 优先，SDK APIStatusError 和 Pydantic AI ModelHTTPError 使用同一 HTTP 错误码映射。HTTP 402/429 在普通调用与 Agent 中均为 failed，并分别保留 model_insufficient_credits / model_rate_limited；上游 5xx、超时、取消及无法确认结果仍为 unknown。分类同时提供安全响应和调用状态，不从原始异常文本推断、不透传上游内容；费用未知仍为未知，失败不代表免费。安全包装保留发送前登记和拒绝重发规则。
 
 adapters/billing/openrouter.py 负责 generation 直查；adapters/billing/openlux.py 和 yunwu.py 各自声明站点与单位，共用 token_logs.py 解析有界日志页。services/cost_context.py 绑定原账务范围，cost_policy.py 管费用状态与等待策略，costs.py 管互斥、查询、重试及原子写回；model_access/tasks/workflows.py 只负责 DBOS 扫描和投递。InvocationService 保留授权和手动入口。DeepSeek/阿里云仍不补算调用价格。UTC 应用时间统一使用 core/time.py，数据库生成的 created_at 和历史窗口规则不变。
 
@@ -579,7 +579,7 @@ model_access/tasks/workflows.py 只负责扫描与核对入口的 DBOS 装饰器
 
 本模块的 services/、models/、schemas/、adapters/billing/、adapters/inference/ 均不直接导入 DBOS，也不反向导入 Worker 任务或 Controller。core/execution/runtime.py 只提供技术生命周期和薄调度接入，不导入 model_access、files 或 flow 的业务服务；由 composition 装配。Flow 的引擎与 Agent 持久适配、业务 workflow/step 仍按原约定使用 DBOS，目录整理不重写 Flow 表达方式。
 
-文件清理和 Flow 协调的 DBOS 包装分别位于 files/tasks/workflows.py、flow/tasks/workflows.py，调用原所属模块的服务。清理规则、取消与同步、原执行身份和模型中断收尾不搬到 Worker；Flow 开关仍不关闭费用扫描或已启用文件维护。Worker 按固定身份互斥并共享预算；每次真实 Flow 模型发送登记当前实例归属，服务与适配器不因此导入 DBOS。
+文件清理和 Flow 协调的 DBOS 包装分别位于 files/tasks/workflows.py、flow/tasks/workflows.py，调用原所属模块的服务。清理规则、取消与同步、原执行身份和模型中断收尾不搬到 Worker；费用扫描与文件维护独立运行。Worker 按固定身份互斥并共享预算；每次真实 Flow 模型发送登记当前实例归属，服务与适配器不因此导入 DBOS。
 
 ### 8.5 原文件与现行职责映射
 
@@ -593,7 +593,7 @@ model_access/tasks/workflows.py 只负责扫描与核对入口的 DBOS 装饰器
 | services/costs.py | 保留公共核对算法与事务，站点判断交给 billing，等待规则调用 cost_policy，锁调用 coordination | 完整分页后确认、重复不累加、矛盾阻塞、旧配置结果丢弃和金额/进度同事务 |
 | services/channels.py、invocations.py | 保留配置、历史、汇总及入口授权；通过明确账务能力和共用核对服务协作 | 原 Token 更换约束、本人/全部范围、PAT 权限、手动重启审计及已知费用保留 |
 | credentials.py、gateway.refresh_lock | 凭据能力仍就近保留，SQL 协调独立到 adapters/coordination.py | 密文用途绑定、共享卷密钥、同范围串行及失去所有权时拒绝旧写回 |
-| model_access/jobs.py、files/jobs.py、flow/jobs.py | 分别迁移到所属模块 tasks/definitions.py 与 workflows.py；共用 core/execution/ 的计划和投递 | 稳定计划/队列名；仅保留最新工作流入口，保留去重及同版本恢复语义、健康检查及能力开关 |
+| model_access/jobs.py、files/jobs.py、flow/jobs.py | 分别迁移到所属模块 tasks/definitions.py 与 workflows.py；共用 core/execution/ 的计划和投递 | 稳定计划/队列名；仅保留最新工作流入口，保留去重及同版本恢复语义、健康检查 |
 | composition.py、bootstrap.py、entrypoints/worker.py | 显式装配协议、账务适配、服务和 Worker 入口；核心生命周期继续由 core/execution/runtime.py 管理 | API 不启动执行器、Worker 独占锁、Flow 启动恢复顺序和制品版本保护 |
 
 这些是职责迁移，不要求把每个现有函数逐一变成一个类或增加通用 Repository、BaseService、多引擎接口。文件大小按实际职责控制；表、API 和配置不因目录调整而扩展。

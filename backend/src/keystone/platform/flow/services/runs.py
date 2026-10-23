@@ -33,7 +33,6 @@ class FlowService:
     async def definitions(self):
         async with self.identity.access("flow:start") as (_, auth):
             return {
-                "enabled": self.identity.settings.flow_enabled,
                 "execution_version": self.execution_version(),
                 "idempotency_days": 7,
                 "items": [
@@ -74,8 +73,6 @@ class FlowService:
             auth.require("flow:read")
             return view(old)
         auth.require("flow:start")
-        if not self.identity.settings.flow_enabled:
-            raise ServiceError(503, "flow_disabled", "Flow 尚未启用")
         definition = self.flow_definitions.get(data.definition_key)
         if definition is None:
             raise ServiceError(404, "definition_unavailable", "流程定义不可用")

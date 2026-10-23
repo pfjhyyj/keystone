@@ -16,7 +16,6 @@ it.each([
     status,
     checks: { database, schema, storage },
     storage_sources: {},
-    flow_enabled: false,
   }
   fakeApi(() => new Response(JSON.stringify(value), { status: http }))
   expect(await getReadiness()).toEqual(value)
@@ -26,7 +25,6 @@ it.each([undefined, true])('rejects invalid storage status %s', async (storage) 
   fakeApi(() => ({
     status: 'ready',
     checks: { database: 'ok', schema: 'ok', storage },
-    flow_enabled: false,
   }))
   await expect(getReadiness()).rejects.toThrow('无效的就绪响应')
 })

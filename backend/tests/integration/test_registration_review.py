@@ -97,7 +97,6 @@ def test_original_identity_recovery_rolls_back_after_identity_connection_loss(cl
 
 def test_identity_loss_during_queue_setup_cannot_launch_executor(client, monkeypatch):
     runtime = client.app.state.runtime
-    runtime.settings.flow_enabled = False
     leases = capture_identity(monkeypatch)
     original_register = dbos_runtime.DBOSClient.register_queue_async
     launched = []
@@ -149,7 +148,6 @@ def test_identity_loss_during_queue_setup_cannot_launch_executor(client, monkeyp
 
 def test_identity_loss_while_installing_schedules_cannot_report_ready(client, monkeypatch):
     runtime = client.app.state.runtime
-    runtime.settings.flow_enabled = False
     leases = capture_identity(monkeypatch)
 
     async def disconnected():

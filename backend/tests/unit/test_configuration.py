@@ -148,6 +148,11 @@ def test_file_capacity_floor_toml_environment_and_worker_digest(tmp_path, monkey
     assert config_digest(overridden) != config_digest(original)
 
 
+def test_removed_flow_toggle_is_rejected():
+    with pytest.raises(ValidationError):
+        Settings(config_file=None, flow_enabled=True)
+
+
 def test_example_is_complete_and_uses_config_directory(monkeypatch, tmp_path):
     example = Path(__file__).parents[2] / "keystone.toml.example"
     monkeypatch.chdir(tmp_path)
@@ -155,7 +160,6 @@ def test_example_is_complete_and_uses_config_directory(monkeypatch, tmp_path):
     assert settings.database_url is not None
     assert settings.file_storages["local"].root == example.parent.parent / ".data/files"
     assert settings.file_coordination_root == settings.file_storages["local"].root
-    assert settings.flow_enabled
     assert settings.initial_admin_password is None
 
 

@@ -1,4 +1,4 @@
-"""Adapted from Ether's database lifecycle; no implicit DDL or SQLite fallback."""
+"""Database lifecycle; no implicit DDL or SQLite fallback."""
 
 import asyncio
 from contextlib import asynccontextmanager

@@ -148,17 +148,14 @@ def test_flow_directory_isolation_in_api_execution_and_reconciliation(monkeypatc
     monkeypatch.setattr(composition, "FLOW_DEFINITIONS", (first_definition,))
     first = request.getfixturevalue("client")
     first_runtime = first.app.state.runtime
-    first_runtime.settings.flow_enabled = True
     login(first)
     read_pat = bearer(token(first, ["flow:start", "flow:read", READ])["token"])
     write_pat = bearer(token(first, ["flow:start", "flow:read", WRITE])["token"])
     monkeypatch.setattr(composition, "FLOW_DEFINITIONS", (second_definition,))
-    settings = first_runtime.settings.model_copy(update={"flow_enabled": False})
+    settings = first_runtime.settings.model_copy()
     with TestClient(
         create_app(settings), backend_options={"loop_factory": new_event_loop}
     ) as second:
-        second_runtime = second.app.state.runtime
-        second_runtime.settings.flow_enabled = True
         for app, allowed, denied, expected in (
             (first, read_pat, write_pat, first_definition),
             (second, write_pat, read_pat, second_definition),
@@ -231,8 +228,6 @@ def test_flow_model_selection_final_input_size_limit(monkeypatch, request, extra
         ),
     )
     client = request.getfixturevalue("client")
-    settings = client.app.state.runtime.settings
-    settings.flow_enabled = True
     login(client)
     final_input = {"text": "", "model_key": "chat"}
     entry(client, channel(client))
@@ -291,7 +286,6 @@ def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, 
         ),
     )
     client = request.getfixturevalue("client")
-    client.app.state.runtime.settings.flow_enabled = True
     login(client)
     identifiers = ["bad-id"]
     payload = {
@@ -359,7 +353,6 @@ def test_flow_reconciliation_uses_serialized_output_contract(
     )
     client = request.getfixturevalue("client")
     runtime = client.app.state.runtime
-    runtime.settings.flow_enabled = True
     login(client)
     response = client.post(
         "/api/v1/flow-runs",

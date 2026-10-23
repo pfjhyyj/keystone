@@ -39,7 +39,6 @@ def configuration(client, monkeypatch):
 
     runtime.flow_definitions = {definition.key: definition}
     settings = runtime.settings
-    settings.flow_enabled = True
     DBOS.migrate(settings.database_url.get_secret_value())
     runtime.flow_engine = Engine(settings)
     entry(client, channel(client))
@@ -82,7 +81,6 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
             )
         ),
         "KEYSTONE_ENV": "test",
-        "KEYSTONE_FLOW_ENABLED": str(settings.flow_enabled).lower(),
         "KEYSTONE_WORKER_ID": worker_id or settings.worker_id,
         "KEYSTONE_DATABASE_URL": settings.database_url.get_secret_value(),
         "KEYSTONE_FILE_COORDINATION_ROOT": str(settings.file_coordination_root),
@@ -968,18 +966,7 @@ run(main())
         assert client.get("/api/v1/worker/status").json()["status"] == "offline"
 
 
-def test_common_dbos_runtime_without_flow_keeps_other_tasks_and_recovery(client, tmp_path):
-    # A persisted Flow queue must not be consumed just because DBOS is now always on.
-    runtime = client.app.state.runtime
-    file_id = upload(client).json()["id"]
-    identifier = start(client, file_id).json()["id"]
-    definition = runtime.flow_definitions["document.review"]
-
-    async def enqueue(session):
-        return await session.get(FlowRun, UUID(identifier))
-
-    row = query(client, enqueue)
-    client.portal.call(runtime.flow_engine.enqueue, row, definition)
+def test_worker_shutdown_cancels_own_workflow_but_not_other_tasks(client, tmp_path):
     code = """
 import asyncio
 from dbos import DBOS, SetWorkflowID
@@ -1002,10 +989,6 @@ async def blocked():
 
 async def main():
     settings = Settings()
-    settings.flow_enabled = False
-    def unexpected_registration():
-        raise AssertionError('Disabled Flow registered business execution code')
-    worker.register_workflows = unexpected_registration
     runtime = build_runtime(settings)
     stop = asyncio.Event()
     task = asyncio.create_task(worker.run(settings, stop))
@@ -1041,30 +1024,10 @@ run(main())
     with worker(client, tmp_path, code=code) as (process, log):
         assert process.wait(timeout=50) == 0, log.read_text(encoding="utf8")
         assert "common_runtime_verified" in log.read_text(encoding="utf8")
-    assert client.get(f"/api/v1/flow-runs/{identifier}").json()["status"] == "pending"
-    assert client.get(f"/api/v1/model-invocations?flow_run_id={identifier}").json() == []
-
-    async def state():
-        return await runtime.flow_engine.client.list_workflows_async(
-            workflow_ids=[f"flow:{identifier}", "test:common-runtime:pending"]
-        )
-
-    rows = client.portal.call(state)
-    assert {row.workflow_id: row.status for row in rows} == {
-        f"flow:{identifier}": "ENQUEUED",
-        "test:common-runtime:pending": "PENDING",
-    }
 
 
-def test_missing_dbos_schema_stops_worker_even_with_flow_disabled(client, tmp_path):
-    # Older installations with Flow disabled may never have initialized DBOS.
+def test_missing_dbos_schema_stops_worker(client, tmp_path):
     query(client, lambda session: session.execute(text("DROP SCHEMA dbos CASCADE")))
-    code = """
-import os
-os.environ['KEYSTONE_FLOW_ENABLED'] = 'false'
-from keystone.entrypoints.worker import main
-main()
-"""
-    with worker(client, tmp_path, code=code) as (process, log):
+    with worker(client, tmp_path) as (process, log):
         assert process.wait(timeout=25) != 0, log.read_text(encoding="utf8")
     assert client.get("/api/v1/worker/status").json()["status"] == "offline"

@@ -369,7 +369,7 @@ it('keeps a Flow request key after failure and dialog reopen; a new request chan
     return []
   })
   const wrapper = mount(FlowStartDialog, {
-    props: { open: true, definitions: [definition], enabled: true, idempotencyDays: 7 },
+    props: { open: true, definitions: [definition], idempotencyDays: 7 },
   })
   await flushPromises()
   await wrapper.get('textarea').setValue('{"count":2}')
@@ -393,7 +393,7 @@ it('rejects non-object Flow JSON without sending', async () => {
     return []
   })
   const wrapper = mount(FlowStartDialog, {
-    props: { open: true, definitions: [definition], enabled: true, idempotencyDays: 7 },
+    props: { open: true, definitions: [definition], idempotencyDays: 7 },
   })
   await flushPromises()
   await wrapper.get('textarea').setValue('[]')
@@ -498,7 +498,6 @@ it('distinguishes catalog loading and failure, retries and opens the selected Fl
       return attempts === 1
         ? pending.promise
         : {
-            enabled: true,
             idempotency_days: 7,
             items: [
               definition,
@@ -548,7 +547,6 @@ it('retains a composed Flow input across reopen and clears it when switching def
     props: {
       open: true,
       definitions: [{ ...definition, key: 'document.review' }, definition],
-      enabled: true,
       idempotencyDays: 7,
     },
   })

@@ -51,7 +51,7 @@ def test_code_binary_resources_and_supervisor_are_hashed_without_importing(packa
 def test_missing_package_or_required_resource_prevents_startup(package, missing):
     (package / missing).unlink()
     with pytest.raises(ServiceError) as error:
-        build_runtime(Settings(config_file=None, flow_enabled=True, database_url=None))
+        build_runtime(Settings(config_file=None, database_url=None))
     assert error.value.code == "execution_version_unavailable"
 
 

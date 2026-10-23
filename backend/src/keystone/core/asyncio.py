@@ -1,4 +1,4 @@
-"""Psycopg-compatible event loops, reused from ether.core.asyncio."""
+"""Psycopg-compatible event loop helpers."""
 
 import asyncio
 import sys

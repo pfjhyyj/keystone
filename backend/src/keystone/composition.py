@@ -77,9 +77,7 @@ def register_maintenance(runtime, health):
         (files_jobs.CLEANUP_SCHEDULE, flow_jobs.RECONCILE_SCHEDULE, model_jobs.COST_SCHEDULE),
         other_entrypoints=(
             definition.entrypoint for definition in runtime.flow_definitions.values()
-        )
-        if runtime.settings.flow_enabled
-        else (),
+        ),
     )
     return queues, installers
 

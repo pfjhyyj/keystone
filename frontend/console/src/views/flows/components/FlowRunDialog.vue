@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Ether's independent detail sections and request generation, narrowed to Keystone's Run.
+// Independent detail sections and request generation, narrowed to one Run.
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { can, identity } from '../../../stores/session'
 import { ApiError, request } from '../../../api/client'

@@ -12,7 +12,6 @@ it('accepts an empty registration set and displays retired identities without re
       return {
         status: 'ready',
         checks: { database: 'ok', schema: 'ok', storage: 'ok' },
-        flow_enabled: true,
       }
     if (path === '/worker/status')
       return {
@@ -54,7 +53,6 @@ it('polls Worker readiness and heartbeat independently and stops polling after l
       return {
         status: 'ready',
         checks: { database: 'ok', schema: 'ok', storage: 'ok' },
-        flow_enabled: true,
       }
     if (path === '/worker/status') return worker
     throw new Error(path)
@@ -90,7 +88,6 @@ it('does not report offline when the Worker status query fails', async () => {
       return {
         status: 'ready',
         checks: { database: 'ok', schema: 'ok', storage: 'ok' },
-        flow_enabled: true,
       }
     throw new Error('Connection lost')
   })
@@ -109,7 +106,6 @@ it('shows a missing fixed Worker and shared maintenance separately from the live
       return {
         status: 'ready',
         checks: { database: 'ok', schema: 'ok', storage: 'ok' },
-        flow_enabled: true,
       }
     if (path === '/worker/status')
       return {

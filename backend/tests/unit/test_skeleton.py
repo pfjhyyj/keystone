@@ -74,9 +74,7 @@ def test_liveness_does_not_imply_database_or_domain_readiness():
         "status",
         "checks",
         "storage_sources",
-        "flow_enabled",
     }
-    assert ready.json()["flow_enabled"] is True
     assert ready.json()["status"] == "unavailable"
     assert live.headers["cache-control"] == "no-store"
     assert ready.headers["cache-control"] == "no-store"
@@ -135,6 +133,7 @@ async def test_worker_stop_closes_database(monkeypatch):
 
     class FakeRuntime:
         database = FakeDatabase()
+        flow_engine = None
 
         async def readiness(self):
             entered.set()
@@ -146,7 +145,7 @@ async def test_worker_stop_closes_database(monkeypatch):
         await stop.wait()
 
     monkeypatch.setattr(worker, "run_executor", executor)
-    task = asyncio.create_task(worker.run(settings(flow_enabled=False), stopped))
+    task = asyncio.create_task(worker.run(settings(), stopped))
     await asyncio.wait_for(entered.wait(), timeout=2)
     stopped.set()
     await asyncio.wait_for(task, timeout=2)

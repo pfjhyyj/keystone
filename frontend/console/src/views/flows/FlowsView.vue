@@ -14,8 +14,7 @@ const status = ref(''),
   startingKey = ref(''),
   selected = ref(''),
   notice = ref('')
-const enabled = ref(false),
-  definitions = ref<FlowDefinition[]>([]),
+const definitions = ref<FlowDefinition[]>([]),
   idempotencyDays = ref(7),
   catalogError = ref(''),
   catalogLoading = ref(false)
@@ -32,13 +31,11 @@ async function catalog() {
   try {
     const result = await flowApi.definitions()
     if (alive) {
-      enabled.value = result.enabled
       definitions.value = result.items
       idempotencyDays.value = result.idempotency_days
     }
   } catch (reason) {
     if (alive) {
-      enabled.value = false
       definitions.value = []
       catalogError.value = reason instanceof Error ? reason.message : '目录不可用'
     }
@@ -53,7 +50,7 @@ function accepted(run: FlowRun) {
   if (can('flow:read')) selected.value = run.id
 }
 function start(key: string) {
-  if (!can('flow:start') || !enabled.value || catalogLoading.value) return
+  if (!can('flow:start') || catalogLoading.value) return
   startingKey.value = key
   starting.value = true
 }
@@ -102,18 +99,12 @@ onScopeDispose(() => {
         catalogError
       }}</el-alert>
       <p v-else-if="catalogLoading" role="status">正在加载流程目录…</p>
-      <p v-else-if="!enabled">Flow 尚未启用；完成执行服务配置后刷新目录。</p>
       <p v-else>
-        Flow 已启用。任务由 Worker 执行，长时间等待时可到
+        任务由 Worker 执行，长时间等待时可到
         <RouterLink to="/">平台状态</RouterLink>查看 Worker 就绪状态和最近心跳。
       </p>
-      <FlowCatalog
-        :definitions="definitions"
-        :loading="catalogLoading"
-        :enabled="enabled"
-        @start="start"
-      />
-      <p v-if="!catalogLoading && !catalogError && enabled && !definitions.length">
+      <FlowCatalog :definitions="definitions" :loading="catalogLoading" @start="start" />
+      <p v-if="!catalogLoading && !catalogError && !definitions.length">
         没有符合当前权限的流程定义。
       </p>
     </section>
@@ -190,7 +181,6 @@ onScopeDispose(() => {
       :open="starting"
       :definition-key="startingKey"
       :definitions="definitions"
-      :enabled="enabled"
       :idempotency-days="idempotencyDays"
       @close="starting = false"
       @accepted="accepted"

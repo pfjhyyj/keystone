@@ -1,4 +1,4 @@
-"""Adapted from Ether's public DBOS client boundary; never starts an executor in API."""
+"""Public DBOS client boundary; never starts an executor in API."""
 
 import asyncio
 

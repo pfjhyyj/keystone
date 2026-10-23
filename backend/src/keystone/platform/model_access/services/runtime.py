@@ -1,7 +1,7 @@
 """One SDK send per registered attempt. No message/output persistence or automatic retries.
 
-Adapts Ether's managed SDK/transport boundary; Keystone registers before dispatch and
-uses the invocation PK to refuse a repeated durable request even after a successful call.
+Registers before dispatch and uses the invocation PK to refuse a repeated durable request
+even after a successful call.
 """
 
 import asyncio

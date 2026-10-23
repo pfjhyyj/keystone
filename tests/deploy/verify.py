@@ -2,7 +2,7 @@
 
 Run from the repository root with backend/.venv/bin/python tests/deploy/verify.py.
 The complete stack is a test fixture, separate from development dependency Compose.
-Like Ether's deployment check, use PostgreSQL and tar directly, not a backup framework.
+Use PostgreSQL and tar directly, not a backup framework.
 """
 
 import argparse
@@ -98,7 +98,6 @@ class Deployment:
                 "KEYSTONE_DATABASE_URL": f"postgresql+psycopg://keystone:{password}@postgres:5432/keystone",
                 "KEYSTONE_ENV": "test",
                 "KEYSTONE_INITIAL_ADMIN_PASSWORD": PASSWORD,
-                "KEYSTONE_FLOW_ENABLED": "true",
                 "KEYSTONE_BROWSER_ORIGINS": json.dumps([self.origin]),
             }
         )

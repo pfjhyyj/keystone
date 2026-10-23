@@ -65,7 +65,7 @@ async function invoke() {
 <template>
   <section aria-label="真实调用">
     <h2>真实调用</h2>
-    <p>请求将发送到 OpenRouter，可能产生真实费用。停止接收不代表取消上游计费。</p>
+    <p>请求将发送到所选模型对应的上游服务，可能产生真实费用。停止接收不代表取消上游计费。</p>
     <p>消息与输出只留在当前页面，离开后清空。</p>
     <el-alert v-if="error" role="alert" type="error" show-icon :closable="false">{{
       error

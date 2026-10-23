@@ -67,15 +67,13 @@ class Runtime:
             "status": "ready" if all(v == "ok" for v in checks.values()) else "unavailable",
             "checks": checks,
             "storage_sources": sources,
-            "flow_enabled": self.settings.flow_enabled,
         }
 
 
 def build_runtime(settings: Settings) -> Runtime:
     catalog = build_catalog()
     definitions = build_flow_definitions(catalog)
-    if settings.flow_enabled:
-        execution_version()
+    execution_version()
     load_models()
     heads = expected_heads(settings)
     database = Database(settings, catalog=catalog)
@@ -88,7 +86,7 @@ def build_runtime(settings: Settings) -> Runtime:
         definitions,
         execution_version,
     )
-    if settings.flow_enabled and settings.database_url:
+    if settings.database_url:
         from keystone.platform.flow.adapters.dbos import Engine
 
         runtime.flow_engine = Engine(settings)

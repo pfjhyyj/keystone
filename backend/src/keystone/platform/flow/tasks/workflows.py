@@ -58,9 +58,7 @@ async def reconcile_one(runtime, engine, identifier, *, prepare=None, project=No
 
 
 def register(runtime, health):
-    enabled = runtime.settings.flow_enabled
-    if enabled:
-        health.require_task("flow")
+    health.require_task("flow")
 
     @safe_step(name="flow.claim_batch", error_code="flow_reconcile_failed")
     async def claim_batch():
@@ -105,8 +103,6 @@ def register(runtime, health):
 
     @DBOS.workflow(name=WORKFLOW)
     async def reconcile_pass(payload):
-        if not enabled:
-            return
         try:
             NoInput.model_validate(payload)
             for identifier in await claim_batch():
@@ -119,7 +115,7 @@ def register(runtime, health):
             health.checked_task("flow", False)
             raise RuntimeError("flow_reconcile_failed") from None
 
-    task = TaskBinding(RECONCILE, reconcile_pass, enabled, "flow")
+    task = TaskBinding(RECONCILE, reconcile_pass, True, "flow")
     return (task,), register_schedule(
         RECONCILE_SCHEDULE,
         task,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Ether's permission-aware subject picker, with Keystone's paginated directories.
+// Permission-aware subject picker with paginated directories.
 // The parent keys this component by kind to discard selection and pending requests.
 import { computed, ref } from 'vue'
 import { can } from '../../../stores/session'

@@ -1,6 +1,6 @@
 # Keystone
 
-从 Ether 整理的模块化单体平台，提供身份与审计、文件、字典、模型接入和 Flow。API、Worker 与 CLI 共用一个 Python 工程，控制台使用 Vue。
+模块化单体平台，提供身份与审计、文件、字典、模型接入和 Flow。API、Worker 与 CLI 共用一个 Python 工程，控制台使用 Vue。
 
 ## Quickstart
 
@@ -87,9 +87,9 @@ uv run --locked keystone retire-worker --worker-id keystone-worker-03
 
 ## 模型配置（手动）
 
-在控制台“模型接入”创建渠道、填写推理 API Key，再创建模型 key 和上游模型 ID。支持 OpenRouter `https://openrouter.ai/api/v1`、Openlux `https://api.openlux.ai/v1` 和 Yunwu `https://yunwu.ai/v1`。OpenRouter 余额查询可另填同账户 Management Key。
+在控制台“模型接入”创建渠道，按页面提示填写服务商、服务地址、推理 API Key 和上游模型 ID，再创建业务使用的模型 key。服务地址由代码声明并受发送前校验，页面只列出当前可用的服务商；需要查询账户余额的渠道，可按提示另填同账户的查询凭据。
 
-密钥加密保存，不回显；编辑时留空保留原值。模型配置保存后直接生效。Openlux/Yunwu 按原 Token 自动查费，更换 Token 或站点时新建渠道；未确认费用保留待查原因，不视为零。完整规则见[模型接入](docs/domains/model-access.md)。
+密钥加密保存，不回显；编辑时留空保留原值。模型配置保存后直接生效，无需重启 API 或 Worker。费用按渠道声明的账务能力核对；更换凭据或站点时新建渠道，未确认费用保留待查原因，不视为零。完整规则见[模型接入](docs/domains/model-access.md)。
 
 ## 服务打包
 

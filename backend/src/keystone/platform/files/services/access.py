@@ -1,4 +1,4 @@
-"""Ether's explicit per-file grants, with Keystone's administrator exceptions."""
+"""Explicit per-file grants with administrator exceptions."""
 
 from sqlalchemy import exists, literal, or_, select
 

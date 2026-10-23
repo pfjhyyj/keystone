@@ -115,7 +115,6 @@ async def test_heartbeats_continue_while_starting_unready_and_recovering(tmp_pat
     runtime.readiness.side_effect = initial_check
     settings = Settings(
         config_file=None,
-        flow_enabled=False,
         file_coordination_root=tmp_path,
         file_storages={"local": {"driver": "filesystem", "root": tmp_path}},
     )
@@ -147,8 +146,7 @@ async def test_heartbeats_continue_while_starting_unready_and_recovering(tmp_pat
     runtime.database.close.assert_awaited_once()
 
 
-@pytest.mark.parametrize("flow_enabled", [False, True])
-async def test_executor_readiness_and_failure_are_observed(monkeypatch, runtime, flow_enabled):
+async def test_executor_readiness_and_failure_are_observed(monkeypatch, runtime):
     entered, initialized, failure, stop = (asyncio.Event() for _ in range(4))
 
     async def fake_executor(runtime, stop, *, ready, health):
@@ -162,9 +160,7 @@ async def test_executor_readiness_and_failure_are_observed(monkeypatch, runtime,
             ready.clear()
 
     monkeypatch.setattr(worker, "run_executor", fake_executor)
-    task = asyncio.create_task(
-        worker.run(Settings(config_file=None, flow_enabled=flow_enabled), stop)
-    )
+    task = asyncio.create_task(worker.run(Settings(config_file=None), stop))
     try:
         await entered.wait()
         await wait_until(lambda: len(runtime.observations) >= 2)
@@ -178,14 +174,13 @@ async def test_executor_readiness_and_failure_are_observed(monkeypatch, runtime,
             await asyncio.wait_for(task, 3)
     assert runtime.observations[-1] == "stopped"
     runtime.database.close.assert_awaited_once()
-    assert runtime.flow_engine.close.await_count == int(flow_enabled)
+    assert runtime.flow_engine.close.await_count == 1
 
 
 async def test_stale_maintenance_does_not_restart_an_idle_process(tmp_path, runtime):
     stop = asyncio.Event()
     settings = Settings(
         config_file=None,
-        flow_enabled=False,
         file_coordination_root=tmp_path,
         file_storages={"local": {"driver": "filesystem", "root": tmp_path}},
     )

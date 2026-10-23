@@ -23,7 +23,6 @@ class WorkerIdentity:
 def config_digest(settings):
     # Identity and HTTP-only options differ by process; shared execution declarations do not.
     fields = (
-        "flow_enabled",
         "flow_worker_concurrency",
         "flow_global_concurrency",
         "model_cost_concurrency",

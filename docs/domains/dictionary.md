@@ -118,7 +118,7 @@ Dictionary、DictionaryItem 都是管理配置，各自保留四个审计字段�
 | GET /api/v1/dictionaries/by-key/{key}/options | read，仅返回父字典与选项都启用的可选项 |
 | GET /api/v1/dictionaries/by-key/{key}/items/{item_id} | read，按预期字典解析历史选项，包含父字典启用状态 |
 
-查询默认 50、最多 100 条，offset 最多 100000；选项按 sort_order、id 稳定排序。不存在字典返回 404，通用历史解析中不存在/跨字典选项返回 422；停用字典的可选项为 []。无 DELETE 接口，无默认业务字典或示例预置。
+查询默认 50、最多 100 条，offset 最多 100000；选项按 sort_order、id 稳定排序。options 与 items 入口的字典不存在返回 404，通用历史解析中选项不存在或跨字典返回 422；停用字典的可选项为 []。无 DELETE 接口，无默认业务字典或示例预置。
 
 编辑接口按完整编辑表单保存：省略 description 时写入 null，省略 sort_order 时写入 0；其他必填编辑字段仍须提交。审计 before/after 覆盖实际写入的同一组字段，包括这些默认值，不能只记录请求显式传入字段的旧值。
 

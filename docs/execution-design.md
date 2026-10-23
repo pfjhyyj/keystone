@@ -1,6 +1,6 @@
 # 任务执行与模块规范设计
 
-**状态：任务设施、三类维护迁移及 MVC + Service 目录归位已实现；Flow 扩展及素材粗选仍为目标设计。** 当前提供 core/execution/、模块 tasks/、TaskDefinition/TaskBinding、统一计划和投递。费用扫描/范围查询、文件清理及 Flow 同步使用统一任务入口和检查点。第 6 节 FlowPackage、多角色模型、数组文件路径及素材包适配尚未实现；相关代码块仍是设计示例。本文素材侧依据 `ether-flows-media-selection==0.17.0` 的粗选 v17、单段验收 v10 声明。当前源码入口见[整体架构第 3.7 节](architecture.md#37-现有实现与调整点)；现有业务接入见[新增业务](extending.md)。
+**状态：任务设施、三类维护迁移及 MVC + Service 目录归位已实现；Flow 扩展及素材粗选仍为目标设计。** 当前提供 core/execution/、模块 tasks/、TaskDefinition/TaskBinding、统一计划和投递。费用扫描/范围查询、文件清理及 Flow 同步使用统一任务入口和检查点。第 6 节 FlowPackage、多角色模型、数组文件路径及素材包适配尚未实现；相关代码块仍是设计示例。当前源码入口见[整体架构第 3.7 节](architecture.md#37-现有实现与调整点)；现有业务接入见[新增业务](extending.md)。
 
 本文统一任务声明、模块目录及执行边界。人工操作归具体业务模块，前后自动阶段拆成独立 Flow；资源状态、结果版本、决定及幂等衔接统一见 [Flow 领域第 8.3 节](domains/flow.md#83-业务人工操作与独立-flow-衔接目标设计)。本次不建设通用人工节点，不让 Run 跨人工操作悬挂。现有事务内受理能力可复用，具体业务审核仍需单独实现。
 
@@ -238,7 +238,7 @@ scope_task = TaskBinding(COST_SCOPE, check_scope)
 当前入口位于 [files/tasks/workflows.py](../backend/src/keystone/platform/files/tasks/workflows.py)，规则继续位于 [services/cleanup.py](../backend/src/keystone/platform/files/services/cleanup.py)。保留现有数据库/存储预检、每轮 20 个候选、文件互斥、引用检查、状态复核与失败轮换，仍使用有界批次。
 
 ```python
-@safe_step(name="files.cleanup_batch")
+@safe_step(name="files.cleanup", error_code="file_cleanup_failed")
 async def cleanup_batch():
     # 保留依赖预检及其观测；领域函数内部继续负责幂等。
     await cleanup(database, storage, limit=20)
@@ -288,7 +288,7 @@ prepare 的结果在恢复时可能变旧，不能代替实际业务执行前的
 
 ### 6.1 包与宿主边界
 
-独立 Flow 包拥有业务算法和编排；宿主拥有账户、ModelEntry、文件授权、FlowRun 与业务入库。目标稳定公开边界先放在轻量 Flow 契约和宿主接口模块，声明模块不导入 ORM、API、Agent 或重型媒体依赖，不预建独立 SDK 工程。
+独立 Flow 包拥有业务算法和编排；宿主拥有账户、ModelEntry、文件授权、FlowRun 与业务入库。目标稳定公开边界先放在轻量 Flow 契约和宿主接口模块，声明模块不导入 ORM、API、Agent 或重型媒体依赖，不预建独立 SDK 工程。仓库当前不包含素材流程包、其依赖与执行模块；本节类型、字段及路径均为目标设计，不能在现有 Definition 上直接调用。
 
 ```text
 media_selection/
@@ -373,15 +373,15 @@ flowchart TB
     Save --> Adopt[宿主业务校验并入库]
 ```
 
-流程继续以原生 workflow/step 和 DBOSDurability 表达，保留有界候选循环及补查。独立单段验收可以单独提供 Flow 入口，粗选内部复用验收能力不要求逐段创建 FlowRun。技术失败、成功零结果与业务淘汰分别处理。素材流程仍按既定规则直接入库；若具体业务要求人工审核，由业务资源上的普通操作承接，通过后另行受理后续 Flow，不在粗选内部插入人工节点。
+流程继续以原生 workflow/step 和 DBOSDurability 表达，保留有界候选循环及补查。独立单段验收可以单独提供 Flow 入口，粗选内部复用验收能力不要求逐段创建 FlowRun。技术失败、成功零结果与业务淘汰分别处理。目标业务规则是素材流程保存结果后直接入库；若具体业务要求人工审核，由业务资源上的普通操作承接，通过后另行受理后续 Flow，不在粗选内部插入人工节点。
 
 | 能力 | 当前差距/归属 |
 |---|---|
 | 多角色模型 | Keystone 只有单个 model_field；需扩展显式绑定 |
-| 模型选择 | Ether v17 可在连接引用上补模型名；接入时改为受理时固定 ModelEntry 角色 |
+| 模型选择 | 参考素材流程包可在连接引用上补模型名；接入时改为受理时固定 ModelEntry 角色 |
 | 集合文件引用 | 当前 Keystone 不支持 clips.*.file_id 等路径 |
 | 多模态与预算 | 当前请求体大小、输出 token 等限制需按受控媒体能力核验，不能直接放开 |
-| 宿主 API | ether-flow 与 Keystone 文件、模型、授权接口不同；需适配并验证 |
+| 宿主 API | 素材流程包与 Keystone 文件、模型、授权接口不同；需适配并验证 |
 | 模型/文件恢复 | 保留原发送登记、稳定产物键、权限与取消检查，需受控场景验收 |
 | 生图/生视频 | 供应商协议与异步任务结果查询仍需 Model Access 实现，不随目录迁移自动获得 |
 
@@ -405,7 +405,7 @@ bindings, install = model_tasks.register(runtime, health)
 # FlowPackage 的装配留待后续，当前继续使用 FLOW_DEFINITIONS/register_workflows。
 ```
 
-composition 创建依赖并汇总声明；core/execution/ 不反向导入 composition 或领域模块。启动顺序为身份与共享配置准入 → 声明校验/入口注册 → 原有恢复准备 → 队列预算持久化并复核身份锁 → DBOS 启动 → 计划安装/暂停 → 就绪。API 不启动执行器。关闭 Flow 不关闭费用核对及已启用文件维护。
+composition 创建依赖并汇总声明；core/execution/ 不反向导入 composition 或领域模块。启动顺序为身份与共享配置准入 → 声明校验/入口注册 → 原有恢复准备 → 队列预算持久化并复核身份锁 → DBOS 启动 → 计划安装/暂停 → 就绪。API 不启动执行器。
 
 | 事实 | 归属 |
 |---|---|

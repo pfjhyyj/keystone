@@ -15,7 +15,6 @@ x-backend: &backend
     KEYSTONE_HOST: 0.0.0.0
     KEYSTONE_PORT: 8000
     KEYSTONE_FILE_MAX_BYTES: ${KEYSTONE_FILE_MAX_BYTES:-16777216}
-    KEYSTONE_FLOW_ENABLED: ${KEYSTONE_FLOW_ENABLED:-true}
   volumes:
     - file_data:/data/files
     - ./backend.toml:/app/keystone.toml:ro

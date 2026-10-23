@@ -9,7 +9,6 @@ export interface Health {
 export interface Readiness {
   status: 'ready' | 'unavailable'
   checks: { database: string; schema: string; storage: string }
-  flow_enabled: boolean
 }
 
 export interface WorkerStatus {
@@ -75,8 +74,7 @@ export async function getReadiness(): Promise<Readiness> {
     !record(value.checks) ||
     typeof value.checks.database !== 'string' ||
     typeof value.checks.schema !== 'string' ||
-    typeof value.checks.storage !== 'string' ||
-    typeof value.flow_enabled !== 'boolean'
+    typeof value.checks.storage !== 'string'
   ) {
     throw new Error('无效的就绪响应')
   }

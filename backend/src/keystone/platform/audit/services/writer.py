@@ -1,4 +1,4 @@
-"""Explicit safe snapshots and caller-owned transactions, adapted from Ether audit."""
+"""Explicit safe snapshots and caller-owned transactions."""
 
 import json
 import logging

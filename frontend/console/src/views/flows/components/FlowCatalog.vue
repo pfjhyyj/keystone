@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import type { FlowDefinition } from '../../../api/flows'
 
-const props = defineProps<{ definitions: FlowDefinition[]; loading: boolean; enabled: boolean }>()
+const props = defineProps<{ definitions: FlowDefinition[]; loading: boolean }>()
 const emit = defineEmits<{ start: [key: string] }>()
 const query = ref('')
 const filtered = computed(() => {
@@ -16,7 +16,7 @@ const filtered = computed(() => {
 </script>
 
 <template>
-  <template v-if="enabled && definitions.length">
+  <template v-if="definitions.length">
     <div class="module-form catalog-toolbar">
       <label
         >搜索流程<el-input v-model="query" placeholder="搜索名称、标识或说明" clearable

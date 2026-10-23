@@ -11,7 +11,6 @@ const props = defineProps<{
   open: boolean
   definitionKey?: string
   definitions: FlowDefinition[]
-  enabled: boolean
   idempotencyDays: number
 }>()
 const emit = defineEmits<{ close: []; accepted: [run: FlowRun] }>()
@@ -55,7 +54,7 @@ watch(
 )
 
 async function submit() {
-  if (!props.enabled || !can('flow:start')) return
+  if (!can('flow:start')) return
   await run(async () => {
     let value: unknown = input.value
     if (!form.value) {
@@ -124,10 +123,7 @@ async function submit() {
         天去重窗口内返回原运行。未确认受理时可原样重试；重新执行请准备新请求。关闭弹窗会保留本页请求，离开页面后不再保留。
       </p>
       <div class="row-actions">
-        <el-button
-          :disabled="busy || !enabled || !definitionKey"
-          native-type="submit"
-          type="primary"
+        <el-button :disabled="busy || !definitionKey" native-type="submit" type="primary"
           >提交流程</el-button
         ><el-button :disabled="busy" @click="newRequest" native-type="button" type="default">
           准备新的运行

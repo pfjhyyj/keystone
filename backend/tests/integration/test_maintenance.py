@@ -47,7 +47,7 @@ def executions(client, name, **filters):
     return client.portal.call(read)
 
 
-def test_schedules_survive_restart_and_flow_toggle_without_duplicate_cleanup(client, tmp_path):
+def test_schedules_survive_restart_without_duplicate_cleanup(client, tmp_path):
     with worker(client, tmp_path) as (process, log):
         wait_for(
             client,
@@ -60,26 +60,17 @@ def test_schedules_survive_restart_and_flow_toggle_without_duplicate_cleanup(cli
         for plan in original.values():
             assert plan["schedule"] == "*/5 * * * * *"
             assert not plan["automatic_backfill"]
+            assert plan["status"] == "ACTIVE"
 
-    disabled = """
-import os
-os.environ['KEYSTONE_FLOW_ENABLED'] = 'false'
-from keystone.entrypoints.worker import main
-main()
-"""
-    client.app.state.runtime.settings.flow_enabled = False
-    with worker(client, tmp_path, code=disabled) as (process, log):
+    with worker(client, tmp_path) as (process, log):
         wait_for(
             client,
             process,
             log,
-            # The previous process's last heartbeat is still fresh during restart.
-            lambda: schedules(client)[flow_jobs.SCHEDULE]["status"] == "PAUSED",
+            lambda: client.get("/api/v1/worker/status").json()["status"] == "ready",
         )
-        paused = schedules(client)
-        assert paused[flow_jobs.SCHEDULE]["status"] == "PAUSED"
-        assert paused[files_jobs.SCHEDULE]["status"] == "ACTIVE"
-        assert {name: plan["schedule_id"] for name, plan in paused.items()} == {
+        resumed = schedules(client)
+        assert {name: plan["schedule_id"] for name, plan in resumed.items()} == {
             name: plan["schedule_id"] for name, plan in original.items()
         }
         # Create work after startup, so a real cron tick must discover it.
@@ -101,26 +92,6 @@ main()
         )
         assert executions(client, files_jobs.WORKFLOW)
 
-    client.app.state.runtime.settings.flow_enabled = True
-    with worker(client, tmp_path) as (process, log):
-        wait_for(
-            client,
-            process,
-            log,
-            lambda: schedules(client)[flow_jobs.SCHEDULE]["status"] == "ACTIVE",
-        )
-        resumed = schedules(client)
-        assert resumed[flow_jobs.SCHEDULE]["status"] == "ACTIVE"
-        assert {name: plan["schedule_id"] for name, plan in resumed.items()} == {
-            name: plan["schedule_id"] for name, plan in original.items()
-        }
-        previous = resumed[flow_jobs.SCHEDULE]["last_fired_at"]
-        wait_for(
-            client,
-            process,
-            log,
-            lambda: schedules(client)[flow_jobs.SCHEDULE]["last_fired_at"] != previous,
-        )
     assert (
         query(client, lambda session: session.scalar(select(func.count()).select_from(FlowRun)))
         == 0

@@ -33,11 +33,10 @@ src/
 │   └── users/
 │       ├── UsersView.vue
 │       └── components/UserRolesDialog.vue
-├── businesses/                # 具体业务表单
 └── __tests__/
 ```
 
-其他页面按 `views/<页面>/<页面名>View.vue` 组织，私有组件放在该页面的 `components/`，没有私有组件就不建空目录。跨页面共用的组件才放到顶层 `components/`；例如 `components/models/` 中的模型选择器和费用展示同时服务模型页面与 Flow。页面不依赖其他页面的私有组件。Flow 的表单映射就近放在 `views/flows/forms.ts`，实际业务表单仍由 `businesses/` 维护。
+其他页面按 `views/<页面>/<页面名>View.vue` 组织，私有组件放在该页面的 `components/`，没有私有组件就不建空目录。跨页面共用的组件才放到顶层 `components/`；例如 `components/models/` 中的模型选择器和费用展示同时服务模型页面与 Flow。页面不依赖其他页面的私有组件。Flow 的表单映射就近放在 `views/flows/forms.ts`，当前为空；需要专用业务表单时再按页面增加组件，未注册的定义继续使用通用 JSON 表单。
 
 路由保留[Vue Router 懒加载](https://router.vuejs.org/guide/advanced/lazy-loading.html)，组件使用含义明确的 PascalCase 文件名。目录是本项目按页面归属制定的约定；参考 [Vue 风格指南](https://vuejs.org/style-guide/rules-strongly-recommended.html)，避免继续嵌套通用 `index.vue`、`Item.vue` 等难以区分的文件。公共组合逻辑遵循 [Vue Composables](https://vuejs.org/guide/reusability/composables.html) 的使用方式。
 
@@ -85,7 +84,7 @@ KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone_test:isolated-test-onl
 
 Worker 每 5 秒向 PostgreSQL 上报心跳，启动、依赖失败和排空期间也继续报告。每个固定 worker_id 按登记所指向的当前 instance_id 展示状态，执行版本和公共配置须一致；默认运行一个实例。数据库时间判断心跳与维护检查是否超过 30 秒，旧实例迟到的退出不遮蔽新进程。
 
-API 按未退役身份登记计算预期数量并自动发现新 Worker，无需同步身份清单或重启 API/已有 Worker。普通停止、心跳过期与历史观测清理不移除登记；永久缩容先停止目标进程，再执行 keystone retire-worker --worker-id ID。退役拒绝仍在运行或有待恢复工作的身份；恢复退役身份须先执行 reactivate-worker。同身份互斥、故障恢复与操作步骤见[部署说明](deployment.md#44-固定槽位调整与故障恢复)。
+API 按未退役身份登记计算预期数量并自动发现新 Worker，无需同步身份清单或重启 API/已有 Worker。普通停止、心跳过期与历史观测清理不移除登记；永久缩容先停止目标进程，再执行 `uv run --locked keystone retire-worker --worker-id ID`。退役拒绝仍在运行或有待恢复工作的身份；恢复退役身份须先执行 reactivate-worker。同身份互斥、故障恢复与操作步骤见[部署说明](deployment.md#44-固定槽位调整与故障恢复)。
 
 进程健康与共享维护分开：进程检查依赖、DBOS 和队列；共享维护聚合实际执行过的文件清理、Flow 协调及费用扫描结果。任一同版本实例成功扫描即可更新共享结果，空闲实例不因未亲自扫描误报。普通心跳不能刷新陈旧的任务结果，依赖检查也不能掩盖共享维护故障。供应商待出账、限流或 Token 失效保留为费用状态，不等同 Worker 故障。
 

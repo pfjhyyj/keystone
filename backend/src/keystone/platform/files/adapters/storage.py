@@ -1,4 +1,4 @@
-"""Named OpenDAL filesystem/S3 sources; location guards adapted from Ether."""
+"""Named OpenDAL filesystem/S3 sources with location guards."""
 
 import asyncio
 import hashlib

@@ -1,4 +1,4 @@
-"""Reuse Ether's Argon2 verification and SHA-256 digest; no JWT/refresh tokens."""
+"""Argon2 verification and SHA-256 digest; no JWT/refresh tokens."""
 
 import hashlib
 import hmac

@@ -1,4 +1,4 @@
-"""Validated configuration for one named storage source (adapted from Ether)."""
+"""Validated configuration for one named storage source."""
 
 from pathlib import Path
 from typing import Annotated, Literal

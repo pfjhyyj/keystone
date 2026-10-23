@@ -5,7 +5,7 @@ from uuid import UUID
 
 
 def validate_file_paths(schema, paths):
-    """Check existing object paths and terminal ID lists, adapted from Ether."""
+    """Check existing object paths and terminal ID lists."""
 
     def declared(node, parts, *, collection=True):
         if "$ref" in node:
