@@ -74,5 +74,6 @@ cd backend
 - 新测试先判断是否需要数据库：不需要放 `unit/`，需要放 `integration/` 并使用现有 `client`、`empty_database_url` 夹具。
 - 跨测试的桩和辅助函数放 `support/`；不要让 `unit/` 依赖 `integration/` 的模块。
 - 同一校验函数的不同输入用一次测试循环覆盖，不重复创建应用、数据库或子进程。
+- 领域状态提交与 DBOS Workflow 完成是不同事实；断言 Workflow 成功次数前，须等待对应的 `SUCCESS` 状态，不能只以领域终态作为完成屏障。
 - Flow/Worker 的子进程测试通过 `support.*` 导入夹具；E2E 和部署验证也使用同一份 support 目录。
 - 迁移测试使用随机隔离库；回滚测试只发生在测试库。

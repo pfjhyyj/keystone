@@ -171,6 +171,7 @@ main()
                 log,
                 lambda: (
                     len(executions(client, "keystone.files.cleanup_tick", status="SUCCESS")) >= 2
+                    and len(executions(client, flow_jobs.WORKFLOW, status="SUCCESS")) >= 2
                 ),
             )
             files = executions(client, files_jobs.WORKFLOW)
@@ -457,8 +458,20 @@ def test_flow_scan_attempts_advance_fairly_across_scheduled_passes(client, tmp_p
             )
 
     query(client, older_runs)
+
+    def completed():
+        # Flow projection commits before DBOS records the surrounding pass as SUCCESS.
+        # Await both facts within the original wait_run timeout on every platform.
+        row = client.get(f"/api/v1/flow-runs/{identifier}").json()
+        if (
+            row["status"] in {"succeeded", "failed", "cancelled"}
+            and len(executions(client, flow_jobs.WORKFLOW, status="SUCCESS")) >= 3
+        ):
+            return row
+        return None
+
     with worker(client, tmp_path) as (process, log):
-        done = wait_run(client, identifier, process, log)
+        done = wait_for(client, process, log, completed, timeout=35)
         assert done["status"] == "succeeded", done
         assert len(executions(client, flow_jobs.WORKFLOW, status="SUCCESS")) >= 3
     assert (
