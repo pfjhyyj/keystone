@@ -19,7 +19,6 @@ import httpx
 import psycopg
 from alembic import command
 from psycopg import sql
-from sqlalchemy.engine import make_url
 
 from keystone.composition import build_catalog
 from keystone.core.asyncio import run
@@ -285,14 +284,20 @@ def main():
         "--browser-channel", default="", help="Optional system browser, e.g. msedge"
     )
     args = parser.parse_args()
-    url = make_url(os.environ["KEYSTONE_TEST_DATABASE_URL"])
-    if url.database != "keystone_test" or url.drivername != "postgresql+psycopg":
-        raise RuntimeError("Only a dedicated postgresql+psycopg keystone_test database is accepted")
+    sys.path.insert(0, str(ROOT / "backend/tests"))
+    from support.postgres import probe_test_database
+
+    probe = probe_test_database()
+    if not probe.available:
+        raise SystemExit(f"Local media acceptance requires a test database: {probe.detail}")
+    url = probe.url
+    assert url is not None
     name = "keystone_test_" + uuid4().hex
     result_path = ROOT / ".artifacts/local-media" / f"{name}.json"
     with psycopg.connect(
         url.set(drivername="postgresql").render_as_string(hide_password=False),
         autocommit=True,
+        connect_timeout=5,
     ) as connection:
         connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
         try:

@@ -22,6 +22,10 @@ from keystone.platform.flow.workflows import context as host
 
 pytestmark = pytest.mark.postgres
 
+# Cancellation must be prompt. A finite sentinel turns a broken cancel path into
+# a bounded test failure instead of a ten-minute hang.
+HOLD_SECONDS = 30
+
 
 def change(client, run_id, **values):
     query(
@@ -166,7 +170,7 @@ def test_business_failure_is_preserved_and_external_cancel_stays_cancelled(artif
         async def hold():
             async with host.execution_scope(run_id):
                 entered.set()
-                await asyncio.sleep(600)
+                await asyncio.sleep(HOLD_SECONDS)
 
         task = asyncio.create_task(hold())
         await entered.wait()
@@ -259,7 +263,7 @@ async def test_monitor_cleanup_cancellation_cannot_replace_business_failure(monk
             if asyncio.current_task() is not parent:
                 entered.set()
                 try:
-                    await asyncio.sleep(600)
+                    await asyncio.sleep(HOLD_SECONDS)
                 except asyncio.CancelledError:
                     parent.cancel()  # A second cancellation arriving during watcher cleanup.
                     raise

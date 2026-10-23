@@ -15,6 +15,13 @@ ROOT = Path(__file__).resolve().parents[1]
 CONSOLE = ROOT / "frontend/console"
 
 
+def probe_test_database():
+    sys.path.insert(0, str(ROOT / "backend/tests"))
+    from support.postgres import probe_test_database as probe
+
+    return probe()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--unit", action="store_true", help="Explicitly omit DB and browser checks")
@@ -25,23 +32,22 @@ def main():
     if args.unit and args.deploy:
         parser.error("--deploy requires full validation; omit --unit")
     if not args.unit:
-        from sqlalchemy.engine import make_url
-
-        try:
-            url = make_url(os.environ.get("KEYSTONE_TEST_DATABASE_URL", ""))
-            valid = url.drivername == "postgresql+psycopg" and url.database == "keystone_test"
-        except Exception:
-            valid = False
-        if not valid:
+        probe = probe_test_database()
+        if not probe.available:
             parser.error(
-                "Full validation requires KEYSTONE_TEST_DATABASE_URL pointing to keystone_test "
-                "using postgresql+psycopg. Use --unit only for an explicitly partial check."
+                f"{probe.requirement()} Start the dedicated keystone_test database "
+                "or use --unit for an explicitly partial check."
             )
     node, uv = shutil.which("node"), shutil.which("uv")
     if not node or not uv:
         parser.error("Install Node.js and uv, then sync backend and frontend dependencies first")
-    if args.deploy and not shutil.which("docker"):
-        parser.error("--deploy requires Docker with Compose")
+    if args.deploy:
+        if not shutil.which("docker"):
+            parser.error("--deploy requires Docker with Compose")
+        try:
+            subprocess.run(["docker", "info"], check=True, capture_output=True, timeout=10)
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            parser.error("--deploy requires a running Docker daemon")
     directory = (
         ROOT
         / ".artifacts/checks"

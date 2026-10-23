@@ -16,15 +16,13 @@ import psycopg
 from alembic import command
 from dbos import DBOS
 from psycopg import sql
-from sqlalchemy.engine import make_url
 
 from keystone.composition import build_catalog
 from keystone.core.asyncio import run
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.migrations import migration_config
-from keystone.platform.files.adapters.leases import initialize
-from keystone.platform.files.adapters.storage import StorageRegistry
+from keystone.platform.files.adapters.storage import StorageRegistry, initialize
 from keystone.platform.files.schemas import Upload
 from keystone.platform.files.services.files import FileService
 from keystone.platform.files.services.references import FileReferences
@@ -36,11 +34,24 @@ from keystone.platform.identity.services.auth import AuthService
 from keystone.platform.identity.services.initialize import initialize_admin
 
 
+def _log_tail(path, limit=2000):
+    try:
+        value = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return value[-limit:]
+
+
 def main():
-    url = make_url(os.environ["KEYSTONE_TEST_DATABASE_URL"])
-    if url.database != "keystone_test":
-        raise RuntimeError("Only the dedicated keystone_test database is accepted")
     console = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(console.parents[1] / "backend/tests"))
+    from support.postgres import probe_test_database
+
+    probe = probe_test_database()
+    if not probe.available:
+        raise SystemExit(f"Console E2E requires a reachable test database: {probe.detail}")
+    url = probe.url
+    assert url is not None
     name = "keystone_test_" + uuid4().hex
     database_url = url.set(database=name).render_as_string(hide_password=False)
     with socket.socket() as listener:
@@ -123,9 +134,10 @@ def main():
                         "KEYSTONE_API_PROXY": f"http://127.0.0.1:{port}",
                     }
                 )
+                api_path = Path(directory) / "api.log"
                 worker_path = Path(directory) / "worker.log"
                 with (
-                    (Path(directory) / "api.log").open("w", encoding="utf-8") as log,
+                    api_path.open("w", encoding="utf-8") as log,
                     worker_path.open("w", encoding="utf-8") as worker_log,
                 ):
                     process = subprocess.Popen(
@@ -159,7 +171,9 @@ def main():
                         )
                         for _ in range(100):
                             if process.poll() is not None:
-                                raise RuntimeError("Test API stopped before readiness")
+                                raise RuntimeError(
+                                    "Test API stopped before readiness:\n" + _log_tail(api_path)
+                                )
                             try:
                                 with urllib.request.urlopen(
                                     f"http://127.0.0.1:{port}/api/v1/ready", timeout=1
@@ -168,15 +182,22 @@ def main():
                             except OSError:
                                 time.sleep(0.1)
                         else:
-                            raise RuntimeError("Test API readiness timeout")
+                            raise RuntimeError(
+                                "Test API readiness timeout:\n" + _log_tail(api_path)
+                            )
                         for _ in range(300):
                             if worker_process.poll() is not None:
-                                raise RuntimeError("Test Worker stopped before readiness")
+                                raise RuntimeError(
+                                    "Test Worker stopped before readiness:\n"
+                                    + _log_tail(worker_path)
+                                )
                             if "flow_worker_ready" in worker_path.read_text(encoding="utf-8"):
                                 break
                             time.sleep(0.1)
                         else:
-                            raise RuntimeError("Test Worker readiness timeout")
+                            raise RuntimeError(
+                                "Test Worker readiness timeout:\n" + _log_tail(worker_path)
+                            )
                         result = subprocess.run(
                             [node, "node_modules/@playwright/test/cli.js", "test"],
                             cwd=console,

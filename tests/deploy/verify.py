@@ -653,12 +653,22 @@ def exercise(source, restored, checks):
             passed("down/up preserves both volumes and does not replay completed model calls")
 
 
+def require_docker():
+    try:
+        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    if result is None or result.returncode:
+        raise SystemExit("Docker daemon is not available; start Docker and retry")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--skip-build", action="store_true", help="Use locally built :verify images"
     )
     args = parser.parse_args()
+    require_docker()
     directory = ROOT / ".artifacts/deploy-verify" / uuid4().hex[:12]
     directory.mkdir(parents=True)
     print(f"Deployment artifacts: {directory}", flush=True)
