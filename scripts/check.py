@@ -22,6 +22,19 @@ def probe_test_database():
     return probe()
 
 
+def test_workers():
+    value = os.environ.get("KEYSTONE_TEST_WORKERS")
+    if value:
+        try:
+            workers = int(value)
+        except ValueError as error:
+            raise SystemExit("KEYSTONE_TEST_WORKERS must be an integer") from error
+        if workers < 1:
+            raise SystemExit("KEYSTONE_TEST_WORKERS must be at least 1")
+        return min(workers, 8)
+    return max(1, min(8, os.cpu_count() or 1))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--unit", action="store_true", help="Explicitly omit DB and browser checks")
@@ -55,7 +68,15 @@ def main():
     )
     temporary = directory / "tmp"
     temporary.mkdir(parents=True)
-    environment = dict(os.environ, TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
+    uv_cache = ROOT / ".cache/uv"
+    uv_cache.mkdir(parents=True, exist_ok=True)
+    environment = dict(
+        os.environ,
+        TEMP=str(temporary),
+        TMP=str(temporary),
+        TMPDIR=str(temporary),
+        UV_CACHE_DIR=str(uv_cache),
+    )
     results = {"mode": "unit" if args.unit else "full", "status": "failed", "checks": []}
 
     def run(label, command, cwd=ROOT):
@@ -105,6 +126,9 @@ def main():
         )
         tests = [sys.executable, "-m", "pytest", "-q", "--junitxml", str(directory / "pytest.xml")]
         tests += ["-m", "not postgres"] if args.unit else ["--require-postgres"]
+        workers = test_workers()
+        if workers > 1:
+            tests += ["-n", str(workers), "--dist", "load"]
         run("backend tests", tests, ROOT / "backend")
         run(
             "frontend format",

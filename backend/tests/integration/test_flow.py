@@ -10,6 +10,7 @@ from uuid import UUID
 import pytest
 from dbos import DBOS
 from sqlalchemy import select, text, update
+from support.processes import stop_process
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
 from test_identity import assign, bearer, create_user, login, query, role, token
@@ -123,17 +124,7 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None):
         try:
             yield process, log
         finally:
-            if process.poll() is None:
-                if sys.platform == "win32":
-                    # Windows venv Python can launch a base-interpreter child.
-                    subprocess.run(
-                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                        check=False,
-                        capture_output=True,
-                    )
-                else:
-                    process.terminate()
-            process.wait(timeout=20)
+            stop_process(process)
 
 
 def wait_run(client, identifier, process, log, timeout=35):

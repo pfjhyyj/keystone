@@ -42,6 +42,8 @@ export KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone:keystone_local_
 
 数据库不可用时按入口区分：`pytest --require-postgres` 和 `scripts/check.py` 全量会在启动阶段直接报错；默认 `pytest` 会统一跳过 `postgres` 用例，unit 照常运行。`scripts/check.py --unit` 和 `pytest tests/unit` 不探测数据库。
 
+`scripts/check.py` 的后端测试默认使用最多 8 个 `pytest-xdist` worker 并行执行；设置 `KEYSTONE_TEST_WORKERS=1` 可串行运行，便于排查并发相关失败。
+
 ## 组织约定
 
 - 新测试先判断是否需要数据库：不需要放 `unit/`，需要放 `integration/` 并使用现有 `client`、`empty_database_url` 夹具。

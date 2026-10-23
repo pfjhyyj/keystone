@@ -1,14 +1,13 @@
 """Two real DBOS processes, isolated PostgreSQL, local provider fixtures only."""
 
 import json
-import subprocess
-import sys
 import time
 from contextlib import asynccontextmanager
 from uuid import UUID
 
 import pytest
 from sqlalchemy import select
+from support.processes import stop_process
 from test_auto_costs import billing as billing
 from test_auto_costs import call, configure, due, process, receipt, stored, view
 from test_files_dictionary import client as client
@@ -35,14 +34,7 @@ def pair(client):
 
 
 def kill(process):
-    if process.poll() is None:
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, check=True
-            )
-        else:
-            process.kill()
-    process.wait(timeout=20)
+    stop_process(process)
 
 
 def status(client):

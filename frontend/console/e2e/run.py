@@ -46,6 +46,7 @@ def main():
     console = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(console.parents[1] / "backend/tests"))
     from support.postgres import probe_test_database
+    from support.processes import stop_process
 
     probe = probe_test_database()
     if not probe.available:
@@ -206,22 +207,12 @@ def main():
                         )
                     finally:
                         for child in (worker_process, process):
-                            if child is None:
-                                continue
-                            if os.name == "nt":
-                                subprocess.run(
-                                    ["taskkill", "/PID", str(child.pid), "/T", "/F"],
-                                    check=False,
-                                    capture_output=True,
-                                )
-                            else:
-                                child.terminate()
-                            child.wait(timeout=15)
+                            if child is not None:
+                                stop_process(child, timeout=15)
                 return result.returncode
         finally:
-            if process and process.poll() is None:
-                process.kill()
-                process.wait(timeout=10)
+            if process is not None:
+                stop_process(process, timeout=10)
             connection.execute(
                 sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name))
             )

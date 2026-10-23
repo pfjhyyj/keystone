@@ -79,7 +79,7 @@ KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone:keystone_local_only@12
   .venv/bin/python -m pytest tests/integration --require-postgres
 ```
 
-只运行非数据库检查时使用 `scripts/check.py --unit`。需要验证 Dockerfile、完整测试栈及备份恢复时使用 `scripts/check.py --deploy`；完整容器栈定义在 `tests/deploy/compose.yaml`，只供隔离测试，不参与默认开发启动。数据库不可达时，`scripts/check.py` 全量和 `pytest --require-postgres` 会在启动阶段直接报错；默认 `pytest` 会统一跳过 integration，仅运行 unit。测试目录和夹具约定见[后端测试](../backend/tests/README.md)。
+只运行非数据库检查时使用 `scripts/check.py --unit`。需要验证 Dockerfile、完整测试栈及备份恢复时使用 `scripts/check.py --deploy`；完整容器栈定义在 `tests/deploy/compose.yaml`，只供隔离测试，不参与默认开发启动。数据库不可达时，`scripts/check.py` 全量和 `pytest --require-postgres` 会在启动阶段直接报错；默认 `pytest` 会统一跳过 integration，仅运行 unit。`scripts/check.py` 默认最多用 8 个 `pytest-xdist` worker 并行跑后端测试，可用 `KEYSTONE_TEST_WORKERS=1` 改为串行。测试目录和夹具约定见[后端测试](../backend/tests/README.md)。
 
 ## Worker 健康检查（排障）
 

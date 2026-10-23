@@ -78,6 +78,8 @@ def peak_rss(pid):
 
 
 def exercise(root, database_url, channel):
+    from support.processes import stop_process
+
     ffmpeg, node = shutil.which("ffmpeg"), shutil.which("node")
     if not ffmpeg or not node:
         raise RuntimeError("Install FFmpeg and Node.js to run this optional media acceptance")
@@ -267,15 +269,7 @@ uvicorn.run(create_app(Settings(config_file=None)), host='127.0.0.1', port={port
                     "status": "passed",
                 }
         finally:
-            if process.poll() is None:
-                if sys.platform == "win32":
-                    subprocess.run(
-                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                        capture_output=True,
-                    )
-                else:
-                    process.terminate()
-            process.wait(timeout=20)
+            stop_process(process, timeout=20)
 
 
 def main():
