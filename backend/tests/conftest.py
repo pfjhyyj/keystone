@@ -36,7 +36,10 @@ def _postgres_error(probe: TestDatabaseProbe) -> str:
 def _postgres_probe(config):
     probe = getattr(config, "_keystone_postgres", None)
     if probe is None or probe.state == "configured":
-        probe = probe_test_database()
+        workers = getattr(config, "workerinput", {}).get("workercount")
+        if workers is None:
+            workers = len(config.getoption("tx", default=[])) or 1
+        probe = probe_test_database(workers=workers)
         config._keystone_postgres = probe
     return probe
 
@@ -65,6 +68,8 @@ def pytest_collection_finish(session):
     probe = _postgres_probe(config)
     if probe.available:
         return
+    if probe.state == "insufficient_capacity":
+        raise pytest.UsageError(_postgres_error(probe))
     if config.getoption("--require-postgres"):
         raise pytest.UsageError(_postgres_error(probe))
     reason = _postgres_error(probe)

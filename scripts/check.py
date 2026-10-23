@@ -15,11 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 CONSOLE = ROOT / "frontend/console"
 
 
-def probe_test_database():
+def probe_test_database(workers):
     sys.path.insert(0, str(ROOT / "backend/tests"))
     from support.postgres import probe_test_database as probe
 
-    return probe()
+    return probe(workers=workers)
 
 
 def test_workers():
@@ -44,8 +44,10 @@ def main():
     args = parser.parse_args()
     if args.unit and args.deploy:
         parser.error("--deploy requires full validation; omit --unit")
+    workers = test_workers()
+    probe = None
     if not args.unit:
-        probe = probe_test_database()
+        probe = probe_test_database(workers)
         if not probe.available:
             parser.error(
                 f"{probe.requirement()} Start the dedicated keystone_test database "
@@ -77,7 +79,13 @@ def main():
         TMPDIR=str(temporary),
         UV_CACHE_DIR=str(uv_cache),
     )
-    results = {"mode": "unit" if args.unit else "full", "status": "failed", "checks": []}
+    results = {
+        "mode": "unit" if args.unit else "full",
+        "status": "failed",
+        "test_workers": workers,
+        "postgres_connection_capacity": probe.connection_capacity if probe else None,
+        "checks": [],
+    }
 
     def run(label, command, cwd=ROOT):
         print(f"\n[{label}]", flush=True)
@@ -126,9 +134,12 @@ def main():
         )
         tests = [sys.executable, "-m", "pytest", "-q", "--junitxml", str(directory / "pytest.xml")]
         tests += ["-m", "not postgres"] if args.unit else ["--require-postgres"]
-        workers = test_workers()
         if workers > 1:
             tests += ["-n", str(workers), "--dist", "load"]
+            if not args.unit:
+                # Keep long Worker/recovery cases available to free executors instead
+                # of reserving a large consecutive batch on one pytest worker.
+                tests += ["--maxschedchunk=1"]
         run("backend tests", tests, ROOT / "backend")
         run(
             "frontend format",

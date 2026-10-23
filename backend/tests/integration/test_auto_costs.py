@@ -279,26 +279,22 @@ def test_auth_block_and_explicit_manual_repair(client, billing):
     assert len(audits) == 1 and audits[0]["actor_type"] == "user"
 
 
-@pytest.mark.parametrize("reason", ["network", "quota", "policy", "envelope", "depth", "model"])
+@pytest.mark.parametrize("reason", ["network", "quota"])
 def test_safe_query_failure_classification(client, billing, reason):
+    # The parsing matrix lives in unit/test_billing_validation.py; retain both persisted states.
     configure(client)
     identifier = call(client)
     due(client, identifier)
     if reason == "network":
         billing["error"] = httpx2.ConnectError("https://api.openlux.ai/api/log/token?key=" + SECRET)
-    elif reason == "quota":
-        billing["records"][0]["quota"] = -1
-    elif reason == "policy":
-        billing["policy"]["currency_type"] = "CNY"
-    elif reason == "depth":
-        billing["records"][0]["other"] = "[" * 1100 + "0" + "]" * 1100
-    elif reason == "model":
-        billing["records"][0]["model_name"] = "m" * 129
     else:
-        billing["records"][0]["other"] = "not-json"
+        billing["records"][0]["quota"] = -1
     process(client, identifier)
     row = view(client, identifier)
     assert row["cost_check_status"] == ("pending" if reason == "network" else "blocked")
+    assert row["cost_check_reason"] == (
+        "cost_transport_failed" if reason == "network" else "cost_invalid_response"
+    )
     assert row["cost_amount"] is None
     assert SECRET not in json.dumps(row)
     assert "key=" not in str(row["cost_check_reason"])
@@ -422,11 +418,15 @@ main()
             wait_for(client, process, log, checkpoint_saved)
         assert view(client, identifier)["cost_amount"] is None
     with worker(client, tmp_path, code=code) as (process, log):
+        # The cost transaction commits before DBOS records workflow completion.
         wait_for(
             client,
             process,
             log,
-            lambda: view(client, identifier)["cost_check_status"] == "confirmed",
+            lambda: (
+                view(client, identifier)["cost_check_status"] == "confirmed"
+                and executions(client, jobs.QUERY_WORKFLOW, status="SUCCESS")
+            ),
         )
         assert executions(client, jobs.QUERY_WORKFLOW, status="SUCCESS")
         wait_for(
@@ -445,7 +445,10 @@ main()
             client,
             process,
             log,
-            lambda: view(client, other)["cost_check_status"] == "confirmed",
+            lambda: (
+                view(client, other)["cost_check_status"] == "confirmed"
+                and len(executions(client, jobs.QUERY_WORKFLOW, status="SUCCESS")) >= 2
+            ),
         )
         assert len(executions(client, jobs.QUERY_WORKFLOW, status="SUCCESS")) >= 2
         assert SECRET not in log.read_text(encoding="utf8")

@@ -66,7 +66,7 @@ def test_large_global_inference_budget_does_not_exhaust_registration_connections
         assert all(
             isinstance(r, dict) or isinstance(r, ServiceError) and r.code == "model_capacity_busy"
             for r in results
-        )
+        ), [(type(r).__name__, getattr(r, "code", None)) for r in results]
         return len(completed)
 
     completed = client.portal.call(load)

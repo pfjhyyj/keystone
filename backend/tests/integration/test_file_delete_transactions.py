@@ -256,21 +256,13 @@ def test_late_object_denial_rolls_back_prior_file_marks_and_released_references(
     assert rejected.value.code == "file_not_found"
 
 
-@pytest.mark.parametrize(
-    "owner,slot,identifier",
-    [
-        ("", "slot", None),
-        ("o" * 161, "slot", None),
-        ("o", "s" * 101, None),
-        ("o", "slot", "bad-id"),
-    ],
-)
-def test_invalid_claims_are_rejected_before_any_release(client, owner, slot, identifier):
+def test_invalid_claims_are_rejected_before_any_release(client):
+    # Key/UUID combinations live in unit; this checks the real transaction keeps earlier claims.
     file_id = upload(client).json()["id"]
     claim = ("orders:one", "result", file_id)
     register(client, [claim])
     with pytest.raises(ValueError):
-        compose(client, claims=[claim, (owner, slot, identifier or file_id)])
+        compose(client, claims=[claim, ("o", "slot", "bad-id")])
     assert references(client, file_id) == [{"owner": "orders:one", "slot": "result"}]
 
 

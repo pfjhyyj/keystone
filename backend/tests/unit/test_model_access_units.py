@@ -11,7 +11,12 @@ from pydantic_ai.exceptions import ModelHTTPError
 
 from keystone.core.errors import ServiceError
 from keystone.platform.files.adapters.storage import initialize
+from keystone.platform.model_access.adapters.billing.openrouter import OpenRouter
 from keystone.platform.model_access.adapters.credentials import KEY_FILE, ChannelCredentials
+from keystone.platform.model_access.adapters.inference.client import (
+    OPENROUTER_BASE,
+    InferenceClient,
+)
 from keystone.platform.model_access.adapters.inference.errors import classify_error
 
 
@@ -63,8 +68,12 @@ def test_concurrent_first_saves_publish_one_complete_key(tmp_path):
 @pytest.mark.parametrize(
     "status,code,state",
     [
+        (400, "model_invalid_request", "failed"),
         (401, "model_authentication_failed", "failed"),
         (402, "model_insufficient_credits", "failed"),
+        (403, "model_access_denied", "failed"),
+        (404, "upstream_model_not_found", "failed"),
+        (422, "model_invalid_request", "failed"),
         (429, "model_rate_limited", "failed"),
         (500, "model_upstream_error", "unknown"),
     ],
@@ -83,6 +92,42 @@ def test_direct_and_agent_http_errors_have_the_same_safe_classification(status, 
         result = classify_error(error)
         assert result[0] == 502 and result[1] == code and result[3] == state
         assert "sensitive" not in result[2]
+
+
+def test_inference_rejects_untrusted_targets_and_unsupported_providers():
+    client = InferenceClient(None)
+    client.check_target("openrouter", OPENROUTER_BASE, "/chat/completions")
+    for base, path, method in (
+        ("https://mock.invalid/v1", "/chat/completions", "POST"),
+        ("https://127.0.0.1/api/v1", "/chat/completions", "POST"),
+        ("https://openrouter.ai.evil.invalid/api/v1", "/chat/completions", "POST"),
+        ("https://openrouter.ai/api", "/chat/completions", "POST"),
+        ("https://openrouter.ai:444/api/v1", "/chat/completions", "POST"),
+        ("https://openrouter.ai/api/v1/other", "/chat/completions", "POST"),
+        (OPENROUTER_BASE, "/credits", "POST"),
+        (OPENROUTER_BASE, "/chat/completions", "GET"),
+    ):
+        with pytest.raises(ServiceError) as caught:
+            client.check_target("openrouter", base, path, method=method)
+        assert (caught.value.status, caught.value.code) == (409, "model_target_not_allowed")
+    for provider in ("deepseek", "aliyun_bailian"):
+        with pytest.raises(ServiceError) as caught:
+            client.check_target(provider, OPENROUTER_BASE, "/chat/completions")
+        assert (caught.value.status, caught.value.code) == (503, "model_provider_unavailable")
+
+
+def test_billing_rejects_untrusted_bases_and_non_billing_paths():
+    adapter = OpenRouter()
+    for path in ("/credits", "/generation"):
+        adapter.check_target(OPENROUTER_BASE, path)
+    for base, path in (
+        ("https://mock.invalid/v1", "/credits"),
+        (OPENROUTER_BASE, "/keys"),
+        (OPENROUTER_BASE, "/chat/completions"),
+    ):
+        with pytest.raises(ServiceError) as caught:
+            adapter.check_target(base, path)
+        assert (caught.value.status, caught.value.code) == (409, "model_target_not_allowed")
 
 
 def test_wrapped_timeout_cancellation_and_platform_error_remain_unknown():

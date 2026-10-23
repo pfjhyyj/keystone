@@ -247,39 +247,16 @@ def test_live_sdk_stream_cost_query_balance_and_credential_separation(client, li
 @pytest.mark.postgres
 def test_live_rejects_untrusted_targets_and_unsupported_providers_before_send(client, live):
     calls, _, _ = live
-    bad = [
-        "https://mock.invalid/v1",
-        "https://127.0.0.1/api/v1",
-        "https://openrouter.ai.evil.invalid/api/v1",
-        "https://openrouter.ai/api",
-        "https://openrouter.ai:444/api/v1",
-        "https://openrouter.ai/api/v1/other",
-    ]
-    for index, base in enumerate(bad):
-        entry(client, channel(client, api_base=base), key=f"bad{index}")
-        response = invoke(client, key=f"bad{index}")
-        assert response.status_code == 409 and response.json()["code"] == "model_target_not_allowed"
-    for provider in ("deepseek", "aliyun_bailian"):
-        entry(client, channel(client, provider, api_base=gateway.OPENROUTER_BASE), key=provider)
-        response = invoke(client, key=provider)
-        assert (
-            response.status_code == 503 and response.json()["code"] == "model_provider_unavailable"
-        )
+    # The complete target matrix lives in unit tests; keep the public pre-send boundary here.
+    entry(client, channel(client, api_base="https://mock.invalid/v1"), key="bad-target")
+    response = invoke(client, key="bad-target")
+    assert response.status_code == 409 and response.json()["code"] == "model_target_not_allowed"
+    entry(client, channel(client, "deepseek"), key="unsupported")
+    response = invoke(client, key="unsupported")
+    assert response.status_code == 503 and response.json()["code"] == "model_provider_unavailable"
     assert client.get("/api/v1/models").json() == {"items": []}
     assert client.get("/api/v1/model-invocations").json() == []
 
-    async def invalid_query():
-        for base, path in [
-            (bad[0], "/credits"),
-            (gateway.OPENROUTER_BASE, "/keys"),
-            (gateway.OPENROUTER_BASE, "/chat/completions"),
-        ]:
-            with pytest.raises(ServiceError):
-                client.app.state.runtime.models.billing.adapter("openrouter").check_target(
-                    base, path
-                )
-
-    client.portal.call(invalid_query)
     assert calls == []
 
 
@@ -392,19 +369,9 @@ def test_live_stable_attempt_id_never_sends_twice(client, live):
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize("upstream_status", [None, 400, 402, 404, 429])
-def test_live_mode_real_dbos_worker_uses_same_send_boundary(
-    client, live, tmp_path, upstream_status
-):
+def test_live_mode_real_dbos_worker_uses_same_send_boundary(client, live, tmp_path):
     calls, overrides, port = live
     configure(client)
-    if upstream_status:
-        overrides["/api/v1/chat/completions"] = (
-            upstream_status,
-            "application/json",
-            json.dumps({"error": {"message": SECRET}}).encode(),
-            {},
-        )
     runtime = client.app.state.runtime
     from support.flow_fixture.contracts import definition
 
@@ -413,7 +380,6 @@ def test_live_mode_real_dbos_worker_uses_same_send_boundary(
     DBOS.migrate(runtime.settings.database_url.get_secret_value(), schema="dbos")
     runtime.flow_engine = Engine(runtime.settings)
     file_id = upload(client, b"Local socket fixture for live mode.").json()["id"]
-    run = start(client, file_id).json()
     # No production option allows bypassing the official target: the child imports this test bridge.
     code = (
         f"import sys, os; sys.path.insert(0, {str(Path(__file__).parent)!r}); "
@@ -423,27 +389,37 @@ def test_live_mode_real_dbos_worker_uses_same_send_boundary(
         "from keystone.entrypoints.worker import main; main()"
     )
     with worker(client, tmp_path, code=code, stub=False) as (process, log):
-        done = wait_run(client, run["id"], process, log)
-        assert done["status"] == ("failed" if upstream_status else "succeeded"), (
-            done,
-            log.read_text(encoding="utf-8"),
-        )
-    rows = client.get(f"/api/v1/model-invocations?flow_run_id={run['id']}").json()
-    if upstream_status:
-        code = {
-            400: "model_invalid_request",
-            402: "model_insufficient_credits",
-            404: "upstream_model_not_found",
-            429: "model_rate_limited",
-        }[upstream_status]
-        assert done["error_code"] == code
-        assert len(rows) == len(calls) == 1
-        assert rows[0]["status"] == "failed" and rows[0]["error_code"] == code
-        assert SECRET not in json.dumps(done) and SECRET not in json.dumps(rows)
-        assert rows[0]["cost_amount"] is None  # A rejection is not a free-call receipt.
-        return
-    assert len(rows) == len(calls) == 2
-    assert all(r["status"] == "succeeded" and r["cost_source"] == "response" for r in rows)
-    assert (
-        client.get(f"/api/v1/files/{done['result']['report_file_id']}/content").status_code == 200
-    )
+        # Unit tests cover the full error map; exercise success and one rejection through DBOS.
+        for upstream_status in (None, 429):
+            if upstream_status:
+                overrides["/api/v1/chat/completions"] = (
+                    upstream_status,
+                    "application/json",
+                    json.dumps({"error": {"message": SECRET}}).encode(),
+                    {},
+                )
+            before = len(calls)
+            run = start(client, file_id, key=f"live-{upstream_status}").json()
+            done = wait_run(client, run["id"], process, log)
+            assert done["status"] == ("failed" if upstream_status else "succeeded"), (
+                upstream_status,
+                done,
+                log.read_text(encoding="utf-8"),
+            )
+            rows = client.get(f"/api/v1/model-invocations?flow_run_id={run['id']}").json()
+            sent = len(calls) - before
+            if upstream_status:
+                error_code = "model_rate_limited"
+                assert done["error_code"] == error_code
+                assert len(rows) == sent == 1
+                assert rows[0]["status"] == "failed" and rows[0]["error_code"] == error_code
+                assert SECRET not in json.dumps(done) and SECRET not in json.dumps(rows)
+                assert rows[0]["cost_amount"] is None  # A rejection is not a free-call receipt.
+                continue
+            assert len(rows) == sent == 2
+            assert all(r["status"] == "succeeded" and r["cost_source"] == "response" for r in rows)
+            assert (
+                client.get(f"/api/v1/files/{done['result']['report_file_id']}/content").status_code
+                == 200
+            )
+    assert len(calls) == 3  # No late retry from either run.

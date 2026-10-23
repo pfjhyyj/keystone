@@ -74,17 +74,36 @@ async def test_real_agent_repairs_source_mismatch_within_request_budget(source):
     assert any("characters must match" in str(p.content) for p in feedback)
 
 
-async def test_repeated_invalid_output_stops_after_declared_correction_budget(source):
+async def test_repeated_invalid_output_fails_workflow_without_publishing(monkeypatch, source):
     attempts = []
+    run_id = str(uuid4())
+    monkeypatch.setattr(workflow, "prepare", AsyncMock(return_value=source))
+    inspected = AsyncMock(
+        return_value={
+            **source,
+            "status": "succeeded",
+            "summary": "Source",
+            "preview": "hello",
+            "truncated": False,
+        }
+    )
+    monkeypatch.setattr(workflow, "inspect_source", inspected)
+    save = AsyncMock()
+    monkeypatch.setattr(workflow, "save_report", save)
 
     def respond(messages, info):
         attempts.append(1)
+        if len(attempts) == 1:
+            return ModelResponse([ToolCallPart("inspect_document", {})])
         return ModelResponse([ToolCallPart("submit_review", judgment(source, characters=6))])
 
     with workflow.agent.override(model=FunctionModel(respond)):
-        with pytest.raises(UnexpectedModelBehavior):
-            await workflow.review(str(uuid4()), source)
-    assert len(attempts) == 2
+        with pytest.raises(RuntimeError) as caught:
+            await unwrap(workflow.run)(run_id)
+    assert str(caught.value) == "flow_invalid_output"
+    assert len(attempts) == 3
+    inspected.assert_awaited_once_with(run_id)
+    save.assert_not_called()
 
 
 async def test_correction_cannot_start_a_request_beyond_total_budget(monkeypatch, source):

@@ -21,24 +21,14 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    services:
-      postgres:
-        image: postgres:17.11-alpine
-        env:
-          POSTGRES_DB: keystone_test
-          POSTGRES_USER: keystone_test
-          POSTGRES_PASSWORD: isolated-ci-only
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U keystone_test -d keystone_test"
-          --health-interval 5s --health-timeout 3s --health-retries 12
     env:
-      KEYSTONE_TEST_DATABASE_URL: postgresql+psycopg://keystone_test:isolated-ci-only@127.0.0.1:5432/keystone_test
+      KEYSTONE_TEST_DATABASE_URL: postgresql+psycopg://keystone_test:isolated-test-only@127.0.0.1:55433/keystone_test
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Start dedicated test database
+        run: docker compose -f tests/postgres/compose.yaml up -d --wait
       # uv 0.10.2 predates this Python release; install it independently of uv's catalog.
       - uses: actions/setup-python@v7
         with:
@@ -83,3 +73,6 @@ jobs:
             .artifacts/deploy-verify/**/result.json
             .artifacts/deploy-verify/**/build.log
             .artifacts/deploy-verify/**/compose.log
+      - name: Stop test database
+        if: always()
+        run: docker compose -f tests/postgres/compose.yaml down --volumes

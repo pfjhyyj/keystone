@@ -84,3 +84,39 @@ def test_short_password_does_not_corrupt_the_driver_message(monkeypatch):
 
     assert probe.state == "unreachable"
     assert probe.detail == "connection timeout expired"
+
+
+@pytest.mark.parametrize(
+    "workers,capacity,state",
+    [(1, 97, "ok"), (8, 399, "insufficient_capacity"), (8, 400, "ok"), (8, 509, "ok")],
+)
+def test_parallel_capacity_boundary_is_checked_without_exposing_credentials(
+    monkeypatch, workers, capacity, state
+):
+    statements = []
+
+    class Connection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def execute(self, statement):
+            statements.append(statement)
+            return self
+
+        def fetchone(self):
+            return (capacity,)
+
+    monkeypatch.setattr(postgres.psycopg, "connect", lambda *_, **__: Connection())
+    probe = postgres.probe_test_database(URL, workers=workers)
+    assert probe.state == state
+    assert probe.available == (state == "ok")
+    assert probe.connection_capacity == capacity
+    assert "secret" not in probe.detail
+    assert statements[0] == "SELECT 1"
+    assert "superuser_reserved_connections" in statements[1]
+    assert "reserved_connections" in statements[1]
+    if state == "insufficient_capacity":
+        assert "400" in probe.detail and "tests/postgres/compose.yaml" in probe.detail

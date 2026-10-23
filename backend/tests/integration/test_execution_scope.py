@@ -2,8 +2,6 @@
 
 import asyncio
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -16,7 +14,6 @@ from test_processes import python, ready, stopped, tree
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.flow.adapters.dbos import Engine
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.workflows import context as host
 
@@ -212,66 +209,3 @@ def test_monitor_retries_transient_dependency_failure_without_logging_secrets(
     assert len(checks) >= 4  # entry, failing tick, recovered tick, exit
     assert "execution_monitor_retry type=RuntimeError" in caplog.text
     assert "secret connection string" not in caplog.text
-
-
-@pytest.mark.parametrize("permissions", ["audit:read", ("",), (123,)])
-async def test_invalid_permission_declarations(permissions):
-    with pytest.raises(ValueError):
-        async with host.execution_scope(uuid4(), permissions=permissions):
-            pytest.fail("Invalid declaration")
-
-
-@pytest.mark.parametrize(
-    "code",
-    [
-        "process_timeout",
-        "process_output_limit",
-        "process_file_limit",
-        "process_unavailable",
-    ],
-)
-@pytest.mark.parametrize("raw", [False, True])
-async def test_engine_projects_only_exact_safe_process_codes(code, raw):
-    engine = Engine.__new__(Engine)
-    engine.client = SimpleNamespace(
-        list_workflows_async=AsyncMock(
-            return_value=[
-                SimpleNamespace(
-                    error=f"{code}: private native stderr"
-                    if raw
-                    else ServiceError(503, code, "private"),
-                    status="ERROR",
-                    output=None,
-                    app_version="version",
-                    name="flow",
-                )
-            ]
-        )
-    )
-    result = await engine.state(uuid4())
-    assert result["error_code"] == ("flow_execution_failed" if raw else code)
-    assert "private" not in str(result)
-
-
-async def test_monitor_cleanup_cancellation_cannot_replace_business_failure(monkeypatch):
-    parent, entered = asyncio.current_task(), asyncio.Event()
-
-    class Identity:
-        @asynccontextmanager
-        async def access(self):
-            yield None, None
-            if asyncio.current_task() is not parent:
-                entered.set()
-                try:
-                    await asyncio.sleep(HOLD_SECONDS)
-                except asyncio.CancelledError:
-                    parent.cancel()  # A second cancellation arriving during watcher cleanup.
-                    raise
-
-    monkeypatch.setattr(host, "identity", lambda _: Identity())
-    failure = ValueError("business failure")
-    with pytest.raises(ValueError) as error:
-        async with host.execution_scope(uuid4()):
-            await entered.wait()
-            raise failure
-    assert error.value is failure

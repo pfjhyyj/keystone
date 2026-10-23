@@ -140,7 +140,10 @@ main()
 
 def test_slow_cleanup_is_coalesced_and_does_not_block_flow_coordination(client, tmp_path):
     identifier = start(client, upload(client).json()["id"]).json()["id"]
-    code = """
+    release = tmp_path / "release-cleanup"
+    code = (
+        f"from pathlib import Path\nrelease = Path({str(release)!r})\n"
+        + """
 import asyncio
 from keystone.platform.files.tasks import workflows as jobs
 original = jobs.cleanup
@@ -150,26 +153,33 @@ async def slow_once(*args, **kwargs):
     calls += 1
     if calls == 1:
         print('slow_cleanup_entered', flush=True)
-        await asyncio.sleep(15)
+        while not release.exists():
+            await asyncio.sleep(.05)
     await original(*args, **kwargs)
 jobs.cleanup = slow_once
 from keystone.entrypoints.worker import main
 main()
 """
+    )
     with worker(client, tmp_path, code=code) as (process, log):
-        done = wait_run(client, identifier, process, log)
-        assert done["status"] == "succeeded", done
-        wait_for(
-            client,
-            process,
-            log,
-            lambda: len(executions(client, "keystone.files.cleanup_tick", status="SUCCESS")) >= 2,
-        )
-        files = executions(client, files_jobs.WORKFLOW)
-        assert len(files) == 1 and files[0].status == "PENDING"
-        assert len(executions(client, flow_jobs.WORKFLOW, status="SUCCESS")) >= 2
-        observation = client.get("/api/v1/worker/status").json()
-        assert observation["status"] == "unready" and observation["last_heartbeat_at"]
+        try:
+            done = wait_run(client, identifier, process, log)
+            assert done["status"] == "succeeded", done
+            wait_for(
+                client,
+                process,
+                log,
+                lambda: (
+                    len(executions(client, "keystone.files.cleanup_tick", status="SUCCESS")) >= 2
+                ),
+            )
+            files = executions(client, files_jobs.WORKFLOW)
+            assert len(files) == 1 and files[0].status == "PENDING"
+            assert len(executions(client, flow_jobs.WORKFLOW, status="SUCCESS")) >= 2
+            observation = client.get("/api/v1/worker/status").json()
+            assert observation["status"] == "unready" and observation["last_heartbeat_at"]
+        finally:
+            release.touch()
         wait_for(
             client,
             process,

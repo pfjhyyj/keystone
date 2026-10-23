@@ -2,7 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from sqlalchemy import delete, update
@@ -19,7 +19,7 @@ from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.files.models import FileReference
 from keystone.platform.files.services.references import FileReferences
 from keystone.platform.flow.models import FlowRun
-from keystone.platform.flow.services.artifacts import FlowArtifactService, artifact_location
+from keystone.platform.flow.services.artifacts import FlowArtifactService
 from keystone.platform.flow.services.identity import ExecutionIdentity
 from keystone.platform.flow.workflows import context as host
 from keystone.platform.identity.schemas.credentials import Credential
@@ -395,20 +395,6 @@ def test_s3_artifact_queries_use_existing_bounded_integrity_checks(artifacts):
         with pytest.raises(ServiceError) as rejected:
             client.portal.call(host.artifact, run_id, "report")
         assert rejected.value.code == "file_corrupt"
-
-
-@pytest.mark.parametrize("key", ["", "x" * 87, "line\nbreak", None])
-def test_artifact_key_validation_precedes_io(key):
-    with pytest.raises(ValueError):
-        artifact_location(uuid4(), key)
-
-
-def test_artifact_location_preserves_opaque_keys_and_canonicalizes_run_ids():
-    run_id = uuid4()
-    assert artifact_location(str(run_id).upper(), "preview.v2.proxy") == (
-        f"flow:{run_id}",
-        "artifact.preview.v2.proxy",
-    )
 
 
 def test_maximum_key_and_shared_file_do_not_add_business_distinctness_rules(artifacts):

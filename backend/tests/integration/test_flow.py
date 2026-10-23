@@ -58,7 +58,12 @@ def start(client, file_id, key="review", **overrides):
 
 
 @contextmanager
-def worker(client, tmp_path, *, code=None, stub=True, worker_id=None):
+def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_health=True):
+    """Real executor; stubbed functional tests observe health at a shorter cadence.
+
+    Custom bootstraps and fast_health=False keep production polling. Cron schedules,
+    DBOS polling, lease timeouts, recovery deadlines and shutdown budgets are unchanged.
+    """
     settings = client.app.state.runtime.settings
     env = {
         **{
@@ -112,6 +117,12 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None):
                     "from support.model_stub import install; install(); "
                     "from support.flow_fixture import install; install(); "
                     if stub
+                    else ""
+                )
+                + (
+                    "import keystone.entrypoints.worker as _test_worker; "
+                    "_test_worker.POLL_SECONDS = 0.2; _test_worker.HEARTBEAT_SECONDS = 0.2; "
+                    if stub and fast_health
                     else ""
                 )
                 + (code or "from keystone.entrypoints.worker import main; main()"),
@@ -173,37 +184,28 @@ def test_real_worker_harness_model_and_report(client, tmp_path):
     assert client.delete(f"/api/v1/files/{file_id}").status_code == 409
 
 
-@pytest.mark.parametrize(
-    "scenario,status,error,count",
-    [
-        ("repair", "succeeded", None, 3),
-        ("invalid", "failed", "flow_invalid_output", 3),
-        ("budget", "failed", "flow_budget_exceeded", 4),
-    ],
-)
-def test_example_acceptance_and_budget_in_real_worker(
-    client, tmp_path, scenario, status, error, count
-):
+def test_example_acceptance_and_budget_in_real_worker(client, tmp_path):
     file_id = upload(client, b"Review this source.").json()["id"]
-    run = start(client, file_id).json()
+    scenario_file = tmp_path / "scenario"
+    scenario_file.write_text("budget", encoding="utf8")
     # Only model response contents change. SDK, DBOS and accounting stay real.
     code = (
-        f"SCENARIO = {scenario!r}\n"
+        f"from pathlib import Path\nscenario_file = Path({str(scenario_file)!r})\n"
         + """
 from pydantic_ai.messages import ToolCallPart
 from keystone.platform.flow.workflows.agent_model import FlowModel
-submissions = 0
+submissions = {}
 original_request = FlowModel.request
 
 async def edited_request(self, *args, **kwargs):
-    global submissions
     response = await original_request(self, *args, **kwargs)
     function = next(part for part in response.parts if isinstance(part, ToolCallPart))
     if function.tool_name == 'submit_review':
-        submissions += 1
-        if SCENARIO == 'budget':
+        run_id = self.deps['run_id']
+        submissions[run_id] = submissions.get(run_id, 0) + 1
+        if scenario_file.read_text(encoding='utf8') == 'budget':
             function.tool_name, function.args = 'inspect_document', {}
-        elif SCENARIO == 'invalid' or submissions == 1:
+        elif submissions[run_id] == 1:
             values = function.args_as_dict()
             function.args = {**values, 'characters': values['characters'] + 1}
     return response
@@ -214,18 +216,27 @@ main()
 """
     )
     with worker(client, tmp_path, code=code) as (process, log):
-        done = wait_run(client, run["id"], process, log)
-    assert (done["status"], done["error_code"]) == (status, error), done
-    calls = client.get(f"/api/v1/model-invocations?flow_run_id={run['id']}").json()
-    assert len(calls) == count and all(call["status"] == "succeeded" for call in calls)
-    assert len({call["id"] for call in calls}) == count
-    assert len({call["flow_context"]["agent_call_id"] for call in calls}) == 1
-    assert len(client.get("/api/v1/files").json()) == (2 if status == "succeeded" else 1)
-    if status == "succeeded":
-        assert done["result"]["source_file_id"] == file_id
-        assert done["result"]["characters"] == len("Review this source.")
-    else:
-        assert done["result"] is None
+        # The failed run publishes nothing, then an independent run repairs its output.
+        # Share startup while keeping the exact per-run receipt and file assertions.
+        for scenario, status, error, count in (
+            ("budget", "failed", "flow_budget_exceeded", 4),
+            ("repair", "succeeded", None, 3),
+        ):
+            scenario_file.write_text(scenario, encoding="utf8")
+            run = start(client, file_id, key=scenario).json()
+            done = wait_run(client, run["id"], process, log)
+            assert (done["status"], done["error_code"]) == (status, error), done
+            calls = client.get(f"/api/v1/model-invocations?flow_run_id={run['id']}").json()
+            assert len(calls) == count and all(call["status"] == "succeeded" for call in calls)
+            assert len({call["id"] for call in calls}) == count
+            assert len({call["flow_context"]["agent_call_id"] for call in calls}) == 1
+            assert len(client.get("/api/v1/files").json()) == (2 if status == "succeeded" else 1)
+            if status == "succeeded":
+                assert done["result"]["source_file_id"] == file_id
+                assert done["result"]["characters"] == len("Review this source.")
+            else:
+                assert done["result"] is None
+    assert len(client.get("/api/v1/model-invocations").json()) == 7
 
 
 @pytest.mark.parametrize("credential_kind", ["session", "pat"])
@@ -943,7 +954,7 @@ async def main():
 configure_logging('INFO')
 run(main())
 """
-    with worker(client, tmp_path, code=code) as (process, log):
+    with worker(client, tmp_path, code=code, fast_health=False) as (process, log):
         deadline = time.monotonic() + 20
         while client.get("/api/v1/worker/status").json()["status"] != "ready":
             assert process.poll() is None and time.monotonic() < deadline

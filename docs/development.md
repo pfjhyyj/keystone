@@ -64,9 +64,9 @@ src/
 
 ```bash
 (cd frontend/console && pnpm exec playwright install chromium)
-# 专用入口库只需建立一次，不能指向开发或业务数据库。
-docker compose -f deploy/compose.yaml exec postgres createdb -U keystone keystone_test
-export KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone:keystone_local_only@127.0.0.1:55432/keystone_test'
+# 独立测试实例预建入口库；每个用例继续创建随机隔离库。
+docker compose -f tests/postgres/compose.yaml up -d --wait
+export KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone_test:isolated-test-only@127.0.0.1:55433/keystone_test'
 backend/.venv/bin/python scripts/check.py
 ```
 
@@ -75,7 +75,7 @@ backend/.venv/bin/python scripts/check.py
 ```bash
 cd backend
 .venv/bin/python -m pytest tests/unit                              # 不连接数据库
-KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone:keystone_local_only@127.0.0.1:55432/keystone_test' \
+KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone_test:isolated-test-only@127.0.0.1:55433/keystone_test' \
   .venv/bin/python -m pytest tests/integration --require-postgres
 ```
 

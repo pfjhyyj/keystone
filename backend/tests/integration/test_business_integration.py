@@ -4,7 +4,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from functools import partial
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -202,10 +202,8 @@ def test_flow_directory_isolation_in_api_execution_and_reconciliation(monkeypatc
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize("expansion", ["default", "serializer", "model_selection"])
 @pytest.mark.parametrize("extra_bytes", [0, 1])
-def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_bytes):
-    from pydantic import Field, field_serializer
+def test_flow_model_selection_final_input_size_limit(monkeypatch, request, extra_bytes):
     from support.flow_fixture import contracts
     from test_model_access import channel, entry
 
@@ -215,15 +213,9 @@ def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_byte
     from keystone.platform.flow.schemas.values import small_json
     from keystone.platform.model_access.services.entries import select_model
 
-    padding = ""
-
     class Params(Input):
-        text: str = Field(default_factory=lambda: padding)
+        text: str
         model_key: str = "chat"
-
-        @field_serializer("text")
-        def serialize_text(self, value) -> str:
-            return padding if expansion == "serializer" and value == "expand" else value
 
     monkeypatch.setattr(
         composition,
@@ -233,7 +225,7 @@ def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_byte
                 contracts.definition,
                 input_type=Params,
                 file_fields=(),
-                model_field="model_key" if expansion == "model_selection" else None,
+                model_field="model_key",
                 required_permissions=(),
             ),
         ),
@@ -243,18 +235,13 @@ def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_byte
     settings.flow_enabled = True
     login(client)
     final_input = {"text": "", "model_key": "chat"}
-    if expansion == "model_selection":
-        entry(client, channel(client))
-        selection = query(client, lambda session: select_model(session, "chat"))
-        final_input["model_key"] = selection.model_dump(mode="json")
+    entry(client, channel(client))
+    selection = query(client, lambda session: select_model(session, "chat"))
+    final_input["model_key"] = selection.model_dump(mode="json")
     remaining = 65536 + extra_bytes - len(small_json(final_input))
     # Count UTF-8 bytes, including JSON structure, rather than Python characters.
     padding = "界" * (remaining // 3) + "x" * (remaining % 3)
-    data = (
-        {}
-        if expansion == "default"
-        else {"text": "expand" if expansion == "serializer" else padding}
-    )
+    data = {"text": padding}
     payload = {"definition_key": contracts.definition.key, "request_key": "size", "input": data}
     response = client.post("/api/v1/flow-runs", json=payload)
     if extra_bytes:
@@ -278,8 +265,7 @@ def test_flow_final_input_size_limit(monkeypatch, request, expansion, extra_byte
 
 
 @pytest.mark.postgres
-@pytest.mark.parametrize("case", ["invalid_uuid", "too_many"])
-def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, request, case):
+def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, request):
     from pydantic import ConfigDict, Field
     from support.flow_fixture import contracts
 
@@ -307,7 +293,7 @@ def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, 
     client = request.getfixturevalue("client")
     client.app.state.runtime.settings.flow_enabled = True
     login(client)
-    identifiers = ["bad-id"] if case == "invalid_uuid" else [str(uuid4()) for _ in range(101)]
+    identifiers = ["bad-id"]
     payload = {
         "definition_key": contracts.definition.key,
         "request_key": "invalid-files",

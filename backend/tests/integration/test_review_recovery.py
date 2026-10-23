@@ -78,9 +78,14 @@ ModelRequestNode._append_response = staticmethod(crash_after_checkpoint)
     before = client.get(f"/api/v1/model-invocations?flow_run_id={run['id']}").json()
     expected = 3 if budget == "output_retries" else (1 if budget == "deadline" else 2)
     assert len(before) == expected and all(row["status"] == "succeeded" for row in before)
+    recovery_code = configuration_code
     if budget == "deadline":
-        time.sleep(3.1)
-    with worker(client, tmp_path, code=configuration_code + main) as (process, log):
+        # Import the replacement process while the original deadline elapses;
+        # its executor still starts only after the same 3.1-second expiry barrier.
+        recovery_code += (
+            f"\nimport time\ntime.sleep(max(0, {time.monotonic() + 3.1!r} - time.monotonic()))\n"
+        )
+    with worker(client, tmp_path, code=recovery_code + main) as (process, log):
         done = wait_run(client, run["id"], process, log)
     if budget == "deadline":
         assert done["status"] == "cancelled", done

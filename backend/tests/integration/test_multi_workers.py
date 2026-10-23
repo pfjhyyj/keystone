@@ -42,7 +42,10 @@ def status(client):
 
 
 def test_shared_plans_limits_idle_health_and_duplicate_identity(client, tmp_path, pair):
-    with worker(client, tmp_path) as (a, la), worker(client, tmp_path, worker_id=SECOND) as (b, lb):
+    with (
+        worker(client, tmp_path, fast_health=False) as (a, la),
+        worker(client, tmp_path, worker_id=SECOND, fast_health=False) as (b, lb),
+    ):
         wait_for(
             client,
             a,
@@ -388,33 +391,61 @@ def test_lost_scope_connection_cannot_write_old_fee(client, billing, monkeypatch
     assert view(client, identifier)["cost_check_status"] == "confirmed"
 
 
-@pytest.mark.parametrize(
-    "override",
-    [
-        "import os; os.environ['KEYSTONE_MODEL_COST_CONCURRENCY']='3'",
-        "import socket; socket.gethostname=lambda:'unsupported-other-host'",
-        "import keystone.entrypoints.worker as w; w.execution_version=lambda:'other-release'",
-        "from keystone.core.local_leases import LocalLeases; "
-        "LocalLeases.fingerprint=lambda self:'0'*64",
-    ],
+def test_conflicting_worker_does_not_change_live_plans_or_heartbeat(client, tmp_path, pair):
+    code = f"""
+import os, time
+from pathlib import Path
+from unittest.mock import patch
+from keystone.entrypoints import worker as entrypoint
+from keystone.core.local_leases import LocalLeases
+root = Path({str(tmp_path)!r})
+overrides = (
+    patch.dict(os.environ, {{'KEYSTONE_MODEL_COST_CONCURRENCY': '3'}}),
+    patch('socket.gethostname', return_value='unsupported-other-host'),
+    patch.object(entrypoint, 'execution_version', return_value='other-release'),
+    patch.object(LocalLeases, 'fingerprint', return_value='0' * 64),
 )
-def test_conflicting_worker_does_not_change_live_plans_or_heartbeat(
-    client, tmp_path, pair, override
-):
+for index, override in enumerate(overrides):
+    with override:
+        try:
+            entrypoint.main()
+        except SystemExit as error:
+            assert error.code == 1, error.code
+        else:
+            raise AssertionError('Conflicting Worker started')
+    print('conflict_rejected', index, flush=True)
+    (root / f'rejected-{{index}}').touch()
+    deadline = time.monotonic() + 15
+    while not (root / f'checked-{{index}}').exists():
+        assert time.monotonic() < deadline, 'Parent did not check the rejection'
+        time.sleep(.05)
+"""
     with worker(client, tmp_path) as (a, la):
         wait_for(client, a, la, lambda: status(client)["ready_workers"] == 1)
         plans = schedules(client)
-        code = override + "\nfrom keystone.entrypoints.worker import main\nmain()"
+        # Reuse only the rejected interpreter; each main() constructs and closes its runtime.
         with worker(client, tmp_path, code=code, worker_id=SECOND) as (b, lb):
-            b.wait(timeout=15)
-            assert b.returncode != 0
-            assert "worker_deployment_conflict" in lb.read_text(encoding="utf8")
-        current = schedules(client)
-        assert {k: (v["schedule_id"], v["status"]) for k, v in current.items()} == {
-            k: (v["schedule_id"], v["status"]) for k, v in plans.items()
-        }
-        assert status(client)["ready_workers"] == 1
-        assert all(r["worker_id"] != SECOND for r in status(client)["instances"])
+            offset = 0
+            for index, override in enumerate(("concurrency", "host", "version", "coordination")):
+                wait_for(
+                    client,
+                    b,
+                    lb,
+                    lambda index=index: (tmp_path / f"rejected-{index}").exists(),
+                    timeout=15,
+                )
+                output = lb.read_text(encoding="utf8")
+                assert "worker_deployment_conflict" in output[offset:], override
+                offset = len(output)
+                current = schedules(client)
+                assert {k: (v["schedule_id"], v["status"]) for k, v in current.items()} == {
+                    k: (v["schedule_id"], v["status"]) for k, v in plans.items()
+                }, override
+                assert a.poll() is None, la.read_text(encoding="utf8")
+                assert status(client)["ready_workers"] == 1, override
+                assert all(r["worker_id"] != SECOND for r in status(client)["instances"]), override
+                (tmp_path / f"checked-{index}").touch()
+            assert b.wait(timeout=15) == 0, lb.read_text(encoding="utf8")
 
 
 def test_inference_budget_shared_by_independent_clients_and_token_aliases(client):
