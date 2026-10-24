@@ -94,4 +94,6 @@ Worker 准入先核对身份、协调卷、制品和公共配置，收尾本槽�
 
 执行版本覆盖代码、锁文件、声明与资源。发布保留原制品/身份处理在途，不能移动目录后冒充旧检查点兼容。健康状态区分进程/依赖与共享任务进度。默认预算见[架构](architecture.md#34-定时任务与队列)，配置和发布命令见[配置](configuration.md)、[部署](deployment.md)。
 
+[渠道协议实现](domains/model-access.md#85-固定选择媒体任务与恢复)只返回协议结果/回执，不管理 DBOS、补查调度或数据库恢复。原任务等待、费用待办和共享协调继续由宿主现有设施处理；协议与宿主代码随同一制品发布，不增加媒体任务引擎或第二个轮询推进者。
+
 官方语义：[Workflow 确定性](https://docs.dbos.dev/python/tutorials/workflow-tutorial#determinism)、[Step](https://docs.dbos.dev/python/tutorials/step-tutorial)、[队列](https://docs.dbos.dev/python/tutorials/queue-tutorial)、[定时计划](https://docs.dbos.dev/python/tutorials/scheduled-workflows)。实际行为以锁定版本 SDK 和原生集成测试为准。

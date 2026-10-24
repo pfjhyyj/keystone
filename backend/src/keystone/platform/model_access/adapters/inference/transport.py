@@ -115,15 +115,19 @@ class ObservedResponse(httpx2.Response):
 
 
 class SendTransport(httpx2.AsyncBaseTransport):
-    def __init__(self, source, before_send, observation, on_receipt, validate, identifier):
+    def __init__(
+        self, source, before_send, observation, on_receipt, validate, identifier, *, authorize
+    ):
         self.source, self.before_send, self.observation = source, before_send, observation
         self.on_receipt, self.validate, self.identifier = on_receipt, validate, identifier
+        self.authorize = authorize
 
     async def handle_async_request(self, request):
         self.observation.request_budget = self.validate(request)
         secret = await self.before_send()
         # Authorization and committed registration precede the only physical send.
-        request.headers["Authorization"] = "Bearer " + secret
+        request.headers.pop("Authorization", None)
+        self.authorize(request, secret)
         request.headers["X-Keystone-Invocation-Id"] = str(self.identifier)
         response = await self.source.handle_async_request(request)
         self.observation.rate_limited = response.status_code == 429

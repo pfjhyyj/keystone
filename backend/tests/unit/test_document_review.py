@@ -255,6 +255,9 @@ async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
         return await kwargs["sdk_request"](None)
 
     selected = SimpleNamespace(provider_model="test-model")
+    prepare_settings = Mock(
+        side_effect=lambda selected, settings: {**settings, "temperature": 0.25}
+    )
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
@@ -272,7 +275,13 @@ async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
         _invocation_context=Mock(side_effect=correlation),
         execution_scope=scope,
         consume_iteration=AsyncMock(),
-        _model=AsyncMock(return_value=(SimpleNamespace(invoke_sdk=invoke), selected, uuid4())),
+        _model=AsyncMock(
+            return_value=(
+                SimpleNamespace(invoke_sdk=invoke, sdk_settings=prepare_settings),
+                selected,
+                uuid4(),
+            )
+        ),
     )
     monkeypatch.setattr(agent_model.host, "flow_context", lambda _: context)
     monkeypatch.setattr(agent_model.host, "_runtime", lambda: SimpleNamespace(worker_identity=None))
@@ -296,12 +305,15 @@ async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
     ]:
         assert await model.request([], settings, ModelRequestParameters()) == "accepted"
         assert request.call_args.args[1]["max_tokens"] == expected
+        assert request.call_args.args[1]["temperature"] == 0.25
+        assert prepare_settings.call_args.args[0] is selected
     before = request.await_count
     for invalid in [None, True, 0, 4097, "2048"]:
         with pytest.raises(ServiceError) as caught:
             await model.request([], {"max_tokens": invalid}, ModelRequestParameters())
         assert caught.value.code == "model_invalid_request"
     assert request.await_count == before
+    assert prepare_settings.call_count == 3
 
 
 def test_contract_import_does_not_load_agent_or_skill_runtime():

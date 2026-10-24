@@ -108,6 +108,7 @@ def build_catalog():
 
 def build_model_clients(settings, database):
     from keystone.platform.model_access.adapters.billing.registry import BillingClient
+    from keystone.platform.model_access.adapters.channels import CHANNELS
     from keystone.platform.model_access.adapters.clients import ModelClients
     from keystone.platform.model_access.adapters.coordination import QueryCoordination
     from keystone.platform.model_access.adapters.credentials import ChannelCredentials
@@ -117,8 +118,8 @@ def build_model_clients(settings, database):
     http = HttpClient()
     return ModelClients(
         http,
-        InferenceClient(http),
-        BillingClient(http),
+        InferenceClient(http, CHANNELS),
+        BillingClient(http, CHANNELS),
         ChannelCredentials(settings.file_coordination_root),
         QueryCoordination(database, settings),
     )

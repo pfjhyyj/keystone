@@ -6,9 +6,7 @@ from decimal import Decimal
 
 import httpx2
 
-
-class ResponseTooLarge(ValueError):
-    pass
+from keystone.platform.model_access.schemas.errors import ResponseTooLarge as ResponseTooLarge
 
 
 class HttpClient:

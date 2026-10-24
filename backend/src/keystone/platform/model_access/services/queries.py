@@ -2,12 +2,12 @@ from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time_range import history_range
-from keystone.platform.model_access.adapters.billing.registry import PROVIDERS
+from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.models import ModelInvocation
 
 
 def balance_config(channel):
-    adapter = PROVIDERS[channel.provider]
+    adapter = CHANNELS[channel.provider].billing
     return (
         channel.provider,
         channel.api_base,

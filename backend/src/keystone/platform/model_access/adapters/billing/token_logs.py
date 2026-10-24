@@ -91,10 +91,10 @@ class TokenLogs(ResponseBilling):
         return Receipt(identifiers.get("x-api-request-id"))
 
     def check_target(self, base, path):
-        from keystone.core.errors import ServiceError
+        from keystone.platform.model_access.schemas.errors import AdapterError
 
         if base != self.billing_origin or path not in {"/api/status", "/api/log/token"}:
-            raise ServiceError(409, "model_target_not_allowed", "账务查询目标不受支持")
+            raise AdapterError(409, "model_target_not_allowed", "账务查询目标不受支持")
 
     def policy_matches(self, context, payload):
         data = payload.get("data")

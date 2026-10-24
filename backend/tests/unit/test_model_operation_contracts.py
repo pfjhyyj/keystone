@@ -12,6 +12,7 @@ from keystone.core.errors import ServiceError
 from keystone.platform.flow.schemas.definitions import ModelRole
 from keystone.platform.flow.schemas.snapshots import read_snapshot
 from keystone.platform.model_access.schemas.entries import EntryCreate, EntryEdit
+from keystone.platform.model_access.schemas.errors import AdapterError
 from keystone.platform.model_access.schemas.invocations import Selection
 from keystone.platform.model_access.schemas.structured import (
     JsonOutput,
@@ -95,10 +96,10 @@ def test_image_references_and_real_rasters_are_bounded_and_checked(monkeypatch):
         (b"text", "image/png"),
         (b"x" * (4 * 1024 * 1024 + 1), "image/png"),
     ):
-        with pytest.raises(ServiceError):
+        with pytest.raises(AdapterError):
             images.image_data_uri(body, content_type)
     monkeypatch.setattr(images, "MAX_IMAGE_PIXELS", 1)
-    with pytest.raises(ServiceError) as error:
+    with pytest.raises(AdapterError) as error:
         images.image_data_uri(content, "image/png")
     assert error.value.code == "model_invalid_image"
     message = [{"role": "user", "content": "What is in this image?"}]

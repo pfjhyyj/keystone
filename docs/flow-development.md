@@ -2,6 +2,8 @@
 
 FlowDefinition/FlowPackage、模型角色和受控 Context 的完整契约见[Flow 领域](domains/flow.md)。本文保留实际接入与工具示例；人工决定由业务 Service 完成，前后自动处理使用独立 Flow。
 
+本文代码示例使用现有 Context 和显式等待接口。[渠道协议与宿主接口](domains/model-access.md#84-service-与-adapter-接口)在 Model Access 内分工，业务流程仍只调用公开 Service/Context，无需新增渠道分支；数据库不配置协议组合。视频和独立模型接入库尚未提供。
+
 可复用示例位于 `backend/src/keystone/examples/document_review/`。它使用现有
 Pydantic AI、Harness、DBOS、文件服务和 ModelRuntime，不引入额外执行框架或业务表。
 集成测试通过 `backend/tests/support/flow_fixture/` 直接执行这份代码，不维护第二份示例。

@@ -2,8 +2,8 @@
 
 from urllib.parse import urlsplit
 
-from keystone.core.errors import ServiceError
 from keystone.platform.model_access.adapters.inference.limits import retry_after
+from keystone.platform.model_access.schemas.errors import AdapterError, QueryLater
 from keystone.platform.model_access.schemas.images import ImageTaskReceipt
 
 ORIGIN = "https://api.openlux.ai"
@@ -13,19 +13,13 @@ QUERY = SUBMIT + "/{id}"
 MODELS = {"kling-v1", "kling-v1-5", "kling-v2", "kling-v2-1"}
 
 
-class QueryLater(Exception):
-    def __init__(self, seconds=5, *, rate_limited=False):
-        self.seconds = max(1, min(int(seconds or 5), 60))
-        self.rate_limited, self.cooldown_seconds = rate_limited, seconds
-
-
 def submit_body(selected, data):
     if (
         selected.provider != "openlux"
         or selected.api_base != BASE
         or selected.provider_model not in MODELS
     ):
-        raise ServiceError(409, "model_provider_unavailable", "模型不支持原生异步图片协议")
+        raise AdapterError(409, "model_provider_unavailable", "模型不支持原生异步图片协议")
     return {
         "model_name": selected.provider_model,
         "prompt": data.prompt,
@@ -46,7 +40,7 @@ def task_id(payload):
             raise ValueError()
         return value
     except (AttributeError, KeyError, TypeError, ValueError):
-        raise ServiceError(502, "model_invalid_output", "异步图片提交回执无效") from None
+        raise AdapterError(502, "model_invalid_output", "异步图片提交回执无效") from None
 
 
 def status(payload, receipt: ImageTaskReceipt):
@@ -71,12 +65,12 @@ def status(payload, receipt: ImageTaskReceipt):
             download_host(url)
         return state, urls
     except (AttributeError, KeyError, TypeError, ValueError):
-        raise ServiceError(502, "model_invalid_output", "异步图片查询结果无效") from None
+        raise AdapterError(502, "model_invalid_output", "异步图片查询结果无效") from None
 
 
 def download_host(url):
     if not isinstance(url, str) or len(url) > 8192:
-        raise ServiceError(502, "model_result_source_denied", "图片结果来源不受支持")
+        raise AdapterError(502, "model_result_source_denied", "图片结果来源不受支持")
     try:
         parsed = urlsplit(url)
         host = parsed.hostname or ""
@@ -91,7 +85,7 @@ def download_host(url):
             raise ValueError()
         return host
     except ValueError:
-        raise ServiceError(502, "model_result_source_denied", "图片结果来源不受支持") from None
+        raise AdapterError(502, "model_result_source_denied", "图片结果来源不受支持") from None
 
 
 def check_query(response):
@@ -101,14 +95,14 @@ def check_query(response):
             rate_limited=response.status_code == 429,
         )
     if response.status_code != 200:
-        raise ServiceError(502, "model_task_query_rejected", "原图片任务查询被拒绝")
+        raise AdapterError(502, "model_task_query_rejected", "原图片任务查询被拒绝")
 
 
 def check_download(response):
     if response.status_code in {404, 429} or response.status_code >= 500:
         raise QueryLater()
     if response.status_code != 200:
-        raise ServiceError(502, "model_result_download_unavailable", "原图片结果无法取回")
+        raise AdapterError(502, "model_result_download_unavailable", "原图片结果无法取回")
 
 
 async def query(http, receipt, secret):
@@ -126,13 +120,13 @@ async def query(http, receipt, secret):
     except (TimeoutError, OSError, httpx2.TimeoutException, httpx2.NetworkError):
         raise QueryLater() from None
     except (AttributeError, ValueError, TypeError, RecursionError):
-        raise ServiceError(502, "model_invalid_output", "原图片任务返回了无效结果") from None
+        raise AdapterError(502, "model_invalid_output", "原图片任务返回了无效结果") from None
 
 
 async def download(http, url):
     import httpx2
 
-    from keystone.platform.model_access.adapters.http import ResponseTooLarge
+    from keystone.platform.model_access.schemas.errors import ResponseTooLarge
     from keystone.platform.model_access.schemas.images import MAX_OUTPUT_IMAGE_BYTES
 
     try:
@@ -146,4 +140,23 @@ async def download(http, url):
     except (TimeoutError, OSError, httpx2.TimeoutException, httpx2.NetworkError):
         raise QueryLater() from None
     except ResponseTooLarge:
-        raise ServiceError(502, "model_response_too_large", "原图片结果超过上限") from None
+        raise AdapterError(502, "model_response_too_large", "原图片结果超过上限") from None
+
+
+class KlingImages:
+    operations = frozenset({"image.generate"})
+    delivery = "async"
+    models = frozenset(MODELS)
+    paths = {SUBMIT: "POST", QUERY: "GET"}
+    query_path = QUERY
+    require_parameters = False
+
+    def request_target(self, selected):
+        return ORIGIN, SUBMIT, "model_name"
+
+    async def submit(self, sdk, selected, data):
+        response = await sdk.post(SUBMIT, body=submit_body(selected, data), cast_to=dict)
+        return task_id(response)
+
+    query = staticmethod(query)
+    download = staticmethod(download)

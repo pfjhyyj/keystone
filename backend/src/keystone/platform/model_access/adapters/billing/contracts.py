@@ -79,12 +79,12 @@ class ResponseBilling:
         return Receipt(identifier)
 
     def check_target(self, base, path):
-        from keystone.core.errors import ServiceError
+        from keystone.platform.model_access.schemas.errors import AdapterError
 
         if not self.enabled:
-            raise ServiceError(503, "model_provider_unavailable", "当前服务商尚未开放账务查询")
+            raise AdapterError(503, "model_provider_unavailable", "当前服务商尚未开放账务查询")
         if base != self.api_base or path not in self.paths():
-            raise ServiceError(409, "model_target_not_allowed", "账务查询目标不受支持")
+            raise AdapterError(409, "model_target_not_allowed", "账务查询目标不受支持")
 
     def paths(self):
         return {self.balance_path} if self.balance_path else set()

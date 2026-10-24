@@ -2,13 +2,15 @@
 
 本模块保存渠道、模型配置、调用/用量和供应商费用；billing 与 inference Adapter 处理协议，Service 负责授权、事务和事实，后台 Task 负责核对编排。[Flow](flow.md) 通过公开 Service 固定角色选择与累计预算，不共享领域 ORM。
 
+第 1～7 节描述调用、费用和恢复契约；[第 8 节](#8-多渠道模型接入设计)维护现有渠道代码适配层与数据库的边界。当前适配整理不增加渠道、数据库字段或视频能力；仍只记录、补查和统计渠道实际成本。
+
 ## 1. 范围与边界
 
 为后续业务提供统一的模型调用入口，记录每次调用的用量、上游报告的费用，并展示渠道账户的余额。采用“成熟调用 SDK＋少量渠道适配代码”，不要求独立网关。
 
 当前实际发送开放 OpenRouter、Openlux 和 Yunwu，复用 OpenAI SDK 的文本对话及流式协议。OpenRouter 可保存响应费用并按请求 ID 补查，Openlux/Yunwu 使用原 Token 分页核对日志。DeepSeek、阿里云百炼保留适配声明，尚未开放发送。阿里云暂按百炼/DashScope 按量付费服务设计，不把订阅额度混为账户余额。图片与异步任务能力见[模型操作与产物](#6-模型操作与产物)。
 
-只保留渠道、模型配置、调用记录三个对象。不做用户钱包、充值、配额分配、计费倍率、价格表、自动渠道切换或智能路由。这里记录的是供应商侧成本，不是向 Keystone 用户收费。
+渠道、模型配置、调用记录是三个主要对象；第 8 节的代码适配层继续复用它们。不做用户钱包、充值、额度扣减、计费倍率、价格表、自动渠道切换或智能路由。这里记录的是供应商侧成本，不是向 Keystone 用户收费；已有 Flow 次数/token/文件预算仍属于资源限制。
 
 ## 2. 领域模型
 
@@ -134,7 +136,7 @@ Agent 一次运行可能发起多次模型请求，每次实际请求都独立�
 
 不支持的能力直接返回“不可用/不支持”，不为了统一接口编造金额。沿用普通适配类和显式 provider 注册，cost_query_mode 区分请求直查、日志分页和不支持；不增加插件系统或独立账务服务。OpenAI 兼容只说明推理格式相似，不能据此推断查费路径、凭据范围或金额单位相同。
 
-调用协议位于 adapters/inference/、费用和余额协议位于 adapters/billing/，Service 保留业务用例、权限与事实保存。多个中转站复用调用协议、分别选择账务适配；adapters/billing/ 不再复制一套 Controller/Service/Model，也不直接持久化费用。详细边界见第 8 节。
+调用协议位于 adapters/inference/、费用和余额协议位于 adapters/billing/，Service 保留业务用例、权限与事实保存。多个中转站在代码中复用调用协议、组合各自账务实现；adapters/billing/ 不再复制一套 Controller/Service/Model，也不直接持久化费用。代码组合与宿主边界见[第 8 节](#8-多渠道模型接入设计)。
 
 ### 3.2 调用与余额刷新
 
@@ -479,7 +481,7 @@ ModelEntry.operations 非空、无重复、最多五项，未知枚举拒绝。�
 
 ### 6.5 图片产物
 
-新增增量迁移 0009_model_access_image_results，为 ModelInvocation 增加 operation（旧行 text.generate）和可空 result_context。后者是受限证据，公共调用投影不返回它；不复用 cost_context，不保存提示词、base64、签名 URL 或供应商正文。
+模型接入基线直接包含 ModelInvocation.operation（默认 text.generate）和可空 result_context。后者是受限证据，公共调用投影不返回它；不复用 cost_context，不保存提示词、base64、签名 URL 或供应商正文。
 
 同步图片接口的 result_context 使用明确 ImageManifest：format_version=1、request_digest、operation 和 outputs；每个 output 只保存稳定 artifact_key、checksum_sha256、size_bytes、content_type。artifact_key 由 invocation_id 与序号派生，不接受客户端任意 owner/slot。最多两份输出、每份 8 MiB、总计 16 MiB；媒体 HTTP 响应单独有界，文本响应上限不变。
 
@@ -520,3 +522,102 @@ Flow 的批量绑定在调用方当前身份事务内解析，全部 Entry→全
 InvocationContext 的 workflow_id（1～512 字符）/step_id（严格整数 0～2³¹−1）保存原模型 Step，历史为空不补写；异步查询比较原身份/角色/节点，观测位置不参与授权、不覆盖原提交位置。image_sources_in_transaction 每批最多 100 项，在当前模型记录范围和同 Run 内校验私有 Manifest 与 File 登记摘要、大小、MIME，只返回确认的 File/调用/产物键关联。
 
 Run 关联调用按显式 Run 查询，不套默认 30 天窗口；SQL 权限在分页前生效。只投影受控身份、操作、状态、角色/Agent/Step 和错误分类，费用仍独立。Run 预算与诊断接口统一见 [Flow](flow.md#8-api授权与诊断)。
+
+## 8. 多渠道模型接入设计
+
+现有渠道采用代码适配、Service 管理调用、数据库保存配置和事实。协议代码保留在当前仓库的 adapters/ 内，宿主依赖与协议实现明确分开，随 Keystone 发布；当前不是独立分发的库，有其他实际使用方后再考虑独立发包。
+
+### 8.1 职责边界
+
+| 范围 | 当前实现 |
+|---|---|
+| 渠道声明 | CHANNELS 显式组合每种渠道的协议与账务实现；目录、角色绑定、发送和余额查询共用同一声明 |
+| 协议实现 | 兼容文本、OpenRouter 图片、Openlux 原生图片任务与各渠道查费，使用轻量类型和协议错误 |
+| 宿主接入 | InferenceClient / BillingClient 接入受控传输、发送登记钩子，并将协议错误转换为 ServiceError |
+| 数据与运行 | 现有 Service 负责身份、事务、原任务/产物恢复及费用核对；数据库结构保持不变 |
+| 扩展状态 | 没有新增渠道或自由配置站点；视频和独立发包均未实现 |
+
+### 8.2 代码与数据库的边界
+
+| 内容 | 归属 |
+|---|---|
+| 路径、鉴权、参数转换、响应解析、任务提交/查询 | 渠道适配代码 |
+| 查费方式、请求编号匹配、金额/单位解析、余额查询 | 渠道适配代码 |
+| 模型特殊处理、支持的操作、交付方式、参数校验和默认值 | 类型明确的代码 |
+| Channel | 数据库：现有 provider、名称、地址、密钥密文、启停、账户说明及余额/核对字段 |
+| ModelEntry | 数据库：现有 key、channel_id、provider_model、operations 和启停 |
+| ModelInvocation | 数据库：原调用归属、状态、用量、回执、恢复证据、实际费用及核对状态 |
+
+继续使用三个主要实体及现有协调记录。不新增主表或通用配置字段；数据库不保存请求模板、字段映射、协议组合、参数 Schema 或计费公式。恢复回执及账务快照是已发生调用的证据，不是可编辑的协议配置。
+
+管理员只选择渠道类型并填写连接信息、模型映射；不分别选择调用协议和账务协议。provider 继续作为代码注册 key，不另加 adapter_key。已支持类型的渠道实例和模型配置通过数据库维护；新协议、新查费行为和模型特殊处理通过代码更新。确有额外连接参数时，只为具体渠道增加明确类型的字段，不预设通用配置 JSON。
+
+基址、路径和下载目标由渠道实现校验，配置不能放宽网络边界或跨站携带密钥。渠道账户归属、Token/站点修改及历史凭据规则沿用第 2.1、3.6 节，不新增凭据版本机制；无可验证原范围时阻塞历史查询，不用当前密钥冒充原凭据。
+
+### 8.3 渠道组合与模型能力
+
+composition 显式装配渠道入口。一个入口在代码中组合所需的文本、图片、原生任务和账务实现；同类协议使用普通函数和对象复用，不动态扫描或在线加载插件。例如 OpenRouter 组合兼容文本、其图片实现和 OpenRouter 查费；Openlux 组合兼容文本、原生图片任务和 Openlux 查费。渠道内部的组合不暴露为管理配置。
+
+沿用现有明确的操作和请求 DTO，参数默认值、限制和特例放在对应实现中。有效能力取代码支持、ModelEntry.operations 和 Flow 角色要求的交集，未知参数/不支持组合在登记发送前拒绝。新增上游模型只有在既有实现已支持它时才只改映射；不能因模型名存在或兼容文本格式，就宣称支持图片、结构化、视频或查费。
+
+不支持的操作明确拒绝；没有账务查询仍可使用已支持的调用能力，并记录可信响应费用或未知原因。现有模型目录按代码投影可用操作，无需新增能力 API 或通用能力注册平台。
+
+### 8.4 Service 与 Adapter 接口
+
+以下为当前内部接口边界；不新增 HTTP API，也不强迫所有渠道实现同一个大基类。
+
+| 接口 | 输入 → 输出；职责 |
+|---|---|
+| ChannelAdapter.protocol / supports | 操作、交付方式和上游模型 → 已安装实现或支持与否；无数据库或网络 |
+| 协议 validate_request | 实际报文、固定选择和目标 → 校验结果及 ModelRequestBudget；发送登记前执行 |
+| 文本/图片调用与流 | 明确请求、短期连接参数、受控传输 → 类型明确的结果/事件、用量和回执 |
+| 原生任务提交/查询 | 请求或原任务回执、受控传输 → 回执或待完成/结果；仅支持的渠道提供 |
+| 账务 binding / receipt / lookup / page / balance | 原范围配置、响应白名单字段、请求 ID 或有界窗口 → 原账务绑定、Fee / Receipt / LogPage 或余额；按实际能力提供 |
+| ModelEntryService / ModelRuntime | 现有选择、角色批量绑定和调用入口；负责身份、固定目标、预算及发送登记 |
+| ModelRuntime.sdk_settings / invoke_sdk | Agent 使用的固定选择与设置 → 渠道代码补齐的参数及受控调用；Flow 不拼装渠道专用参数 |
+| 调用/图片/费用 Service | 保存调用与回执，通过 Files 管理产物，编排原任务恢复和费用核对，提交事实 |
+
+渠道声明与协议实现只依赖轻量请求/结果类型和传入的 SDK/传输契约，不导入 ORM、用户权限、Service、FlowContext、DBOS 或 ServiceError。协议失败使用 AdapterError，查询退避使用 QueryLater；Keystone 客户端在宿主边界转换或处理。复用现有 Fee、Receipt、Binding、LogPage 等结构，不序列化 SDK 对象；秘密仅在本次请求期间由宿主传入，不进回执或快照。
+
+Keystone 宿主保留授权、事务、凭据读取、共享容量和取消收尾；向适配层注入受控传输及发送前登记/回执钩子；渠道代码提供 authorize，宿主仅在登记成功后用本次秘密执行鉴权，当前渠道均复用 Bearer 实现。所有生成请求都必须经过原子登记，SDK 隐藏重试关闭；查询、下载不能隐式再次生成。共享锁和协调实现仍属宿主，不随协议代码抽出。其他使用方可提供自己的宿主实现，不能因此推定已有 Keystone 的持久化或恢复保证。
+
+### 8.5 固定选择、媒体任务与恢复
+
+保留现有 Selection、ModelInvocation.status、usage、result_context 和 cost_check_status，不增加执行/交付/取消三套状态机。Flow 受理时固定渠道类型、Entry/Channel、上游模型、基址、操作和交付方式，调用回执及账务绑定按原格式持久化；恢复不重新解析当前 key 映射，不保存可执行对象或整套能力定义。新外部操作继续核验原身份和固定目标。
+
+图片仍沿用现有提交、查询原任务与 Flow 显式等待，适配分派不改变轮询归属；费用补查不推进生成任务。恢复查询原 task_id，复用原调用 ID 和产物键；无可靠回执的已登记调用保持 unknown，不重发或换渠道。文件仍经 Files 公开 Service 校验和引用，调用可见不授予内容权。
+
+后续视频增加 video.generate 的明确请求/结果类型和具体原生任务实现，复用调用记录、文件与费用字段；按真实协议验证时限、查询和取消能力后开放。不提前新增视频 API、Webhook、远端任务配额表或媒体任务引擎，也不把当前 HTTP 并发/图片时限当作视频保障。
+
+### 8.6 实际费用与统计
+
+渠道代码获取并解析上游费用事实，CostService 负责原范围校验、精确匹配、幂等和事务写回。继续使用 ModelInvocation 的 cost_amount、cost_unit、cost_source、cost_evidence 和 cost_check_status；来源为响应报告、按原请求查询或原范围日志核对，不新增费用表、价格表、估价或用户扣费。
+
+响应和补查只补全同一条调用，不重复累加；回执归属冲突或同一查询证据的金额冲突标记 blocked。查询规范化替换原响应口径时保留 previous 证据，具体写回语义沿用第 3.6 节。金额用 Decimal 和原单位，仅允许依据渠道明确报告的扣费额度及单位因子规范化。公开单价乘用量、余额差和请求时长不证明实扣；明确报告的 0 才是 0。缺失、失败、取消保持未知及原因。原账务范围、锁、分页、重试和截止仍按第 3.6 节。
+
+usage 按上游提供的已知计量保存；新增图片数量或视频计费秒数时用操作对应字段，不预建通用计量系统。当前沿用现有列表、补查、汇总 API 和权限范围，不在本次整理中增加统计接口或字段。现有汇总按单位分组，未知成本不计作零；后续补充模型/操作过滤和未确认数量时，再扩展对应 DTO，不建设通用查询语言。
+
+### 8.7 版本与发布
+
+适配层先随 Keystone 代码、锁文件和同一制品发布，不新增独立仓库、包发布流水线、在线插件或自动升级。数据库中已支持的渠道实例/模型映射变更与代码能力升级分开；代码更新按现有[发布规则](../deployment.md#3-更新与恢复)处理，不热替换在途执行使用的实现。
+
+以后独立发包时，由宿主锁定依赖版本，渠道实现仍通过显式代码装配。包版本不能替代回执/快照格式版本或 execution_version；更新依赖必须检查旧回执、账务口径与 Flow 检查点兼容性，无法兼容的旧运行保留原制品和身份收尾，不让新版本重新解释或重发。
+
+### 8.8 实现位置与验证边界
+
+下表模块内路径相对 backend/src/keystone/platform/model_access/。
+
+| 位置 | 当前职责 |
+|---|---|
+| adapters/channels.py | ChannelAdapter 与显式 CHANNELS 组合；声明固定基址、协议和账务实现 |
+| adapters/inference/protocols.py、images.py、kling.py | 请求校验、文本/流/识图、图片报文与验证、原生任务协议；不导入宿主权限或执行器 |
+| adapters/billing/（除 registry.py） | 费用/余额协议、原范围绑定与精确回执解析；协议错误独立于 ServiceError |
+| adapters/inference/client.py、transport.py、errors.py；adapters/billing/registry.py | Keystone SDK 生命周期、受控发送、观察、错误转换和客户端分派 |
+| adapters/http.py、credentials.py、coordination.py、errors.py | 宿主 HTTP/下载边界、密钥、共享协调及协议错误转换 |
+| services/entries.py、channels.py、queries.py | 从同一渠道声明读取能力及账务类型；保留授权、SQL 过滤和模型角色绑定 |
+| services/runtime.py、image_tasks.py、costs.py | 调用登记、预算、回执/产物持久化、原任务恢复及费用核对 |
+| 模块外 keystone/composition.py | 将渠道声明与宿主依赖注入客户端，保留原生命周期 |
+
+渠道适配不增加表结构、独立包或新配置字段；当前完整迁移基线及旧库切换规则见[迁移说明](../../backend/migrations/README.md)。provider、Selection、Flow 快照、图片回执/Manifest 和费用证据继续使用原格式，历史不改写、不推测回填。代码及其目录变化仍影响 execution_version，旧在途运行遵守第 8.7 节。
+
+测试覆盖协议代码的依赖边界、多个渠道复用文本协议时的不同回执/费用口径、Agent 参数来自渠道代码、登记先于渠道鉴权和发送、能力与目录/发送一致、协议错误到宿主错误的转换，并保留真实 PostgreSQL/DBOS 的旧快照、原任务恢复、未知不重发、取消、共享容量及费用核对回归。自动验证使用本地协议桩，不触发付费调用；视频与独立分发待具体实现后再验证。

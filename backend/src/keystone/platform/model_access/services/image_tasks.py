@@ -3,18 +3,15 @@
 import hashlib
 import math
 from datetime import timedelta
-from functools import partial
 
 from sqlalchemy import select
 
-from keystone.core.asyncio import blocking
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.model_access.adapters.inference import kling
-from keystone.platform.model_access.adapters.inference.images import verify_image
+from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
+from keystone.platform.model_access.schemas.errors import QueryLater
 from keystone.platform.model_access.schemas.images import (
-    MAX_OUTPUT_IMAGE_BYTES,
     ImageBatch,
     ImageManifest,
     ImageOutput,
@@ -89,12 +86,16 @@ class ImageTaskService:
             )
         except ValueError:
             original = None
+        adapter = CHANNELS.get(selected.provider)
         if (
             row is None
             or row.operation != "image.generate"
             or selected.delivery != "async"
-            or selected.provider != "openlux"
-            or selected.api_base != kling.BASE
+            or adapter is None
+            or selected.api_base != adapter.api_base
+            or not adapter.supports(
+                selected.operation, selected.delivery, model=selected.provider_model
+            )
             or original != context.authority()
             or row.model_entry_id != selected.model_entry_id
             or row.channel_id != selected.channel_id
@@ -110,7 +111,7 @@ class ImageTaskService:
 
     async def submit(self, data, *, selected, identifier, context, worker_identity):
         data = ImageTaskRequest.model_validate(data.model_dump(mode="json"))
-        body = kling.submit_body(selected, data)
+        self.clients.inference.task_protocol(selected)
         if selected.operation != "image.generate" or selected.delivery != "async":
             raise ServiceError(422, "model_invalid_request", "异步图片角色操作不匹配")
         async with self.identity.access("model:invoke") as (session, _):
@@ -123,8 +124,7 @@ class ImageTaskService:
                 return ImageTask(invocation_id=identifier)
 
         async def send(sdk):
-            response = await sdk.post(kling.SUBMIT, body=body, cast_to=dict)
-            task_id = kling.task_id(response)
+            task_id = await self.clients.inference.submit_task(sdk, selected, data)
             now = utcnow()
             return ImageTaskReceipt(
                 task_id=task_id,
@@ -267,10 +267,7 @@ class ImageTaskService:
                 if delay:
                     return await self.delay(identifier, selected, context, math.ceil(delay))
                 await permit()
-                self.clients.inference.check_target(
-                    "openlux", kling.BASE, kling.QUERY, method="GET"
-                )
-                state, urls = await kling.query(self.clients.http, task, secret)
+                state, urls = await self.clients.inference.query_task(selected, task, secret)
                 if state in {"submitted", "processing"}:
                     return await self.delay(identifier, selected, context, 5)
                 if state == "failed":
@@ -281,10 +278,8 @@ class ImageTaskService:
                 for index, url in enumerate(urls):
                     await self.credentials(selected)
                     await permit()
-                    content = await kling.download(self.clients.http, url)
-                    content_type = await blocking(
-                        partial(verify_image, content, None, max_bytes=MAX_OUTPUT_IMAGE_BYTES)
-                    )
+                    content = await self.clients.inference.download_task_output(selected, url)
+                    content_type = await self.clients.inference.verify_output_image(content)
                     contents.append(content)
                     outputs.append(
                         ImageOutput(
@@ -304,7 +299,7 @@ class ImageTaskService:
                     identifier, selected, context, "succeeded", manifest=manifest
                 )
                 return ImageBatch(manifest, tuple(contents))
-        except kling.QueryLater as error:
+        except QueryLater as error:
             if error.rate_limited:
                 await self.runtime.dispatch.cooldown(scope, error.cooldown_seconds)
             return await self.delay(identifier, selected, context, error.seconds)

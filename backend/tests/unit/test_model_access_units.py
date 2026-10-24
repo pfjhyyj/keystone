@@ -18,6 +18,7 @@ from keystone.platform.model_access.adapters.inference.client import (
     InferenceClient,
 )
 from keystone.platform.model_access.adapters.inference.errors import classify_error
+from keystone.platform.model_access.schemas.errors import AdapterError
 
 
 def test_credentials_are_bound_to_channel_and_purpose_and_shared_between_processes(tmp_path):
@@ -125,16 +126,17 @@ def test_billing_rejects_untrusted_bases_and_non_billing_paths():
         (OPENROUTER_BASE, "/keys"),
         (OPENROUTER_BASE, "/chat/completions"),
     ):
-        with pytest.raises(ServiceError) as caught:
+        with pytest.raises(AdapterError) as caught:
             adapter.check_target(base, path)
         assert (caught.value.status, caught.value.code) == (409, "model_target_not_allowed")
 
 
-def test_wrapped_timeout_cancellation_and_platform_error_remain_unknown():
+def test_wrapped_timeout_cancellation_and_safe_errors_remain_unknown():
     for cause, code in (
         (httpx2.ReadTimeout("sensitive"), "model_timeout"),
         (asyncio.CancelledError(), "model_interrupted"),
         (ServiceError(503, "model_result_unavailable", "safe"), "model_result_unavailable"),
+        (AdapterError(413, "model_input_too_large", "safe"), "model_input_too_large"),
     ):
         wrapper = RuntimeError("sensitive")
         wrapper.__cause__ = cause

@@ -744,8 +744,10 @@ def test_openrouter_missing_response_cost_uses_direct_lookup(client, monkeypatch
 
 
 def test_another_billing_contract_reuses_inference_and_reconciliation(client, billing, monkeypatch):
+    from dataclasses import replace
+
     from keystone.platform.model_access.adapters.billing.contracts import Binding, LogPage, Receipt
-    from keystone.platform.model_access.adapters.billing.registry import PROVIDERS
+    from keystone.platform.model_access.adapters.channels import CHANNELS
 
     pages = []
 
@@ -768,7 +770,7 @@ def test_another_billing_contract_reuses_inference_and_reconciliation(client, bi
             record = {"request_id": billing["ids"][0], "amount": "0.25", "unit": "test_credits"}
             return LogPage([record], 7 if len(pages) == 1 else 8, len(pages) == 2)
 
-    monkeypatch.setitem(PROVIDERS, "openlux", OtherBilling())
+    monkeypatch.setitem(CHANNELS, "openlux", replace(CHANNELS["openlux"], billing=OtherBilling()))
     configure(client)
     identifier = call(client)
     due(client, identifier)

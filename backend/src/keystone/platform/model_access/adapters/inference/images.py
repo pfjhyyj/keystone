@@ -7,7 +7,7 @@ from io import BytesIO
 
 from PIL import Image
 
-from keystone.core.errors import ServiceError
+from keystone.platform.model_access.schemas.errors import AdapterError
 from keystone.platform.model_access.schemas.images import MAX_IMAGE_BYTES, MAX_IMAGE_PIXELS
 
 MIME = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
@@ -15,7 +15,7 @@ MIME = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
 
 def verify_image(content, content_type, *, max_bytes=MAX_IMAGE_BYTES):
     if not 0 < len(content) <= max_bytes:
-        raise ServiceError(413, "model_input_too_large", "图片超过单文件上限")
+        raise AdapterError(413, "model_input_too_large", "图片超过单文件上限")
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -34,7 +34,7 @@ def verify_image(content, content_type, *, max_bytes=MAX_IMAGE_BYTES):
             with Image.open(BytesIO(content), formats=list(MIME)) as image:
                 image.load()
     except Exception:
-        raise ServiceError(422, "model_invalid_image", "图片格式、类型或像素范围无效") from None
+        raise AdapterError(422, "model_invalid_image", "图片格式、类型或像素范围无效") from None
     return detected
 
 
@@ -81,7 +81,7 @@ def image_batch(response, data, identifier, digest, operation):
             ImageManifest(request_digest=digest, operation=operation, outputs=outputs),
             tuple(contents),
         )
-    except ServiceError:
+    except AdapterError:
         raise
     except Exception:
-        raise ServiceError(502, "model_invalid_output", "图片响应不符合本次操作契约") from None
+        raise AdapterError(502, "model_invalid_output", "图片响应不符合本次操作契约") from None

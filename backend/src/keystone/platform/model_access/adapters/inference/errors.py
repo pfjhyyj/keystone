@@ -6,6 +6,7 @@ import httpx2
 from openai import APIStatusError
 
 from keystone.core.errors import ServiceError
+from keystone.platform.model_access.schemas.errors import AdapterError
 
 
 def classify_error(error):
@@ -18,9 +19,9 @@ def classify_error(error):
         seen.add(id(cause))
         causes.append(cause)
         cause = cause.__cause__
-    # Preserve platform errors even when an SDK wraps them; no raw upstream message escapes.
+    # Preserve safe host/protocol errors through SDK wrappers; no raw upstream message escapes.
     for cause in causes:
-        if isinstance(cause, ServiceError):
+        if isinstance(cause, (ServiceError, AdapterError)):
             return cause.status, cause.code, cause.detail, "unknown"
     for cause in causes:
         if isinstance(cause, (APIStatusError, ModelHTTPError)):

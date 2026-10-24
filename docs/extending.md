@@ -93,7 +93,7 @@ from .note import Note as Note
 from keystone.businesses.notes import models as notes_models  # noqa: F401
 ```
 
-脚手架按当前 head 生成一份迁移，包含建表与逆序回滚。路径为 `backend/migrations/versions/NNNN_<namespace>_initial.py`，文件直接平铺，不建立分类或模块子目录；模块归属体现在文件名中，序号在所有模块间连续递增。以当前 head 为例，notes 生成 `0013_notes_initial.py`，`revision = "0013"`、`down_revision = "0012"`。后续 revision 继续使用四位序号；执行仍由 Alembic 原生依赖决定。
+脚手架按当前 head 生成一份迁移，包含建表与逆序回滚。路径为 `backend/migrations/versions/NNNN_<namespace>_initial.py`，文件直接平铺，不建立分类或模块子目录；模块归属体现在文件名中，序号在所有模块间连续递增。以当前 head 为例，notes 生成 `0008_notes_initial.py`，`revision = "0008"`、`down_revision = "0007"`。后续 revision 继续使用四位序号；执行仍由 Alembic 原生依赖决定。
 
 生成前校验平铺路径、命名、重复序号/revision、序号连续性和线性依赖，支持带类型注解的静态元数据，失败时不写业务文件。若已有 `<namespace>_initial` 迁移，拒绝再生成初始建表；仅补回代码可使用 `--no-migration`。后续手工增量迁移遵循同一规则，并行开发在合并前处理尚未发布的编号冲突。完整历史和命名规范见[迁移说明](../backend/migrations/README.md)。生成后评审字段、约束和索引，再执行：
 

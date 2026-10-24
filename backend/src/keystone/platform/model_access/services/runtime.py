@@ -73,6 +73,9 @@ class ModelRuntime:
     async def invoke(self, data, *, invocation_id=None, selection=None):
         return await completed(self.events(data, invocation_id=invocation_id, selection=selection))
 
+    def sdk_settings(self, selection, settings):
+        return self.clients.inference.sdk_settings(selection, settings)
+
     async def invoke_sdk(
         self, *, selection, invocation_id, sdk_request, flow_context=None, worker_identity=None
     ):
@@ -135,11 +138,6 @@ class ModelRuntime:
     async def invoke_image(
         self, data, *, images, selection, invocation_id, context, worker_identity
     ):
-        from keystone.core.asyncio import blocking
-        from keystone.platform.model_access.adapters.inference.images import (
-            image_batch,
-            image_data_uri,
-        )
         from keystone.platform.model_access.schemas.images import (
             MAX_INPUT_IMAGE_BYTES,
             ImageEditRequest,
@@ -154,20 +152,12 @@ class ModelRuntime:
             raise ServiceError(422, "model_invalid_request", "图片操作与请求类型不匹配")
         if sum(len(image[1]) for image in images) > MAX_INPUT_IMAGE_BYTES:
             raise ServiceError(413, "model_input_too_large", "图片累计大小超过上限")
-        references = []
-        for content_type, content, _ in images:
-            encoded = await blocking(image_data_uri, content, content_type)
-            references.append({"type": "image_url", "image_url": {"url": encoded}})
         digest = self.image_digest(data, operation)
 
         async def send(sdk):
-            body = data.model_dump(mode="json", exclude={"images"})
-            body["model"] = selection.provider_model
-            body["provider"] = {"allow_fallbacks": False}
-            if edit:
-                body["input_references"] = references
-            response = await sdk.post("/images", body=body, cast_to=dict)
-            return await blocking(image_batch, response, data, invocation_id, digest, operation)
+            return await self.clients.inference.image(
+                sdk, selection, data, images, invocation_id, digest
+            )
 
         return await self.invoke_sdk(
             selection=selection,
@@ -180,8 +170,6 @@ class ModelRuntime:
     async def invoke_vision(
         self, data, *, images, selection, invocation_id, context, worker_identity
     ):
-        from keystone.core.asyncio import blocking
-        from keystone.platform.model_access.adapters.inference.images import image_data_uri
         from keystone.platform.model_access.schemas.images import (
             MAX_INPUT_IMAGE_BYTES,
             VisionRequest,
@@ -192,27 +180,9 @@ class ModelRuntime:
             raise ServiceError(422, "model_invalid_request", "图片操作或输入不匹配")
         if sum(len(image[1]) for image in images) > MAX_INPUT_IMAGE_BYTES:
             raise ServiceError(413, "model_input_too_large", "图片累计大小超过上限")
-        parts = []
-        for (content_type, content, _), image in zip(images, data.images, strict=True):
-            encoded = await blocking(image_data_uri, content, content_type)
-            parts.append(
-                {"type": "image_url", "image_url": {"url": encoded, "detail": image.detail}}
-            )
 
         async def send(sdk):
-            messages = [message.model_dump(mode="json") for message in data.messages]
-            messages.append({"role": "user", "content": parts})
-            response = await sdk.chat.completions.create(
-                model=selection.provider_model,
-                messages=messages,
-                max_tokens=data.max_tokens,
-            )
-            if not response.choices or response.choices[0].finish_reason is None:
-                raise ServiceError(502, "model_response_unknown", "模型响应缺少完成结果")
-            content = response.choices[0].message.content
-            if not isinstance(content, str):
-                raise ServiceError(502, "model_response_unknown", "模型未返回文本结果")
-            return content
+            return await self.clients.inference.vision(sdk, selection, data, images)
 
         return await self.invoke_sdk(
             selection=selection,

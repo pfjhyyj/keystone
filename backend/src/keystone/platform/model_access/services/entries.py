@@ -3,27 +3,18 @@ from sqlalchemy import and_, false, or_, select
 from keystone.core.errors import ServiceError
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.adapters.inference.client import (
-    SUPPORTED_MODELS,
-    SUPPORTED_OPERATIONS,
-    SUPPORTED_TARGETS,
-    operation_delivery,
-    protocol_supports,
-)
+from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.models import Channel, ModelEntry
 from keystone.platform.model_access.schemas.operations import Delivery, Operation
 from keystone.platform.model_access.services.queries import locked
 
 
 def catalog_entry(row, provider):
+    adapter = CHANNELS.get(provider)
     operations = sorted(
         operation
-        for operation in set(row.operations) & SUPPORTED_OPERATIONS.get(provider, frozenset())
-        if protocol_supports(provider, operation, operation_delivery(provider, operation))
-        and (
-            (provider, operation) not in SUPPORTED_MODELS
-            or row.provider_model in SUPPORTED_MODELS[provider, operation]
-        )
+        for operation in row.operations
+        if adapter is not None and adapter.protocol(operation, model=row.provider_model) is not None
     )
     return {
         "key": row.key,
@@ -68,13 +59,13 @@ class ModelEntryService:
                         *(
                             and_(
                                 Channel.provider == provider,
-                                Channel.api_base == base,
-                                ModelEntry.provider_model.in_(SUPPORTED_MODELS[provider, operation])
-                                if (provider, operation) in SUPPORTED_MODELS
+                                Channel.api_base == adapter.api_base,
+                                ModelEntry.provider_model.in_(protocol.models)
+                                if protocol.models is not None
                                 else True,
                             )
-                            for provider, (base, _) in SUPPORTED_TARGETS.items()
-                            if protocol_supports(provider, operation, delivery)
+                            for provider, adapter in CHANNELS.items()
+                            if (protocol := adapter.protocol(operation, delivery)) is not None
                         ),
                     )
                 )
@@ -197,14 +188,12 @@ async def resolve_bindings_in_transaction(session, auth, *, roles, bindings):
         channel = by_id.get(entry.channel_id)
         if channel is None or not channel.is_active or not entry.is_active:
             raise ServiceError(409, "model_disabled", "模型或渠道不可用")
-        target = SUPPORTED_TARGETS.get(channel.provider)
+        adapter = CHANNELS.get(channel.provider)
         if (
-            target is None
-            or channel.api_base != target[0]
-            or not protocol_supports(channel.provider, role.operation, role.delivery)
+            adapter is None
+            or channel.api_base != adapter.api_base
+            or not adapter.supports(role.operation, role.delivery, model=entry.provider_model)
             or role.operation not in entry.operations
-            or (channel.provider, role.operation) in SUPPORTED_MODELS
-            and entry.provider_model not in SUPPORTED_MODELS[channel.provider, role.operation]
         ):
             raise ServiceError(409, "model_provider_unavailable", "模型不支持所需操作")
         result[role.key] = ResolvedModelBinding(

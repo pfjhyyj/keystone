@@ -3,9 +3,8 @@
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
-from keystone.core.errors import ServiceError
 from keystone.platform.model_access.adapters.billing.contracts import BillingQueryError
-from keystone.platform.model_access.adapters.http import ResponseTooLarge
+from keystone.platform.model_access.schemas.errors import AdapterError, ResponseTooLarge
 
 
 def retry_delay(value):
@@ -62,7 +61,7 @@ async def cost_get(
         raise BillingQueryError("cost_response_too_large", blocked=True) from None
     except (ValueError, KeyError, TypeError, RecursionError):
         raise BillingQueryError("cost_invalid_response", blocked=True) from None
-    except ServiceError:
+    except AdapterError:
         raise BillingQueryError("cost_configuration_unavailable", blocked=True) from None
     except Exception:
         raise BillingQueryError("cost_transport_failed") from None
@@ -73,7 +72,7 @@ async def balance_get(http, adapter, base, secret):
 
     def check(response):
         if response.status_code != 200:
-            raise ServiceError(502, "model_query_failed", "渠道查询失败")
+            raise AdapterError(502, "model_query_failed", "渠道查询失败")
 
     try:
         payload = await http.get_json(
@@ -85,4 +84,4 @@ async def balance_get(http, adapter, base, secret):
         )
         return adapter.balance(payload)
     except ResponseTooLarge:
-        raise ServiceError(502, "model_query_failed", "渠道查询响应超过上限") from None
+        raise AdapterError(502, "model_query_failed", "渠道查询响应超过上限") from None

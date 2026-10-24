@@ -1,6 +1,6 @@
 """Initialize the model_access domain.
 
-Tables: model_channels, model_entries, model_invocations.
+Tables: model_channels, model_entries, model_invocations, model_dispatch_scopes.
 """
 
 import sqlalchemy as sa
@@ -71,6 +71,12 @@ def upgrade():
         sa.Column("key", sa.String(length=64), nullable=False),
         sa.Column("channel_id", sa.Uuid(), nullable=False),
         sa.Column("provider_model", sa.String(length=128), nullable=False),
+        sa.Column(
+            "operations",
+            postgresql.JSONB(astext_type=sa.Text()),
+            server_default=sa.text("'[\"text.generate\"]'::jsonb"),
+            nullable=False,
+        ),
         sa.Column("is_active", sa.Boolean(), nullable=False),
         sa.Column(
             "created_at",
@@ -86,6 +92,12 @@ def upgrade():
             nullable=False,
         ),
         sa.Column("updated_by", sa.Uuid(), nullable=True),
+        sa.CheckConstraint(
+            "jsonb_typeof(operations) = 'array' AND jsonb_array_length(operations) BETWEEN 1 AND 5 "
+            'AND operations <@ \'["text.generate","text.structured","image.understand",'
+            '"image.generate","image.edit"]\'::jsonb',
+            name="model_entry_operations",
+        ),
         sa.ForeignKeyConstraint(
             ["channel_id"],
             ["keystone.model_channels.id"],
@@ -113,6 +125,17 @@ def upgrade():
         sa.Column("channel_id", sa.Uuid(), nullable=False),
         sa.Column("provider_model", sa.String(length=128), nullable=False),
         sa.Column("upstream_request_id", sa.String(length=200), nullable=True),
+        sa.Column(
+            "operation",
+            sa.String(32),
+            nullable=False,
+            server_default="text.generate",
+        ),
+        sa.Column(
+            "result_context",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+        ),
         sa.Column("status", sa.String(length=16), nullable=False),
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("usage", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
@@ -147,6 +170,16 @@ def upgrade():
             sa.DateTime(timezone=True),
             server_default=sa.text("now()"),
             nullable=False,
+        ),
+        sa.CheckConstraint(
+            "operation IN ('text.generate','text.structured','image.understand',"
+            "'image.generate','image.edit')",
+            name="invocation_operation",
+        ),
+        sa.CheckConstraint(
+            "result_context IS NULL OR (jsonb_typeof(result_context) = 'object' "
+            "AND octet_length(result_context::text) <= 16384)",
+            name="invocation_result_context",
         ),
         sa.CheckConstraint(
             "(cost_amount IS NULL AND cost_unit IS NULL AND cost_source = 'unknown') OR "
@@ -217,8 +250,41 @@ def upgrade():
         schema="keystone",
     )
 
+    op.create_index(
+        "ix_model_invocations_flow_time",
+        "model_invocations",
+        [sa.text("(flow_context ->> 'flow_run_id')"), "created_at", "id"],
+        schema="keystone",
+    )
+    op.create_table(
+        "model_dispatch_scopes",
+        sa.Column("scope", sa.String(64), nullable=False),
+        sa.Column(
+            "next_send_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "blocked_until",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.CheckConstraint("scope ~ '^[0-9a-f]{64}$'", name="dispatch_scope_identity"),
+        sa.PrimaryKeyConstraint("scope"),
+        schema="keystone",
+    )
+
 
 def downgrade():
+    op.drop_table("model_dispatch_scopes", schema="keystone")
     op.drop_table("model_invocations", schema="keystone")
     op.drop_table("model_entries", schema="keystone")
     op.drop_table("model_channels", schema="keystone")

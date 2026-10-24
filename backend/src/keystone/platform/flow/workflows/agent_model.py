@@ -37,13 +37,7 @@ class FlowModel(Model):
             self.deps["model_role"], operation=operation
         )
         await ctx.consume_iteration("agent_model_request")
-        if operation == "text.structured" and selected.provider == "openrouter":
-            extra = settings.get("extra_body") or {}
-            preferences = extra.get("provider") or {}
-            settings["extra_body"] = {
-                **extra,
-                "provider": {**preferences, "require_parameters": True},
-            }
+        settings = runtime.sdk_settings(selected, settings)
 
         async def request(sdk):
             model = OpenAIChatModel(

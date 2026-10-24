@@ -8,7 +8,7 @@ from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.adapters.inference.client import SUPPORTED_TARGETS
+from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.models import Channel
 from keystone.platform.model_access.services.cost_context import bind_channel
 from keystone.platform.model_access.services.queries import balance_config, locked
@@ -21,7 +21,7 @@ class ChannelService:
     async def options(self):
         async with self.identity.access("model:manage"):
             return {
-                "providers": list(SUPPORTED_TARGETS),
+                "providers": [key for key, adapter in CHANNELS.items() if adapter.protocols],
             }
 
     async def update_keys(self, session, row, data):

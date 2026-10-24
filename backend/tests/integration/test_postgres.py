@@ -119,8 +119,8 @@ def test_initial_schema_is_complete_reversible_and_preserves_dbos(empty_database
         ("0002", {"audit_logs"}),
         ("0003", {"dictionaries", "dictionary_items"}),
         ("0004", {"files", "file_grants", "file_references"}),
-        ("0005", {"model_channels", "model_entries", "model_invocations"}),
-        ("0006", {"flow_runs"}),
+        ("0005", {"model_channels", "model_entries", "model_invocations", "model_dispatch_scopes"}),
+        ("0006", {"flow_runs", "flow_run_budgets", "flow_budget_claims"}),
         ("0007", {"worker_registrations", "worker_heartbeats"}),
     ]
     tables = set().union(*(tables for _, tables in domains))
@@ -166,10 +166,7 @@ def test_initial_schema_is_complete_reversible_and_preserves_dbos(empty_database
             assert set(inspect(engine).get_table_names(schema="keystone")) == expected
         command.upgrade(config, "head")
         assert set(inspect(engine).get_table_names(schema="keystone")) == tables | {
-            "alembic_version",
-            "model_dispatch_scopes",
-            "flow_run_budgets",
-            "flow_budget_claims",
+            "alembic_version"
         }
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 42

@@ -5,6 +5,7 @@ SDK, retries, tracking, response parsing and PostgreSQL transactions remain real
 """
 
 import json
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -23,6 +24,7 @@ from test_model_access import BILLING, SECRET, channel, entry, internal_service,
 from keystone.core.errors import ServiceError
 from keystone.platform.flow.adapters.dbos import Engine
 from keystone.platform.model_access import schemas
+from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.adapters.inference import client as gateway
 from keystone.platform.model_access.services.runtime import ModelRuntime
@@ -35,12 +37,11 @@ def test_live_catalog_and_sender_share_capability_declaration(client, live, monk
     calls, _, _ = live
     configure(client)
     assert client.get("/api/v1/models").json()["items"]
-    monkeypatch.setitem(
-        gateway.SUPPORTED_TARGETS, "openrouter", (gateway.OPENROUTER_BASE, {"/credits": "GET"})
-    )
+    adapter = CHANNELS["openrouter"]
+    monkeypatch.setitem(CHANNELS, "openrouter", replace(adapter, protocols=adapter.protocols[1:]))
     assert client.get("/api/v1/models").json()["items"] == []
     response = invoke(client)
-    assert response.status_code == 409 and response.json()["code"] == "model_target_not_allowed"
+    assert response.status_code == 409 and response.json()["code"] == "model_operation_unavailable"
     assert calls == []
 
 

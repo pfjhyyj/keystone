@@ -246,8 +246,11 @@ def transport(provider):
 
 def install(monkeypatch=None):
     """Inject deterministic HTTP responses in tests, including isolated child processes."""
+    from dataclasses import replace
+
+    from keystone.platform.model_access.adapters.channels import CHANNELS, OPENROUTER_BASE
     from keystone.platform.model_access.adapters.http import HttpClient
-    from keystone.platform.model_access.adapters.inference import client as gateway
+    from keystone.platform.model_access.adapters.inference.protocols import ChatCompletions
 
     def set_value(obj, name, value):
         if monkeypatch is None:
@@ -255,34 +258,20 @@ def install(monkeypatch=None):
         else:
             monkeypatch.setattr(obj, name, value)
 
-    from keystone.platform.model_access.adapters.billing.registry import PROVIDERS
+    def set_channel(key, value):
+        if monkeypatch is None:
+            CHANNELS[key] = value
+        else:
+            monkeypatch.setitem(CHANNELS, key, value)
 
-    set_value(PROVIDERS["aliyun_bailian"], "balance_path", "/mock/QueryAccountBalance")
+    set_value(CHANNELS["aliyun_bailian"].billing, "balance_path", "/mock/QueryAccountBalance")
     for provider in ("deepseek", "aliyun_bailian"):
-        set_value(PROVIDERS[provider], "enabled", True)
-        set_value(PROVIDERS[provider], "api_base", gateway.OPENROUTER_BASE)
-    targets = dict(gateway.SUPPORTED_TARGETS)
-    for provider in ("deepseek", "aliyun_bailian"):
-        targets[provider] = (
-            gateway.OPENROUTER_BASE,
-            {
-                "/chat/completions": "POST",
-                "/user/balance": "GET",
-                "/mock/QueryAccountBalance": "GET",
-            },
+        adapter = CHANNELS[provider]
+        set_value(adapter.billing, "enabled", True)
+        set_value(adapter.billing, "api_base", OPENROUTER_BASE)
+        set_channel(
+            provider, replace(adapter, api_base=OPENROUTER_BASE, protocols=(ChatCompletions(),))
         )
-    set_value(gateway, "SUPPORTED_TARGETS", targets)
-    operations = {
-        **gateway.SUPPORTED_OPERATIONS,
-        "deepseek": frozenset({"text.generate"}),
-        "aliyun_bailian": frozenset({"text.generate"}),
-    }
-    set_value(gateway, "SUPPORTED_OPERATIONS", operations)
-    # entries imports this mapping directly.
-    from keystone.platform.model_access.services import entries
-
-    set_value(entries, "SUPPORTED_TARGETS", targets)
-    set_value(entries, "SUPPORTED_OPERATIONS", operations)
 
     async def address(self, hostname):
         return "1.1.1.1"

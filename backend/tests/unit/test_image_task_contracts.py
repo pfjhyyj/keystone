@@ -13,6 +13,7 @@ from keystone.core.time import utcnow
 from keystone.platform.flow.schemas.definitions import ModelRole
 from keystone.platform.model_access.adapters.http import HttpClient, ResponseTooLarge
 from keystone.platform.model_access.adapters.inference import kling
+from keystone.platform.model_access.schemas.errors import AdapterError, QueryLater
 from keystone.platform.model_access.schemas.images import ImageTaskReceipt
 
 
@@ -72,7 +73,7 @@ def test_only_the_original_task_and_supported_https_sources_are_accepted():
         {"status": "failed"},
         {"task_result": {"images": []}},
     ):
-        with pytest.raises(ServiceError):
+        with pytest.raises(AdapterError):
             kling.status({**valid, "data": {**valid["data"], **changes}}, item)
     for url in (
         "http://p2-fdl.klingai.com/file.png",
@@ -82,17 +83,17 @@ def test_only_the_original_task_and_supported_https_sources_are_accepted():
         "https://p2-fdl.klingai.com:8443/file.png",
         "https://p2-fdl.klingai.com/file.png#fragment",
     ):
-        with pytest.raises(ServiceError) as error:
+        with pytest.raises(AdapterError) as error:
             kling.download_host(url)
         assert error.value.code == "model_result_source_denied"
     selected = SimpleNamespace(provider="openlux", api_base=kling.BASE, provider_model="not-kling")
-    with pytest.raises(ServiceError):
+    with pytest.raises(AdapterError):
         kling.submit_body(selected, SimpleNamespace(prompt="x", n=1, resolution="1K"))
 
 
 @pytest.mark.parametrize("header,seconds", [("7", 7), ("999999", 60), ("²", 5), ("9" * 5000, 5)])
 def test_retry_after_is_bounded_even_for_untrusted_numeric_header(header, seconds):
-    with pytest.raises(kling.QueryLater) as error:
+    with pytest.raises(QueryLater) as error:
         kling.check_query(httpx2.Response(429, headers={b"retry-after": header.encode()}))
     assert error.value.seconds == seconds
 
