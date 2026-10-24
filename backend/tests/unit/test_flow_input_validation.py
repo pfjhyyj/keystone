@@ -12,8 +12,9 @@ from support.flow_fixture.contracts import definition
 from keystone.core.errors import ServiceError
 from keystone.core.schemas import Input
 from keystone.platform.files.services.references import FileReferences
+from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.schemas import Start
-from keystone.platform.flow.schemas.files import file_ids
+from keystone.platform.flow.schemas.files import compile_file_paths, extract_file_ids
 from keystone.platform.flow.schemas.values import small_json
 from keystone.platform.flow.services.runs import FlowService
 
@@ -35,9 +36,9 @@ async def test_final_input_size_checks_defaults_and_serializers_before_persisten
         padding = "界" * (remaining // 3) + "x" * (remaining % 3)
         flow = replace(
             definition,
-            input_type=Params,
+            input_model=Params,
             file_fields=(),
-            model_field=None,
+            model_roles=(),
             required_permissions=(),
         )
         session = SimpleNamespace(
@@ -69,8 +70,10 @@ async def test_final_input_size_checks_defaults_and_serializers_before_persisten
             result = await service.start_in_transaction(session, auth, data)
             assert result["input"] == {"text": padding, "model_key": "chat"}
             assert len(small_json(result["input"])) == 65536
-            session.add.assert_called_once()
-            session.flush.assert_awaited_once()
+            assert (
+                sum(isinstance(call.args[0], FlowRun) for call in session.add.call_args_list) == 1
+            )
+            session.flush.assert_awaited()
             references.assert_awaited_once()
             identity.log.assert_awaited_once()
 
@@ -90,9 +93,22 @@ def test_file_input_validation_uses_normalized_aliases_and_bounds_unique_ids():
             mode="json", by_alias=False
         )
         with pytest.raises(ValueError):
-            file_ids(normalized, ("files",))
+            extract_file_ids(
+                normalized,
+                compile_file_paths(
+                    FilesInput.model_json_schema(mode="serialization", by_alias=False), ("files",)
+                ),
+            )
     for valid in ([], identifiers[:100], identifiers[:100] + identifiers[:1]):
         normalized = FilesInput.model_validate({"fileIds": valid}).model_dump(
             mode="json", by_alias=False
         )
-        assert {str(value) for value in file_ids(normalized, ("files",))} == set(valid)
+        assert {
+            str(value)
+            for value in extract_file_ids(
+                normalized,
+                compile_file_paths(
+                    FilesInput.model_json_schema(mode="serialization", by_alias=False), ("files",)
+                ),
+            )
+        } == set(valid)

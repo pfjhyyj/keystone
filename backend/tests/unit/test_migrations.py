@@ -19,7 +19,7 @@ def test_source_migrations_are_independent_of_working_directory(tmp_path, monkey
     settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == source
-    assert migrations.expected_heads(settings) == {"0007"}
+    assert migrations.expected_heads(settings) == {"0012"}
 
 
 def test_installed_package_uses_migrations_beside_working_directory(tmp_path, monkeypatch):
@@ -34,7 +34,7 @@ def test_installed_package_uses_migrations_beside_working_directory(tmp_path, mo
     settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == app / "migrations"
-    assert migrations.expected_heads(settings) == {"0007"}
+    assert migrations.expected_heads(settings) == {"0012"}
 
 
 def test_missing_migration_files_fail_before_database_access(tmp_path, monkeypatch):
@@ -52,7 +52,20 @@ def test_module_paths_and_global_sequence_follow_the_native_revision_chain():
     script = ScriptDirectory.from_config(config)
     root = Path(script.dir) / "versions"
     chain = list(reversed(list(script.walk_revisions())))
-    modules = ("identity", "audit", "dictionary", "files", "model_access", "flow", "worker")
+    modules = (
+        "identity",
+        "audit",
+        "dictionary",
+        "files",
+        "model_access",
+        "flow",
+        "worker",
+        "model_access",
+        "model_access",
+        "model_access",
+        "flow",
+        "model_access",
+    )
     assert len(chain) == len(modules)
     assert len(script.get_heads()) == 1 and len(script.get_bases()) == 1
     assert {Path(revision.path) for revision in chain} == set(root.rglob("*.py"))

@@ -32,7 +32,7 @@ pytestmark = pytest.mark.postgres
 def artifacts(client, monkeypatch):
     runtime = client.app.state.runtime
     runtime.flow_definitions = {definition.key: definition}
-    monkeypatch.setattr(host, "_runtime", runtime)
+    monkeypatch.setattr(host, "_bound_runtime", runtime)
     source = upload(client).json()["id"]
     run_id = start(client, source)
     return client, run_id, source
@@ -54,7 +54,7 @@ def start(client, source, key="first", headers=None):
 
 def put(client, run_id, key="report", data=b"result", **kwargs):
     return client.portal.call(
-        lambda: host.upload(run_id, key, "result.txt", data, content_type="text/plain", **kwargs)
+        lambda: host._upload(run_id, key, "result.txt", data, content_type="text/plain", **kwargs)
     )
 
 
@@ -84,12 +84,12 @@ def require(client, svc, run_id, expected, *, adopt=False, rollback=False):
 
 def test_find_verified_id_missing_key_and_upload_replay_without_new_references(artifacts):
     client, run_id, source = artifacts
-    assert client.portal.call(host.artifact, run_id, "report") is None
-    assert client.portal.call(host.artifact, run_id, "input") is None
+    assert client.portal.call(host._artifact, run_id, "report") is None
+    assert client.portal.call(host._artifact, run_id, "input") is None
     identifier = put(client, run_id)
     assert put(client, run_id) == identifier
-    assert client.portal.call(host.artifact, run_id, "report") == identifier
-    assert client.portal.call(host.artifact, run_id, "other") is None
+    assert client.portal.call(host._artifact, run_id, "report") == identifier
+    assert client.portal.call(host._artifact, run_id, "other") is None
     assert client.get(f"/api/v1/files/{source}/references").json() == [
         {"owner": f"flow:{run_id}", "slot": "input"}
     ]
@@ -181,7 +181,7 @@ def test_execution_revalidates_lifecycle_and_version(artifacts, change, code):
         ),
     )
     with pytest.raises(ServiceError) as rejected:
-        client.portal.call(host.artifact, run_id, "report")
+        client.portal.call(host._artifact, run_id, "report")
     assert rejected.value.code == code
 
 
@@ -219,7 +219,7 @@ def test_historical_read_does_not_resume_a_terminal_or_old_execution(artifacts):
 def test_find_never_treats_an_unusable_registered_file_as_absent(artifacts, change, code):
     client, run_id, _ = artifacts
     identifier = put(client, run_id)
-    assert client.portal.call(host.artifact, run_id, "report") == identifier
+    assert client.portal.call(host._artifact, run_id, "report") == identifier
     rt = client.app.state.runtime
     path = rt.storage.get().root / "files" / UUID(identifier).hex
     if change == "disabled":
@@ -239,7 +239,7 @@ def test_find_never_treats_an_unusable_registered_file_as_absent(artifacts, chan
         (rt.storage.get().root / ".keystone-storage").write_text("invalid", encoding="utf-8")
     with pytest.raises(ServiceError) as rejected:
         client.portal.call(
-            lambda: host.artifact(run_id, "report", max_bytes=1 if change == "limit" else None)
+            lambda: host._artifact(run_id, "report", max_bytes=1 if change == "limit" else None)
         )
     assert rejected.value.code == code
 
@@ -325,7 +325,7 @@ def test_rechecks_after_io_without_holding_a_run_or_identity_transaction(
 
     monkeypatch.setattr(source, "open_local", pause)
     with ThreadPoolExecutor(1) as pool:
-        pending = pool.submit(client.portal.call, host.artifact, run_id, "report")
+        pending = pool.submit(client.portal.call, host._artifact, run_id, "report")
         try:
             assert opened.wait(5)
             if mutation == "reference":
@@ -389,11 +389,11 @@ def test_s3_artifact_queries_use_existing_bounded_integrity_checks(artifacts):
         )
         rt.storage = StorageRegistry(rt.settings)
         identifier = put(client, run_id, storage_key="cloud")
-        assert client.portal.call(host.artifact, run_id, "report") == identifier
+        assert client.portal.call(host._artifact, run_id, "report") == identifier
         key = next(iter(state.objects))
         state.objects[key] = b"broken"
         with pytest.raises(ServiceError) as rejected:
-            client.portal.call(host.artifact, run_id, "report")
+            client.portal.call(host._artifact, run_id, "report")
         assert rejected.value.code == "file_corrupt"
 
 
@@ -402,7 +402,7 @@ def test_maximum_key_and_shared_file_do_not_add_business_distinctness_rules(arti
     key = "x" * 86
     identifier = put(client, run_id, key)
     assert put(client, run_id, key) == identifier
-    assert client.portal.call(host.artifact, run_id, key) == identifier
+    assert client.portal.call(host._artifact, run_id, key) == identifier
     svc = service(client, run_id)
 
     async def alias():
@@ -439,3 +439,29 @@ def test_transaction_rechecks_current_file_access_before_adoption(artifacts, cha
     assert client.get(f"/api/v1/files/{identifier}/references").json() == [
         {"owner": f"flow:{run_id}", "slot": "artifact.report"}
     ]
+
+
+def test_public_context_limits_files_to_run_and_returns_input_copies(artifacts):
+    client, run_id, source = artifacts
+    ctx = host.flow_context(run_id)
+    assert client.portal.call(lambda: ctx.read_file(source, max_bytes=64)) == b"hello"
+    inputs = client.portal.call(ctx.inputs)
+    inputs["source_file_id"] = "changed"
+    assert client.portal.call(ctx.inputs)["source_file_id"] == source
+    own = put(client, run_id)
+    assert client.portal.call(lambda: ctx.read_file(own, max_bytes=64)) == b"result"
+    unrelated = upload(client, key="outside-context").json()["id"]
+    other = put(client, start(client, source, key="other"))
+
+    async def materialize(identifier):
+        async with ctx.materialize_file(identifier):
+            pytest.fail("Unregistered content must not be materialized")
+
+    for identifier in (unrelated, other):
+        for operation in (
+            lambda identifier=identifier: ctx.read_file(identifier, max_bytes=64),
+            lambda identifier=identifier: materialize(identifier),
+        ):
+            with pytest.raises(ServiceError) as error:
+                client.portal.call(operation)
+            assert error.value.code == "flow_file_scope_denied"

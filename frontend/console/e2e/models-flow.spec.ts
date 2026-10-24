@@ -93,9 +93,8 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
   dialog = page.getByRole('dialog')
   const files = await (await page.request.get('/api/v1/files?limit=50')).json()
   const source = files.find((file: { name: string }) => file.name === 'referenced.txt')
-  await dialog
-    .getByLabel('流程输入 JSON')
-    .fill(JSON.stringify({ source_file_id: source.id, model_key: 'openrouter_chat' }))
+  await dialog.getByLabel('流程输入 JSON').fill(JSON.stringify({ source_file_id: source.id }))
+  await choose(dialog, '审查模型', 'openrouter_chat')
   await dialog.getByRole('button', { name: '提交流程', exact: true }).click()
   dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: '运行详情', exact: true })).toBeVisible()
@@ -103,6 +102,17 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
   await expect(dialog).toContainText('模拟审查已完成')
   await expect(dialog).toContainText('0.0024 credits')
   await expect(dialog.locator('.el-timeline-item').first()).toBeVisible()
+  const budgetPanel = dialog.getByRole('region', { name: '运行预算', exact: true })
+  await expect(budgetPanel).toContainText('模型请求 · 已预留')
+  await expect(budgetPanel).toContainText('未结清文本请求：0')
+  const diagnosticModels = dialog.getByRole('region', { name: '关联模型调用', exact: true })
+  await expect(diagnosticModels).toContainText('Agent')
+  await expect(diagnosticModels).toContainText('review_agent')
+  await expect(diagnosticModels).not.toContainText('历史 Step 位置未记录')
+  await expect(dialog.getByRole('region', { name: '关联文件', exact: true })).toContainText(
+    'artifact.report',
+  )
+
   await page.screenshot({
     path: '../../.artifacts/console-flow-detail.png',
     fullPage: true,

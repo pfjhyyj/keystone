@@ -48,13 +48,24 @@ class ContentReader:
 
 
 class FileService:
-    def __init__(self, identity: AccessContext, storage):
+    def __init__(self, identity: AccessContext, storage, *, transfer_scope=None):
         self.identity, self.storage = identity, storage
+        self._transfer_scope, self._transfers = transfer_scope, None
+
+    @property
+    def transfers(self):
+        if self._transfers is None:
+            self._transfers = (
+                self.storage.transfers
+                if self._transfer_scope is None
+                else self.storage.transfers.scoped(self._transfer_scope)
+            )
+        return self._transfers
 
     @contextmanager
     def transfer(self):
         """Acquire before a caller's execution scope; release after all I/O and cleanup."""
-        with self.storage.transfers.slot() as number:
+        with self.transfers.slot() as number:
             transfer = FileTransferService(self, number)
             try:
                 yield transfer
@@ -117,7 +128,7 @@ class FileService:
         ):
             raise ValueError("Invalid reference key")
         reference = (owner, slot) if owner is not None else None
-        async with self.storage.transfers.stage(
+        async with self.transfers.stage(
             chunks,
             data.expected_size,
             data.checksum_sha256,
@@ -391,7 +402,7 @@ class FileService:
         async with self.identity.access("file:content_read") as (session, auth):
             await policy.require(session, auth, await session.get(File, identifier), "content_read")
         slot = (
-            self.storage.transfers.read_slot(timeout=3 if wait_for_slot else 0)
+            self.transfers.read_slot(timeout=3 if wait_for_slot else 0)
             if _transfer_slot is None
             else nullcontext()
         )

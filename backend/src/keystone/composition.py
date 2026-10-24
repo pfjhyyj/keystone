@@ -1,7 +1,9 @@
 """Explicit code declarations; no discovery, global registration or business table."""
 
 from functools import lru_cache
+from importlib import import_module
 from pathlib import Path
+from types import MappingProxyType
 
 from keystone.core.catalog import Catalog, combine_catalogs, merge_catalogs
 from keystone.core.execution.contracts import QueueDefinition
@@ -11,7 +13,7 @@ from keystone.platform.audit.catalog import CATALOG as AUDIT_CATALOG
 from keystone.platform.dictionary.catalog import CATALOG as DICTIONARY_CATALOG
 from keystone.platform.files.catalog import CATALOG as FILES_CATALOG
 from keystone.platform.flow.catalog import CATALOG as FLOW_CATALOG
-from keystone.platform.flow.schemas.definitions import build_definitions
+from keystone.platform.flow.schemas.packages import build_packages, execution_manifest
 from keystone.platform.identity.catalog import CATALOG as IDENTITY_CATALOG
 from keystone.platform.model_access.catalog import CATALOG as MODEL_CATALOG
 from keystone.worker.catalog import CATALOG as WORKER_CATALOG
@@ -30,23 +32,41 @@ PLATFORM_CATALOG = combine_catalogs(
 
 # Import each business's lightweight CATALOG here and add (namespace, CATALOG).
 BUSINESS_CATALOGS: tuple[tuple[str, Catalog], ...] = ()
-FLOW_DEFINITIONS = ()
-# Package import name -> required resource paths. API and Worker hash the same files.
-EXECUTION_PACKAGES: dict[str, tuple[str, ...]] = {}
+FLOW_PACKAGES = ()
 
 
 @lru_cache
 def execution_version():
-    return artifact_version(Path(__file__).resolve().parent, EXECUTION_PACKAGES)
+    resources, manifest = execution_manifest(FLOW_PACKAGES)
+    return artifact_version(Path(__file__).resolve().parent, resources, manifest=manifest)
 
 
 def build_flow_definitions(catalog):
-    return build_definitions(FLOW_DEFINITIONS, catalog.permissions)
+    definitions, _ = build_packages(FLOW_PACKAGES, catalog.permissions)
+    return definitions
+
+
+def flow_package_owners():
+    return MappingProxyType(
+        {
+            definition.key: package.key
+            for package in FLOW_PACKAGES
+            for definition in package.definitions
+        }
+    )
 
 
 def register_workflows():
-    # Application composition adds Worker-only imports here.
-    pass
+    for module in sorted({m for package in FLOW_PACKAGES for m in package.execution_modules}):
+        _register_module(module)
+
+
+@lru_cache
+def _register_module(module):
+    loaded = import_module(module)
+    # Explicit factory exports, once per process; imported decorators already run once.
+    if hasattr(loaded, "register"):
+        loaded.register()
 
 
 def register_maintenance(runtime, health):

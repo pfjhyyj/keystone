@@ -1,7 +1,8 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from keystone.core.database import Base
@@ -9,6 +10,19 @@ from keystone.core.database import Base
 
 class ModelEntry(Base):
     __tablename__ = "model_entries"
+    __table_args__ = (
+        CheckConstraint(
+            "jsonb_typeof(operations) = 'array' AND jsonb_array_length(operations) BETWEEN 1 AND 5 "
+            'AND operations <@ \'["text.generate","text.structured","image.understand",'
+            '"image.generate","image.edit"]\'::jsonb',
+            name="model_entry_operations",
+        ),
+    )
+    operations: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default=lambda: ["text.generate"],
+        server_default=text("'[\"text.generate\"]'::jsonb"),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     key: Mapped[str] = mapped_column(String(64), unique=True)
     channel_id: Mapped[UUID] = mapped_column(ForeignKey("keystone.model_channels.id"), index=True)

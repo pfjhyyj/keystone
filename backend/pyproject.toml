@@ -13,6 +13,7 @@ dependencies = [
     "jsonschema>=4.26,<5",
     "openai==3.22.1",
     "opendal==0.47.10",
+    "pillow==13.0.0",
     "portalocker>=3.2,<4",
     "psycopg[binary]==3.3.6",
     "pycasbin>=2.6,<3",

@@ -1,4 +1,4 @@
-"""Failure boundaries during fixed-identity recovery and executor startup."""
+"""Worker identity ownership, startup ordering and resumable recovery batches."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -101,9 +101,14 @@ def test_identity_loss_during_queue_setup_cannot_launch_executor(client, monkeyp
     original_register = dbos_runtime.DBOSClient.register_queue_async
     launched = []
     stop = None
+    terminated = False
 
     async def disconnected(*args, **kwargs):
+        nonlocal terminated
         await original_register(*args, **kwargs)
+        if terminated:
+            return
+        terminated = True
         async with runtime.database.transaction() as other:
             assert await other.scalar(
                 text("SELECT pg_terminate_backend(:pid)"), {"pid": leases[-1].pid}

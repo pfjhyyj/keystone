@@ -8,11 +8,20 @@ from keystone.core.errors import ServiceError
 
 QUEUE = "keystone-flows"
 ERRORS = {
+    "flow_snapshot_unavailable",
+    "flow_file_scope_denied",
+    "flow_model_role_unavailable",
     "execution_not_authorized",
     "flow_cancelled",
     "execution_version_unavailable",
     "flow_invalid_output",
     "flow_budget_exceeded",
+    "flow_capacity_busy",
+    "flow_operation_interrupted",
+    "flow_process_output_denied",
+    "file_scope_limit",
+    "flow_budget_conflict",
+    "flow_budget_unavailable",
     "flow_timeout",
     "process_timeout",
     "process_output_limit",
@@ -22,6 +31,15 @@ ERRORS = {
     "model_not_found",
     "model_disabled",
     "model_configuration_changed",
+    "model_operation_unavailable",
+    "model_invalid_output",
+    "model_invalid_image",
+    "model_task_failed",
+    "model_task_timeout",
+    "model_dispatch_delayed",
+    "model_task_query_rejected",
+    "model_result_source_denied",
+    "model_result_download_unavailable",
     "model_target_changed",
     "model_input_too_large",
     "model_response_too_large",
@@ -65,11 +83,13 @@ class Engine:
     async def enqueue(self, run, definition):
         await self.client.enqueue_async(
             {
-                "workflow_name": definition.entrypoint,
+                "workflow_name": run.definition_snapshot.get("entrypoint", definition.entrypoint),
                 "queue_name": QUEUE,
                 "workflow_id": workflow_id(run.id),
                 "app_version": run.execution_version,
-                "workflow_timeout": definition.timeout_seconds,
+                "workflow_timeout": run.definition_snapshot.get(
+                    "timeout_seconds", definition.timeout_seconds
+                ),
             },
             str(run.id),
         )

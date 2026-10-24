@@ -6,6 +6,7 @@ import { flowForms } from '../forms'
 import type { FlowDefinition, FlowRun } from '../../../api/flows'
 import { useAction } from '../../../composables/useAction'
 import AppDialog from '../../../components/AppDialog.vue'
+import ModelPicker from '../../../components/models/ModelPicker.vue'
 
 const props = defineProps<{
   open: boolean
@@ -18,6 +19,8 @@ const definitionKey = ref(''),
   input = ref<Record<string, unknown>>({}),
   json = ref('{}'),
   requestKey = ref(crypto.randomUUID())
+const bindings = ref<Record<string, string>>({})
+const selected = computed(() => props.definitions.find((d) => d.key === definitionKey.value))
 const form = computed(() => flowForms[definitionKey.value])
 const { busy, error, notice, run } = useAction()
 
@@ -35,7 +38,22 @@ watch(
 watch(definitionKey, () => {
   input.value = {}
   json.value = '{}'
+  bindings.value = Object.fromEntries((selected.value?.model_roles ?? []).map((r) => [r.key, '']))
 })
+watch(
+  () => selected.value?.model_roles.map((role) => role.key) ?? [],
+  (keys) => {
+    const current = Object.keys(bindings.value)
+    if (current.length !== keys.length || keys.some((key) => !current.includes(key)))
+      bindings.value = Object.fromEntries(
+        keys.map((key) => [
+          key,
+          typeof bindings.value[key] === 'string' ? bindings.value[key] : '',
+        ]),
+      )
+  },
+  { immediate: true },
+)
 watch(
   () => [props.open, props.definitionKey] as const,
   ([open, key]) => {
@@ -44,14 +62,12 @@ watch(
   },
   { immediate: true },
 )
-watch(
-  [definitionKey, input, json],
-  () => {
-    requestKey.value = crypto.randomUUID()
-    notice.value = ''
-  },
-  { deep: true, flush: 'sync' },
-)
+function requestChanged() {
+  requestKey.value = crypto.randomUUID()
+  notice.value = ''
+}
+watch([definitionKey, input, json, bindings], requestChanged, { deep: true, flush: 'sync' })
+watch(() => selected.value?.revision, requestChanged, { flush: 'sync' })
 
 async function submit() {
   if (!can('flow:start')) return
@@ -71,9 +87,13 @@ async function submit() {
       new TextEncoder().encode(JSON.stringify(value)).length > 65536
     )
       throw new Error('流程输入须为不超过 64 KiB 的 JSON 对象')
+    if ((selected.value?.model_roles ?? []).some((r) => !bindings.value[r.key]))
+      throw new Error('请为每个角色选择模型')
     const accepted = await request<FlowRun>('/flow-runs', 'POST', {
       definition_key: definitionKey.value,
       request_key: requestKey.value,
+      definition_revision: selected.value?.revision,
+      model_bindings: bindings.value,
       input: value,
     })
     notice.value = `已受理：${accepted.id}`
@@ -99,6 +119,16 @@ async function submit() {
         /></AppSelect>
       </div>
       <p>{{ definitions.find((d) => d.key === definitionKey)?.description }}</p>
+      <p v-if="selected?.revision">契约版本：{{ selected.revision }}</p>
+      <div v-for="role in selected?.model_roles ?? []" :key="role.key" class="form-field">
+        <ModelPicker
+          v-model="bindings[role.key]!"
+          :label="role.label + '模型'"
+          :operation="role.operation"
+          :delivery="role.delivery ?? 'sync'"
+          :disabled="busy"
+        />
+      </div>
       <component :is="form" v-if="form" :key="definitionKey" v-model="input" :disabled="busy" />
       <template v-else>
         <label

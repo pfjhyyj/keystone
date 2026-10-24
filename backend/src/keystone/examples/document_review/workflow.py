@@ -19,8 +19,9 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import Skills
 
 from keystone.core.errors import ServiceError
-from keystone.platform.flow.workflows import context as host
+from keystone.platform.flow.services.budgets import digest
 from keystone.platform.flow.workflows.agent_model import resolve_model
+from keystone.platform.flow.workflows.context import flow_context
 
 from .contracts import (
     EXCERPT_CHARACTERS,
@@ -72,7 +73,7 @@ skill = selected[0]
 
 async def source_text(run_id, identifier):
     try:
-        content = await host.read_file(run_id, identifier, max_bytes=SOURCE_BYTES)
+        content = await flow_context(run_id).read_file(identifier, max_bytes=SOURCE_BYTES)
         return content.decode("utf-8")
     except UnicodeDecodeError:
         raise ServiceError(422, "flow_invalid_text", "示例流程需要 UTF-8 文本") from None
@@ -86,7 +87,10 @@ async def source_text(run_id, identifier):
 
 @DBOS.step(name="document.inspect", retries_allowed=False)
 async def inspect_source(run_id):
-    data = await host.inputs(run_id)
+    data = await flow_context(run_id).inputs()
+    await flow_context(run_id).consume_tool(
+        "inspect_document", request_digest=digest(["inspect_document", data["source_file_id"]])
+    )
     text = await source_text(run_id, data["source_file_id"])
     return DocumentSummary(
         summary="Source metadata and bounded preview; use read_document for remaining text.",
@@ -109,7 +113,11 @@ async def read_excerpt(run_id, offset, length):
         raise ValueError("Invalid excerpt range")
     if not 1 <= length <= EXCERPT_CHARACTERS:
         raise ValueError("Invalid excerpt length")
-    data = await host.inputs(run_id)
+    data = await flow_context(run_id).inputs()
+    await flow_context(run_id).consume_tool(
+        "read_document",
+        request_digest=digest(["read_document", data["source_file_id"], offset, length]),
+    )
     text = await source_text(run_id, data["source_file_id"])
     if offset > len(text):
         raise ModelRetry("offset must not exceed the source character count")
@@ -172,7 +180,7 @@ async def validate_review(ctx: RunContext[dict], value: Judgment) -> Judgment:
 
 @DBOS.step(name="document.prepare", retries_allowed=False)
 async def prepare(run_id):
-    data = await host.inputs(run_id)
+    data = await flow_context(run_id).inputs()
     text = await source_text(run_id, data["source_file_id"])
     return {"source_file_id": data["source_file_id"], "characters": len(text)}
 
@@ -185,10 +193,10 @@ async def save_report(run_id, judgment, source):
     except (ValidationError, ValueError):
         raise ServiceError(422, "flow_invalid_output", "审查结果未通过业务验收") from None
     content = f"{value.verdict}\n\n{value.summary}\n".encode()
-    file_id = await host.upload(
-        run_id, "report", "review-report.txt", content, content_type="text/plain"
+    file_id = await flow_context(run_id).upload(
+        "report", "review-report.txt", content, content_type="text/plain"
     )
-    return ReviewOutput(**value.model_dump(mode="json"), report_file_id=file_id).model_dump(
+    return ReviewOutput(**value.model_dump(mode="json"), report_file_id=str(file_id)).model_dump(
         mode="json", by_alias=False
     )
 
@@ -199,7 +207,7 @@ async def review(run_id, source):
         "Review the registered source file.",
         deps={
             "run_id": run_id,
-            "model_field": "model_key",
+            "model_role": "review",
             "node_key": "review",
             "agent_key": "review_agent",
             "agent_call_id": str(uuid5(UUID(run_id), "review:0")),

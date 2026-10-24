@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Numeric, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Numeric, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -22,8 +22,24 @@ class ModelInvocation(Base):
             "AND cost_source IN ('response','query'))",
             name="invocation_cost",
         ),
+        CheckConstraint(
+            "operation IN ('text.generate','text.structured','image.understand',"
+            "'image.generate','image.edit')",
+            name="invocation_operation",
+        ),
+        CheckConstraint(
+            "result_context IS NULL OR (jsonb_typeof(result_context) = 'object' "
+            "AND octet_length(result_context::text) <= 16384)",
+            name="invocation_result_context",
+        ),
         Index("ix_model_invocations_user_time", "user_id", "created_at", "id"),
         Index("ix_model_invocations_time", "created_at", "id"),
+        Index(
+            "ix_model_invocations_flow_time",
+            text("(flow_context ->> 'flow_run_id')"),
+            "created_at",
+            "id",
+        ),
         CheckConstraint(
             "cost_check_status IN ('pending','confirmed','blocked','unavailable','exhausted')",
             name="invocation_cost_check_status",
@@ -40,6 +56,10 @@ class ModelInvocation(Base):
             name="invocation_worker_owner",
         ),
     )
+    operation: Mapped[str] = mapped_column(
+        String(32), default="text.generate", server_default="text.generate"
+    )
+    result_context: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     worker_id: Mapped[str | None] = mapped_column(String(64))
     worker_instance_id: Mapped[UUID | None] = mapped_column()

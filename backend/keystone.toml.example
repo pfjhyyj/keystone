@@ -33,6 +33,11 @@ file_upload_timeout_seconds = 3600
 # The default worker_id is "keystone-worker"; override KEYSTONE_WORKER_ID per extra process.
 # Concurrency and shutdown use built-in defaults. Optional tuning: docs/configuration.md.
 
+# Optional shared model send controls (all API/Workers must agree).
+# model_send_interval_ms = 0
+# model_cooldown_seconds = 5
+# model_cooldown_max_seconds = 300
+
 # Model channels/keys are configured manually in the console after startup.
 
 # Optional for non-interactive initialization of an empty installation only.

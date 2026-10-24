@@ -369,7 +369,12 @@ def test_live_stable_attempt_id_never_sends_twice(client, live):
 
 
 @pytest.mark.postgres
-def test_live_mode_real_dbos_worker_uses_same_send_boundary(client, live, tmp_path):
+def test_live_mode_real_dbos_worker_uses_same_send_boundary(client, live, tmp_path, monkeypatch):
+    from keystone import composition
+    from keystone.examples.document_review.contracts import PACKAGE
+
+    monkeypatch.setattr(composition, "FLOW_PACKAGES", (PACKAGE,))
+    composition.execution_version.cache_clear()
     calls, overrides, port = live
     configure(client)
     runtime = client.app.state.runtime

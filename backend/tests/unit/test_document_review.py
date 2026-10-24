@@ -3,7 +3,7 @@
 from dataclasses import replace
 from inspect import unwrap
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -18,6 +18,19 @@ from keystone.examples.document_review.contracts import (
     EXCERPT_CHARACTERS,
     PREVIEW_CHARACTERS,
 )
+
+
+@pytest.fixture(autouse=True)
+def mock_workflow_context(monkeypatch):
+    context = SimpleNamespace(
+        inputs=AsyncMock(),
+        read_file=AsyncMock(),
+        upload=AsyncMock(),
+        consume_tool=AsyncMock(),
+        consume_iteration=AsyncMock(),
+    )
+    monkeypatch.setattr(workflow, "flow_context", lambda _: context)
+    return context
 
 
 @pytest.fixture
@@ -39,7 +52,7 @@ def judgment(source, **overrides):
 )
 async def test_reject_before_any_report_upload(monkeypatch, source, change):
     upload = AsyncMock()
-    monkeypatch.setattr(workflow.host, "upload", upload)
+    monkeypatch.setattr(workflow.flow_context(None), "upload", upload)
     with pytest.raises(ServiceError) as caught:
         await unwrap(workflow.save_report)(str(uuid4()), judgment(source, **change), source)
     assert caught.value.code == "flow_invalid_output"
@@ -49,13 +62,13 @@ async def test_reject_before_any_report_upload(monkeypatch, source, change):
 async def test_acceptance_saves_normalized_result_with_stable_artifact_key(monkeypatch, source):
     file_id, run_id = str(uuid4()), str(uuid4())
     upload = AsyncMock(return_value=file_id)
-    monkeypatch.setattr(workflow.host, "upload", upload)
+    monkeypatch.setattr(workflow.flow_context(None), "upload", upload)
     result = await unwrap(workflow.save_report)(
         run_id, judgment(source, summary="  Checked.  "), source
     )
     assert result == {**judgment(source, summary="Checked."), "report_file_id": file_id}
-    assert upload.call_args.args[:3] == (run_id, "report", "review-report.txt")
-    assert upload.call_args.args[3] == b"reviewed\n\nChecked.\n"
+    assert upload.call_args.args[:2] == ("report", "review-report.txt")
+    assert upload.call_args.args[2] == b"reviewed\n\nChecked.\n"
 
 
 async def test_real_agent_repairs_source_mismatch_within_request_budget(source):
@@ -181,10 +194,10 @@ async def test_tools_return_bounded_unicode_preview_and_exact_excerpt(monkeypatc
     source_id, run_id = str(uuid4()), str(uuid4())
     text = "汉🙂" * 1600
     monkeypatch.setattr(
-        workflow.host, "inputs", AsyncMock(return_value={"source_file_id": source_id})
+        workflow.flow_context(None), "inputs", AsyncMock(return_value={"source_file_id": source_id})
     )
     read = AsyncMock(return_value=text.encode())
-    monkeypatch.setattr(workflow.host, "read_file", read)
+    monkeypatch.setattr(workflow.flow_context(None), "read_file", read)
     summary = await unwrap(workflow.inspect_source)(run_id)
     assert "text" not in summary and summary["preview"] == text[:PREVIEW_CHARACTERS]
     assert summary["truncated"] and summary["characters"] == len(text)
@@ -201,7 +214,7 @@ async def test_tools_return_bounded_unicode_preview_and_exact_excerpt(monkeypatc
 @pytest.mark.parametrize("offset,length", [(-1, 1), (0, 2049), (True, 1), (0, 0)])
 async def test_invalid_tool_ranges_do_not_read_files(monkeypatch, offset, length):
     read = AsyncMock()
-    monkeypatch.setattr(workflow.host, "read_file", read)
+    monkeypatch.setattr(workflow.flow_context(None), "read_file", read)
     with pytest.raises(ValueError):
         await unwrap(workflow.read_excerpt)(str(uuid4()), offset, length)
     read.assert_not_called()
@@ -230,43 +243,47 @@ async def test_failure_stops_before_publication_and_exposes_only_safe_code(
 
 
 async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
+    from pydantic_ai.models import ModelRequestParameters
+
     from keystone.platform.flow.workflows import agent_model
 
     run_id = str(uuid4())
     request = AsyncMock(return_value="accepted")
     monkeypatch.setattr(agent_model, "DBOS", SimpleNamespace(workflow_id="flow:test", step_id=1))
-    monkeypatch.setattr(
-        agent_model.host,
-        "inputs",
-        AsyncMock(
-            return_value={
-                "model": {
-                    "model_entry_id": str(uuid4()),
-                    "channel_id": str(uuid4()),
-                    "provider_model": "test-model",
-                    "api_base": "https://openrouter.ai/api/v1",
-                }
-            }
-        ),
-    )
-    monkeypatch.setattr(agent_model.host, "identity", lambda _: None)
-    monkeypatch.setattr(
-        agent_model.host, "runtime", lambda: SimpleNamespace(models=None, worker_identity=None)
-    )
-    monkeypatch.setattr(agent_model, "ModelEntryService", lambda *_: None)
-    monkeypatch.setattr(agent_model, "OpenAIProvider", lambda **_: None)
-    monkeypatch.setattr(
-        agent_model, "OpenAIChatModel", lambda *_, **__: SimpleNamespace(request=request)
-    )
 
     async def invoke(**kwargs):
         return await kwargs["sdk_request"](None)
 
-    monkeypatch.setattr(agent_model, "ModelRuntime", lambda _: SimpleNamespace(invoke_sdk=invoke))
+    selected = SimpleNamespace(provider_model="test-model")
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def scope():
+        yield
+
+    from keystone.platform.model_access.schemas.invocations import InvocationContext
+
+    def correlation(role, **fields):
+        return InvocationContext(
+            flow_run_id=run_id, model_role=role, workflow_id="flow:test", step_id=1, **fields
+        )
+
+    context = SimpleNamespace(
+        _invocation_context=Mock(side_effect=correlation),
+        execution_scope=scope,
+        consume_iteration=AsyncMock(),
+        _model=AsyncMock(return_value=(SimpleNamespace(invoke_sdk=invoke), selected, uuid4())),
+    )
+    monkeypatch.setattr(agent_model.host, "flow_context", lambda _: context)
+    monkeypatch.setattr(agent_model.host, "_runtime", lambda: SimpleNamespace(worker_identity=None))
+    monkeypatch.setattr(agent_model, "OpenAIProvider", lambda **_: None)
+    monkeypatch.setattr(
+        agent_model, "OpenAIChatModel", lambda *_, **__: SimpleNamespace(request=request)
+    )
     model = agent_model.FlowModel(
         {
             "run_id": run_id,
-            "model_field": "model",
+            "model_role": "review",
             "node_key": "review",
             "agent_key": "review_agent",
             "agent_call_id": str(uuid4()),
@@ -277,12 +294,12 @@ async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
         ({"max_tokens": 2048}, 2048),
         ({"max_tokens": 4096}, 4096),
     ]:
-        assert await model.request([], settings, None) == "accepted"
+        assert await model.request([], settings, ModelRequestParameters()) == "accepted"
         assert request.call_args.args[1]["max_tokens"] == expected
     before = request.await_count
     for invalid in [None, True, 0, 4097, "2048"]:
         with pytest.raises(ServiceError) as caught:
-            await model.request([], {"max_tokens": invalid}, None)
+            await model.request([], {"max_tokens": invalid}, ModelRequestParameters())
         assert caught.value.code == "model_invalid_request"
     assert request.await_count == before
 

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request
 
 from keystone.core.http import Page
 from keystone.platform.flow.schemas import Start
+from keystone.platform.flow.schemas.diagnostics import Diagnostics, DiagnosticSection
 from keystone.platform.flow.services.runs import FlowService
 from keystone.platform.identity.controllers.dependencies import access_context
 
@@ -52,3 +53,12 @@ async def steps(identifier: UUID, request: Request):
 @router.get("/flow-runs/{identifier}/costs")
 async def costs(identifier: UUID, request: Request):
     return await request.app.state.runtime.flow_costs(access_context(request)).execute(identifier)
+
+
+@router.get("/flow-runs/{identifier}/diagnostics", response_model=Diagnostics)
+async def diagnostics(
+    identifier: UUID, request: Request, page: Page, section: DiagnosticSection = "all"
+):
+    return await request.app.state.runtime.flow_diagnostics(access_context(request)).execute(
+        identifier, page.offset, page.limit, section
+    )

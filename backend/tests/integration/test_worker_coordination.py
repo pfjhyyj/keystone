@@ -1,4 +1,4 @@
-"""Regression of multi-Worker admission, connection budgets and release ordering."""
+"""Shared Worker capacity, deployment barriers and connection ownership."""
 
 import asyncio
 from contextlib import asynccontextmanager

@@ -1,6 +1,7 @@
 """Hash the loaded artifact and explicitly declared execution resources."""
 
 import hashlib
+import json
 import re
 from importlib.util import find_spec
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 from keystone.core.errors import ServiceError
 
 
-def artifact_version(root: Path, packages):
+def artifact_version(root: Path, packages, *, manifest=()):
     # Hash the package actually loaded by this process, including wheel installations.
     # A stale deployment source copy must not hide a different installed executor.
     lock = next((p / "uv.lock" for p in root.parents if (p / "uv.lock").is_file()), None)
@@ -19,6 +20,7 @@ def artifact_version(root: Path, packages):
         if path.is_file() and path.suffix in {".py", ".md", ".json", ".txt"}:
             digest.update(path.relative_to(root).as_posix().encode())
             digest.update(path.read_bytes().replace(b"\r\n", b"\n"))
+    digest.update(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode())
     for name, required in sorted(packages.items()):
         _package_version(digest, name, required)
     return digest.hexdigest()
@@ -41,7 +43,17 @@ def _package_version(digest, name, required):
             raise ValueError()
         for resource in required:
             path = (root / resource).resolve()
-            if not path.is_relative_to(root) or not path.is_file():
+            relative = Path(resource)
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or any(
+                    (root / Path(*relative.parts[:i])).is_symlink()
+                    for i in range(1, len(relative.parts) + 1)
+                )
+                or not path.is_relative_to(root)
+                or not path.is_file()
+            ):
                 raise ValueError()
         for path in sorted(root.rglob("*")):
             if "__pycache__" in path.parts or path.suffix in {".pyc", ".pyo"}:

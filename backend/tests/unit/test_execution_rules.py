@@ -18,7 +18,7 @@ HOLD_SECONDS = 30
 @pytest.mark.parametrize("permissions", ["audit:read", ("",), (123,)])
 async def test_invalid_permission_declarations(permissions):
     with pytest.raises(ValueError):
-        async with host.execution_scope(uuid4(), permissions=permissions):
+        async with host._execution_scope(uuid4(), permissions=permissions):
             pytest.fail("Invalid declaration")
 
 
@@ -69,10 +69,10 @@ async def test_monitor_cleanup_cancellation_cannot_replace_business_failure(monk
                     parent.cancel()  # A second cancellation arriving during watcher cleanup.
                     raise
 
-    monkeypatch.setattr(host, "identity", lambda _: Identity())
+    monkeypatch.setattr(host, "_identity", lambda _: Identity())
     failure = ValueError("business failure")
     with pytest.raises(ValueError) as error:
-        async with host.execution_scope(uuid4()):
+        async with host._execution_scope(uuid4()):
             await entered.wait()
             raise failure
     assert error.value is failure

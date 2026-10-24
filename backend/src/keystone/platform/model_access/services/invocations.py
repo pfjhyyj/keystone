@@ -7,6 +7,12 @@ from keystone.platform.audit.services.writer import Actor
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.models import ModelInvocation
+from keystone.platform.model_access.schemas.diagnostics import (
+    ImageSource,
+    InvocationDiagnostics,
+    diagnostic,
+)
+from keystone.platform.model_access.schemas.images import ImageManifest
 from keystone.platform.model_access.services.costs import CostService
 from keystone.platform.model_access.services.queries import history_filters, history_scope
 
@@ -14,6 +20,86 @@ from keystone.platform.model_access.services.queries import history_filters, his
 class InvocationService:
     def __init__(self, identity: AccessContext, clients):
         self.identity, self.clients = identity, clients
+
+    async def image_sources_in_transaction(self, session, auth, run_id, sources):
+        """Trusted caller holds identity/Run authorization; return confirmed edges only.
+
+        Private result evidence stays inside Model Access. A valid key alone never
+        attributes a file: its immutable byte metadata must match the original output.
+        """
+        if len(sources) > 100:
+            raise ValueError("Too many diagnostic sources")
+        if not sources or "model_invocation:read" not in auth.permissions:
+            return set()
+        sources = [ImageSource.model_validate(source) for source in sources]
+        rows = await session.execute(
+            select(ModelInvocation.id, ModelInvocation.operation, ModelInvocation.result_context)
+            .where(
+                *history_scope(auth),
+                ModelInvocation.id.in_({source.invocation_id for source in sources}),
+                ModelInvocation.flow_context["flow_run_id"].astext == str(run_id),
+                ModelInvocation.operation.in_(("image.generate", "image.edit")),
+            )
+            .limit(100)
+        )
+        manifests = {}
+        for row in rows:
+            try:
+                manifest = ImageManifest.model_validate(row.result_context)
+            except ValueError:
+                continue
+            if manifest.operation != row.operation or any(
+                output.artifact_key != f"model.{row.id}.{index}"
+                for index, output in enumerate(manifest.outputs)
+            ):
+                continue
+            manifests[row.id] = manifest
+        confirmed = set()
+        for source in sources:
+            manifest = manifests.get(source.invocation_id)
+            if manifest is not None and any(
+                output.artifact_key == source.artifact_key
+                and output.checksum_sha256 == source.checksum_sha256
+                and output.size_bytes == source.size_bytes
+                and output.content_type == source.content_type
+                for output in manifest.outputs
+            ):
+                confirmed.add((source.file_id, source.invocation_id, source.artifact_key))
+        return confirmed
+
+    async def flow_diagnostics_in_transaction(self, session, auth, run_id, offset, limit):
+        """Trusted caller authorizes Run and holds the current identity transaction.
+
+        No default history window: an authorized historical Run keeps its facts.
+        SQL applies the invocation scope before bounded pagination.
+        """
+        if "model_invocation:read" not in auth.permissions:
+            return InvocationDiagnostics(available=False)
+        rows = list(
+            await session.execute(
+                select(
+                    ModelInvocation.id,
+                    ModelInvocation.operation,
+                    ModelInvocation.status,
+                    ModelInvocation.flow_context,
+                    ModelInvocation.error_code,
+                )
+                .where(
+                    *history_scope(auth),
+                    ModelInvocation.flow_context["flow_run_id"].astext == str(run_id),
+                )
+                .order_by(ModelInvocation.created_at, ModelInvocation.id)
+                .offset(offset)
+                .limit(limit + 1)
+            )
+        )
+        truncated = len(rows) > limit
+        return InvocationDiagnostics(
+            available=True,
+            items=[diagnostic(row) for row in rows[:limit]],
+            truncated=truncated,
+            next_offset=offset + limit if truncated else None,
+        )
 
     async def invocations(self, offset, limit, **filters):
         async with self.identity.access("model_invocation:read") as (session, auth):

@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 
 from keystone.core.schemas import Input
-from keystone.platform.flow.schemas.definitions import Definition
+from keystone.platform.flow.schemas.definitions import FlowDefinition
+from keystone.platform.flow.schemas.packages import FlowPackage
 
 
 class Source(Input):
@@ -17,12 +18,13 @@ class Result(Input):
     file_id: str
 
 
-definition = Definition(
+definition = FlowDefinition(
+    revision="1",
     key="test.local_media",
     name="Local media acceptance",
     description="Local transfer only",
-    input_type=Source,
-    output_type=Result,
+    input_model=Source,
+    output_model=Result,
     entrypoint="test.local_media.run",
     required_permissions=("file:create", "file:content_read"),
     file_fields=("source_file_id",),
@@ -38,8 +40,8 @@ def register():
 
     @DBOS.step(name="test.local_media.copy", retries_allowed=False)
     async def copy(run_id):
-        inputs = await host.inputs(run_id)
-        async with host.materialize_file(run_id, inputs["source_file_id"]) as path:
+        inputs = await host._inputs(run_id)
+        async with host._materialize_file(run_id, inputs["source_file_id"]) as path:
             gate = inputs.get("wait_for")
             if gate:
                 Path(gate + ".entered").touch()
@@ -47,7 +49,7 @@ def register():
                     os._exit(71)
                 while not Path(gate).exists():
                     await asyncio.sleep(0.1)
-            identifier = await host.upload_file(
+            identifier = await host._upload_file(
                 run_id, "copy", path, name="copy.mp4", content_type="video/mp4"
             )
             return {"file_id": identifier}
@@ -60,8 +62,8 @@ def register():
 def install():
     from keystone import composition
 
-    composition.FLOW_DEFINITIONS = (definition,)
-    composition.register_workflows = register
+    composition.FLOW_PACKAGES = PACKAGE
+    composition.execution_version.cache_clear()
     if os.environ.get("KEYSTONE_ACCEPTANCE_CANCEL_FAIL") == "1":
         from keystone.platform.flow.adapters.dbos import Engine
 
@@ -69,3 +71,14 @@ def install():
             raise RuntimeError("Engine cancellation unavailable")
 
         Engine.cancel = unavailable
+
+
+PACKAGE = (
+    FlowPackage(
+        key="local-media-test",
+        host_api_version=1,
+        definitions=(definition,),
+        execution_modules=("support.local_media_stub",),
+        execution_packages=("support",),
+    ),
+)

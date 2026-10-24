@@ -19,7 +19,13 @@ def test_completed_checkpoints_do_not_reset_budgets(client, tmp_path, budget):
     if budget == "deadline":
         runtime = client.app.state.runtime
         definition = runtime.flow_definitions["document.review"]
-        runtime.flow_definitions = {definition.key: replace(definition, timeout_seconds=3)}
+        from keystone import composition
+        from keystone.examples.document_review.contracts import PACKAGE
+
+        changed = replace(definition, timeout_seconds=3)
+        runtime.flow_definitions = {definition.key: changed}
+        composition.FLOW_PACKAGES = (replace(PACKAGE, definitions=(changed,)),)
+        composition.execution_version.cache_clear()
     file_id = upload(client, b"Review this source.").json()["id"]
     run = start(client, file_id).json()
     configuration_code = (
@@ -38,7 +44,10 @@ if BUDGET_KIND == 'total_tokens':
     limits = {'total_tokens': 30}  # Each checkpointed mock response reports 20.
 if BUDGET_KIND == 'deadline':
     limits = {'seconds': 3}
-    composition.FLOW_DEFINITIONS = (replace(workflow.definition, timeout_seconds=3),)
+    from keystone.examples.document_review.contracts import PACKAGE
+    changed = replace(workflow.definition, timeout_seconds=3)
+    composition.FLOW_PACKAGES = (replace(PACKAGE, definitions=(changed,)),)
+    composition.execution_version.cache_clear()
 workflow.BUDGET = replace(workflow.BUDGET, **limits)
 
 original_request = FlowModel.request

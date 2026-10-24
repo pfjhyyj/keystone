@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
 from keystone.platform.flow.models import TERMINAL, FlowRun
+from keystone.platform.flow.schemas.snapshots import matches_definition, read_snapshot
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.identity.services.authorization import load_authorization
 
@@ -12,6 +13,9 @@ async def authorize_execution(session, run, definitions, *, execution_version):
     definition = definitions.get(run.definition_key)
     if run.execution_version != execution_version or definition is None:
         raise ServiceError(409, "execution_version_unavailable", "原执行版本不可用")
+    snapshot = read_snapshot(run.definition_snapshot)
+    if not matches_definition(snapshot, definition):
+        raise ServiceError(409, "execution_version_unavailable", "运行契约与当前制品不匹配")
     if run.status in TERMINAL or run.cancel_requested_at:
         raise ServiceError(409, "flow_cancelled", "流程已结束或正在取消")
     try:

@@ -65,12 +65,13 @@ def test_generated_business_is_importable_and_migration_extends_head(tmp_path, m
         "services",
         "controllers",
     }
-    path = migrations / "0008_tiny_notes_initial.py"
+    revision = f"{int(migration_head(VERSIONS)) + 1:04d}"
+    path = migrations / f"{revision}_tiny_notes_initial.py"
     migration = path.read_text(encoding="utf-8")
-    assert 'revision = "0008"' in migration
+    assert f'revision = "{revision}"' in migration
     assert f'down_revision = "{head}"' in migration
     assert '"tiny_notes_tiny_note"' in migration
-    assert migration_head(migrations) == "0008"
+    assert migration_head(migrations) == revision
 
     monkeypatch.syspath_prepend(str(businesses))
     from tiny_notes.catalog import CATALOG
@@ -174,10 +175,12 @@ def test_scaffold_continues_global_sequence_across_business_modules(tmp_path):
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    path = migrations / f"0009_{namespace}_initial.py"
+    previous = f"{int(migration_head(VERSIONS)) + 1:04d}"
+    revision = f"{int(previous) + 1:04d}"
+    path = migrations / f"{revision}_{namespace}_initial.py"
     value = path.read_text(encoding="utf8")
-    assert 'revision = "0009"' in value and 'down_revision = "0008"' in value
-    assert migration_head(migrations) == "0009"
+    assert f'revision = "{revision}"' in value and f'down_revision = "{previous}"' in value
+    assert migration_head(migrations) == revision
 
 
 def test_scaffold_reads_annotated_metadata_without_executing_migration(tmp_path):
@@ -192,14 +195,16 @@ def test_scaffold_reads_annotated_metadata_without_executing_migration(tmp_path)
         .replace("depends_on = None", "depends_on: str | None = None")
     )
     path.write_text(content, encoding="utf8")
-    assert migration_head(migrations) == "0007"
+    assert migration_head(migrations) == migration_head(VERSIONS)
     path.write_text(
         content + '\nraise RuntimeError("must not import historical DDL")\n', encoding="utf8"
     )
     result = invoke(businesses, migrations)
     assert result.returncode == 0, result.stderr
-    value = (migrations / "0008_tiny_notes_initial.py").read_text(encoding="utf8")
-    assert 'revision = "0008"' in value and 'down_revision = "0007"' in value
+    previous = migration_head(VERSIONS)
+    revision = f"{int(previous) + 1:04d}"
+    value = (migrations / f"{revision}_tiny_notes_initial.py").read_text(encoding="utf8")
+    assert f'revision = "{revision}"' in value and f'down_revision = "{previous}"' in value
 
 
 def test_scaffold_refuses_to_recreate_a_module_with_existing_migrations(tmp_path):
@@ -279,7 +284,7 @@ def test_invalid_migration_history_fails_before_creating_business(tmp_path, mist
             encoding="utf8",
         )
     elif mistake == "missing_sequence":
-        path.rename(path.with_name("0008_worker_initial.py"))
+        path.rename(path.with_name(f"{int(migration_head(VERSIONS)) + 2:04d}_worker_initial.py"))
     elif mistake == "wrong_parent":
         path.write_text(
             content.replace('down_revision = "0006"', 'down_revision = "0004"'),

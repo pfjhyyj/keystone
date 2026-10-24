@@ -16,15 +16,27 @@ export interface Channel {
   balance_checked_at: string | null
   balance_last_attempt_at: string | null
 }
+export type ModelDelivery = 'sync' | 'async'
+export type ModelOperation =
+  'text.generate' | 'text.structured' | 'image.understand' | 'image.generate' | 'image.edit'
+export const operationLabels: Record<ModelOperation, string> = {
+  'text.generate': '文本生成',
+  'text.structured': '结构化文本',
+  'image.understand': '图片理解',
+  'image.generate': '图片生成',
+  'image.edit': '图片编辑',
+}
 export interface ModelEntry {
   id: string
   key: string
   channel_id: string
   provider_model: string
+  operations: ModelOperation[]
   is_active: boolean
 }
 export interface Invocation {
   id: string
+  operation: ModelOperation
   user_id: string | null
   channel_id: string
   model_entry_id: string
@@ -60,8 +72,14 @@ export interface ModelOptions {
 export const modelApi = {
   channels: (offset: number) => request<Channel[]>(`/model-channels?offset=${offset}&limit=50`),
   entries: (offset: number) => request<ModelEntry[]>(`/model-entries?offset=${offset}&limit=50`),
-  catalog: (offset: number) =>
-    request<{ items: { key: string }[] }>(`/models?offset=${offset}&limit=50`),
+  catalog: (
+    offset: number,
+    operation: ModelOperation = 'text.generate',
+    delivery: ModelDelivery = 'sync',
+  ) =>
+    request<{ items: { key: string; operations: ModelOperation[] }[] }>(
+      `/models?offset=${offset}&limit=50&operation=${encodeURIComponent(operation)}&delivery=${delivery}`,
+    ),
   calls: (offset: number, filters: Record<string, string>) =>
     request<Invocation[]>(
       `/model-invocations?${new URLSearchParams({ ...filters, offset: String(offset), limit: '50' })}`,

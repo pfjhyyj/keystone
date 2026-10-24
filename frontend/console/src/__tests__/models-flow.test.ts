@@ -57,6 +57,8 @@ const flow = {
   error_code: null,
 }
 const definition = {
+  revision: '1',
+  model_roles: [],
   key: 'custom.flow',
   name: '自定义流程',
   description: '',
@@ -178,7 +180,14 @@ it('preserves an off-page channel and never sends model key in PATCH', async () 
   expect(selectControl(wrapper, '模型渠道').text()).toContain(channelId)
   await wrapper.get('[role=dialog] form').trigger('submit')
   await flushPromises()
-  expect(writes).toEqual([{ channel_id: channelId, provider_model: 'mock-chat', is_active: true }])
+  expect(writes).toEqual([
+    {
+      channel_id: channelId,
+      provider_model: 'mock-chat',
+      is_active: true,
+      operations: ['text.generate'],
+    },
+  ])
 })
 it('uses identical bounded filters for history and summary and rejects invalid IDs', async () => {
   authorize(['model_invocation:read'])
@@ -546,13 +555,20 @@ it('retains a composed Flow input across reopen and clears it when switching def
   const wrapper = mount(FlowStartDialog, {
     props: {
       open: true,
-      definitions: [{ ...definition, key: 'document.review' }, definition],
+      definitions: [
+        {
+          ...definition,
+          key: 'document.review',
+          model_roles: [{ key: 'review', label: '审查', operation: 'text.generate' }],
+        },
+        definition,
+      ],
       idempotencyDays: 7,
     },
   })
   await flushPromises()
   await wrapper.get('input[placeholder="已知文件 UUID"]').setValue(id)
-  await chooseSelect(wrapper, 'chat', '模型')
+  await chooseSelect(wrapper, 'chat', '审查模型')
   await wrapper.get('form').trigger('submit')
   await flushPromises()
   await wrapper.setProps({ open: false })
@@ -564,11 +580,115 @@ it('retains a composed Flow input across reopen and clears it when switching def
   await wrapper.get('form').trigger('submit')
   await flushPromises()
   expect(bodies[1]).toEqual(bodies[0])
-  expect(bodies[0]!.input).toEqual({ source_file_id: id, model_key: 'chat' })
+  expect(bodies[0]!.input).toEqual({ source_file_id: id })
   await chooseSelect(wrapper, definition.key, '流程')
   await wrapper.get('textarea').setValue('{"count":2}')
   await wrapper.get('form').trigger('submit')
   await flushPromises()
   expect(bodies[2]!.input).toEqual({ count: 2 })
   expect(bodies[2]!.request_key).not.toBe(bodies[1]!.request_key)
+})
+
+it('requires every model role and preserves bindings on unknown response', async () => {
+  authorize(['flow:start', 'model:invoke'])
+  const bodies: {
+    request_key: string
+    input: object
+    model_bindings: object
+    definition_revision: string
+  }[] = []
+  fakeApi((path, init) => {
+    if (init.method === 'POST') {
+      bodies.push(JSON.parse(String(init.body)))
+      return new Response(JSON.stringify({ detail: '暂不可用' }), { status: 503 })
+    }
+    return path.startsWith('/models') ? { items: [{ key: 'chat' }] } : []
+  })
+  const wrapper = mount(FlowStartDialog, {
+    props: {
+      open: true,
+      idempotencyDays: 7,
+      definitions: [
+        {
+          ...definition,
+          model_roles: [
+            { key: 'analyze', label: '分析', operation: 'text.generate' },
+            { key: 'review', label: '复核', operation: 'text.generate' },
+          ],
+        },
+      ],
+    },
+  })
+  await flushPromises()
+  expect(
+    wrapper.findAllComponents(ModelPicker).map((picker) => picker.props('modelValue')),
+  ).toEqual(['', ''])
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  expect(bodies).toHaveLength(0)
+  expect(wrapper.text()).toContain('请为每个角色选择模型')
+  await chooseSelect(wrapper, 'chat', '分析模型')
+  await chooseSelect(wrapper, 'chat', '复核模型')
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  expect(bodies[0]).toEqual(bodies[1])
+  expect(bodies[0]!.input).toEqual({})
+  expect(bodies[0]!.model_bindings).toEqual({ analyze: 'chat', review: 'chat' })
+  expect(bodies[0]!.definition_revision).toBe('1')
+  await wrapper.setProps({
+    definitions: wrapper.props('definitions').map((item) => ({
+      ...item,
+      model_roles: item.model_roles.map((role) => ({ ...role })),
+    })),
+  })
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  expect(bodies[2]).toEqual(bodies[1])
+  await wrapper.setProps({
+    definitions: [
+      {
+        ...definition,
+        revision: '2',
+        model_roles: [
+          { key: 'analyze', label: '分析', operation: 'text.generate' },
+          { key: 'review', label: '复核', operation: 'text.generate' },
+        ],
+      },
+    ],
+  })
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  expect(bodies[3]!.request_key).not.toBe(bodies[2]!.request_key)
+  expect(bodies[3]!.definition_revision).toBe('2')
+  await wrapper.setProps({
+    definitions: [
+      {
+        ...definition,
+        revision: '3',
+        model_roles: [{ key: 'review', label: '复核', operation: 'text.generate' }],
+      },
+    ],
+  })
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  expect(bodies[4]!.model_bindings).toEqual({ review: 'chat' })
+})
+
+it('filters model choices by role operation and reloads when the operation changes', async () => {
+  authorize(['model:invoke'])
+  const paths: string[] = []
+  fakeApi((path) => {
+    paths.push(path)
+    return { items: [{ key: path.includes('text.structured') ? 'structured' : 'vision' }] }
+  })
+  const wrapper = mount(ModelPicker, { props: { modelValue: '', operation: 'text.structured' } })
+  await flushPromises()
+  expect(paths.at(-1)).toContain('operation=text.structured')
+  expect(wrapper.text()).toContain('structured')
+  await wrapper.setProps({ operation: 'image.understand' })
+  await flushPromises()
+  expect(paths.at(-1)).toContain('operation=image.understand')
+  expect(wrapper.text()).toContain('vision')
 })

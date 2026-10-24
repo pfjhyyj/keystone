@@ -16,12 +16,12 @@ log = logging.getLogger(__name__)
 async def prepare(runtime, *, lease):
     # The Worker holds its fixed-identity locks throughout this context.
     # Bind services and close interrupted calls before DBOS starts recovery.
-    host.bind(runtime)
+    host._bind(runtime)
     try:
         await recover_interrupted_calls(runtime.database, runtime.worker_identity, lease=lease)
         yield
     finally:
-        host.bind(None)
+        host._bind(None)
 
 
 def report_ready():

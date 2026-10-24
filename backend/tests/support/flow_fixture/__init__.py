@@ -7,8 +7,7 @@ def register():
 
 def install():
     from keystone import composition
+    from keystone.examples.document_review.contracts import PACKAGE
 
-    from .contracts import definition
-
-    composition.FLOW_DEFINITIONS = (definition,)
-    composition.register_workflows = register
+    composition.FLOW_PACKAGES = (PACKAGE,)
+    composition.execution_version.cache_clear()

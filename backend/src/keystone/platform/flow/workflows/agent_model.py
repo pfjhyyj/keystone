@@ -1,4 +1,4 @@
-from uuid import UUID, uuid5
+from uuid import UUID
 
 from dbos import DBOS
 from pydantic_ai.models import Model
@@ -7,9 +7,6 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from keystone.core.errors import ServiceError
 from keystone.platform.flow.workflows import context as host
-from keystone.platform.model_access.schemas import FlowContext, Selection
-from keystone.platform.model_access.services.entries import ModelEntryService
-from keystone.platform.model_access.services.runtime import ModelRuntime
 
 
 class FlowModel(Model):
@@ -19,7 +16,7 @@ class FlowModel(Model):
     system = "keystone"
 
     def __init__(self, deps):
-        super().__init__()
+        super().__init__(profile={"supports_json_schema_output": True})
         self.deps = deps
 
     async def request(self, messages, model_settings, model_request_parameters):
@@ -30,10 +27,23 @@ class FlowModel(Model):
         if type(limit) is not int or not 1 <= limit <= 4096:
             raise ServiceError(422, "model_invalid_request", "模型输出上限须为 1～4096 token")
         run_id = self.deps["run_id"]
-        inputs = await host.inputs(run_id)
-        selected = Selection.model_validate(inputs[self.deps["model_field"]])
-        invocation_id = uuid5(UUID(run_id), f"model:{DBOS.workflow_id}:{DBOS.step_id}")
-        service = ModelEntryService(host.identity(run_id), host.runtime().models)
+        ctx = host.flow_context(run_id)
+        operation = (
+            "text.structured"
+            if model_request_parameters.output_mode == "native"
+            else "text.generate"
+        )
+        runtime, selected, invocation_id = await ctx._model(
+            self.deps["model_role"], operation=operation
+        )
+        await ctx.consume_iteration("agent_model_request")
+        if operation == "text.structured" and selected.provider == "openrouter":
+            extra = settings.get("extra_body") or {}
+            preferences = extra.get("provider") or {}
+            settings["extra_body"] = {
+                **extra,
+                "provider": {**preferences, "require_parameters": True},
+            }
 
         async def request(sdk):
             model = OpenAIChatModel(
@@ -41,17 +51,17 @@ class FlowModel(Model):
             )
             return await model.request(messages, settings, model_request_parameters)
 
-        return await ModelRuntime(service).invoke_sdk(
+        return await runtime.invoke_sdk(
             invocation_id=invocation_id,
             selection=selected,
-            flow_context=FlowContext(
-                flow_run_id=UUID(run_id),
+            flow_context=ctx._invocation_context(
+                self.deps["model_role"],
                 node_key=self.deps["node_key"],
                 agent_key=self.deps["agent_key"],
                 agent_call_id=UUID(self.deps["agent_call_id"]),
             ),
             sdk_request=request,
-            worker_identity=host.runtime().worker_identity,
+            worker_identity=host._runtime().worker_identity,
         )
 
 

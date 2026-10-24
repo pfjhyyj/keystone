@@ -88,10 +88,18 @@ async def monitor(workspace, limit):
 
 
 class Transfers:
-    def __init__(self, coordination, settings):
+    def __init__(self, coordination, settings, *, scope=None):
         self.coordination = coordination
         self.settings = settings
         self.capacity = Capacity(coordination, settings)
+        self.scope = scope
+
+    def scoped(self, scope):
+        from keystone.platform.files.schemas.transfers import TransferScope
+
+        return Transfers(
+            self.coordination, self.settings, scope=TransferScope.model_validate(scope.model_dump())
+        )
 
     @property
     def limit(self):
@@ -145,6 +153,8 @@ class Transfers:
     @asynccontextmanager
     async def workspace(self, size, *, _slot=None, destination=None):
         # _slot is only for host helpers already holding this registry's slot lease.
+        if type(size) is not int or size < 0:
+            raise ValueError("Invalid workspace byte promise")
         if size > self.limit:
             raise ServiceError(413, "file_temporary_limit", "文件超过临时空间配额")
         with self.slot() if _slot is None else nullcontext(_slot) as number:
@@ -163,7 +173,15 @@ class Transfers:
             targets = [(path.parent, size)]
             if destination is not None:
                 targets.append((destination, size))
-            async with opened(lambda: self.capacity.reserve(targets, slot=number)) as allocation:
+
+            def reserve():
+                if self.scope is None:
+                    return self.capacity.reserve(targets, slot=number)
+                return self.capacity.reserve(
+                    targets, slot=number, scope=self.scope, scope_bytes=size
+                )
+
+            async with opened(reserve) as allocation:
                 workspace = Workspace(path, allocation)
                 try:
                     async with monitor(workspace, size):

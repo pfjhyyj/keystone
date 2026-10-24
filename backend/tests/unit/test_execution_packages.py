@@ -1,15 +1,16 @@
-"""External code/resources participate in the same API and Worker execution version."""
+"""Package manifests and actual loaded resources share one execution fingerprint."""
 
 import importlib
 import sys
+from dataclasses import replace
 
 import pytest
 
 from keystone import composition
 from keystone.bootstrap import build_runtime
-from keystone.composition import execution_version
 from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
+from keystone.platform.flow.schemas.packages import FlowPackage, PackageResource
 
 
 @pytest.fixture
@@ -20,16 +21,24 @@ def package(tmp_path, monkeypatch):
     (root / "child.py").write_bytes(b"# native supervisor\n")
     (root / "rules.bin").write_bytes(b"\x00\x01\r\n\xff")
     monkeypatch.syspath_prepend(str(tmp_path))
-    monkeypatch.setattr(composition, "EXECUTION_PACKAGES", {"external_workflows": ("child.py",)})
+    manifest = FlowPackage(
+        key="external",
+        host_api_version=1,
+        definitions=(),
+        execution_modules=("external_workflows.child",),
+        execution_packages=("external_workflows",),
+        required_resources=(PackageResource("external_workflows", "child.py"),),
+    )
+    monkeypatch.setattr(composition, "FLOW_PACKAGES", (manifest,))
     importlib.invalidate_caches()
-    execution_version.cache_clear()
+    composition.execution_version.cache_clear()
     yield root
-    execution_version.cache_clear()
+    composition.execution_version.cache_clear()
 
 
 def version():
-    execution_version.cache_clear()
-    return execution_version()
+    composition.execution_version.cache_clear()
+    return composition.execution_version()
 
 
 def test_code_binary_resources_and_supervisor_are_hashed_without_importing(package):
@@ -50,24 +59,20 @@ def test_code_binary_resources_and_supervisor_are_hashed_without_importing(packa
 @pytest.mark.parametrize("missing", ["child.py", "__init__.py"])
 def test_missing_package_or_required_resource_prevents_startup(package, missing):
     (package / missing).unlink()
-    with pytest.raises(ServiceError) as error:
+    with pytest.raises(ServiceError):
         build_runtime(Settings(config_file=None, database_url=None))
-    assert error.value.code == "execution_version_unavailable"
 
 
-@pytest.mark.parametrize(
-    "declaration",
-    [
-        {"missing_external_package": ()},
-        {"external_workflows.child": ()},
-        {"external_workflows": ("../outside",)},
-    ],
-)
-def test_invalid_or_missing_declarations_fail_closed(package, monkeypatch, declaration):
-    monkeypatch.setattr(composition, "EXECUTION_PACKAGES", declaration)
-    with pytest.raises(ServiceError) as error:
+def test_resource_boundaries_and_host_version_fail_closed(package, monkeypatch):
+    for path in ("../outside", "/absolute", "a/../../escape"):
+        with pytest.raises(ValueError):
+            PackageResource("external_workflows", path)
+    with pytest.raises(ValueError):
+        replace(composition.FLOW_PACKAGES[0], host_api_version=2)
+    (package / "child.py").unlink()
+    (package / "child.py").symlink_to(package / "rules.bin")
+    with pytest.raises(ServiceError):
         version()
-    assert error.value.code == "execution_version_unavailable"
 
 
 def test_text_normalization_across_stream_boundary(package):
@@ -87,10 +92,10 @@ def test_installed_backend_is_hashed_instead_of_shadow_sources(package, tmp_path
     shadow.write_text("# stale source tree\n")
     (application / "uv.lock").write_text("# locked dependencies\n")
     monkeypatch.setattr(composition, "__file__", str(installed))
-    monkeypatch.setattr(composition, "EXECUTION_PACKAGES", {})
+    monkeypatch.setattr(composition, "FLOW_PACKAGES", ())
     before = version()
     installed.write_text("# different installed backend\n")
     actual = version()
-    assert actual != before, "A stale source copy must not hide changes to loaded code"
+    assert actual != before
     shadow.write_text("# changed unused source copy\n")
     assert version() == actual

@@ -496,7 +496,8 @@ def exercise(source, restored, checks):
         payload = {
             "definition_key": "document.review",
             "request_key": "completed-before-backup",
-            "input": {"source_file_id": file["id"], "model_key": "openrouter"},
+            "input": {"source_file_id": file["id"]},
+            "model_bindings": {"review": "openrouter"},
         }
         run = request(client, "POST", "/flow-runs", 202, json=payload)
         completed = source.finish(client, run["id"])

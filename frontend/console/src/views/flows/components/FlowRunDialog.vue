@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Independent detail sections and request generation, narrowed to one Run.
-import { computed, onMounted, onScopeDispose, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { can, identity } from '../../../stores/session'
 import { ApiError, request } from '../../../api/client'
 import { flowApi, flowStates, ongoing, type FlowRun, type Steps } from '../../../api/flows'
@@ -8,6 +8,7 @@ import type { Costs } from '../../../api/models'
 import { useAction } from '../../../composables/useAction'
 import AppDialog from '../../../components/AppDialog.vue'
 import CostSummary from '../../../components/models/CostSummary.vue'
+import FlowRunDiagnostics from './FlowRunDiagnostics.vue'
 const props = defineProps<{ id: string }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 const row = ref<FlowRun | null>(null),
@@ -19,6 +20,17 @@ const detailError = ref(''),
   loading = ref(false),
   confirming = ref(false)
 const { busy, error, notice, run } = useAction()
+const diagnosticRefresh = ref(0)
+function unavailable(message: string) {
+  generation++
+  row.value = null
+  steps.value = null
+  costs.value = null
+  detailError.value = message
+  loading.value = false
+  confirming.value = false
+  clearInterval(timer)
+}
 let generation = 0,
   alive = true,
   timer: ReturnType<typeof setInterval> | undefined
@@ -40,6 +52,7 @@ async function refresh() {
     if (!current()) return
     row.value = value
     detailError.value = ''
+    diagnosticRefresh.value++
     await Promise.all([
       (async () => {
         try {
@@ -79,11 +92,7 @@ async function refresh() {
     if (current()) {
       detailError.value = reason instanceof Error ? reason.message : '运行查询失败'
       if (reason instanceof ApiError && [401, 403, 404].includes(reason.status)) {
-        row.value = null
-        steps.value = null
-        costs.value = null
-        confirming.value = false
-        clearInterval(timer)
+        unavailable(detailError.value)
       }
     }
   } finally {
@@ -98,10 +107,17 @@ async function cancel() {
     generation++
     row.value = value
     confirming.value = false
+    diagnosticRefresh.value++
     notice.value = '取消请求已受理，等待执行端确认；已发生的费用和文件写入不会撤回。'
     emit('changed')
   })
 }
+watch(
+  () => can('flow:read'),
+  (allowed) => {
+    if (!allowed) unavailable('当前权限不可查看此运行。')
+  },
+)
 onMounted(() => {
   void refresh()
   timer = setInterval(() => {
@@ -143,6 +159,12 @@ onScopeDispose(() => {
       ><dl>
         <dt>流程 / 运行 ID</dt>
         <dd>{{ row.definition_key }}<br />{{ row.id }}</dd>
+        <dt>契约版本</dt>
+        <dd>{{ row.definition_revision ?? '历史契约' }}</dd>
+        <template v-if="Object.keys(row.model_bindings ?? {}).length">
+          <dt>模型角色绑定</dt>
+          <dd v-for="(model, role) in row.model_bindings" :key="role">{{ role }}：{{ model }}</dd>
+        </template>
         <dt>状态</dt>
         <dd>
           <StatusTag :status="row.status">
@@ -194,6 +216,12 @@ onScopeDispose(() => {
           </el-timeline-item>
         </el-timeline></template
       >
+      <FlowRunDiagnostics
+        :id="id"
+        :refresh="diagnosticRefresh"
+        :steps="steps"
+        @unavailable="unavailable"
+      />
       <h3>模型调用费用 · 最近 30 天</h3>
       <el-alert v-if="costError" role="alert" type="error" show-icon :closable="false">{{
         costError

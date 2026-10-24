@@ -46,7 +46,7 @@ def test_scope_checks_before_entry(artifacts, values, code):
     change(client, run_id, **values)
 
     async def operation():
-        async with host.execution_scope(run_id):
+        async with host._execution_scope(run_id):
             pytest.fail("Unauthorized scope must never execute its body")
 
     with pytest.raises(ServiceError) as error:
@@ -60,7 +60,7 @@ def test_missing_run_and_extra_permission_at_entry(artifacts):
     pat_run = start(client, source, "limited", bearer(issued["token"]))
 
     async def operation(identifier, permissions):
-        async with host.execution_scope(identifier, permissions=permissions):
+        async with host._execution_scope(identifier, permissions=permissions):
             pytest.fail("Invalid authority must never reach business code")
 
     for identifier, permissions, code in (
@@ -81,7 +81,7 @@ def test_quick_change_detected_at_boundary_without_a_monitor_tick(artifacts, exp
     client, run_id, _ = artifacts
 
     async def operation():
-        async with host.execution_scope(run_id) as check:
+        async with host._execution_scope(run_id) as check:
             async with client.app.state.runtime.database.transaction() as session:
                 await session.execute(
                     update(FlowRun)
@@ -109,10 +109,10 @@ def test_long_process_cancel_or_pat_revocation_releases_materialized_file(
     local = []
 
     async def operation():
-        async with host.execution_scope(run_id, permissions=("audit:read",)):
-            async with host.materialize_file(run_id, source) as path:
+        async with host._execution_scope(run_id, permissions=("audit:read",)):
+            async with host._materialize_file(run_id, source) as path:
                 local.append(path)
-                await host.run_process(None, argv)
+                await host._run_process(None, argv)
 
     future = client.portal.start_task_soon(operation)
     try:
@@ -137,18 +137,18 @@ def test_nested_scope_keeps_outer_requirements_and_rejects_other_run(artifacts):
     other = start(client, source, "other")
 
     async def operation():
-        async with host.execution_scope(run_id, permissions=("audit:read",)):
-            async with host.execution_scope(run_id):
+        async with host._execution_scope(run_id, permissions=("audit:read",)):
+            async with host._execution_scope(run_id):
                 assert host._execution.get()[1] == frozenset({"audit:read"})
-                result = await host.run_process(None, python("print('ok')"))
+                result = await host._run_process(None, python("print('ok')"))
                 assert result.stdout.strip() == b"ok"
                 with pytest.raises(ServiceError) as error:
-                    async with host.execution_scope(other):
+                    async with host._execution_scope(other):
                         pytest.fail("Cross-run nested scope")
                 assert error.value.code == "flow_not_found"
         assert host._execution.get() is None
         with pytest.raises(RuntimeError, match="active execution scope"):
-            await host.run_process(None, python("pass"))
+            await host._run_process(None, python("pass"))
 
     client.portal.call(operation)
 
@@ -159,13 +159,13 @@ def test_business_failure_is_preserved_and_external_cancel_stays_cancelled(artif
     async def operation():
         failure = ValueError("business failure")
         with pytest.raises(ValueError) as error:
-            async with host.execution_scope(run_id):
+            async with host._execution_scope(run_id):
                 raise failure
         assert error.value is failure
         entered = asyncio.Event()
 
         async def hold():
-            async with host.execution_scope(run_id):
+            async with host._execution_scope(run_id):
                 entered.set()
                 await asyncio.sleep(HOLD_SECONDS)
 
@@ -187,7 +187,7 @@ def test_monitor_retries_transient_dependency_failure_without_logging_secrets(
     caplog,
 ):
     client, run_id, _ = artifacts
-    original = host.identity
+    original = host._identity
     checks = []
 
     class Flaky:
@@ -199,10 +199,10 @@ def test_monitor_retries_transient_dependency_failure_without_logging_secrets(
             async with original(run_id).access() as value:
                 yield value
 
-    monkeypatch.setattr(host, "identity", lambda _: Flaky())
+    monkeypatch.setattr(host, "_identity", lambda _: Flaky())
 
     async def operation():
-        async with host.execution_scope(run_id):
+        async with host._execution_scope(run_id):
             await asyncio.sleep(2.2)
 
     client.portal.call(operation)

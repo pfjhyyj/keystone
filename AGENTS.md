@@ -1,106 +1,46 @@
-# Keystone 协作与设计规范
+# Keystone 协作规范
 
-本文件适用于本仓库。明确的用户要求优先；只分析、只更新文档等阶段限制必须遵守。详细接口、状态机和操作步骤以链接的设计文档为准，不在此复制维护。
+本文件适用于本仓库，用户的明确要求优先。
 
-## 项目与查阅入口
+## 查阅入口
 
-Keystone 是模块化单体平台。API、Worker 与 CLI 共用后端工程和镜像，控制台使用 Vue 与 Element Plus；不因进程分离引入内部 HTTP 服务。
-
-按改动范围阅读相关文档，不必每次通读全部资料：
-
-| 改动范围 | 权威说明 |
+| 范围 | 文档 |
 |---|---|
-| 模块、依赖方向、进程与跨领域边界 | [整体架构](docs/architecture.md) |
-| Task、Flow、DBOS、调度与当前实现/目标设计 | [执行设计](docs/execution-design.md) |
-| 新业务、权限、审计、模型及路由接入 | [模块扩展](docs/extending.md) |
-| 业务 Workflow、Agent、工具和输出验收 | [Flow 开发](docs/flow-development.md) |
-| FlowRun、授权、取消、恢复及人工操作衔接 | [Flow 领域](docs/domains/flow.md) |
-| 其他领域的字段、权限与生命周期 | [领域文档索引](docs/README.md) |
-| 开发命令、测试组织和数据库隔离 | [开发说明](docs/development.md)、[后端测试](backend/tests/README.md) |
-| 发布、迁移与恢复操作 | [部署说明](docs/deployment.md)、[迁移说明](backend/migrations/README.md)、[备份恢复](docs/backup-restore.md) |
+| 进程、领域与依赖方向 | [整体架构](docs/architecture.md) |
+| Task、队列、计划与 Worker | [任务执行](docs/execution-design.md) |
+| FlowDefinition/Package、角色、快照、文件路径、Context、预算与恢复 | [Flow](docs/domains/flow.md)、[接入示例](docs/flow-development.md) |
+| 模型操作、费用与原任务恢复 | [模型接入](docs/domains/model-access.md) |
+| 新业务、权限、审计、迁移 | [模块扩展](docs/extending.md) |
+| 文件及其他领域 | [文档索引](docs/README.md) |
+| 开发、验证、发布与恢复 | [开发](docs/development.md)、[测试](backend/tests/README.md)、[部署](docs/deployment.md)、[备份恢复](docs/backup-restore.md) |
 
-## 设计与工作原则
+## 实现约束
 
-- 先明确资源、操作、事实归属和权限，再决定目录、接口及执行方式。目录统一服务于职责清晰，不能仅靠移动文件完成分层。
-- 优先采用明确的函数、服务对象和显式依赖注入。按真实职责创建目录，避免空目录、纯转发层和为假想扩展预建框架。
-- 遵循已选框架的原生语义，技术适配保持薄层。当前不引入 Module/BaseService 基类、通用 CRUD/Repository、动态模块扫描、插件容器或可替换任务引擎；新增此类抽象前先说明现有方案不能满足的具体需求。
-- 通过 composition/bootstrap 显式装配依赖和声明，模型元数据显式注册。模块不反向依赖应用组装、入口或上层跨领域用例；平台不导入具体业务，core 不反向依赖领域模块。
-- 在用户授权范围内完成必要实现和发现的问题修复，避免反复确认常规选择；不顺带接入新业务。用户要求提交时再提交，不将一次实现请求扩大为发布或部署。
-- 重构保持行为契约。减少无实际用途的旧入口和兼容别名，不为目录调整机械新增 v2；已有数据、在途执行及外部副作用的兼容和恢复必须单独处理。
+- Keystone 是模块化单体。API、Worker、CLI 共用工程和镜像，领域 Service 用 Python 调用协作，不建立内部 HTTP 服务。
+- 先明确资源、操作、事实归属和权限；优先普通函数、Service 对象和显式依赖注入，不引入通用 CRUD/Repository/BaseService、动态扫描、在线插件或第二执行引擎。
+- composition/bootstrap 显式装配声明和依赖；平台不导入业务/examples，core 不依赖领域，跨模块只使用公开 Service/Schema，不导入其他模块 ORM/Adapter。
+- 模块根目录只保留 __init__.py 与轻量 catalog.py；一级目录按需使用 controllers、schemas、models、services、adapters、tasks、workflows，不预建空目录。每个持久实体一个文件，显式导出。
+- Controller 只绑定 HTTP/身份/传输；Service 负责授权、事务、审计和查询，不依赖 Request/Response、DBOS、Worker、FlowContext 或 SDK 协议；Schema 不查库、不加载 ORM/Service/SDK/执行器；Adapter 不拥有业务授权、领域事务，不反向依赖 Service/ORM。具体依赖和技术例外见[架构](docs/architecture.md#54-模块分层与代码规范)。
+- catalog.py 仅声明权限/审计，不加载执行器或注册 Flow。Flow 定义在轻量 schemas，业务流程在 workflows；Task/Workflow 调用 Service，不直接读写领域表。
+- 迁移平铺在 backend/migrations/versions，使用全局连续 NNNN_<module>_<change>.py 和同一线性链。历史 revision 不重写，Worker 相关用 worker 前缀；详细规则和当前 head 见[迁移说明](backend/migrations/README.md)。
 
-## MVC + Service 模块规范
+## 行为保证
 
-`backend/src/keystone/platform/<module>/` 与 `businesses/<module>/` 使用相同规则。Vue 页面承担 View；后端 Schema 是契约与投影，不另建后端 views/。
+- 分别检查功能、对象、文件内容和调用/费用范围；PAT 是当前用户权限与原令牌范围的交集。前端控制不替代后端授权，不统一加入管理员绕过、软删除或审计字段。
+- 业务变更与成功审计同事务，失败/拒绝回滚后记录。跨域原子操作由上层协调同一身份事务，被调 Service 不另开事务、不自行提交；外部 I/O 不持长业务事务。
+- Flow 每次新操作复查原用户/PAT、Run、契约和固定目标，撤权/取消阻止新副作用；已发生的调用、费用、文件和真实终态按事实受限收尾。
+- DBOS 保留原生确定性与 Step 边界；检查点不能保证第三方 exactly-once。模型发送前原子登记，未知结果不换 Run/调用 ID 重发。业务幂等使用稳定标识和唯一约束。
+- 待办先持久提交，再由可恢复扫描投递；不能以提交后的临时协程保证不丢失。Task 不强制创建 FlowRun，Step/Agent 也不自动注册 Task。
+- 并发、批次、等待、重试和输出有界。反复取消仍须等待原生 I/O、进程及文件清理，再释放句柄/许可；失锁后不得换连接继续提交。
+- 代码、目录、声明和资源都影响执行版本。新制品不能冒充旧检查点兼容，保留原制品和身份收尾，不删除 DBOS/未知调用绕过恢复或容量规则。
+- 输入、结果、审计、错误和检查点使用显式白名单，不存凭据、运行句柄、供应商原始正文或未控制异常；费用与预算分别表达。
+- 人工决定由业务 Service 保存版本、决定和引用，自动阶段分为独立 Flow；不建设通用 HumanTask、人工等待或唤醒 API。
 
-模块根目录仅保留包说明 `__init__.py` 和按需提供的轻量 `catalog.py`。一级职责目录限 `controllers/`、`schemas/`、`models/`、`services/`、`adapters/`、`tasks/`、`workflows/`，按需创建。
+## 验证与维护
 
-| 位置 | 职责与限制 |
-|---|---|
-| controllers | HTTP 参数绑定、身份提取、Cookie/CSRF、响应和传输；不直接查询 ORM、开启业务事务或实现业务授权 |
-| services | 用例、业务规则、功能/对象权限、事务、审计和领域查询；不接收 FastAPI Request/Response，不依赖 Controller、SDK 协议实现、Worker 或 DBOS 执行器 |
-| models | 实体、约束、关系和索引；每个文件一个持久化实体，`__init__.py` 显式导出；不处理用例或执行调度 |
-| schemas | 输入校验、轻量契约和显式响应投影；不查库、开事务或调用 Service，不自动遍历 ORM 列生成响应 |
-| adapters | SDK、协议、存储、加密与技术协调；不拥有业务授权、领域事务或任务策略，不反向调用 Service 或领域 ORM |
-| tasks | 后台作业的 DBOS 编排、检查点、投递和执行观测；领域读写调用 Service |
-| workflows | 业务流程、Step、Agent、工具与资源；通过公开 Service 或受控 FlowContext 使用平台能力，不直接访问领域表 |
-| catalog.py | 本模块权限及审计字段白名单；仅为轻量声明，不加载 ORM、Service、SDK 或执行器，也不注册 Flow |
-
-主要依赖方向：`Controller / 执行适配 → Service → 本模块 Model / Adapter`；Controller 和 Service 均可使用 Schema。
-
-- 跨模块通过公开 Service、Schema 或轻量任务声明协作，不导入其他模块的 Model 或 Adapter。角色成员信息使用当前 Authorization.role_ids，授权主体校验调用 Identity Service；文件传输使用 FileService.transfer()，共用卷身份和锁使用 core/local_leases.py。跨领域事务由上层明确用例协调；事务内服务方法明确 session、授权及锁前提，不自行提交。
-- 纯业务判断就近放在 services/，复杂后可拆 services/policies/；不在模块根目录新增 helper.py、policy.py、host.py 等零散实现。
-- Flow 定义位于 `flow/schemas/definitions.py`，业务流程位于 `workflows/<flow>/`；`catalog.py` 始终指权限/审计声明，避免混用概念。
-- 技术适配的例外保持明确：Adapter 可使用 core 的 Worker 登记与锁完成技术协调；`flow/adapters/dbos.py` 仅适配 DBOSClient，不注册执行器，不借例外承担领域事实。
-- 结构规范由架构检查和脚手架共同执行。调整规则时覆盖违规导入、相对导入、嵌套目录及例外绕过，不能只检查正常示例。
-- 迁移文件直接平铺在 `backend/migrations/versions/`，不建立分类或模块子目录。文件名统一为全局连续的 `NNNN_<module>_<change>.py`，通过模块前缀体现归属，Worker 相关使用 worker。共用一条 Alembic 线性链，新 revision 使用四位序号；历史内容和 revision 不重写。命名与顺序由测试及脚手架检查，详细规则见[迁移说明](backend/migrations/README.md)。
-
-## 业务模块、Task、Flow 与 DBOS
-
-| 概念 | 负责什么 |
-|---|---|
-| 业务模块 | 业务资源、规则、状态、人工决定、文件引用、公开操作及业务幂等 |
-| 基础模块 | 身份与权限、文件、模型接入、审计等公共领域能力；各自保留领域规则和 Service，不成为任意业务逻辑的容器 |
-| Service | 可由 HTTP、Task 和 Flow 复用的业务能力；普通同步操作直接调用 |
-| Task | 可独立投递的后台作业，如费用扫描/核对、文件清理和 Flow 状态协调；不是一份通用业务运行记录 |
-| Flow / FlowRun | 平台独立受理、授权、查询和管理的业务流程及其运行记录，具有明确输入、结果和取消语义 |
-| DBOS Workflow / Step | 技术编排和持久检查点，提供队列执行、恢复等能力；不替代领域授权或业务事实 |
-| Schedule / Worker | 时间触发规则 / 承载执行器的进程；两者都不是业务流程 |
-
-- 新增操作先选择同步 Service、后台 Task 或独立 Flow。耗时、步骤数量及是否调用 AI 均不是分类标准；Flow 可以只有一步。
-- 持久后台 Task 与 Flow 共用 DBOS 设施，但保持独立接入语义。维护任务不创建 FlowRun，Flow 内部每个 Step、工具或 Agent 也不自动注册成 Task。
-- 普通查询、配置写入和手动同步查费直接调用 Service。心跳、连接维护等由进程生命周期管理的循环不包装为持久任务；进程内工作必须有明确的等待、取消和收尾责任。
-- DBOS 生命周期、技术投递和计划适配归 core/execution/，领域执行入口归所属模块 tasks/workflows。普通 Service 不依赖 DBOS，不再建立通用 TaskRun/JobRun、自建检查点或第二套执行引擎。
-- 持久编排遵循 DBOS 确定性与 Step 边界；外部 I/O 等非确定性操作使用适当检查点。授权和执行许可按现有约定实时复查，不能以缓存的检查点结果授权新副作用。
-- 领域记录保存费用待办、文件清理事实等；FlowRun 保存受理、取消意图和结果关联；DBOS 保存技术执行、检查点、队列与计划。不得复制成多套互相竞争的状态源。
-- 业务事务先保存可恢复的持久待办，再由 Worker 发现和投递。不能假定业务提交与引擎调用天然原子，也不能靠提交后的临时后台协程保证任务不丢失。
-
-## 人工操作与自动阶段
-
-采用“Flow A → 保存业务结果版本 → 人工业务操作 → 独立 Flow B”。当前平台提供基础服务，具体审核业务及端到端衔接仍需业务实现；以下是接入规则，不表示现有通用审批能力。
-
-- 人工审核、继续和驳回属于业务模块。不建设通用 HumanTask、跨人工操作悬挂的 Run、持久人工等待或唤醒 API。
-- A 成功、人工批准和 B 执行成功是独立事实。驳回不把 A 改成失败；B 失败或取消不倒改批准决定。
-- 业务保存采用的结果版本、来源 Run 和文件引用。人工编辑形成新业务版本，不修改历史 Flow 的输入或结果；B 处理明确批准的版本，不复用 A 的临时执行上下文。
-- 批准即继续时，同一事务完成当前权限检查、资源版本锁定、决定保存、B 的 pending FlowRun 受理、关联及审计。使用业务唯一约束处理跨操作者重复提交，Flow 的 actor/request_key 去重不能替代它。
-- 后续重试作为显式业务尝试，先核实原执行和副作用，不能以新 Run 或请求 ID 绕过未知结果。完整状态与竞争规则见 [Flow 人工操作衔接](docs/domains/flow.md#83-业务人工操作与独立-flow-衔接目标设计)。
-
-## 权限、幂等与恢复约束
-
-- 分别检查功能权限、对象范围、文件内容及调用/费用访问；前端控制不能替代后端授权。不默认赋予管理员绕过，也不统一套用软删除。
-- 在实际执行和受保护 I/O 边界复查当前授权及原 Run 身份/凭据范围，不能换用当前会话扩大权限。撤权或取消后禁止新操作，已发生副作用的事实仍按现有受控规则收尾。
-- 业务变更与成功审计同事务；失败/拒绝审计在回滚后按约定记录。避免在长业务事务内等待外部 I/O。
-- 为副作用定义稳定标识及业务唯一约束。execution_key 复用技术执行，coalesce_key 合并活动工作，二者不能替代业务幂等。
-- DBOS 检查点不能保证第三方 API 只计费一次。保留发送前登记；模型结果未知时不得换新调用 ID 重发，也不得把未知视为失败或未计费。
-- 取消是包含事实落库、资源释放和状态同步的协议。保留资源获取/释放顺序，等待已启动且归当前操作管理的 I/O 和必要收尾；并发、批次、重试、等待和输出均需有界，不引入隐藏 SDK 重试。
-- 执行版本由发布制品指纹约束，目录移动也可能改变版本。新代码不能冒充旧检查点兼容；切换前处理在途执行，必要时以原制品、原 Worker 身份恢复。不能删除 DBOS 执行或更换 Run ID 来绕过恢复和容量约束。
-- Schema、审计、错误及 Step 持久结果使用明确白名单，不泄露凭据、原始供应商正文、运行句柄或未经控制的异常。
-
-## 验证与文档维护
-
-- 根据实际行为选择检查：分层变更验证架构约束；权限、事务、幂等、取消或恢复变更验证相应失败窗口。需要真实 PostgreSQL/DBOS 语义时使用集成测试，避免用 mock 代替关键保证。
-- 测试按依赖放入 unit/integration，共享夹具放 support；unit 不依赖 integration。优先通过事件和显式状态构造竞争条件，避免依赖短暂 sleep 的偶然时序。
-- 集成测试仅使用专用测试入口库及隔离随机库，不能指向开发或业务数据库。运行命令与前置条件见[测试说明](backend/tests/README.md)；仓库统一检查入口为 `backend/.venv/bin/python scripts/check.py`，`--unit` 为部分检查，Windows 使用 `.venv/Scripts/python.exe`。
-- 纯文档改动检查内容、链接和差异即可。行为改动完成相关检查后，不因惯性重复或扩大测试；报告实际验证范围及未验证部分。
-- 架构文档维护边界，领域文档维护字段、权限和生命周期，命令维护在开发/部署说明。修改这些契约时同步文档，避免多处复制同一细节。
-- 明确标注当前实现与目标设计；设计示例不等于可调用接口。FlowPackage、多角色模型、数组文件路径等能力的实现状态以执行设计为准，不因需求中提及就视为已经具备。
-- AGENTS.md 记录稳定规则；临时任务范围放任务说明，逐轮实施记录和测试结果不写入长期设计文档。规则变化时同步本文件及对应架构检查。
+- 按行为验证授权、事务、幂等、取消和失败窗口；真实 PostgreSQL/DBOS/跨进程语义使用集成测试，不用 mock 替代关键保证。
+- 测试按 unit/integration 分层，共享夹具放 support；unit 不导入 integration。竞争优先使用事件/门闩，不依赖短 sleep；每个场景保留独立事实断言，复用重复装配和数据构造。
+- 集成仅使用专用 keystone_test 入口及随机隔离库。统一检查为 backend/.venv/bin/python scripts/check.py，--unit 是部分检查；Windows 使用 .venv/Scripts/python.exe。Ruff 使用 backend/pyproject.toml。
+- 完成相关检查后仅在新改动/失败/未决问题需要时扩大或重跑；纯文档改动检查内容、链接和差异。
+- 架构维护边界、领域维护当前契约、开发文档维护示例、操作手册维护命令；同一规则一处维护。不要保留实施计划、阶段记录、旧文件映射或测试过程日志。
+- 在已授权范围内完成必要实现、review、修复和文档同步，常规选择不反复确认。只有用户要求时提交代码或部署。

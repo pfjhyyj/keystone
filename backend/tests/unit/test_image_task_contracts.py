@@ -1,0 +1,159 @@
+"""Native task and download contracts reject unsafe targets before network I/O."""
+
+import socket
+from datetime import timedelta
+from types import SimpleNamespace
+
+import httpx2
+import pytest
+from pydantic import ValidationError
+
+from keystone.core.errors import ServiceError
+from keystone.core.time import utcnow
+from keystone.platform.flow.schemas.definitions import ModelRole
+from keystone.platform.model_access.adapters.http import HttpClient, ResponseTooLarge
+from keystone.platform.model_access.adapters.inference import kling
+from keystone.platform.model_access.schemas.images import ImageTaskReceipt
+
+
+def receipt(**changes):
+    now = utcnow()
+    return ImageTaskReceipt(
+        **{
+            "task_id": "original-task",
+            "request_digest": "a" * 64,
+            "count": 1,
+            "submitted_at": now,
+            "deadline_at": now + timedelta(seconds=300),
+            "next_query_at": now,
+            **changes,
+        }
+    )
+
+
+def test_task_receipts_keep_original_identity_and_bounded_query_window():
+    item = receipt()
+    assert ImageTaskReceipt.model_validate_json(item.model_dump_json()) == item
+    for changes in (
+        {"queries": 61},
+        {"task_id": "../other-task"},
+        {"count": 0},
+        {"deadline_at": item.submitted_at + timedelta(seconds=301)},
+        {"next_query_at": item.submitted_at - timedelta(seconds=1)},
+    ):
+        with pytest.raises(ValidationError):
+            ImageTaskReceipt.model_validate({**item.model_dump(), **changes})
+    for operation in ("text.generate", "image.edit"):
+        with pytest.raises(ValueError):
+            ModelRole("role", "Role", operation, delivery="async")
+    ModelRole("role", "Role", "image.generate", delivery="async")
+
+
+def test_only_the_original_task_and_supported_https_sources_are_accepted():
+    item = receipt()
+    for state in ("submitted", "processing", "failed"):
+        assert kling.status(
+            {"code": 0, "data": {"task_id": item.task_id, "task_status": state}}, item
+        ) == (state, ())
+    valid = {
+        "code": 0,
+        "data": {
+            "task_id": item.task_id,
+            "task_status": "succeed",
+            "task_result": {
+                "images": [{"url": "https://p2-fdl.klingai.com/result.png?signature=test"}]
+            },
+        },
+    }
+    assert kling.status(valid, item)[0] == "succeed"
+    for changes in (
+        {"task_id": "other-task"},
+        {"task_status": "unknown"},
+        {"status": "failed"},
+        {"task_result": {"images": []}},
+    ):
+        with pytest.raises(ServiceError):
+            kling.status({**valid, "data": {**valid["data"], **changes}}, item)
+    for url in (
+        "http://p2-fdl.klingai.com/file.png",
+        "https://127.0.0.1/file.png",
+        "https://p2-fdl.klingai.com.evil.invalid/file.png",
+        "https://user:secret@p2-fdl.klingai.com/file.png",
+        "https://p2-fdl.klingai.com:8443/file.png",
+        "https://p2-fdl.klingai.com/file.png#fragment",
+    ):
+        with pytest.raises(ServiceError) as error:
+            kling.download_host(url)
+        assert error.value.code == "model_result_source_denied"
+    selected = SimpleNamespace(provider="openlux", api_base=kling.BASE, provider_model="not-kling")
+    with pytest.raises(ServiceError):
+        kling.submit_body(selected, SimpleNamespace(prompt="x", n=1, resolution="1K"))
+
+
+@pytest.mark.parametrize("header,seconds", [("7", 7), ("999999", 60), ("²", 5), ("9" * 5000, 5)])
+def test_retry_after_is_bounded_even_for_untrusted_numeric_header(header, seconds):
+    with pytest.raises(kling.QueryLater) as error:
+        kling.check_query(httpx2.Response(429, headers={b"retry-after": header.encode()}))
+    assert error.value.seconds == seconds
+
+
+async def test_download_uses_one_pinned_public_address_original_sni_and_no_secret(monkeypatch):
+    addresses, calls = [], []
+
+    def resolve(host, *args):
+        addresses.append(host)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.1.1.1", 443))]
+
+    async def send(request):
+        calls.append(request)
+        return httpx2.Response(200, content=b"bounded")
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    http = HttpClient()
+    monkeypatch.setattr(http, "transport", lambda provider: httpx2.MockTransport(send))
+    result = await http.get_public_bytes(
+        "openlux",
+        "https://p2-fdl.klingai.com/result.png?signature=private",
+        hostname="p2-fdl.klingai.com",
+        limit=7,
+        check_status=kling.check_download,
+    )
+    assert result == b"bounded" and addresses == ["p2-fdl.klingai.com"]
+    assert len(calls) == 1
+    assert calls[0].url.host == "1.1.1.1" and calls[0].headers["host"] == "p2-fdl.klingai.com"
+    assert calls[0].extensions["sni_hostname"] == "p2-fdl.klingai.com"
+    assert "authorization" not in calls[0].headers
+    with pytest.raises(ResponseTooLarge):
+        await http.get_public_bytes(
+            "openlux",
+            "https://p2-fdl.klingai.com/result.png",
+            hostname="p2-fdl.klingai.com",
+            limit=6,
+            check_status=kling.check_download,
+        )
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "169.254.169.254", "10.0.0.1", "::1"])
+async def test_private_download_addresses_are_denied_before_transport(monkeypatch, address):
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443)),
+        ],
+    )
+    http = HttpClient()
+
+    def forbidden(provider):
+        raise AssertionError("No transport may open for a private address")
+
+    monkeypatch.setattr(http, "transport", forbidden)
+    with pytest.raises(ServiceError) as error:
+        await http.get_public_bytes(
+            "openlux",
+            "https://p2-fdl.klingai.com/result.png",
+            hostname="p2-fdl.klingai.com",
+            limit=7,
+            check_status=kling.check_download,
+        )
+    assert error.value.code == "model_result_source_denied"

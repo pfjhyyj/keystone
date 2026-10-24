@@ -5,6 +5,7 @@ from fastapi import APIRouter, Request
 from keystone.core.http import Page
 from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.model_access import schemas
+from keystone.platform.model_access.schemas.operations import Delivery, Operation
 from keystone.platform.model_access.services.entries import ModelEntryService
 
 router = APIRouter(prefix="/api/v1", tags=["models"])
@@ -30,5 +31,12 @@ async def edit_entry(identifier: UUID, data: schemas.EntryEdit, request: Request
 
 
 @router.get("/models")
-async def catalog(request: Request, page: Page):
-    return await _service(request).catalog(page.offset, page.limit)
+async def catalog(
+    request: Request,
+    page: Page,
+    operation: Operation = "text.generate",
+    delivery: Delivery = "sync",
+):
+    return await _service(request).catalog(
+        page.offset, page.limit, operation=operation, delivery=delivery
+    )

@@ -4,6 +4,8 @@ import { can } from '../../stores/session'
 import { request } from '../../api/client'
 import {
   modelApi,
+  operationLabels,
+  type ModelOperation,
   providers,
   balanceStates,
   type Channel,
@@ -37,6 +39,7 @@ const name = ref(''),
 const key = ref(''),
   channelId = ref(''),
   upstream = ref('')
+const operations = ref<ModelOperation[]>(['text.generate'])
 async function loadOptions() {
   optionsError.value = ''
   try {
@@ -64,6 +67,7 @@ function entry(row: ModelEntry | null) {
   key.value = row?.key ?? ''
   channelId.value = row?.channel_id ?? ''
   upstream.value = row?.provider_model ?? ''
+  operations.value = [...(row?.operations ?? ['text.generate'])]
   active.value = row?.is_active ?? true
   error.value = ''
   form.value = 'entry'
@@ -89,6 +93,7 @@ async function save() {
       const body = {
         channel_id: channelId.value,
         provider_model: upstream.value,
+        operations: operations.value,
         is_active: active.value,
       }
       if (editingEntry.value)
@@ -305,6 +310,13 @@ onMounted(() => {
                 row.provider_model
               }}</template></el-table-column
             >
+            <el-table-column label="操作能力" min-width="160"
+              ><template #default="{ row }">{{
+                (row.operations ?? ['text.generate'])
+                  .map((op: ModelOperation) => operationLabels[op])
+                  .join('、')
+              }}</template></el-table-column
+            >
             <el-table-column label="状态" min-width="120"
               ><template #default="{ row: row }"
                 ><StatusTag :status="row.is_active ? 'active' : 'disabled'">{{
@@ -423,8 +435,18 @@ onMounted(() => {
               required
               pattern="[a-z][a-z0-9_-]{0,63}" /></label
           ><ChannelPicker v-model="channelId" :disabled="busy" /><label
-            >上游模型<el-input v-model="upstream" required maxlength="128" /></label
-        ></template>
+            >上游模型<el-input v-model="upstream" required maxlength="128"
+          /></label>
+          <fieldset>
+            <legend>模型操作能力</legend>
+            <el-checkbox-group v-model="operations" aria-label="模型操作能力">
+              <el-checkbox v-for="(label, op) in operationLabels" :key="op" :value="op">{{
+                label
+              }}</el-checkbox>
+            </el-checkbox-group>
+            <p>按上游模型实际能力配置。可用目录还会核验渠道协议支持范围。</p>
+          </fieldset>
+        </template>
         <el-checkbox class="check-option" v-model="active">启用配置</el-checkbox>
         <p>配置只停用，不删除。服务商和模型 key 创建后不可修改。</p>
         <el-button :disabled="busy" native-type="submit" type="primary">{{

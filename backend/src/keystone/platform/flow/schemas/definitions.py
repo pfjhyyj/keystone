@@ -1,75 +1,156 @@
-"""Lightweight code contracts. Importing this directory never registers an executor."""
+"""Lightweight, immutable Flow contracts; importing never registers an executor."""
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from types import MappingProxyType
 
 from pydantic import BaseModel
 
-from keystone.platform.flow.schemas.files import validate_file_paths
+from keystone.platform.flow.schemas.budgets import FlowLimits
+from keystone.platform.flow.schemas.files import compile_file_paths
+from keystone.platform.model_access.schemas.operations import OPERATIONS, Delivery, Operation
 
 
 @dataclass(frozen=True)
-class Definition:
+class ModelRole:
+    key: str
+    label: str
+    operation: Operation = "text.generate"
+    delivery: Delivery = "sync"
+
+    def __post_init__(self):
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", self.key):
+            raise ValueError("Invalid model role key")
+        if not 1 <= len(self.label.strip()) <= 128 or self.operation not in OPERATIONS:
+            raise ValueError("Invalid model role label or operation")
+        if (
+            self.delivery not in {"sync", "async"}
+            or self.delivery == "async"
+            and self.operation != "image.generate"
+        ):
+            raise ValueError("Unsupported model delivery")
+        object.__setattr__(self, "label", self.label.strip())
+
+
+@dataclass(frozen=True)
+class FlowDefinition:
     key: str
     name: str
     description: str
-    input_type: type[BaseModel]
-    output_type: type[BaseModel]
+    input_model: type[BaseModel]
+    output_model: type[BaseModel]
     entrypoint: str
+    revision: str
     required_permissions: tuple[str, ...] = ()
     file_fields: tuple[str, ...] = ()
     output_file_fields: tuple[str, ...] = ()
-    # Trusted code declaration, not a new persisted field or public import path.
-    model_field: str | None = None
+    model_roles: tuple[ModelRole, ...] = ()
+
     timeout_seconds: int = 300
+    limits: FlowLimits = field(default_factory=FlowLimits)
+
+    def __post_init__(self):
+        object.__setattr__(
+            self,
+            "limits",
+            FlowLimits.model_validate(
+                self.limits.model_dump() if isinstance(self.limits, FlowLimits) else self.limits
+            ),
+        )
+        for name in ("required_permissions", "file_fields", "output_file_fields", "model_roles"):
+            object.__setattr__(self, name, tuple(getattr(self, name)))
+        if not self.revision.strip() or len(self.revision) > 64:
+            raise ValueError("Invalid Flow revision")
+        if type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 86400:
+            raise ValueError("Flow timeout must be between 1 and 86400 seconds")
+        for model in (self.input_model, self.output_model):
+            if (
+                not isinstance(model, type)
+                or not issubclass(model, BaseModel)
+                or getattr(model, "__pydantic_root_model__", False)
+                or model.model_json_schema().get("type") != "object"
+                or model.model_json_schema(mode="serialization", by_alias=False).get("type")
+                != "object"
+            ):
+                raise ValueError("Flow contracts must be object models")
+        if self.input_model.model_config.get("extra") != "forbid":
+            raise ValueError("Flow input must forbid extra fields")
+        if len(self.model_roles) > 16 or len({r.key for r in self.model_roles}) != len(
+            self.model_roles
+        ):
+            raise ValueError("Duplicate or excessive model roles")
+        if self.model_roles and "model:invoke" not in self.required_permissions:
+            raise ValueError("Model roles require model:invoke")
+        operations = {role.operation for role in self.model_roles}
+        file_permissions = set()
+        if operations & {"image.understand", "image.generate", "image.edit"}:
+            file_permissions.add("file:content_read")
+        if operations & {"image.generate", "image.edit"}:
+            file_permissions.add("file:create")
+        if not file_permissions <= set(self.required_permissions):
+            raise ValueError("Image roles require explicit file permissions")
+        compile_file_paths(self.input_schema(), self.file_fields)
+        compile_file_paths(self.output_schema(), self.output_file_fields)
+
+    def input_schema(self):
+        return self.input_model.model_json_schema(mode="serialization", by_alias=False)
 
     def output_schema(self):
-        # Match workflow model_dump(mode="json", by_alias=False), including serializers.
-        return self.output_type.model_json_schema(mode="serialization", by_alias=False)
+        return self.output_model.model_json_schema(mode="serialization", by_alias=False)
 
     def view(self):
         return {
             "key": self.key,
+            "revision": self.revision,
+            "host_api_version": 1,
             "name": self.name,
             "description": self.description,
-            "input_schema": self.input_type.model_json_schema(),
+            "input_schema": self.input_model.model_json_schema(),
             "output_schema": self.output_schema(),
             "entrypoint": self.entrypoint,
             "required_permissions": self.required_permissions,
             "file_fields": self.file_fields,
             "output_file_fields": self.output_file_fields,
+            "model_roles": [
+                {"key": r.key, "label": r.label, "operation": r.operation, "delivery": r.delivery}
+                for r in self.model_roles
+            ],
             "timeout_seconds": self.timeout_seconds,
+            "limits": self.limits.model_dump(mode="json"),
         }
 
-    def snapshot(self):
+    def snapshot(self, *, package_key, model_bindings):
         return {
+            "format_version": 2,
+            "package_key": package_key,
+            "host_api_version": 1,
+            "revision": self.revision,
+            "entrypoint": self.entrypoint,
+            "required_permissions": list(self.required_permissions),
+            "timeout_seconds": self.timeout_seconds,
+            "limits": self.limits.model_dump(mode="json"),
+            "input_schema": self.input_schema(),
             "output_schema": self.output_schema(),
+            "file_fields": list(self.file_fields),
             "output_file_fields": list(self.output_file_fields),
+            "model_roles": {
+                r.key: {"operation": r.operation, "delivery": r.delivery} for r in self.model_roles
+            },
+            "model_bindings": model_bindings,
         }
 
 
 def build_definitions(definitions, permissions):
-    """Validate the complete explicit list and freeze this application's directory."""
     result, entrypoints = {}, set()
     for definition in definitions:
-        if (
-            type(definition.timeout_seconds) is not int
-            or not 1 <= definition.timeout_seconds <= 86400
-        ):
-            raise ValueError("Flow timeout must be between 1 and 86400 seconds")
-        if not definition.key or definition.key in result:
+        if not definition.key.strip() or len(definition.key) > 100 or definition.key in result:
             raise ValueError("Empty or duplicate Flow definition key")
+        if len(set(definition.required_permissions)) != len(definition.required_permissions):
+            raise ValueError("Duplicate Flow permissions")
         if set(definition.required_permissions) - permissions.keys():
             raise ValueError("Flow requires undeclared permissions")
         if not definition.entrypoint.strip() or definition.entrypoint in entrypoints:
             raise ValueError("Empty or duplicate Flow entrypoint")
-        input_schema = definition.input_type.model_json_schema(mode="serialization", by_alias=False)
-        if definition.model_field is not None and definition.model_field not in input_schema.get(
-            "properties", {}
-        ):
-            raise ValueError("Flow model field must be declared in its input")
-        validate_file_paths(input_schema, definition.file_fields)
-        validate_file_paths(definition.output_schema(), definition.output_file_fields)
         result[definition.key] = definition
         entrypoints.add(definition.entrypoint)
     return MappingProxyType(result)

@@ -9,6 +9,7 @@ from keystone.core.errors import ServiceError
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor, record
 from keystone.platform.files.models import File, FileReference
+from keystone.platform.files.schemas.diagnostics import ReferenceDiagnostic, ReferenceDiagnostics
 from keystone.platform.files.services import access as policy
 from keystone.platform.identity.services.access import AccessContext
 
@@ -103,6 +104,47 @@ class FileReferenceService:
     def __init__(self, identity: AccessContext):
         self.identity = identity
 
+    async def flow_diagnostics_in_transaction(self, session, auth, run_id, offset, limit):
+        """Trusted caller authorizes this Run under its current identity transaction.
+
+        References never supply inspect or content grants. Filter before pagination.
+        """
+        if "file:inspect" not in auth.permissions:
+            return ReferenceDiagnostics(available=False)
+        auth.require("file:inspect")
+        rows = list(
+            await session.execute(
+                select(
+                    FileReference.file_id,
+                    FileReference.slot,
+                    File.checksum_sha256,
+                    File.size_bytes,
+                    File.content_type,
+                )
+                .join(File, File.id == FileReference.file_id)
+                .where(FileReference.owner == f"flow:{run_id}", policy.scope(auth, "inspect"))
+                .order_by(FileReference.slot, FileReference.file_id)
+                .offset(offset)
+                .limit(limit + 1)
+            )
+        )
+        truncated = len(rows) > limit
+        return ReferenceDiagnostics(
+            available=True,
+            items=[
+                ReferenceDiagnostic(
+                    file_id=row.file_id,
+                    slot=row.slot,
+                    checksum_sha256=row.checksum_sha256,
+                    size_bytes=row.size_bytes,
+                    content_type=row.content_type,
+                )
+                for row in rows[:limit]
+            ],
+            truncated=truncated,
+            next_offset=offset + limit if truncated else None,
+        )
+
     async def release_in_transaction(self, session, auth, references):
         """Release exact (owner, slot, file_id) claims approved by trusted business code.
 
@@ -186,3 +228,34 @@ async def retain_registered_output(session, owner, identifier):
     if registered is None or file.status not in {"active", "disabled"}:
         raise ServiceError(409, "file_reference_invalid", "文件没有当前业务的有效使用记录")
     await retain_artifact(session, owner, file, "output")
+
+
+async def require_usage(session, owner, identifier):
+    """Trusted caller authorizes owner; content authorization remains a separate check."""
+    exists = await session.scalar(
+        select(FileReference.file_id)
+        .where(FileReference.owner == owner, FileReference.file_id == identifier)
+        .limit(1)
+    )
+    if exists is None:
+        raise ServiceError(403, "file_usage_denied", "文件没有当前业务的使用记录")
+
+
+async def describe_inputs_in_transaction(session, auth, identifiers):
+    """Caller holds its identity transaction. Read immutable sizes before Budget→File locks.
+
+    The caller must retain/revalidate references in the same transaction afterwards.
+    No storage access, write or independent commit; no File ORM crosses the boundary.
+    """
+    values = []
+    for identifier in sorted({UUID(str(value)) for value in identifiers}):
+        file = await session.get(File, identifier)
+        await policy.require(session, auth, file, "content_read")
+        values.append(
+            {
+                "id": str(identifier),
+                "size_bytes": file.size_bytes,
+                "checksum_sha256": file.checksum_sha256,
+            }
+        )
+    return values

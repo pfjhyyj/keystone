@@ -5,7 +5,9 @@ even after a successful call.
 """
 
 import asyncio
-from contextlib import AsyncExitStack, aclosing
+import hashlib
+import json
+from contextlib import AsyncExitStack, aclosing, nullcontext
 from uuid import uuid4
 
 from sqlalchemy.dialects.postgresql import insert
@@ -16,8 +18,14 @@ from keystone.platform.model_access.adapters.billing.contracts import Receipt
 from keystone.platform.model_access.adapters.inference.errors import classify_error
 from keystone.platform.model_access.adapters.inference.transport import Observation
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
+from keystone.platform.model_access.schemas.images import (
+    ImageBatch,
+    ImageManifest,
+    ImageTaskReceipt,
+)
 from keystone.platform.model_access.services.cost_context import bind_channel
 from keystone.platform.model_access.services.cost_policy import initialize_check
+from keystone.platform.model_access.services.dispatch import ModelDispatchService
 from keystone.platform.model_access.services.queries import locked
 
 
@@ -55,9 +63,12 @@ async def settle(coroutine):
 
 
 class ModelRuntime:
-    def __init__(self, service):
+    def __init__(self, service, *, admission=None, settlement=None, operation_scope=None):
         self.service = service
         self.identity, self.clients = service.identity, service.clients
+        self.dispatch = ModelDispatchService(self.identity.database, self.identity.settings)
+        self.admission, self.settlement = admission, settlement
+        self.operation_scope = operation_scope
 
     async def invoke(self, data, *, invocation_id=None, selection=None):
         return await completed(self.events(data, invocation_id=invocation_id, selection=selection))
@@ -79,6 +90,157 @@ class ModelRuntime:
         )
         return result["content"]
 
+    @staticmethod
+    def image_digest(data, operation):
+        raw = json.dumps(
+            [operation, data.model_dump(mode="json")],
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+        return hashlib.sha256(raw).hexdigest()
+
+    async def image_manifest(self, identifier, *, data, selection, context):
+        async with self.identity.access("model:invoke") as (session, _):
+            row = await session.get(ModelInvocation, identifier)
+            if row is None:
+                return None
+            expected = context.model_dump(mode="json", exclude_none=True)
+            if (
+                row.flow_context != expected
+                or row.operation != selection.operation
+                or row.model_entry_id != selection.model_entry_id
+                or row.channel_id != selection.channel_id
+                or row.provider_model != selection.provider_model
+                or row.status != "succeeded"
+            ):
+                raise ServiceError(
+                    409, "model_result_unavailable", "原图片调用无法恢复，禁止重新发送"
+                )
+            try:
+                manifest = ImageManifest.model_validate(row.result_context)
+                if (
+                    manifest.operation != selection.operation
+                    or manifest.request_digest != self.image_digest(data, selection.operation)
+                ):
+                    raise ValueError()
+                for index, output in enumerate(manifest.outputs):
+                    if output.artifact_key != f"model.{identifier}.{index}":
+                        raise ValueError()
+                return manifest
+            except (ValueError, TypeError):
+                raise ServiceError(409, "model_result_unavailable", "原图片结果证据无效") from None
+
+    async def invoke_image(
+        self, data, *, images, selection, invocation_id, context, worker_identity
+    ):
+        from keystone.core.asyncio import blocking
+        from keystone.platform.model_access.adapters.inference.images import (
+            image_batch,
+            image_data_uri,
+        )
+        from keystone.platform.model_access.schemas.images import (
+            MAX_INPUT_IMAGE_BYTES,
+            ImageEditRequest,
+            ImageGenerateRequest,
+        )
+
+        edit = isinstance(data, ImageEditRequest)
+        operation = "image.edit" if edit else "image.generate"
+        contract = ImageEditRequest if edit else ImageGenerateRequest
+        data = contract.model_validate(data.model_dump(mode="json"))
+        if selection.operation != operation or len(images) != (len(data.images) if edit else 0):
+            raise ServiceError(422, "model_invalid_request", "图片操作与请求类型不匹配")
+        if sum(len(image[1]) for image in images) > MAX_INPUT_IMAGE_BYTES:
+            raise ServiceError(413, "model_input_too_large", "图片累计大小超过上限")
+        references = []
+        for content_type, content, _ in images:
+            encoded = await blocking(image_data_uri, content, content_type)
+            references.append({"type": "image_url", "image_url": {"url": encoded}})
+        digest = self.image_digest(data, operation)
+
+        async def send(sdk):
+            body = data.model_dump(mode="json", exclude={"images"})
+            body["model"] = selection.provider_model
+            body["provider"] = {"allow_fallbacks": False}
+            if edit:
+                body["input_references"] = references
+            response = await sdk.post("/images", body=body, cast_to=dict)
+            return await blocking(image_batch, response, data, invocation_id, digest, operation)
+
+        return await self.invoke_sdk(
+            selection=selection,
+            invocation_id=invocation_id,
+            sdk_request=send,
+            flow_context=context,
+            worker_identity=worker_identity,
+        )
+
+    async def invoke_vision(
+        self, data, *, images, selection, invocation_id, context, worker_identity
+    ):
+        from keystone.core.asyncio import blocking
+        from keystone.platform.model_access.adapters.inference.images import image_data_uri
+        from keystone.platform.model_access.schemas.images import (
+            MAX_INPUT_IMAGE_BYTES,
+            VisionRequest,
+        )
+
+        data = VisionRequest.model_validate(data.model_dump(mode="json"))
+        if selection.operation != "image.understand" or len(images) != len(data.images):
+            raise ServiceError(422, "model_invalid_request", "图片操作或输入不匹配")
+        if sum(len(image[1]) for image in images) > MAX_INPUT_IMAGE_BYTES:
+            raise ServiceError(413, "model_input_too_large", "图片累计大小超过上限")
+        parts = []
+        for (content_type, content, _), image in zip(images, data.images, strict=True):
+            encoded = await blocking(image_data_uri, content, content_type)
+            parts.append(
+                {"type": "image_url", "image_url": {"url": encoded, "detail": image.detail}}
+            )
+
+        async def send(sdk):
+            messages = [message.model_dump(mode="json") for message in data.messages]
+            messages.append({"role": "user", "content": parts})
+            response = await sdk.chat.completions.create(
+                model=selection.provider_model,
+                messages=messages,
+                max_tokens=data.max_tokens,
+            )
+            if not response.choices or response.choices[0].finish_reason is None:
+                raise ServiceError(502, "model_response_unknown", "模型响应缺少完成结果")
+            content = response.choices[0].message.content
+            if not isinstance(content, str):
+                raise ServiceError(502, "model_response_unknown", "模型未返回文本结果")
+            return content
+
+        return await self.invoke_sdk(
+            selection=selection,
+            invocation_id=invocation_id,
+            sdk_request=send,
+            flow_context=context,
+            worker_identity=worker_identity,
+        )
+
+    async def invoke_text(self, data, *, selection, invocation_id, context, worker_identity):
+        from keystone.platform.model_access.schemas.invocations import TextRequest
+        from keystone.platform.model_access.schemas.structured import StructuredRequest
+
+        expected = "text.structured" if isinstance(data, StructuredRequest) else "text.generate"
+        if selection.operation != expected:
+            raise ServiceError(422, "model_invalid_request", "文本操作与请求类型不匹配")
+        contract = StructuredRequest if expected == "text.structured" else TextRequest
+        data = contract.model_validate(data.model_dump(mode="json"))
+        return await completed(
+            self._events(
+                selection,
+                data=data,
+                invocation_id=invocation_id,
+                flow_context=context,
+                worker_identity=worker_identity,
+            )
+        )
+
     async def events(self, data, *, invocation_id=None, selection=None):
         selected = selection or await self.service.selection(data.model_key)
         async with aclosing(
@@ -87,7 +249,13 @@ class ModelRuntime:
             async for event in events:
                 yield event
 
-    async def _events(
+    async def _events(self, *args, **kwargs):
+        async with self.operation_scope() if self.operation_scope is not None else nullcontext():
+            async with aclosing(self._unscoped_events(*args, **kwargs)) as events:
+                async for event in events:
+                    yield event
+
+    async def _unscoped_events(
         self,
         selected,
         *,
@@ -103,6 +271,9 @@ class ModelRuntime:
             if channel is None:
                 raise ServiceError(404, "model_not_found", "渠道配置不存在")
             provider = channel.provider
+            self.clients.inference.check_operation(
+                provider, selected.operation, selected.delivery, model=selected.provider_model
+            )
         receipt = Receipt()
         adapter = self.clients.billing.adapter(provider)
 
@@ -113,12 +284,19 @@ class ModelRuntime:
             if incoming.fee is not None:
                 receipt.fee = incoming.fee
 
-        observation = Observation(observed)
+        observation = Observation(
+            observed,
+            max_bytes=24 * 1024 * 1024
+            if selected.operation in {"image.generate", "image.edit"}
+            else 4 * 1024 * 1024,
+        )
         registered = finished = False
         budget = AsyncExitStack()
+        dispatch_scope = None
 
         async def before_send():
-            nonlocal registered
+            nonlocal registered, dispatch_scope
+            send_deadline = asyncio.get_running_loop().time() + 55
             if registered:
                 raise ServiceError(409, "model_result_unavailable", "同一次调用不能再次发送")
             async with self.identity.access("model:invoke") as (session, _):
@@ -127,65 +305,99 @@ class ModelRuntime:
                     original.api_key_encrypted, original.id, "inference"
                 )
                 budget_scope = self.clients.credentials.scope(original.api_base, budget_secret)
+                dispatch_scope = budget_scope
             permit = await budget.enter_async_context(
                 self.clients.coordination.inference(budget_scope)
             )
-            async with self.identity.access("model:invoke") as (session, auth):
-                entry = await locked(session, ModelEntry, selected.model_entry_id)
-                channel = await locked(session, Channel, selected.channel_id)
-                if not entry.is_active or not channel.is_active:
-                    raise ServiceError(409, "model_disabled", "模型或渠道已停用")
-                if channel.api_base != selected.api_base:
-                    raise ServiceError(
-                        409, "model_configuration_changed", "渠道地址已改变，请重新选择模型"
+            while True:
+                async with self.identity.access("model:invoke") as (session, auth):
+                    entry = await locked(session, ModelEntry, selected.model_entry_id)
+                    channel = await locked(session, Channel, selected.channel_id)
+                    if selected.operation not in entry.operations:
+                        raise ServiceError(
+                            409, "model_configuration_changed", "原模型操作能力已移除"
+                        )
+                    if not entry.is_active or not channel.is_active:
+                        raise ServiceError(409, "model_disabled", "模型或渠道已停用")
+                    if selected.provider is not None and (
+                        entry.channel_id != selected.channel_id
+                        or entry.provider_model != selected.provider_model
+                        or channel.provider != selected.provider
+                    ):
+                        raise ServiceError(
+                            409, "model_configuration_changed", "原模型或渠道配置已改变"
+                        )
+                    if channel.api_base != selected.api_base:
+                        raise ServiceError(
+                            409, "model_configuration_changed", "渠道地址已改变，请重新选择模型"
+                        )
+                    secret = self.clients.credentials.decrypt(
+                        channel.api_key_encrypted, channel.id, "inference"
                     )
-                secret = self.clients.credentials.decrypt(
-                    channel.api_key_encrypted, channel.id, "inference"
-                )
-                if secret != budget_secret:
-                    raise ServiceError(
-                        409, "model_configuration_changed", "渠道密钥已改变，请重新选择模型"
-                    )
-                if flow_context is not None and worker_identity is None:
-                    raise ServiceError(
-                        503, "model_worker_unavailable", "Flow 模型发送缺少可信执行归属"
-                    )
-                created = await session.scalar(
-                    insert(ModelInvocation)
-                    .values(
-                        id=identifier,
-                        worker_id=worker_identity.worker_id if worker_identity else None,
-                        worker_instance_id=worker_identity.instance_id if worker_identity else None,
-                        execution_version=worker_identity.execution_version
-                        if worker_identity
-                        else None,
-                        user_id=auth.user.id,
-                        flow_context=flow_context.model_dump(mode="json", exclude_none=True)
-                        if flow_context
-                        else None,
-                        model_entry_id=entry.id,
-                        channel_id=channel.id,
-                        provider_model=selected.provider_model,
-                        status="running",
-                        cost_source="unknown",
-                        cost_note="awaiting_response",
-                        cost_context=bind_channel(channel, self.clients),
-                    )
-                    .on_conflict_do_nothing(index_elements=[ModelInvocation.id])
-                    .returning(ModelInvocation.id)
-                )
-                if created is None:
-                    raise ServiceError(
-                        409,
-                        "model_result_unavailable",
-                        "已有调用记录但没有可恢复结果，禁止重复发送",
-                    )
+                    if secret != budget_secret:
+                        raise ServiceError(
+                            409, "model_configuration_changed", "渠道密钥已改变，请重新选择模型"
+                        )
+                    if flow_context is not None and worker_identity is None:
+                        raise ServiceError(
+                            503, "model_worker_unavailable", "Flow 模型发送缺少可信执行归属"
+                        )
+                    if await session.get(ModelInvocation, identifier) is not None:
+                        raise ServiceError(
+                            409, "model_result_unavailable", "已有调用记录，禁止再次发送"
+                        )
+                    delay = await self.dispatch.claim_in_transaction(session, budget_scope)
+                    if delay == 0:
+                        if self.admission is not None:
+                            await self.admission(session, identifier, observation.request_budget)
+                        created = await session.scalar(
+                            insert(ModelInvocation)
+                            .values(
+                                id=identifier,
+                                worker_id=worker_identity.worker_id if worker_identity else None,
+                                worker_instance_id=worker_identity.instance_id
+                                if worker_identity
+                                else None,
+                                execution_version=worker_identity.execution_version
+                                if worker_identity
+                                else None,
+                                user_id=auth.user.id,
+                                flow_context=flow_context.model_dump(mode="json", exclude_none=True)
+                                if flow_context
+                                else None,
+                                model_entry_id=entry.id,
+                                channel_id=channel.id,
+                                provider_model=selected.provider_model,
+                                operation=selected.operation,
+                                status="running",
+                                cost_source="unknown",
+                                cost_note="awaiting_response",
+                                cost_context=bind_channel(channel, self.clients),
+                            )
+                            .on_conflict_do_nothing(index_elements=[ModelInvocation.id])
+                            .returning(ModelInvocation.id)
+                        )
+                        if created is None:
+                            raise ServiceError(
+                                409,
+                                "model_result_unavailable",
+                                "已有调用记录但没有可恢复结果，禁止重复发送",
+                            )
+                if delay == 0:
+                    break
+                remaining = send_deadline - asyncio.get_running_loop().time()
+                if delay >= remaining:
+                    raise ServiceError(429, "model_dispatch_delayed", "模型共享冷却尚未到期")
+                await asyncio.sleep(min(delay, 1))
+                await permit()
             # Commit completed: only now does this executor own the right to send.
             registered = True
             await permit()
             return secret
 
         async def save_receipt():
+            if observation.rate_limited:
+                await self.dispatch.cooldown(dispatch_scope, observation.retry_after_seconds)
             if not receipt.request_id:
                 return
             try:
@@ -199,18 +411,21 @@ class ModelRuntime:
                     503, "model_result_unavailable", "调用回执保存失败，禁止重新发送"
                 ) from None
 
-        async def finish(status, code=None):
+        async def finish(status, code=None, *, result_context=None):
             nonlocal finished
             if not registered or finished:
                 return
             try:
                 async with self.identity.database.transaction() as session:
+                    if self.settlement is not None:
+                        await self.settlement(session, identifier, observation.usage)
                     row = await locked(session, ModelInvocation, identifier)
                     if row.status != "running":
                         raise ServiceError(
                             409, "model_result_unavailable", "调用记录已完成，不能覆盖"
                         )
                     row.status, row.error_code = status, code
+                    row.result_context = result_context
                     row.finished_at = row.updated_at = utcnow()
                     row.upstream_request_id, row.usage = (
                         receipt.request_id,
@@ -231,6 +446,19 @@ class ModelRuntime:
                     503, "model_result_unavailable", "调用记录补全失败，禁止自动重发"
                 ) from None
 
+        async def accepted_task(task):
+            nonlocal finished
+            async with self.identity.database.transaction() as session:
+                row = await locked(session, ModelInvocation, identifier)
+                if row.status != "running" or row.result_context is not None:
+                    raise ServiceError(409, "model_result_unavailable", "原任务回执不能覆盖")
+                row.result_context = task.model_dump(mode="json")
+                row.upstream_request_id = receipt.request_id
+                row.receipt_ids = dict(observation.receipt_ids) or None
+                row.usage = observation.usage
+                row.updated_at = utcnow()
+            finished = True
+
         try:
             async with aclosing(
                 self.clients.inference.events(
@@ -248,7 +476,15 @@ class ModelRuntime:
                     if event["type"] != "result":
                         yield event
                         continue
-                    await finish("succeeded")
+                    result_context = (
+                        event["content"].manifest.model_dump(mode="json")
+                        if isinstance(event["content"], ImageBatch)
+                        else None
+                    )
+                    if isinstance(event["content"], ImageTaskReceipt):
+                        await accepted_task(event["content"])
+                    else:
+                        await finish("succeeded", result_context=result_context)
                     yield {
                         "type": "done",
                         "invocation_id": str(identifier),

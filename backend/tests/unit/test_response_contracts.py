@@ -29,12 +29,12 @@ CASES = [
     ),
     (
         entry_view,
-        """id key channel_id provider_model is_active created_at created_by
+        """id key channel_id provider_model operations is_active created_at created_by
                    updated_at updated_by""",
     ),
     (
         invocation_view,
-        """id user_id flow_context model_entry_id channel_id provider_model
+        """id user_id flow_context model_entry_id channel_id provider_model operation
                         upstream_request_id status finished_at usage cost_amount cost_unit
                         cost_source cost_note cost_check_status cost_check_reason
                         cost_check_rounds cost_check_errors cost_checked_at cost_next_check_at
@@ -42,7 +42,8 @@ CASES = [
     ),
     (
         run_view,
-        """id definition_key definition_snapshot execution_version actor_id
+        """id definition_key definition_revision model_bindings definition_snapshot
+                 execution_version actor_id
                  personal_access_token_id request_key request_digest input created_at status
                  result error_code cancel_requested_at finished_at observed_at""",
     ),
@@ -71,6 +72,8 @@ def test_projection_ignores_new_internal_fields():
             cost_checkpoint={"page": 2},
             receipt_ids={"body_id": "internal"},
         )
+        if project is run_view:
+            row.definition_snapshot = {"output_schema": {}, "output_file_fields": []}
         result = project(row)
         assert set(result) == expected
         assert "future_secret" not in result
@@ -81,5 +84,6 @@ def test_cost_decimal_and_run_timezone_keep_wire_semantics():
     invocation.cost_amount = Decimal("0.000000001234")
     assert invocation_view(invocation)["cost_amount"] == "0.000000001234"
     run = Row(**dict.fromkeys(CASES[5][1].split()))
+    run.definition_snapshot = {"output_schema": {}, "output_file_fields": []}
     run.created_at = datetime(2026, 10, 19, 8, tzinfo=timezone(timedelta(hours=8)))
     assert run_view(run)["created_at"] == datetime(2026, 10, 19, tzinfo=UTC)

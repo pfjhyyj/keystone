@@ -7,6 +7,7 @@ from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services.writer import Actor, record
 from keystone.platform.flow.models import TERMINAL, FlowRun
+from keystone.platform.flow.schemas.snapshots import matches_definition, read_snapshot
 from keystone.platform.flow.schemas.values import small_json
 from keystone.platform.flow.services.identity import ExecutionIdentity
 from keystone.platform.flow.services.outputs import retain_outputs
@@ -16,13 +17,13 @@ log = logging.getLogger(__name__)
 
 def matches_observation(runtime, run, state):
     definition = runtime.flow_definitions.get(run.definition_key)
+    snapshot = read_snapshot(run.definition_snapshot)
+    expected = snapshot.get("entrypoint")
+    if expected is None and definition and run.execution_version == runtime.execution_version():
+        expected = definition.entrypoint
     return not state or (
         state["version"] == run.execution_version
-        and (
-            not definition
-            or run.execution_version != runtime.execution_version()
-            or state["name"] == definition.entrypoint
-        )
+        and (expected is None or state["name"] == expected)
     )
 
 
@@ -84,7 +85,11 @@ async def submission(runtime, identifier):
         if run is None or run.status in TERMINAL or run.cancel_requested_at:
             return None
         definition = runtime.flow_definitions.get(run.definition_key)
-        if definition is None or run.execution_version != runtime.execution_version():
+        if (
+            definition is None
+            or run.execution_version != runtime.execution_version()
+            or not matches_definition(read_snapshot(run.definition_snapshot), definition)
+        ):
             return None
         return run, definition
 
@@ -129,14 +134,19 @@ async def finish(session, run, status, result=None, error=None):
     if status == "succeeded":
         try:
             small_json(result)
+            snapshot = read_snapshot(run.definition_snapshot)
             Draft202012Validator(
-                run.definition_snapshot["output_schema"], format_checker=FormatChecker()
+                snapshot["output_schema"], format_checker=FormatChecker()
             ).validate(result)
             # Savepoint prevents partial references surviving output validation failure.
             async with session.begin_nested():
                 await retain_outputs(session, run, result)
         except (ServiceError, ValueError, KeyError, TypeError) as exc:
             raise ServiceError(409, "flow_invalid_output", "流程输出不符合原契约") from exc
+    if status != "succeeded":
+        from keystone.platform.model_access.services.image_tasks import abandon_in_transaction
+
+        await abandon_in_transaction(session, run.id)
     run.status, run.result, run.error_code = (
         status,
         result if status == "succeeded" else None,

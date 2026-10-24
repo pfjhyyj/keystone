@@ -4,7 +4,6 @@ import { can } from '../../stores/session'
 import { fileApi, uuidPattern } from '../../api/files'
 import { usePagedList } from '../../composables/usePagedList'
 import ListPager from '../../components/ListPager.vue'
-import ModelPicker from '../../components/models/ModelPicker.vue'
 
 defineProps<{ disabled: boolean }>()
 const input = defineModel<Record<string, unknown>>({ required: true })
@@ -12,12 +11,6 @@ const fileId = computed({
   get: () => String(input.value.source_file_id ?? ''),
   set: (value) => {
     input.value = { ...input.value, source_file_id: value }
-  },
-})
-const modelKey = computed({
-  get: () => String(input.value.model_key ?? ''),
-  set: (value) => {
-    input.value = { ...input.value, model_key: value }
   },
 })
 const files = usePagedList('file:inspect', fileApi.list)
@@ -69,6 +62,5 @@ const files = usePagedList('file:inspect', fileApi.list)
       placeholder="已知文件 UUID"
   /></label>
   <p>文件须可读取且为不超过 16 KiB 的 UTF-8 文本；可见文件不自动代表有内容读取权。</p>
-  <ModelPicker v-model="modelKey" :disabled="disabled" />
   <p>本流程将调用真实模型，可能产生费用；取消不撤销已发生的调用。</p>
 </template>

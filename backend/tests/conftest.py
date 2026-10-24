@@ -120,3 +120,13 @@ def empty_database_url(pytestconfig):
 
 def pytest_asyncio_loop_factories():
     return {"keystone": new_event_loop}
+
+
+@pytest.fixture(autouse=True)
+def isolate_execution_version_cache():
+    """Test manifests vary per case; production manifests are fixed for the process."""
+    from keystone.composition import execution_version
+
+    execution_version.cache_clear()
+    yield
+    execution_version.cache_clear()

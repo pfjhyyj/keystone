@@ -1,19 +1,37 @@
 <script setup lang="ts">
-import { modelApi } from '../../api/models'
+import { watch } from 'vue'
+import { modelApi, type ModelDelivery, type ModelOperation } from '../../api/models'
 import { usePagedList } from '../../composables/usePagedList'
 import ListPager from '../ListPager.vue'
-const props = defineProps<{ disabled?: boolean }>()
+const props = withDefaults(
+  defineProps<{
+    disabled?: boolean
+    label?: string
+    operation?: ModelOperation
+    delivery?: ModelDelivery
+  }>(),
+  { label: '模型', operation: 'text.generate', delivery: 'sync' },
+)
 const model = defineModel<string>({ required: true })
-const { rows, page, loading, error, reload } = usePagedList('model:invoke', async (offset) => {
-  const data = await modelApi.catalog(offset)
-  return data.items
-})
+const { rows, page, loading, error, reload, search } = usePagedList(
+  'model:invoke',
+  async (offset) => {
+    const data = await modelApi.catalog(offset, props.operation, props.delivery)
+    return data.items
+  },
+)
+watch(
+  () => [props.operation, props.delivery],
+  () => {
+    search()
+  },
+)
 </script>
 <template>
   <div class="subject-picker">
     <div class="form-field">
-      <span class="form-label">模型</span
-      ><AppSelect v-model="model" aria-label="模型" :disabled="props.disabled || loading" required
+      <span class="form-label">{{ label }}</span
+      ><AppSelect v-model="model" :aria-label="label" :disabled="props.disabled || loading" required
         ><el-option value="" :label="'请选择模型'" /><el-option
           v-if="model && !rows.some((row) => row.key === model)"
           :value="model"

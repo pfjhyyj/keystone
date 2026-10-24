@@ -6,6 +6,7 @@ from decimal import Decimal
 import httpx2
 
 from keystone.core.errors import ServiceError
+from keystone.platform.model_access.adapters.inference.limits import retry_after
 from keystone.platform.model_access.adapters.receipts import request_id
 
 
@@ -36,7 +37,8 @@ def usage(data):
 
 
 class Observation:
-    def __init__(self, on_update):
+    def __init__(self, on_update, *, max_bytes=4 * 1024 * 1024):
+        self.max_bytes = max_bytes
         self.on_update = on_update
         self.streaming = self.done = False
         self.buffer = bytearray()
@@ -44,6 +46,9 @@ class Observation:
         self.receipt_ids = {}
         self.usage = None
         self.reported_cost = None
+        self.rate_limited = False
+        self.retry_after_seconds = None
+        self.request_budget = None
 
     def parse(self, raw):
         if raw == b"[DONE]":
@@ -74,7 +79,7 @@ class Observation:
 
     def feed(self, chunk):
         self.total_bytes += len(chunk)
-        if self.total_bytes > 4 * 1024 * 1024:
+        if self.total_bytes > self.max_bytes:
             raise ServiceError(502, "model_response_too_large", "模型响应超过上限")
         self.buffer.extend(chunk)
         if self.streaming:
@@ -115,12 +120,15 @@ class SendTransport(httpx2.AsyncBaseTransport):
         self.on_receipt, self.validate, self.identifier = on_receipt, validate, identifier
 
     async def handle_async_request(self, request):
-        self.validate(request)
+        self.observation.request_budget = self.validate(request)
         secret = await self.before_send()
         # Authorization and committed registration precede the only physical send.
         request.headers["Authorization"] = "Bearer " + secret
         request.headers["X-Keystone-Invocation-Id"] = str(self.identifier)
         response = await self.source.handle_async_request(request)
+        self.observation.rate_limited = response.status_code == 429
+        if self.observation.rate_limited:
+            self.observation.retry_after_seconds = retry_after(response.headers.get("retry-after"))
         self.observation.streaming = "text/event-stream" in response.headers.get("content-type", "")
         self.observation.receipt_ids = {
             name: identifier
@@ -128,7 +136,7 @@ class SendTransport(httpx2.AsyncBaseTransport):
             if (identifier := request_id(response.headers.get(name)))
         }
         self.observation.on_update(self.observation)
-        if self.observation.receipt_ids:
+        if self.observation.receipt_ids or self.observation.rate_limited:
             try:
                 await self.on_receipt()
             except BaseException:

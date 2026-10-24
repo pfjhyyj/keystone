@@ -13,7 +13,12 @@ versions/
 |-- 0005_model_access_initial.py
 |-- 0006_flow_initial.py
 |-- 0007_worker_initial.py
-`-- 0008_<namespace>_initial.py  # 新业务示例，当前尚无业务迁移
+|-- 0008_model_access_operations.py
+|-- 0009_model_access_image_results.py
+|-- 0010_model_access_dispatch.py
+|-- 0011_flow_budgets.py
+|-- 0012_model_access_flow_index.py
+`-- 0013_<namespace>_initial.py  # 下一份新业务迁移示例
 ```
 
 - 所有迁移文件直接位于 `versions/`，不建立分类或模块子目录。模块归属体现在文件名中，Worker 相关迁移使用 `worker` 前缀；不为每个模块另建 Alembic 环境、迁移分支或版本表。
@@ -39,8 +44,13 @@ Get-ChildItem backend/migrations/versions -File -Filter *.py | Sort-Object Name 
 | `0005_model_access_initial.py` / `0005` | 模型接入与费用核对 | model_channels、model_entries、model_invocations；含发送归属、费用核对字段与索引 |
 | `0006_flow_initial.py` / `0006` | Flow | flow_runs；含协调尝试时间 |
 | `0007_worker_initial.py` / `0007` | Worker 登记与运行观测 | worker_registrations、worker_heartbeats |
+| `0008_model_access_operations.py` / `0008` | 模型操作能力增量 | model_entries.operations；旧条目默认 text.generate，不按模型名推断媒体能力 |
+| `0009_model_access_image_results.py` / `0009` | 调用操作与产物证据增量 | model_invocations.operation 默认 text.generate、result_context 为空；保留原账务与回执 |
+| `0010_model_access_dispatch.py` / `0010` | 真实凭据范围发送协调 | model_dispatch_scopes 保存下次发送与共享冷却截止；不改历史调用 |
+| `0011_flow_budgets.py` / `0011` | Run 累计预算与稳定预留 | flow_run_budgets / flow_budget_claims；旧 Run 不回填预算、不改快照或结果 |
+| `0012_model_access_flow_index.py` / `0012` | Run 关联调用查询索引 | flow_context 的 Run ID 表达式与 created_at/id；历史 JSON、回执及费用不重写 |
 
-上表路径相对 `versions/`，通过 `down_revision` 按表中顺序连接，只有一个 head：`0007`。Alembic 使用原生平铺目录加载脚本，源码与安装后部署使用相同规则。文件多源字段合入 files，渠道凭据密文字段合入 model_access。18 张表均位于 `keystone` schema，Alembic 另维护一张版本表。
+上表路径相对 `versions/`，通过 `down_revision` 按表中顺序连接，只有一个 head：`0012`。Alembic 使用原生平铺目录加载脚本，源码与安装后部署使用相同规则。文件多源字段合入 files，渠道凭据密文字段合入 model_access。21 张表均位于 `keystone` schema，Alembic 另维护一张版本表。
 
 这是 0.1.0 的模块基线：每个文件直接包含该模块的完整当前结构，不再保留按版本叠加的中间步骤。model_access 初始迁移直接包含费用核对字段、发送归属字段以及包含 Openlux/Yunwu 的 provider 白名单，不需要对空库执行历史回填；flow_runs 直接包含 `reconcile_attempted_at`；worker 初始迁移直接建立固定身份登记、心跳观测及其约束和索引。新库为空，不导入旧 Worker 名单、历史心跳或旧调用归属，首次登记由 Worker 启动准入完成。
 
@@ -54,7 +64,7 @@ Get-ChildItem backend/migrations/versions -File -Filter *.py | Sort-Object Name 
 
 ## 后续结构变更
 
-新增结构按上述目录和命名规则继续追加同一条链。例如当前新增 notes 业务时，脚手架生成 `versions/0008_notes_initial.py`，`revision = "0008"`、`down_revision = "0007"`；之后任意模块使用下一全局序号 `0009`。部署仍通过 `keystone init` 更新，不增加启动步骤。
+新增结构按上述目录和命名规则继续追加同一条链。例如当前新增 notes 业务时，脚手架生成 `versions/0013_notes_initial.py`，`revision = "0013"`、`down_revision = "0012"`；之后任意模块使用下一全局序号 `0014`。部署仍通过 `keystone init` 更新，不增加启动步骤。
 
 `scripts/new_business.py` 在写入业务代码前读取全部迁移的静态元数据，支持普通赋值和带类型注解的字面量赋值；校验平铺路径、命名、重复序号/revision、连续序号和线性依赖，不执行历史 DDL。子目录中的迁移、重复声明、动态计算的元数据、分支和额外依赖均拒绝。未通过检查时不生成业务文件。
 

@@ -3,24 +3,54 @@ from sqlalchemy import and_, false, or_, select
 from keystone.core.errors import ServiceError
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.adapters.inference.client import SUPPORTED_TARGETS
+from keystone.platform.model_access.adapters.inference.client import (
+    SUPPORTED_MODELS,
+    SUPPORTED_OPERATIONS,
+    SUPPORTED_TARGETS,
+    operation_delivery,
+    protocol_supports,
+)
 from keystone.platform.model_access.models import Channel, ModelEntry
+from keystone.platform.model_access.schemas.operations import Delivery, Operation
 from keystone.platform.model_access.services.queries import locked
+
+
+def catalog_entry(row, provider):
+    operations = sorted(
+        operation
+        for operation in set(row.operations) & SUPPORTED_OPERATIONS.get(provider, frozenset())
+        if protocol_supports(provider, operation, operation_delivery(provider, operation))
+        and (
+            (provider, operation) not in SUPPORTED_MODELS
+            or row.provider_model in SUPPORTED_MODELS[provider, operation]
+        )
+    )
+    return {
+        "key": row.key,
+        "operations": operations,
+        "capabilities": ["text", "stream"] if "text.generate" in operations else [],
+    }
 
 
 class ModelEntryService:
     def __init__(self, identity: AccessContext, clients):
         self.identity, self.clients = identity, clients
 
-    async def catalog(self, offset, limit):
+    async def catalog(
+        self, offset, limit, *, operation: Operation = "text.generate", delivery: Delivery = "sync"
+    ):
         return {
-            "items": await self.entries(offset, limit, catalog=True),
+            "items": await self.entries(
+                offset, limit, catalog=True, operation=operation, delivery=delivery
+            ),
         }
 
     async def prepare_invoke(self, model_key):
         return await self.selection(model_key)
 
-    async def entries(self, offset, limit, *, catalog=False):
+    async def entries(
+        self, offset, limit, *, catalog=False, operation="text.generate", delivery="sync"
+    ):
         async with self.identity.access("model:invoke" if catalog else "model:manage") as (
             session,
             _,
@@ -28,23 +58,38 @@ class ModelEntryService:
             statement = select(ModelEntry)
             if catalog:
                 statement = statement.join(Channel).where(
-                    ModelEntry.is_active.is_(True), Channel.is_active.is_(True)
+                    ModelEntry.is_active.is_(True),
+                    Channel.is_active.is_(True),
+                    ModelEntry.operations.contains([operation]),
                 )
                 statement = statement.where(
                     or_(
                         false(),
                         *(
-                            and_(Channel.provider == provider, Channel.api_base == base)
-                            for provider, (base, paths) in SUPPORTED_TARGETS.items()
-                            if paths.get("/chat/completions") == "POST"
+                            and_(
+                                Channel.provider == provider,
+                                Channel.api_base == base,
+                                ModelEntry.provider_model.in_(SUPPORTED_MODELS[provider, operation])
+                                if (provider, operation) in SUPPORTED_MODELS
+                                else True,
+                            )
+                            for provider, (base, _) in SUPPORTED_TARGETS.items()
+                            if protocol_supports(provider, operation, delivery)
                         ),
                     )
                 )
             rows = await session.scalars(
                 statement.order_by(ModelEntry.key).offset(offset).limit(limit)
             )
+            rows = list(rows)
+            available = {}
+            if catalog:
+                for channel in await session.scalars(
+                    select(Channel).where(Channel.id.in_({row.channel_id for row in rows}))
+                ):
+                    available[channel.id] = channel.provider
             return [
-                {"key": row.key, "capabilities": ["text", "stream"]}
+                catalog_entry(row, available[row.channel_id])
                 if catalog
                 else schemas.entry_view(row)
                 for row in rows
@@ -57,19 +102,20 @@ class ModelEntryService:
         ) as (session, auth):
             row = await locked(session, ModelEntry, identifier) if identifier else None
             await locked(session, Channel, data.channel_id)
+            values = data.model_dump()
+            if values.get("operations") is None:
+                values.pop("operations", None)
             if row:
                 before = {
                     key: str(getattr(row, key)) if key == "channel_id" else getattr(row, key)
-                    for key in data.model_dump()
+                    for key in values
                 }
-                for key, value in data.model_dump().items():
+                for key, value in values.items():
                     setattr(row, key, value)
                 self.identity.touch(row, auth)
             else:
                 before = None
-                row = ModelEntry(
-                    **data.model_dump(), created_by=auth.user.id, updated_by=auth.user.id
-                )
+                row = ModelEntry(**values, created_by=auth.user.id, updated_by=auth.user.id)
                 session.add(row)
             await session.flush()
             await self.identity.log(
@@ -78,7 +124,16 @@ class ModelEntryService:
                 action,
                 "model.entry",
                 row.id,
-                {"before": before, "after": data.model_dump(mode="json")},
+                {
+                    "before": before,
+                    "after": {
+                        "channel_id": str(row.channel_id),
+                        "provider_model": row.provider_model,
+                        "is_active": row.is_active,
+                        "operations": row.operations,
+                        **({"key": row.key} if identifier is None else {}),
+                    },
+                },
             )
             return schemas.entry_view(row)
 
@@ -96,9 +151,72 @@ async def select_model(session, key, *, lock=False):
     channel = await session.get(Channel, entry.channel_id)
     if channel is None or not entry.is_active or not channel.is_active:
         raise ServiceError(409, "model_disabled", "模型或渠道已停用")
+    if "text.generate" not in entry.operations:
+        raise ServiceError(409, "model_operation_unavailable", "模型不支持所需操作")
     return schemas.Selection(
         model_entry_id=entry.id,
         channel_id=channel.id,
         provider_model=entry.provider_model,
         api_base=channel.api_base,
+        provider=channel.provider,
     )
+
+
+async def resolve_bindings_in_transaction(session, auth, *, roles, bindings):
+    """Caller owns identity transaction. Acquire every Entry before any Channel."""
+    from keystone.platform.model_access.schemas.invocations import ResolvedModelBinding
+
+    if {r.key for r in roles} != set(bindings):
+        raise ServiceError(422, "flow_invalid_model_bindings", "模型角色绑定不完整或包含未知角色")
+    if not roles:
+        return {}
+    auth.require("model:invoke")
+    entries = list(
+        await session.scalars(
+            select(ModelEntry)
+            .where(ModelEntry.key.in_(set(bindings.values())))
+            .order_by(ModelEntry.id)
+            .with_for_update(read=True)
+        )
+    )
+    by_key = {entry.key: entry for entry in entries}
+    if by_key.keys() != set(bindings.values()):
+        raise ServiceError(409, "model_disabled", "模型或渠道不可用")
+    channels = list(
+        await session.scalars(
+            select(Channel)
+            .where(Channel.id.in_({e.channel_id for e in entries}))
+            .order_by(Channel.id)
+            .with_for_update(read=True)
+        )
+    )
+    by_id = {channel.id: channel for channel in channels}
+    result = {}
+    for role in roles:
+        entry = by_key[bindings[role.key]]
+        channel = by_id.get(entry.channel_id)
+        if channel is None or not channel.is_active or not entry.is_active:
+            raise ServiceError(409, "model_disabled", "模型或渠道不可用")
+        target = SUPPORTED_TARGETS.get(channel.provider)
+        if (
+            target is None
+            or channel.api_base != target[0]
+            or not protocol_supports(channel.provider, role.operation, role.delivery)
+            or role.operation not in entry.operations
+            or (channel.provider, role.operation) in SUPPORTED_MODELS
+            and entry.provider_model not in SUPPORTED_MODELS[channel.provider, role.operation]
+        ):
+            raise ServiceError(409, "model_provider_unavailable", "模型不支持所需操作")
+        result[role.key] = ResolvedModelBinding(
+            model_key=entry.key,
+            selection=schemas.Selection(
+                model_entry_id=entry.id,
+                channel_id=channel.id,
+                provider_model=entry.provider_model,
+                api_base=channel.api_base,
+                provider=channel.provider,
+                operation=role.operation,
+                delivery=role.delivery,
+            ),
+        ).model_dump(mode="json")
+    return result

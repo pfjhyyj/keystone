@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
+from support.flow_packages import package_for_definitions
 from test_files_dictionary import client as client
 from test_identity import (
     NEW_PASSWORD,
@@ -96,8 +97,12 @@ def test_flow_permissions_must_be_in_application_catalog(monkeypatch):
 
     monkeypatch.setattr(
         composition,
-        "FLOW_DEFINITIONS",
-        (replace(contracts.definition, required_permissions=(READ,)),),
+        "FLOW_PACKAGES",
+        (
+            package_for_definitions(
+                (replace(contracts.definition, required_permissions=(READ, "model:invoke")),)
+            ),
+        ),
     )
     with pytest.raises(ValueError, match="undeclared permissions"):
         build_runtime(Settings(config_file=None))
@@ -115,7 +120,10 @@ def test_all_flow_definitions_are_validated_and_directory_is_frozen():
         )
     with pytest.raises(ValueError, match="undeclared"):
         build_definitions(
-            (definition, replace(definition, key="second", required_permissions=(READ,))),
+            (
+                definition,
+                replace(definition, key="second", required_permissions=(READ, "model:invoke")),
+            ),
             PLATFORM_CATALOG.permissions,
         )
     directory = build_definitions((definition,), PLATFORM_CATALOG.permissions)
@@ -136,22 +144,26 @@ def test_flow_directory_isolation_in_api_execution_and_reconciliation(monkeypatc
 
     first_definition = replace(
         contracts.definition,
-        input_type=EmptyInput,
+        input_model=EmptyInput,
         file_fields=(),
-        model_field=None,
+        model_roles=(),
         required_permissions=(READ,),
     )
     second_definition = replace(
         first_definition, name="Second application", required_permissions=(WRITE,)
     )
     install(monkeypatch)
-    monkeypatch.setattr(composition, "FLOW_DEFINITIONS", (first_definition,))
+    monkeypatch.setattr(
+        composition, "FLOW_PACKAGES", (package_for_definitions((first_definition,)),)
+    )
     first = request.getfixturevalue("client")
     first_runtime = first.app.state.runtime
     login(first)
     read_pat = bearer(token(first, ["flow:start", "flow:read", READ])["token"])
     write_pat = bearer(token(first, ["flow:start", "flow:read", WRITE])["token"])
-    monkeypatch.setattr(composition, "FLOW_DEFINITIONS", (second_definition,))
+    monkeypatch.setattr(
+        composition, "FLOW_PACKAGES", (package_for_definitions((second_definition,)),)
+    )
     settings = first_runtime.settings.model_copy()
     with TestClient(
         create_app(settings), backend_options={"loop_factory": new_event_loop}
@@ -200,43 +212,42 @@ def test_flow_directory_isolation_in_api_execution_and_reconciliation(monkeypatc
 
 @pytest.mark.postgres
 @pytest.mark.parametrize("extra_bytes", [0, 1])
-def test_flow_model_selection_final_input_size_limit(monkeypatch, request, extra_bytes):
+def test_flow_normalized_input_size_limit(monkeypatch, request, extra_bytes):
+    from pydantic import Field
     from support.flow_fixture import contracts
-    from test_model_access import channel, entry
 
     from keystone.core.schemas import Input
     from keystone.platform.files.models import FileReference
     from keystone.platform.flow.models import FlowRun
     from keystone.platform.flow.schemas.values import small_json
-    from keystone.platform.model_access.services.entries import select_model
 
     class Params(Input):
-        text: str
-        model_key: str = "chat"
+        text: str = Field(default_factory=lambda: padding)
 
     monkeypatch.setattr(
         composition,
-        "FLOW_DEFINITIONS",
+        "FLOW_PACKAGES",
         (
-            replace(
-                contracts.definition,
-                input_type=Params,
-                file_fields=(),
-                model_field="model_key",
-                required_permissions=(),
+            package_for_definitions(
+                (
+                    replace(
+                        contracts.definition,
+                        input_model=Params,
+                        file_fields=(),
+                        model_roles=(),
+                        required_permissions=(),
+                    ),
+                )
             ),
         ),
     )
     client = request.getfixturevalue("client")
     login(client)
-    final_input = {"text": "", "model_key": "chat"}
-    entry(client, channel(client))
-    selection = query(client, lambda session: select_model(session, "chat"))
-    final_input["model_key"] = selection.model_dump(mode="json")
+    final_input = {"text": ""}
     remaining = 65536 + extra_bytes - len(small_json(final_input))
     # Count UTF-8 bytes, including JSON structure, rather than Python characters.
     padding = "界" * (remaining // 3) + "x" * (remaining % 3)
-    data = {"text": padding}
+    data = {}
     payload = {"definition_key": contracts.definition.key, "request_key": "size", "input": data}
     response = client.post("/api/v1/flow-runs", json=payload)
     if extra_bytes:
@@ -274,14 +285,18 @@ def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, 
 
     monkeypatch.setattr(
         composition,
-        "FLOW_DEFINITIONS",
+        "FLOW_PACKAGES",
         (
-            replace(
-                contracts.definition,
-                input_type=FilesInput,
-                file_fields=("files",),
-                model_field=None,
-                required_permissions=(),
+            package_for_definitions(
+                (
+                    replace(
+                        contracts.definition,
+                        input_model=FilesInput,
+                        file_fields=("files",),
+                        model_roles=(),
+                        required_permissions=(),
+                    ),
+                )
             ),
         ),
     )
@@ -338,16 +353,20 @@ def test_flow_reconciliation_uses_serialized_output_contract(
 
     monkeypatch.setattr(
         composition,
-        "FLOW_DEFINITIONS",
+        "FLOW_PACKAGES",
         (
-            replace(
-                contracts.definition,
-                input_type=EmptyInput,
-                output_type=Output,
-                file_fields=(),
-                output_file_fields=(),
-                model_field=None,
-                required_permissions=(),
+            package_for_definitions(
+                (
+                    replace(
+                        contracts.definition,
+                        input_model=EmptyInput,
+                        output_model=Output,
+                        file_fields=(),
+                        output_file_fields=(),
+                        model_roles=(),
+                        required_permissions=(),
+                    ),
+                )
             ),
         ),
     )

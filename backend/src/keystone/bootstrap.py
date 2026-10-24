@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fastapi import FastAPI, Response
 
@@ -11,6 +11,7 @@ from keystone.composition import (
     build_flow_definitions,
     build_model_clients,
     execution_version,
+    flow_package_owners,
 )
 from keystone.core.config import Settings
 from keystone.core.database import Database
@@ -24,8 +25,9 @@ from keystone.platform.dictionary.controllers import router as dictionary_router
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.files.controllers import router as files_router
 from keystone.platform.files.services.grants import FileGrantService
+from keystone.platform.files.services.references import FileReferenceService
 from keystone.platform.flow.controllers import router as flow_router
-from keystone.platform.flow.schemas.definitions import Definition
+from keystone.platform.flow.schemas.definitions import FlowDefinition
 from keystone.platform.flow.services.runs import FlowService
 from keystone.platform.identity.adapters.security import Passwords
 from keystone.platform.identity.controllers import router as identity_router
@@ -33,7 +35,7 @@ from keystone.platform.identity.services.login_limits import LoginLimiter
 from keystone.platform.model_access.adapters.clients import ModelClients
 from keystone.platform.model_access.controllers import router as models_router
 from keystone.platform.model_access.services.invocations import InvocationService
-from keystone.use_cases import FlowCosts, RoleDeletion
+from keystone.use_cases import FlowCosts, FlowDiagnostics, RoleDeletion
 
 
 @dataclass
@@ -43,8 +45,9 @@ class Runtime:
     heads: set[str]
     storage: StorageRegistry
     models: ModelClients
-    flow_definitions: Mapping[str, Definition]
+    flow_definitions: Mapping[str, FlowDefinition]
     execution_version: Callable[[], str]
+    flow_packages: Mapping[str, str] = field(default_factory=dict)
     flow_engine: object | None = None
     worker_identity: WorkerIdentity | None = None
     worker_lease: object | None = None
@@ -55,9 +58,19 @@ class Runtime:
     def flow_costs(self, identity):
         return FlowCosts(self.flow_service(identity), InvocationService(identity, self.models))
 
+    def flow_diagnostics(self, identity):
+        return FlowDiagnostics(
+            self.flow_service(identity),
+            InvocationService(identity, self.models),
+            FileReferenceService(identity),
+        )
+
     def flow_service(self, identity):
         return FlowService(
-            identity, self.flow_definitions, execution_version=self.execution_version
+            identity,
+            self.flow_definitions,
+            execution_version=self.execution_version,
+            package_owners=self.flow_packages,
         )
 
     async def readiness(self) -> dict:
@@ -85,6 +98,7 @@ def build_runtime(settings: Settings) -> Runtime:
         build_model_clients(settings, database),
         definitions,
         execution_version,
+        flow_packages=flow_package_owners(),
     )
     if settings.database_url:
         from keystone.platform.flow.adapters.dbos import Engine

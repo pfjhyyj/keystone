@@ -1,6 +1,6 @@
 # Keystone 文件领域
 
-[范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍) · [待确定事项](#6-待确定事项)
+[范围与边界](#1-范围与边界) · [领域模型](#2-领域模型) · [主要流程](#3-主要流程) · [权限与审计](#4-权限与审计) · [设计取舍](#5-设计取舍)
 
 ## 1. 范围与边界
 
@@ -148,6 +148,8 @@ Flow 受理时登记输入引用；产物上传成功时，在确认 File 为 ac
 
 业务采用与 Run 清理由上层用例协调事务：采用先完成则业务引用保留；清理先完成则拒绝通过已清理 Run 采用。业务记录与引用不能部分提交，文件引用登记仍与删除互斥。文件模块不反向查询 FlowRun 或各业务表，不新增引用状态、生命周期字段或通用保留任务表。
 
+Flow 的文件声明支持 Schema 编译的数组 *，FlowContext 读取限于本 Run 已登记输入或产物，再复查当前内容权限。Files 通过公开 require_usage 检查引用归属，不改变 File/FileGrant/FileReference、授权和保留事实；引用不授予读取权。引用范围检查与对象授权缺一不可。路径语法、空值/联合/别名、复杂度上限和输出原子性统一见[集合文件路径设计](flow.md#4-文件路径与引用)。
+
 ## 4. 权限与审计
 
 操作日志采用 [AuditLog](audit.md)，文件删除的请求和清理结果按阶段关联记录。
@@ -177,13 +179,6 @@ FileGrant、FileReference 物理移除，审计日志保留 file_id、授权主�
 - 上传幂等使用 File 的 upload_key、upload_digest；本地卷重试和配置见第 7 节，不新增上传任务表。
 
 当前实现仍只使用 File、FileGrant、FileReference。具体业务的附件权限在对应业务接入时明确；普通上传和管理接口已实现，见第 7 节。
-
-## 6. 待确定事项
-
-- 核心状态和授权边界已确定，保留 disabled；不再将所属人、管理员例外、初始授权时点和引用解除权限列为待定。
-- 具体业务附件如何接入业务对象权限，在设计对应业务时确定。
-- 普通上传交互、幂等重试、共享本地卷协调和失败残留清理已实现；多源本地与 S3 已接入；仍只支持单宿主共享可靠本地协调卷，S3 迟到写入按第 7 节复核。
-- 实现时验证产物上传与引用登记的事务边界、撤权后的受限结果同步、业务采用与 Run 清理/文件删除的竞争，以及角色删除与授权新增的互斥。
 
 ## 7. 当前实现约定
 
@@ -282,3 +277,17 @@ FileService.transfer() 取得本机跨进程槽位，返回仅在该作用域内
 `FileGrantService.grant_in_transaction(session, auth, file_id, data, grant_id=...)` 在调用方当前身份事务内新增或撤销授权，仍检查功能权限、文件 manage 范围、目标主体与生命周期。调用方从 `AccessContext.access()` 取得 session/auth，完成业务对象授权后传入；内部不提交、不另开事务。与 `FileReferences`、业务记录及 `FlowService.start_in_transaction` 一起提交或回滚，成功审计在同一事务；HTTP 原入口继续自管事务。
 
 整文件字节读取入口 `FileService.content` 默认限制为 64 MiB，显式 max_bytes 也必须为非负上限；媒体调用使用流式读取或 Worker 落盘入口，上传容量扩展不会自动放大内存读取上限。
+
+
+## 受控执行的临时空间与上传准入
+
+FileService 可由可信宿主传入轻量 TransferScope(owner, max_temporary_bytes)，为本实例建立 scoped Transfers；不修改共享 StorageRegistry，不向 HTTP Upload 开放任意 owner 或额度。Flow 以原 Run 的声明注入，Files 不导入 Flow。FileTransferService.workspace 提供有界临时 Path；upload_file 的可选 admission(data) 在打开句柄完成长度/摘要和 Upload 校验后、上传正文前执行，普通文件调用不带预算回调。
+
+Scoped 容量记录使用 version=2，在原 OS 所有者账本中保存 scope/scope_bytes/scope_limit。全局永久锁下加总同 scope 的 live 承诺，并取最严格上限；顺序刷盘减少物理未来写入，但整个临时副本仍计入 scope，直到清理结束关闭。无 scope 继续写 version=1，两种格式都可读。崩溃只凭 OS 锁已释放回收，损坏 live 记录安全拒绝；不使用 PID 或时间猜测空间已可复用。
+
+物理磁盘低水位、宿主临时总额/传输槽位/每文件上限与 scope 同时生效，超过 scope 返回 file_scope_limit。正式文件副本继续受物理容量管理，不重复算作临时副本。发布前停止全部旧 API/Worker 和共享协调写入进程；这项账本格式变化虽无新 DDL，也不能让旧代码与 scoped 临时记录混跑。Flow 的累计逻辑文件额度和实际恢复边界见[Flow 运行约束](flow.md#6-累计预算与资源)。
+
+
+## Run 文件诊断
+
+FileReferenceService 的可信事务内入口按精确 flow:<run_id> owner 读取引用；上层先授权 Run，再由 Files 检查 file:inspect 与当前对象元数据范围，在 SQL 中过滤后分页。返回 File ID 与逻辑 slot，不返回物理路径、存储凭据或供应商产物证据；引用不授予内容读取权。可信内部投影另携带登记摘要、大小及 MIME 供原 Manifest 核验，公开 Flow 文件 DTO 显式排除这些核验字段。上层仅对同 Run、当前可见且登记字节元数据完全匹配原 Manifest 的图片源调用补充 invocation_id，普通 input/output/report 保持 Run 用途。接口与权限组合见[治理设计](flow.md#8-api授权与诊断)。

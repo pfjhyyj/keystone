@@ -9,6 +9,7 @@ from keystone.core.asyncio import new_event_loop, run
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.errors import ServiceError
+from keystone.core.migrations import expected_heads
 from keystone.entrypoints.cli import initialize
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.identity.models import User
@@ -77,10 +78,9 @@ def test_init_prepares_all_dependencies_and_preserves_existing_accounts(
                 assert await session.scalar(
                     text("SELECT to_regclass('keystone.worker_heartbeats')")
                 )
-                assert (
-                    await session.scalar(text("SELECT version_num FROM keystone.alembic_version"))
-                    == "0007"
-                )
+                assert await session.scalar(
+                    text("SELECT version_num FROM keystone.alembic_version")
+                ) in expected_heads(settings)
         finally:
             await database.close()
 

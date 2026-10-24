@@ -86,6 +86,9 @@ async def test_empty_database_migration_and_transaction_rollback(empty_database_
                 "flow_runs",
                 "worker_heartbeats",
                 "worker_registrations",
+                "model_dispatch_scopes",
+                "flow_run_budgets",
+                "flow_budget_claims",
             }
         with pytest.raises(RuntimeError, match="rollback-test"):
             async with runtime.database.transaction() as session:
@@ -163,7 +166,10 @@ def test_initial_schema_is_complete_reversible_and_preserves_dbos(empty_database
             assert set(inspect(engine).get_table_names(schema="keystone")) == expected
         command.upgrade(config, "head")
         assert set(inspect(engine).get_table_names(schema="keystone")) == tables | {
-            "alembic_version"
+            "alembic_version",
+            "model_dispatch_scopes",
+            "flow_run_budgets",
+            "flow_budget_claims",
         }
         with engine.connect() as connection:
             assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 42

@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     model_cost_concurrency: int = Field(default=2, ge=1, le=8)
     model_inference_concurrency: int = Field(default=4, ge=1, le=32)
     model_scope_concurrency: int = Field(default=4, ge=1, le=16)
+    model_send_interval_ms: int = Field(default=0, ge=0, le=60000)
+    model_cooldown_seconds: int = Field(default=5, ge=1, le=300)
+    model_cooldown_max_seconds: int = Field(default=300, ge=1, le=3600)
     initial_admin_password: SecretStr | None = Field(default=None, repr=False)
     session_hours: int = Field(default=8, ge=1, le=168)
     pat_max_days: int = Field(default=90, ge=1, le=365)
@@ -94,6 +97,7 @@ class Settings(BaseSettings):
             not re.fullmatch(r"[a-z][a-z0-9_-]{2,63}", self.worker_id)
             or self.flow_worker_concurrency > self.flow_global_concurrency
             or self.model_scope_concurrency > self.model_inference_concurrency
+            or self.model_cooldown_seconds > self.model_cooldown_max_seconds
         ):
             raise ValueError(
                 "Configure a valid fixed worker identity and shared concurrency limits"

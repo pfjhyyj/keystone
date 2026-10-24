@@ -4,8 +4,32 @@ This module never constructs a network transport. Mock amounts are test receipts
 """
 
 import json
+from pathlib import Path
 
 import httpx2
+
+IMAGE_TASK_STATE = None
+
+
+def task_state(change):
+    path = Path(IMAGE_TASK_STATE) if IMAGE_TASK_STATE else None
+    state = json.loads(path.read_text()) if path and path.exists() else {}
+    result = change(state)
+    if path:
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(state))
+        temporary.replace(path)
+    return result
+
+
+def image_bytes(format="PNG"):
+    from io import BytesIO
+
+    from PIL import Image
+
+    output = BytesIO()
+    Image.new("RGB", (2, 2), "blue").save(output, format=format)
+    return output.getvalue()
 
 
 class MockStream(httpx2.AsyncByteStream):
@@ -19,6 +43,74 @@ class MockStream(httpx2.AsyncByteStream):
 
 def transport(provider):
     async def respond(request):
+        if request.method == "POST" and request.url.path.endswith("/kling/v1/images/generations"):
+            body = json.loads(request.content)
+            task_id = "task-" + request.headers["x-keystone-invocation-id"]
+            task_state(lambda state: state.setdefault(task_id, {"n": body["n"], "queries": 0}))
+            return httpx2.Response(
+                200,
+                headers={"x-api-request-id": "native-" + task_id},
+                json={
+                    "code": 0,
+                    "data": {"task_id": task_id, "task_status": "submitted"},
+                },
+            )
+        if request.method == "GET" and "/kling/v1/images/generations/" in request.url.path:
+            task_id = request.url.path.rsplit("/", 1)[1]
+
+            def query(state):
+                task = state.setdefault(task_id, {"n": 1, "queries": 0})
+                task["queries"] += 1
+                return dict(task)
+
+            task = task_state(query)
+            pending = IMAGE_TASK_STATE is not None and task["queries"] == 1
+            return httpx2.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {
+                        "task_id": task_id,
+                        "task_status": "processing" if pending else "succeed",
+                        "task_result": {
+                            "images": [
+                                {"url": f"https://p2-fdl.klingai.com/{task_id}/{i}.png"}
+                                for i in range(task["n"])
+                            ]
+                        },
+                    },
+                },
+            )
+        if request.method == "GET" and request.headers.get("host") == "p2-fdl.klingai.com":
+            return httpx2.Response(
+                200, content=image_bytes(), headers={"content-type": "image/png"}
+            )
+        if request.method == "POST" and request.url.path.endswith("/images"):
+            import base64
+            from io import BytesIO
+
+            from PIL import Image
+
+            body = json.loads(request.content)
+            output = BytesIO()
+            Image.new("RGB", (2, 2), "blue").save(output, format=body["output_format"])
+            encoded = base64.b64encode(output.getvalue()).decode()
+            return httpx2.Response(
+                200,
+                json={
+                    "id": "mock-" + request.headers["x-keystone-invocation-id"],
+                    "data": [
+                        {"b64_json": encoded, "media_type": "image/" + body["output_format"]}
+                        for _ in range(body["n"])
+                    ],
+                    "usage": {
+                        "prompt_tokens": 12,
+                        "completion_tokens": 8,
+                        "total_tokens": 20,
+                        "cost": "0.0012",
+                    },
+                },
+            )
         if request.method == "POST" and request.url.path.endswith("/chat/completions"):
             body = json.loads(request.content)
             identifier = "mock-" + request.headers["x-keystone-invocation-id"]
@@ -26,6 +118,8 @@ def transport(provider):
             if provider == "openrouter":
                 usage["cost"] = "0.0012"
             text = "模拟渠道响应：Keystone 模型调用链路已连通。"
+            if body.get("response_format", {}).get("type") == "json_schema":
+                text = json.dumps({"answer": 7})
             envelope = {"id": identifier, "created": 0, "model": body["model"]}
             names = {t.get("function", {}).get("name") for t in body.get("tools", [])}
             if {"inspect_document", "submit_review"} <= names:
@@ -178,8 +272,20 @@ def install(monkeypatch=None):
             },
         )
     set_value(gateway, "SUPPORTED_TARGETS", targets)
+    operations = {
+        **gateway.SUPPORTED_OPERATIONS,
+        "deepseek": frozenset({"text.generate"}),
+        "aliyun_bailian": frozenset({"text.generate"}),
+    }
+    set_value(gateway, "SUPPORTED_OPERATIONS", operations)
     # entries imports this mapping directly.
     from keystone.platform.model_access.services import entries
 
     set_value(entries, "SUPPORTED_TARGETS", targets)
+    set_value(entries, "SUPPORTED_OPERATIONS", operations)
+
+    async def address(self, hostname):
+        return "1.1.1.1"
+
+    set_value(HttpClient, "public_address", address)
     set_value(HttpClient, "transport", lambda self, provider: transport(provider))

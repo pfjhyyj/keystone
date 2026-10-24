@@ -56,6 +56,9 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 | `model_cost_concurrency` | `KEYSTONE_MODEL_COST_CONCURRENCY` | 默认 2，范围 1–8；覆盖 API 手动补查和全部 Worker 的查费总预算 |
 | `model_inference_concurrency` | `KEYSTONE_MODEL_INFERENCE_CONCURRENCY` | 默认 4，范围 1–32；API 与 Worker 共享的模型发送总预算 |
 | `model_scope_concurrency` | `KEYSTONE_MODEL_SCOPE_CONCURRENCY` | 默认 4，范围 1–16，且不超过发送总预算；相同推理站点/真实 Token 共用上限 |
+| `model_send_interval_ms` | `KEYSTONE_MODEL_SEND_INTERVAL_MS` | 默认 0，范围 0–60000；同推理站点/真实 Token 的共享发送资格间隔（毫秒） |
+| `model_cooldown_seconds` | `KEYSTONE_MODEL_COOLDOWN_SECONDS` | 默认 5，范围 1–300；429 缺少有效 Retry-After 时的冷却秒数 |
+| `model_cooldown_max_seconds` | `KEYSTONE_MODEL_COOLDOWN_MAX_SECONDS` | 默认 300，范围 1–3600，且不小于默认冷却；单次冷却上限 |
 | `initial_admin_password` | `KEYSTONE_INITIAL_ADMIN_PASSWORD` | 可选，仅供空安装首次初始化；设置后即使交互式 `keystone init` 也直接采用、不再提示，已有用户时忽略 |
 
 嵌套环境变量用双下划线 `__` 分隔层级。例如 `KEYSTONE_FILE_STORAGES__LOCAL__ROOT=/data/files` 只覆盖 `local` 源的根目录。源名称以小写字母开头，可包含数字、单下划线和连字符；不要使用连续双下划线，因为该名称无法再通过环境变量层级覆盖。环境变量中的名称使用大写。数组在 TOML 中直接填写；通过环境变量覆盖 `browser_origins` 时使用 JSON 数组，例如 `KEYSTONE_BROWSER_ORIGINS='["https://console.example.com"]'`。
@@ -74,7 +77,9 @@ API/Worker 必须保持相同协调目录、槽位数、临时预算、磁盘保
 
 渠道使用代码声明的固定推理地址，控制台只列出当前支持的服务商。按原 Token 自动查费的渠道使用原推理 Key，不需额外账务 Key 或环境变量；更换 Token/站点须新建渠道，旧渠道保留历史查费凭据。费用扫描每 5 秒运行。默认仍为单 Worker；多实例仅限同宿主、同版本和固定身份，步骤见[部署说明](deployment.md#4-多-worker-部署与发布)。升级先执行 init 应用全部基线迁移。
 
-队列预算、共享模型预算及文件/协调配置进入公共声明校验；固定身份和成员数量不进入共享摘要。新身份经锁保护和兼容性校验后加入，不要求完整本地清单。修改共享执行参数仍先停止旧进程再统一发布，不能由新成员覆盖共享队列/计划。历史故障身份与公共配置冲突时需按部署流程核对，不能清理锁、删除登记或随机换身份绕过。模型发送和查费容量已共享；供应商 RPM/TPM 规则尚未提供，不能把并发值当作每分钟或 Token 配额。
+队列预算、共享模型预算及文件/协调配置进入公共声明校验；固定身份和成员数量不进入共享摘要。新身份经锁保护和兼容性校验后加入，不要求完整本地清单。修改共享执行参数仍先停止旧进程再统一发布，不能由新成员覆盖共享队列/计划。历史故障身份与公共配置冲突时需按部署流程核对，不能清理锁、删除登记或随机换身份绕过。模型发送和查费容量已共享。发送间隔与 429 持久冷却按真实站点/Token 共享，范围与语义见[Flow 运行约束](domains/flow.md#6-累计预算与资源)；固定并发、间隔和冷却并不提供完整供应商 RPM/TPM 或精确 Token 配额。
+
+发送间隔默认 0，不额外降低原吞吐。重复 Channel 使用同一 Token 不能绕过节奏，换 Worker 或重启不会清空数据库中的 blocked_until；不要删除范围行来解除冷却。冷却只延迟首次物理发送，不重发已登记生成。原生图片任务 GET 同样遵守节奏；CDN 下载不使用渠道凭据，不计入该 Token 的发送间隔。发送等待超出当前有界窗口返回 model_dispatch_delayed，尚未登记新调用；取消和撤权会终止等待并释放许可。
 
 SDK 另有每进程 4 个调用槽位，在取得共享推理许可之前限制本地资源占用。model_inference_concurrency 设置的是全部进程的共享上限，提高它不改变 SDK 本地上限，也不保证达到该吞吐量。
 

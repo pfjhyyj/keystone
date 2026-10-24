@@ -34,9 +34,17 @@ class FileTransferService:
             self._busy = False
 
     @asynccontextmanager
+    async def workspace(self, max_bytes):
+        with self._operation():
+            async with self._files.identity.access("file:create"):
+                pass
+            async with self._files.transfers.temporary(max_bytes, _slot=self._number) as path:
+                yield path
+
+    @asynccontextmanager
     async def materialize_file(self, identifier):
         with self._operation():
-            transfers = self._files.storage.transfers
+            transfers = self._files.transfers
             async with self._files.open_content(
                 identifier, _transfer_slot=self._number, max_bytes=transfers.limit
             ) as reader:
@@ -52,11 +60,20 @@ class FileTransferService:
                     yield path
 
     async def upload_file(
-        self, path, *, name, content_type, request_key, owner, slot, storage_key=None
+        self,
+        path,
+        *,
+        name,
+        content_type,
+        request_key,
+        owner,
+        slot,
+        storage_key=None,
+        admission=None,
     ):
         """Trusted local source and reference keys; retain the existing upload transaction."""
         with self._operation():
-            transfers = self._files.storage.transfers
+            transfers = self._files.transfers
             async with opened(Path(path).open, "rb") as source:
                 size = await blocking(source.seek, 0, 2)
                 await self._files.prepare_upload(size, storage_key)
@@ -79,15 +96,18 @@ class FileTransferService:
                     while chunk := await blocking(source.read, CHUNK_BYTES):
                         yield chunk
 
+                data = Upload(
+                    storage_key=storage_key,
+                    name=name,
+                    content_type=content_type,
+                    expected_size=size,
+                    checksum_sha256=digest,
+                    request_key=request_key,
+                )
+                if admission is not None:
+                    await admission(data)
                 return await self._files.upload_stream(
-                    Upload(
-                        storage_key=storage_key,
-                        name=name,
-                        content_type=content_type,
-                        expected_size=size,
-                        checksum_sha256=digest,
-                        request_key=request_key,
-                    ),
+                    data,
                     chunks(),
                     owner=owner,
                     slot=slot,

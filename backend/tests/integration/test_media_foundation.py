@@ -38,6 +38,12 @@ pytestmark = pytest.mark.postgres
 @pytest.fixture
 def media(client, monkeypatch):
     runtime = client.app.state.runtime
+    from support.local_media_stub import PACKAGE
+
+    from keystone import composition
+
+    monkeypatch.setattr(composition, "FLOW_PACKAGES", PACKAGE)
+    composition.execution_version.cache_clear()
     runtime.flow_definitions = {definition.key: definition}
     runtime.settings.file_max_bytes = 16 * 1024**2
     runtime.settings.flow_worker_concurrency = 1
@@ -434,7 +440,7 @@ def test_worker_admission_and_size_limits_precede_storage_scan(media, monkeypatc
     runtime = media.app.state.runtime
     identifier = upload(media).json()["id"]
     run_id = start(media, identifier).json()["id"]
-    monkeypatch.setattr(host, "_runtime", runtime)
+    monkeypatch.setattr(host, "_bound_runtime", runtime)
 
     def unexpected_scan(*args):
         pytest.fail("Storage scanned before admission/size checks")
@@ -442,7 +448,7 @@ def test_worker_admission_and_size_limits_precede_storage_scan(media, monkeypatc
     monkeypatch.setattr(runtime.storage.get(), "open_local", unexpected_scan)
 
     async def materialize():
-        async with host.materialize_file(run_id, identifier):
+        async with host._materialize_file(run_id, identifier):
             pytest.fail("Oversized or full-capacity materialization accepted")
 
     with ExitStack() as stack:
@@ -453,7 +459,7 @@ def test_worker_admission_and_size_limits_precede_storage_scan(media, monkeypatc
         assert rejected.value.code == "file_transfer_busy"
         with pytest.raises(ServiceError) as rejected:
             media.portal.call(
-                lambda: host.upload_file(
+                lambda: host._upload_file(
                     run_id, "copy", tmp_path / "missing", name="copy.mp4", content_type="video/mp4"
                 )
             )

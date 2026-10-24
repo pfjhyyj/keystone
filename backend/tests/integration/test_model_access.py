@@ -443,6 +443,11 @@ def test_disabled_channel_models_independent_and_snapshot_mapping(client):
     async def frozen():
         return await ModelRuntime(service).invoke(data, selection=selected)
 
+    with pytest.raises(ServiceError) as changed:
+        client.portal.call(frozen)
+    assert changed.value.code == "model_configuration_changed"
+    # Historical selections have no provider; their original target rule remains readable.
+    selected = selected.model_copy(update={"provider": None})
     result = client.portal.call(frozen)
     row = client.get("/api/v1/model-invocations/" + result["invocation_id"]).json()
     assert row["channel_id"] == c["id"] and row["provider_model"] == "mock-chat"

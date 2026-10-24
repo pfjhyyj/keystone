@@ -15,7 +15,9 @@ from keystone.core.migrations import migration_config
 
 pytestmark = pytest.mark.postgres
 BACKEND = Path(__file__).resolve().parents[2]
-BASELINE = ("0001", "0002", "0003", "0004", "0005", "0006", "0007")
+SCRIPTS = ScriptDirectory.from_config(migration_config(Settings(config_file=None)))
+CURRENT_HEAD = SCRIPTS.get_current_head()
+BASELINE = tuple(revision.revision for revision in reversed(list(SCRIPTS.walk_revisions())))
 
 
 @pytest.mark.parametrize("revision", BASELINE)
@@ -59,7 +61,7 @@ def test_baseline_revisions_upgrade_and_downgrade_without_restamping(
         with engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
-                == "0007"
+                == CURRENT_HEAD
             )
             assert connection.scalar(text("SELECT username FROM keystone.users")) == "preserved"
             assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 42
@@ -78,7 +80,7 @@ def test_baseline_revisions_upgrade_and_downgrade_without_restamping(
         with engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
-                == "0007"
+                == CURRENT_HEAD
             )
             assert connection.scalar(text("SELECT username FROM keystone.users")) == "preserved"
             assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 42
@@ -113,9 +115,10 @@ def test_generated_business_migration_is_discovered_upgraded_and_reversible(
     config.set_main_option("script_location", str(directory))
     config.attributes["create_schema"] = True
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["0008"]
-    assert script.get_revision("0008").down_revision == "0007"
-    assert (directory / "versions" / f"0008_{namespace}_initial.py").is_file()
+    child = f"{int(CURRENT_HEAD) + 1:04d}"
+    assert script.get_heads() == [child]
+    assert script.get_revision(child).down_revision == CURRENT_HEAD
+    assert (directory / "versions" / f"{child}_{namespace}_initial.py").is_file()
     table = f"{namespace}_{entity}"
     engine = create_engine(empty_database_url)
     try:
@@ -131,14 +134,13 @@ def test_generated_business_migration_is_discovered_upgraded_and_reversible(
         command.upgrade(config, "head")
         with engine.connect() as connection:
             assert connection.scalar(text(f"SELECT content FROM keystone.{table}")) == "Preserved"
-        command.downgrade(config, "0007")
+        command.downgrade(config, CURRENT_HEAD)
         assert table not in inspect(engine).get_table_names(schema="keystone")
         assert "users" in inspect(engine).get_table_names(schema="keystone")
         command.upgrade(config, "head")
         with engine.connect() as connection:
             assert (
-                connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
-                == "0008"
+                connection.scalar(text("SELECT version_num FROM keystone.alembic_version")) == child
             )
     finally:
         engine.dispose()

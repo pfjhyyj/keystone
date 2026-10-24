@@ -6,8 +6,9 @@ from uuid import UUID
 from pydantic import Field, field_validator
 
 from keystone.core.schemas import Input
-from keystone.platform.flow.schemas.definitions import Definition
-from keystone.platform.model_access.schemas import Key
+from keystone.platform.flow.schemas.budgets import FlowLimits
+from keystone.platform.flow.schemas.definitions import FlowDefinition, ModelRole
+from keystone.platform.flow.schemas.packages import FlowPackage, PackageResource
 
 SOURCE_BYTES = 16384
 PREVIEW_CHARACTERS = 512
@@ -16,7 +17,6 @@ EXCERPT_CHARACTERS = 2048
 
 class ReviewInput(Input):
     source_file_id: UUID
-    model_key: Key
 
 
 class Judgment(Input):
@@ -66,12 +66,13 @@ class DocumentExcerpt(Input):
     truncated: bool
 
 
-definition = Definition(
+definition = FlowDefinition(
+    revision="1",
     key="document.review",
     name="文本文件审查",
     description="读取小型 UTF-8 文本，由 Agent 审查并保存通过验收的报告。",
-    input_type=ReviewInput,
-    output_type=ReviewOutput,
+    input_model=ReviewInput,
+    output_model=ReviewOutput,
     entrypoint="keystone.document.review",
     # Recovery may reuse the report through existing file inspection/management checks.
     required_permissions=(
@@ -83,6 +84,28 @@ definition = Definition(
     ),
     file_fields=("source_file_id",),
     output_file_fields=("report_file_id",),
-    model_field="model_key",
+    model_roles=(ModelRole("review", "审查"),),
     timeout_seconds=180,
+    limits=FlowLimits(
+        model_requests=4,
+        tool_calls=3,
+        iterations=4,
+        input_tokens=16000,
+        output_tokens=8192,
+        file_count=2,
+        file_bytes=SOURCE_BYTES + 8192,
+    ),
+)
+
+
+PACKAGE = FlowPackage(
+    key="document-tools",
+    host_api_version=1,
+    definitions=(definition,),
+    execution_modules=("keystone.examples.document_review.workflow",),
+    required_resources=(
+        PackageResource(
+            package="keystone", path="examples/document_review/skills/review-text/SKILL.md"
+        ),
+    ),
 )

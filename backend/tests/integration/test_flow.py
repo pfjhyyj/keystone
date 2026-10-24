@@ -37,6 +37,11 @@ def configuration(client, monkeypatch):
     runtime = client.app.state.runtime
     from support.flow_fixture.contracts import definition
 
+    from keystone import composition
+    from keystone.examples.document_review.contracts import PACKAGE
+
+    monkeypatch.setattr(composition, "FLOW_PACKAGES", (PACKAGE,))
+    composition.execution_version.cache_clear()
     runtime.flow_definitions = {definition.key: definition}
     settings = runtime.settings
     DBOS.migrate(settings.database_url.get_secret_value())
@@ -50,7 +55,8 @@ def start(client, file_id, key="review", **overrides):
         json={
             "definition_key": "document.review",
             "request_key": key,
-            "input": {"source_file_id": file_id, "model_key": "chat"},
+            "input": {"source_file_id": file_id},
+            "model_bindings": {"review": "chat"},
             **overrides,
         },
     )
@@ -92,6 +98,9 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
         "model_cost_concurrency",
         "model_inference_concurrency",
         "model_scope_concurrency",
+        "model_send_interval_ms",
+        "model_cooldown_seconds",
+        "model_cooldown_max_seconds",
         "worker_shutdown_seconds",
         "file_max_bytes",
         "file_transfer_slots",
@@ -152,7 +161,7 @@ def test_real_worker_harness_model_and_report(client, tmp_path):
     response = start(client, file_id)
     assert response.status_code == 202, response.text
     row = response.json()
-    assert len(row) == 16 and row["status"] == "pending"
+    assert len(row) == 18 and row["status"] == "pending"
     with worker(client, tmp_path) as (process, log):
         done = wait_run(client, row["id"], process, log)
         assert done["status"] == "succeeded", (done, log.read_text(encoding="utf8"))
@@ -319,7 +328,8 @@ def test_worker_crash_recovery_never_repeats_paid_request(client, tmp_path, poin
         body = {
             "definition_key": "document.review",
             "request_key": "review",
-            "input": {"source_file_id": file_id, "model_key": "chat"},
+            "input": {"source_file_id": file_id},
+            "model_bindings": {"review": "chat"},
         }
         permissions = [
             "flow:start",
@@ -363,11 +373,11 @@ FlowModel.request = crash
     else:
         injection = """
 from keystone.platform.flow.workflows import context as host
-original = host.upload
+original = host._upload
 async def crash(*args, **kwargs):
     await original(*args, **kwargs)
     os._exit(71)
-host.upload = crash
+host._upload = crash
 """
     code = "import os\n" + injection + "\nfrom keystone.entrypoints.worker import main; main()"
     with worker(client, tmp_path, code=code) as (process, log):
@@ -392,7 +402,8 @@ def test_pat_revocation_blocks_execution_but_new_session_can_cancel(client, tmp_
     body = {
         "definition_key": "document.review",
         "request_key": "pat-review",
-        "input": {"source_file_id": file_id, "model_key": "chat"},
+        "input": {"source_file_id": file_id},
+        "model_bindings": {"review": "chat"},
     }
     row = client.post("/api/v1/flow-runs", json=body, headers=bearer(p["token"])).json()
     assert row["personal_access_token_id"] == p["id"]
@@ -461,7 +472,8 @@ def test_original_output_contract_and_retention_after_revocation(client):
         json={
             "definition_key": "document.review",
             "request_key": "receipt",
-            "input": {"source_file_id": file_id, "model_key": "chat"},
+            "input": {"source_file_id": file_id},
+            "model_bindings": {"review": "chat"},
         },
     )
     row = response.json()
@@ -506,7 +518,8 @@ def test_coordinator_replay_rechecks_identity_and_cancel_intent(client, change):
         json={
             "definition_key": "document.review",
             "request_key": "replayed-plan",
-            "input": {"source_file_id": file_id, "model_key": "chat"},
+            "input": {"source_file_id": file_id},
+            "model_bindings": {"review": "chat"},
         },
     )
     assert response.status_code == 202, response.text
@@ -550,7 +563,8 @@ def test_replayed_submission_denial_preserves_concurrent_engine_completion(clien
         json={
             "definition_key": "document.review",
             "request_key": "completion-race",
-            "input": {"source_file_id": file_id, "model_key": "chat"},
+            "input": {"source_file_id": file_id},
+            "model_bindings": {"review": "chat"},
         },
     ).json()
     client.delete("/api/v1/auth/tokens/" + pat["id"])
@@ -677,6 +691,7 @@ def test_unregistered_output_file_rejected_and_old_version_not_dispatched(client
 def test_external_package_change_blocks_execution_and_delivery(client, tmp_path, monkeypatch):
     from keystone import composition
     from keystone.composition import execution_version
+    from keystone.platform.flow.schemas.packages import FlowPackage
     from keystone.platform.flow.services.identity import ExecutionIdentity
 
     package = tmp_path / "execution_review_package"
@@ -686,8 +701,17 @@ def test_external_package_change_blocks_execution_and_delivery(client, tmp_path,
     monkeypatch.syspath_prepend(str(tmp_path))
     monkeypatch.setattr(
         composition,
-        "EXECUTION_PACKAGES",
-        {**composition.EXECUTION_PACKAGES, "execution_review_package": ()},
+        "FLOW_PACKAGES",
+        (
+            *composition.FLOW_PACKAGES,
+            FlowPackage(
+                key="execution-review",
+                host_api_version=1,
+                definitions=(),
+                execution_modules=(),
+                execution_packages=("execution_review_package",),
+            ),
+        ),
     )
     execution_version.cache_clear()
     try:
@@ -851,16 +875,27 @@ def test_execution_context_preserves_transaction_errors_and_audit(client):
 
 
 def test_flow_binary_files_limits_and_idempotent_retention(client, monkeypatch):
+    from dataclasses import replace
+
     from keystone.platform.flow.workflows import context as host
 
-    client.app.state.runtime.settings.file_max_bytes = 32768
+    runtime = client.app.state.runtime
+    runtime.settings.file_max_bytes = 32768
+    # This test exercises generic binary resources rather than the example's small text quota.
+    current = runtime.flow_definitions["document.review"]
+    runtime.flow_definitions = {
+        **runtime.flow_definitions,
+        current.key: replace(
+            current, limits=current.limits.model_copy(update={"file_bytes": 65536})
+        ),
+    }
     data = b"\xff\x00\x81" * 6000
     source = upload(client, data).json()["id"]
     run_id = start(client, source).json()["id"]
-    monkeypatch.setattr(host, "_runtime", client.app.state.runtime)
+    monkeypatch.setattr(host, "_bound_runtime", client.app.state.runtime)
 
     async def exercise():
-        assert await host.read_file(run_id, source, max_bytes=len(data)) == data
+        assert await host._read_file(run_id, source, max_bytes=len(data)) == data
         original = client.app.state.runtime.storage.get().read
 
         def unexpected_read(*args):
@@ -868,19 +903,19 @@ def test_flow_binary_files_limits_and_idempotent_retention(client, monkeypatch):
 
         monkeypatch.setattr(client.app.state.runtime.storage.get(), "read", unexpected_read)
         with pytest.raises(ServiceError) as error:
-            await host.read_file(run_id, source, max_bytes=len(data) - 1)
+            await host._read_file(run_id, source, max_bytes=len(data) - 1)
         assert error.value.code == "file_too_large"
         monkeypatch.setattr(client.app.state.runtime.storage.get(), "read", original)
-        identifier = await host.upload(
+        identifier = await host._upload(
             run_id, "binary", "data.bin", data, content_type="application/octet-stream"
         )
         assert (
-            await host.upload(
+            await host._upload(
                 run_id, "binary", "data.bin", data, content_type="application/octet-stream"
             )
             == identifier
         )
-        assert await host.read_file(run_id, identifier, max_bytes=len(data)) == data
+        assert await host._read_file(run_id, identifier, max_bytes=len(data)) == data
         return identifier
 
     identifier = client.portal.call(exercise)
@@ -899,7 +934,7 @@ def test_upload_completion_retains_file_after_flow_cancel(client, monkeypatch):
 
     runtime = client.app.state.runtime
     run_id = start(client, upload(client).json()["id"]).json()["id"]
-    monkeypatch.setattr(host, "_runtime", runtime)
+    monkeypatch.setattr(host, "_bound_runtime", runtime)
     original = files.blocking
 
     async def cancel_after_write(function, *args):
@@ -916,7 +951,7 @@ def test_upload_completion_retains_file_after_flow_cancel(client, monkeypatch):
     monkeypatch.setattr(files, "blocking", cancel_after_write)
 
     async def upload_report():
-        return await host.upload(
+        return await host._upload(
             run_id, "report", "cancelled.txt", b"ok", content_type="text/plain"
         )
 
