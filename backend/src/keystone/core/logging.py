@@ -7,21 +7,28 @@ from traceback import walk_tb
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
 
 
+def exception_chain(error: BaseException):
+    """Bound explicit and implicit causes, respecting deliberate context suppression."""
+    seen = set()
+    while error is not None and id(error) not in seen and len(seen) < 8:
+        seen.add(id(error))
+        yield error
+        error = error.__cause__ or (None if error.__suppress_context__ else error.__context__)
+
+
 def safe_exception(error: BaseException) -> list[dict]:
     """Code locations only: never inspect messages, source lines or local variables."""
-    result, seen = [], set()
-    while error is not None and id(error) not in seen and len(result) < 8:
-        seen.add(id(error))
+    result = []
+    for cause in exception_chain(error):
         frames = []
-        for frame, line in walk_tb(error.__traceback__):
+        for frame, line in walk_tb(cause.__traceback__):
             path = Path(frame.f_code.co_filename)
             try:
                 filename = "keystone/" + path.relative_to(SOURCE_ROOT).as_posix()
             except ValueError:
                 filename = path.name
             frames.append({"file": filename, "function": frame.f_code.co_name, "line": line})
-        result.append({"type": type(error).__name__, "frames": frames[-32:]})
-        error = error.__cause__ or (None if error.__suppress_context__ else error.__context__)
+        result.append({"type": type(cause).__name__, "frames": frames[-32:]})
     return result
 
 
@@ -36,6 +43,9 @@ class JsonFormatter(logging.Formatter):
         }
         if getattr(record, "request_id", None):
             value["request_id"] = record.request_id
+        # Only caller-built, explicitly whitelisted diagnostic fields belong here.
+        if getattr(record, "diagnostic", None):
+            value["diagnostic"] = record.diagnostic
         if getattr(record, "exception", None):
             value["exception"] = record.exception
         elif record.exc_info and record.exc_info[1]:

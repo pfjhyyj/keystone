@@ -49,6 +49,9 @@ class Observation:
         self.rate_limited = False
         self.retry_after_seconds = None
         self.request_budget = None
+        self.phase = "preparing"
+        self.request_bytes = None
+        self.upstream_status = None
 
     def parse(self, raw):
         if raw == b"[DONE]":
@@ -106,12 +109,14 @@ class ObservedResponse(httpx2.Response):
         )
 
     async def aiter_bytes(self, chunk_size=None):
+        self.observation.phase = "reading_response"
         async for chunk in super().aiter_bytes(chunk_size):
             self.observation.feed(chunk)
             yield chunk
         if not self.observation.streaming and self.status_code < 400:
             self.observation.parse(bytes(self.observation.buffer))
         self.observation.buffer.clear()
+        self.observation.phase = "response_received"
 
 
 class SendTransport(httpx2.AsyncBaseTransport):
@@ -133,6 +138,7 @@ class SendTransport(httpx2.AsyncBaseTransport):
         self.max_request_bytes = max_request_bytes
 
     async def handle_async_request(self, request):
+        self.observation.phase = "validating_request"
         # SDK multipart requests stream by default. Bound the actual encoded body before
         # registration, then validate exactly the bytes that will reach the relay.
         try:
@@ -154,13 +160,18 @@ class SendTransport(httpx2.AsyncBaseTransport):
             )
         if len(content) > self.max_request_bytes:
             raise ServiceError(413, "model_input_too_large", "模型请求超过本操作上限")
+        self.observation.request_bytes = len(content)
         self.observation.request_budget = self.validate(request)
+        self.observation.phase = "admission"
         secret = await self.before_send()
         # Authorization and committed registration precede the only physical send.
         request.headers.pop("Authorization", None)
         self.authorize(request, secret)
         request.headers["X-Keystone-Invocation-Id"] = str(self.identifier)
+        self.observation.phase = "sending"
         response = await self.source.handle_async_request(request)
+        self.observation.phase = "response_headers"
+        self.observation.upstream_status = response.status_code
         self.observation.rate_limited = response.status_code == 429
         if self.observation.rate_limited:
             self.observation.retry_after_seconds = retry_after(response.headers.get("retry-after"))

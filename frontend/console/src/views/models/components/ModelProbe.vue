@@ -6,7 +6,6 @@ import ModelPicker from '../../../components/models/ModelPicker.vue'
 const emit = defineEmits<{ completed: [] }>()
 const key = ref(''),
   prompt = ref(''),
-  streaming = ref(true),
   output = ref(''),
   invocation = ref(''),
   error = ref(''),
@@ -35,13 +34,12 @@ async function invoke() {
       {
         model_key: key.value,
         messages: [{ role: 'user', content: prompt.value }],
-        stream: streaming.value,
+        stream: false,
       },
       (event) => {
         if (!alive || !can('model:invoke')) return
         if (typeof event.invocation_id === 'string') invocation.value = event.invocation_id
         if (event.type === 'error') throw new Error(String(event.detail))
-        if (event.type === 'delta') output.value += String(event.text)
         if (event.type === 'done' && typeof event.content === 'string') output.value = event.content
       },
       current.signal,
@@ -78,10 +76,8 @@ async function invoke() {
           maxlength="32000"
           :rows="3"
           :disabled="calling"
-          type="textarea" /></label
-      ><el-checkbox class="check-option" v-model="streaming" :disabled="calling"
-        >流式响应</el-checkbox
-      >
+          type="textarea"
+      /></label>
       <div class="row-actions">
         <el-button :disabled="calling || !key || !prompt" native-type="submit" type="primary"
           >发送真实请求</el-button

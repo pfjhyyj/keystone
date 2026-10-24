@@ -4,7 +4,7 @@ from keystone.core.errors import ServiceError
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.adapters.channels import CHANNELS
-from keystone.platform.model_access.models import Channel, ModelEntry
+from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.schemas.operations import Delivery, Operation
 from keystone.platform.model_access.services.queries import locked
 
@@ -18,6 +18,7 @@ def catalog_entry(row, provider):
     )
     return {
         "key": row.key,
+        "name": getattr(row, "name", None) or row.key,
         "operations": operations,
         "capabilities": ["text", "stream"] if "text.generate" in operations else [],
     }
@@ -94,6 +95,10 @@ class ModelEntryService:
             row = await locked(session, ModelEntry, identifier) if identifier else None
             await locked(session, Channel, data.channel_id)
             values = data.model_dump()
+            if values.get("name") is None:
+                values.pop("name", None)
+                if row is None:
+                    values["name"] = data.key
             if values.get("operations") is None:
                 values.pop("operations", None)
             if row:
@@ -122,11 +127,56 @@ class ModelEntryService:
                         "provider_model": row.provider_model,
                         "is_active": row.is_active,
                         "operations": row.operations,
+                        "name": row.name,
                         **({"key": row.key} if identifier is None else {}),
                     },
                 },
             )
             return schemas.entry_view(row)
+
+    async def rename(self, identifier, data):
+        async with self.identity.access(
+            "model:manage", action="model.entry.update", target="model.entry", target_id=identifier
+        ) as (session, auth):
+            row = await locked(session, ModelEntry, identifier)
+            before = row.name or row.key
+            row.name = data.name
+            self.identity.touch(row, auth)
+            await self.identity.log(
+                session,
+                auth,
+                "model.entry.update",
+                "model.entry",
+                row.id,
+                {"before": {"name": before}, "after": {"name": row.name}},
+            )
+            return schemas.entry_view(row)
+
+    async def delete(self, identifier):
+        async with self.identity.access(
+            "model:manage", action="model.entry.delete", target="model.entry", target_id=identifier
+        ) as (session, auth):
+            row = await locked(session, ModelEntry, identifier)
+            called = await session.scalar(
+                select(ModelInvocation.id)
+                .where(ModelInvocation.model_entry_id == identifier)
+                .limit(1)
+            )
+            if called or await self.clients.model_referenced(
+                session, entry_id=identifier, key=row.key
+            ):
+                raise ServiceError(
+                    409, "model_entry_referenced", "模型已有调用记录或流程引用，只能停用，不能删除"
+                )
+            await self.identity.log(
+                session,
+                auth,
+                "model.entry.delete",
+                "model.entry",
+                row.id,
+                {"key": row.key, "name": row.name or row.key},
+            )
+            await session.delete(row)
 
     async def selection(self, key):
         async with self.identity.access("model:invoke") as (session, _):

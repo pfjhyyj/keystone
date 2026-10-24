@@ -17,7 +17,6 @@ import {
 } from '@element-plus/icons-vue'
 import {
   can,
-  checking,
   clearSession,
   identity,
   initialized,
@@ -223,8 +222,7 @@ onBeforeUnmount(() => {
         <el-alert v-if="logoutError" type="error" :closable="false" show-icon>{{
           logoutError
         }}</el-alert>
-        <el-skeleton v-if="checking" :rows="6" animated class="page-loading" />
-        <section v-else-if="!allowed" class="access-denied">
+        <section v-if="!allowed" class="access-denied">
           <el-empty description="请选择可访问的模块，或联系管理员。"
             ><h1>没有此页面的访问权限</h1></el-empty
           >

@@ -2,7 +2,7 @@ import json
 import logging
 import sys
 
-from keystone.core.logging import JsonFormatter, safe_exception
+from keystone.core.logging import JsonFormatter, exception_chain, safe_exception
 
 
 def test_json_exception_preserves_locations_and_chains_without_sensitive_values():
@@ -43,3 +43,31 @@ def test_exception_suppression_and_cycles_are_bounded():
     outer.__cause__ = hidden
     hidden.__cause__ = outer
     assert len(safe_exception(outer)) == 2
+
+
+def test_implicit_exception_context_and_deep_chains_are_bounded():
+    try:
+        try:
+            raise OSError("private upstream URL and key")
+        except OSError:
+            raise RuntimeError("private body") from None
+    except RuntimeError as suppressed:
+        assert len(list(exception_chain(suppressed))) == 1
+        suppressed.__suppress_context__ = False
+        assert [type(error) for error in exception_chain(suppressed)] == [RuntimeError, OSError]
+
+    error = ValueError("private")
+    for _ in range(100):
+        wrapper = RuntimeError("private")
+        wrapper.__cause__ = error
+        error = wrapper
+    assert len(safe_exception(error)) == 8
+
+
+def test_json_formatter_only_emits_explicit_diagnostics():
+    record = logging.LogRecord("test", logging.ERROR, __file__, 1, "operation_failed", (), None)
+    record.diagnostic = {"stage": "inference", "elapsed_ms": 25}
+    record.raw_request = "must-never-log"
+    encoded = JsonFormatter().format(record)
+    assert json.loads(encoded)["diagnostic"] == record.diagnostic
+    assert "must-never-log" not in encoded

@@ -48,6 +48,31 @@ DBOS 公共运行时由 Worker 统一启动，文件清理、Flow 协调和自�
 
 `/api/v1/health` 检查 API 存活，`/api/v1/ready` 检查数据库、业务版本及存储；Worker 使用独立日志或[健康探针](development.md#worker-健康检查排障)。
 
+### 2.1 调用失败排查
+
+API 与 Worker 将 JSON 日志输出到标准错误，部署时由进程管理器或容器平台保留并轮转。模型失败事件为 `model_call_failed`，主动中断为 `model_call_interrupted`；按调用记录的 UUID 查询 API 和 Worker 日志，HTTP 响应头 `X-Request-ID` 对应日志顶层 `request_id`。未完成发送登记时没有持久调用记录，仍可按请求 ID 查询。
+
+`diagnostic` 包含渠道/模型 ID、操作、`stage`、`transport_phase`、`elapsed_ms`、是否登记及上游状态/请求编号。`network_reason` 区分连接/读写超时、DNS、TLS、连接重置和协议异常；`upstream_error_code` / `upstream_error_type` 仅在上游提供已知安全代码时输出。`exception` 保留有界异常链和文件、函数、行号，不包含异常原文、源码行和局部变量。上游没有明确长度错误时，不能仅按耗时或 unknown 判定输入太长。
+
+本机开发若需跨终端保留日志，可在 `backend/` 下分别启动 API 与 Worker：
+
+```bash
+mkdir -p ../.artifacts/logs
+uv run --locked keystone-api >>../.artifacts/logs/api.log 2>&1
+```
+
+```bash
+uv run --locked keystone-worker >>../.artifacts/logs/worker.log 2>&1
+```
+
+从仓库根目录查询：
+
+```bash
+rg --fixed-strings '替换为调用记录 UUID 或 X-Request-ID' .artifacts/logs
+```
+
+日志只覆盖采用当前代码启动后的调用；历史 unknown 记录无法补回当时未记录的异常链。无需修改数据库。发布时仍按下一节处理在途调用与同版本 API/Worker，避免为新增日志打断已发送请求。
+
 ## 3. 更新与恢复
 
 发布前先停止接收新业务写入，使未完成 Flow 在原版本下完成或受控取消并同步终态，再停止全部旧 API/Worker，联合备份数据库、文件及当前发布制品。取消受理不代表已发送模型请求或原生文件 I/O 已结束，停止前仍需核对事实收尾。随后用新版本执行一次 `keystone init` 并分别启动应用进程。所有实例保持同一制品，同身份的新旧 Worker 不并行运行；无法处理的旧业务执行保留原版本恢复路径，不交给新版本强行接管。不兼容升级失败时，不能只退代码而保留新 schema。

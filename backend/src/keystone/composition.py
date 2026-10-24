@@ -107,6 +107,7 @@ def build_catalog():
 
 
 def build_model_clients(settings, database):
+    from keystone.platform.flow.services.model_references import model_referenced
     from keystone.platform.model_access.adapters.billing.registry import BillingClient
     from keystone.platform.model_access.adapters.channels import CHANNELS
     from keystone.platform.model_access.adapters.clients import ModelClients
@@ -122,4 +123,5 @@ def build_model_clients(settings, database):
         BillingClient(http, CHANNELS),
         ChannelCredentials(settings.file_coordination_root),
         QueryCoordination(database, settings),
+        model_referenced,
     )

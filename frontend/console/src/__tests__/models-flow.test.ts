@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { flushPromises, mount, RouterLinkStub, type VueWrapper } from '@vue/test-utils'
 import ModelManager from '../views/models/ModelsView.vue'
 import ModelProbe from '../views/models/components/ModelProbe.vue'
+import UpstreamModelPicker from '../views/models/components/UpstreamModelPicker.vue'
 import ModelPicker from '../components/models/ModelPicker.vue'
 import InvocationHistory from '../views/models/components/InvocationHistory.vue'
 import FlowManager from '../views/flows/FlowsView.vue'
@@ -170,6 +171,7 @@ it('preserves an off-page channel and never sends model key in PATCH', async () 
       return entry
     }
     if (path === '/model-access/options') return { providers: ['openrouter'] }
+    if (path.endsWith('/models')) return { items: [{ id: 'mock-chat' }] }
     return path.startsWith('/model-entries') ? [entry] : []
   })
   const wrapper = mount(ModelManager)
@@ -183,12 +185,208 @@ it('preserves an off-page channel and never sends model key in PATCH', async () 
   expect(writes).toEqual([
     {
       channel_id: channelId,
+      name: 'chat',
       provider_model: 'mock-chat',
       is_active: true,
       operations: ['text.generate'],
     },
   ])
 })
+it('loads channel models, selects an upstream ID and suggests a model key', async () => {
+  authorize(['model:manage'])
+  const writes: unknown[] = []
+  let discoveryCalls = 0
+  fakeApi((path, init) => {
+    if (init.method === 'POST') {
+      writes.push(JSON.parse(String(init.body)))
+      return entry
+    }
+    if (path === '/model-access/options') return { providers: ['openlux'], balance_providers: [] }
+    if (path.endsWith('/models')) {
+      discoveryCalls++
+      return { items: [{ id: 'vendor/chat-v1' }] }
+    }
+    return path.startsWith('/model-channels') ? [{ ...channel, provider: 'openlux' }] : []
+  })
+  const wrapper = mount(ModelManager)
+  await flushPromises()
+  expect(button(wrapper, '刷新余额').attributes('disabled')).toBeDefined()
+  expect(wrapper.text()).toContain('当前渠道尚未接入账户余额查询')
+  await button(wrapper, '新建模型').trigger('click')
+  await flushPromises()
+  await chooseSelect(wrapper, channelId, '模型渠道')
+  expect(wrapper.text()).toContain('已获取 1 个模型')
+  expect(discoveryCalls).toBe(1)
+  await button(wrapper, '刷新上游模型').trigger('click')
+  await flushPromises()
+  expect(discoveryCalls).toBe(2)
+  await chooseSelect(wrapper, 'vendor/chat-v1', '上游模型')
+  expect((wrapper.get('[role=dialog] input').element as HTMLInputElement).value).toBe(
+    'vendor-chat-v1',
+  )
+  await wrapper.get('[role=dialog] form').trigger('submit')
+  await flushPromises()
+  expect(writes).toEqual([
+    {
+      key: 'vendor-chat-v1',
+      name: 'vendor-chat-v1',
+      channel_id: channelId,
+      provider_model: 'vendor/chat-v1',
+      operations: ['text.generate'],
+      is_active: true,
+    },
+  ])
+})
+it.each(['', '   '])('resets a cleared model display name to its fixed key (%j)', async (value) => {
+  authorize(['model:manage'])
+  const writes: { path: string; body: Record<string, unknown> }[] = []
+  fakeApi((path, init) => {
+    if (init.method === 'PATCH') {
+      writes.push({ path, body: JSON.parse(String(init.body)) })
+      return entry
+    }
+    if (path === '/model-access/options') return { providers: ['openrouter'] }
+    if (path.endsWith('/models')) return { items: [{ id: 'mock-chat' }] }
+    return path.startsWith('/model-entries') ? [{ ...entry, name: '旧显示名称' }] : []
+  })
+  const wrapper = mount(ModelManager)
+  await flushPromises()
+  await button(wrapper, '编辑模型').trigger('click')
+  const name = wrapper.get('[role=dialog] input[placeholder="留空使用模型 key"]')
+  expect((name.element as HTMLInputElement).value).toBe('旧显示名称')
+  await name.setValue(value)
+  await wrapper.get('[role=dialog] form').trigger('submit')
+  await flushPromises()
+  expect(writes).toHaveLength(1)
+  expect(writes[0]!.path).toBe(`/model-entries/${id}`)
+  expect(writes[0]!.body.name).toBe(entry.key)
+  expect(writes[0]!.body).not.toHaveProperty('key')
+})
+it.each([
+  ['newapi', 'https://newapiai.com/v1'],
+  ['openlux', 'https://api.openlux.ai/v1'],
+  ['yunwu', 'https://yunwu.ai/v1'],
+])('keeps %s separate and fills its own default address', async (provider, base) => {
+  authorize(['model:manage'])
+  const writes: unknown[] = []
+  fakeApi((path, init) => {
+    if (path === '/model-access/options')
+      return {
+        providers: ['openrouter', 'openlux', 'yunwu', 'newapi'],
+        balance_providers: ['openrouter'],
+        default_api_bases: {
+          newapi: 'https://newapiai.com/v1',
+          openlux: 'https://api.openlux.ai/v1',
+          yunwu: 'https://yunwu.ai/v1',
+        },
+      }
+    if (init.method === 'POST') {
+      writes.push(JSON.parse(String(init.body)))
+      return channel
+    }
+    return []
+  })
+  const wrapper = mount(ModelManager)
+  await flushPromises()
+  await button(wrapper, '新建渠道').trigger('click')
+  await chooseSelect(wrapper, provider, '服务商')
+  expect((wrapper.get('input[type=url]').element as HTMLInputElement).value).toBe(base)
+  expect(selectControl(wrapper, '服务商').text()).toContain('Openlux')
+  expect(selectControl(wrapper, '服务商').text()).toContain('Yunwu')
+  await wrapper.get('[role=dialog] input').setValue('My NewAPI')
+  await wrapper.get('input[type=password]').setValue('private-key')
+  await wrapper.get('[role=dialog] form').trigger('submit')
+  await flushPromises()
+  expect(writes[0]).toMatchObject({
+    provider,
+    api_base: base,
+    api_key: 'private-key',
+  })
+})
+it('discards a stale channel model list and preserves an unavailable current model', async () => {
+  authorize(['model:manage'])
+  const pending = deferred<unknown>()
+  fakeApi((path) =>
+    path.includes('/first/') ? pending.promise : { items: [{ id: 'second-model' }] },
+  )
+  const wrapper = mount(UpstreamModelPicker, {
+    props: { channelId: 'first', disabled: false, modelValue: 'deepseek-flash' },
+  })
+  await flushPromises()
+  await wrapper.setProps({ channelId: 'second' })
+  await flushPromises()
+  pending.resolve({ items: [{ id: 'first-model' }] })
+  await flushPromises()
+  const control = selectControl(wrapper, '上游模型')
+  expect(control.text()).toContain('second-model')
+  expect(control.text()).not.toContain('first-model')
+  expect(wrapper.text()).toContain('当前渠道返回的列表不包含此模型')
+  expect(control.props('modelValue')).toBe('deepseek-flash')
+  wrapper.unmount()
+})
+it.each(['渠道', '模型'])('renames %s from the list using only the display name', async (kind) => {
+  authorize(['model:manage'])
+  const writes: { path: string; body: unknown }[] = []
+  fakeApi((path, init) => {
+    if (init.method === 'PATCH') {
+      writes.push({ path, body: JSON.parse(String(init.body)) })
+      return {}
+    }
+    if (path === '/model-access/options')
+      return { providers: ['openrouter'], balance_providers: ['openrouter'] }
+    return path.startsWith('/model-channels') ? [channel] : [entry]
+  })
+  const wrapper = mount(ModelManager)
+  await flushPromises()
+  await button(wrapper, `修改${kind}名称`).trigger('click')
+  await wrapper.get('[role=dialog] input').setValue('新的显示名称')
+  await wrapper.get('[role=dialog] form').trigger('submit')
+  await flushPromises()
+  expect(writes).toEqual([
+    {
+      path: kind === '渠道' ? `/model-channels/${channelId}/name` : `/model-entries/${id}/name`,
+      body: { name: '新的显示名称' },
+    },
+  ])
+  expect(wrapper.find('[role=dialog]').exists()).toBe(false)
+})
+it.each(['渠道', '模型'])(
+  'confirms deleting %s and keeps referenced rows when the API refuses',
+  async (kind) => {
+    authorize(['model:manage'])
+    const deletes: string[] = []
+    let referenced = true
+    fakeApi((path, init) => {
+      if (init.method === 'DELETE') {
+        deletes.push(path)
+        return referenced
+          ? new Response(
+              JSON.stringify({
+                code: 'model_entry_referenced',
+                detail: '已有流程引用，只能停用，不能删除',
+              }),
+              { status: 409, headers: { 'Content-Type': 'application/json' } },
+            )
+          : new Response(null, { status: 204 })
+      }
+      if (path === '/model-access/options')
+        return { providers: ['openrouter'], balance_providers: ['openrouter'] }
+      return path.startsWith('/model-channels') ? [channel] : [entry]
+    })
+    const wrapper = mount(ModelManager)
+    await flushPromises()
+    await button(wrapper, `删除${kind}`).trigger('click')
+    expect(deletes).toEqual([])
+    await wrapper.get('[role=dialog] form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[role=dialog]').text()).toContain('只能停用，不能删除')
+    referenced = false
+    await wrapper.get('[role=dialog] form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.find('[role=dialog]').exists()).toBe(false)
+    expect(deletes).toHaveLength(2)
+  },
+)
 it('uses identical bounded filters for history and summary and rejects invalid IDs', async () => {
   authorize(['model_invocation:read'])
   const paths: string[] = []
@@ -335,6 +533,7 @@ it('labels live calls and sends only after an explicit submission', async () => 
   await flushPromises()
   expect(wrapper.text()).toContain('可能产生真实费用')
   expect(wrapper.find('section').attributes('aria-label')).toBe('真实调用')
+  expect(wrapper.text()).not.toContain('流式响应')
   expect(spy).not.toHaveBeenCalled()
   await chooseSelect(wrapper, 'chat')
   await wrapper.get('textarea').setValue('hello')
@@ -342,14 +541,14 @@ it('labels live calls and sends only after an explicit submission', async () => 
   await wrapper.get('form').trigger('submit')
   await flushPromises()
   expect(spy).toHaveBeenCalledTimes(1)
-  expect(spy.mock.calls[0]![0]).toMatchObject({ model_key: 'chat', stream: true })
+  expect(spy.mock.calls[0]![0]).toMatchObject({ model_key: 'chat', stream: false })
 })
 it('uses the official address and no fake upstream model when configuring live mode', async () => {
   authorize(['model:manage'])
   fakeApi((path) => (path === '/model-access/options' ? { providers: ['openrouter'] } : []))
   const wrapper = mount(ModelManager)
   await flushPromises()
-  expect(wrapper.text()).toContain('真实发送（OpenRouter、Openlux、Yunwu）')
+  expect(wrapper.text()).toContain('真实发送（OpenRouter、Openlux、Yunwu、NewAPI）')
   await button(wrapper, '新建渠道').trigger('click')
   await flushPromises()
   expect(selectControl(wrapper, '服务商').text()).not.toContain('DeepSeek')

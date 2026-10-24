@@ -101,6 +101,28 @@ def test_model_baseline_defaults_and_roundtrip_preserve_billing_and_recovery(mod
             assert "flow_context ->> 'flow_run_id'" in index and "created_at, id" in index
 
 
+def test_model_baseline_contains_newapi_and_editable_display_name(model_baseline):
+    config, engine = model_baseline
+    with engine.begin() as connection:
+        connection.execute(
+            text("""UPDATE keystone.model_channels SET provider='newapi',
+            api_base='https://newapiai.com/v1'""")
+        )
+        connection.execute(text("UPDATE keystone.model_entries SET name='Display name'"))
+        before = dict(
+            connection.execute(text("SELECT * FROM keystone.model_entries")).mappings().one()
+        )
+        assert before["key"] == "original" and before["name"] == "Display name"
+    command.upgrade(config, "head")
+    command.downgrade(config, "0005")
+    with engine.connect() as connection:
+        assert (
+            dict(connection.execute(text("SELECT * FROM keystone.model_entries")).mappings().one())
+            == before
+        )
+        assert connection.scalar(text("SELECT provider FROM keystone.model_channels")) == "newapi"
+
+
 @pytest.mark.parametrize(
     "table,column,value",
     [

@@ -43,6 +43,8 @@ class MockStream(httpx2.AsyncByteStream):
 
 def transport(provider):
     async def respond(request):
+        if request.method == "GET" and request.url.path.endswith("/models"):
+            return httpx2.Response(200, json={"data": [{"id": "mock-chat"}]})
         if request.method == "POST" and request.url.path.endswith("/kling/v1/images/generations"):
             body = json.loads(request.content)
             task_id = "task-" + request.headers["x-keystone-invocation-id"]

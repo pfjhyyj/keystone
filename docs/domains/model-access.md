@@ -8,7 +8,7 @@
 
 为后续业务提供统一的模型调用入口，记录每次调用的用量、上游报告的费用，并展示渠道账户的余额。采用“成熟调用 SDK＋少量渠道适配代码”，不要求独立网关。
 
-当前实际发送开放 OpenRouter、Openlux 和 Yunwu，复用 OpenAI SDK 的文本对话及流式协议。OpenRouter 可保存响应费用并按请求 ID 补查，Openlux/Yunwu 使用原 Token 分页核对日志。DeepSeek、阿里云百炼保留适配声明，尚未开放发送。阿里云暂按百炼/DashScope 按量付费服务设计，不把订阅额度混为账户余额。图片与异步任务能力见[模型操作与产物](#6-模型操作与产物)。
+当前实际发送开放 OpenRouter、Openlux、Yunwu 和 NewAPI，复用 OpenAI SDK 的文本对话及流式协议。四者为独立渠道类型：Openlux 使用 `https://api.openlux.ai/v1`，Yunwu 使用 `https://yunwu.ai/v1`，NewAPI 指 newapiai.com 站点，使用 `https://newapiai.com/v1`。OpenRouter 可保存响应费用并按请求 ID 补查，Openlux/Yunwu 使用原 Token 分页核对日志；NewAPI 当前只开放文本生成和模型列表查询，未核实的账务、图片和原生任务协议不直接沿用其他站点。DeepSeek、阿里云百炼保留适配声明，尚未开放发送。阿里云暂按百炼/DashScope 按量付费服务设计，不把订阅额度混为账户余额。图片与异步任务能力见[模型操作与产物](#6-模型操作与产物)。
 
 渠道、模型配置、调用记录是三个主要对象；第 8 节的代码适配层继续复用它们。不做用户钱包、充值、额度扣减、计费倍率、价格表、自动渠道切换或智能路由。这里记录的是供应商侧成本，不是向 Keystone 用户收费；已有 Flow 次数/token/文件预算仍属于资源限制。
 
@@ -34,7 +34,7 @@ erDiagram
 | 字段 | 含义 |
 |---|---|
 | `id`、`name` | 稳定 ID、展示名 |
-| `provider` | `deepseek`、`openrouter`、`aliyun_bailian`、`openlux`、`yunwu`，决定适配实现 |
+| `provider` | 新建可用渠道为 `openrouter`、`openlux`、`yunwu`、`newapi`；`deepseek`、`aliyun_bailian` 保留声明 |
 | `api_base` | 经管理员配置的服务地址，包含相应地域/站点差异 |
 | `api_key_encrypted` | 推理 API Key 密文，接口不返回 |
 | `billing_api_key_encrypted` | 可空，账务 API Key 密文，接口不返回 |
@@ -68,6 +68,7 @@ updated_at、updated_by 只追踪渠道配置变更；余额刷新使用 balance
 |---|---|
 | `id` | 稳定 ID |
 | `key` | 业务使用的唯一 key，创建后固定，例如 `general-chat` |
+| `name` | 可修改的显示名称，创建时未填写则使用 key；改名不改变模型绑定 |
 | `channel_id` | 所属渠道 |
 | `provider_model` | 上游接受的模型标识 |
 | `operations` | 管理员声明的明确操作集合，默认 text.generate；可发送能力还须与已实现协议匹配 |
@@ -77,15 +78,15 @@ updated_at、updated_by 只追踪渠道配置变更；余额刷新使用 balance
 | `updated_at` | 最近修改时间，UTC，创建时与 created_at 相同 |
 | `updated_by` | 最近修改操作的用户 ID，系统操作可为空，创建时与 created_by 相同 |
 
-一条配置只映射一个渠道和一个上游模型。界面直接展示 key，不单独保存模型配置的展示名。业务不接触渠道密钥；映射修改不需要业务改 key，但模型能力和行为变化仍需业务验证。历史调用保存当时的渠道和模型，不能通过当前配置反推。
+一条配置只映射一个渠道和一个上游模型。界面展示可修改的显示名称和固定 key；模型选择器同时标明两者。业务不接触渠道密钥；映射修改不需要业务改 key，但模型能力和行为变化仍需业务验证。历史调用保存当时的渠道和模型，不能通过当前配置反推。
 
 普通直接调用在本次尝试开始时解析 key；Flow 在受理时固定模型选择，映射修改只影响之后受理的运行，规则见[固定模型选择](#34-flow-的固定模型选择)。
 
 首版不引入模型家族、模型版本、路由池、价格方案或通用能力注册表。模型与渠道都启用才允许发起新调用；停用不修改已有调用记录。
 
-Channel、ModelEntry 首版都只停用、不删除，统一使用已有 is_active，不增加 deleted 状态、deleted_at 或回收站。停用 Channel 阻止该渠道的新调用，但不批量修改其 ModelEntry；重新启用渠道后，仅模型配置自身也启用时才能调用。单独停用 ModelEntry 只阻断该配置的新调用。
+Channel、ModelEntry 仅在没有引用时允许物理删除，不增加 deleted 状态、deleted_at 或回收站。有调用记录或流程引用（包括已结束运行）时拒绝删除，只允许停用；渠道仍有任何模型配置时也拒绝删除，须先删除未使用的模型配置。停用 Channel 阻止该渠道的新调用，但不批量修改其 ModelEntry；重新启用渠道后，仅模型配置自身也启用时才能调用。单独停用 ModelEntry 只阻断该配置的新调用。
 
-停用配置仍可由有权限的管理者查询、修改或重新启用；ModelEntry.key 继续被原配置占用，不回收给另一条配置。允许误建配置以停用记录留存，省去物理删除与引用清理分支。旧 Run 仍关联原配置，但原模型或渠道停用时明确拒绝新调用；已发送请求继续保存结果、用量和费用，历史数据不改写。
+停用配置仍可由有权限的管理者查询、修改或重新启用；保留的 ModelEntry.key 继续被原配置占用；未被引用的误建配置可删除，删除后才释放 key。旧 Run 仍关联原配置，但原模型或渠道停用时明确拒绝新调用；已发送请求继续保存结果、用量和费用，历史数据不改写。
 
 停用是 Keystone 的调用控制，不等于撤销供应商密钥，也不自动清除已保存的渠道凭据。管理员可在控制台替换 API Key、清除可选账务 Key；供应商侧的撤销由操作者处理，配置与历史记录继续保留。
 
@@ -164,9 +165,16 @@ OpenRouter 等官方能力依据下列文档；Yunwu/Openlux 另有实测依据�
 | DeepSeek | 已核对的对话响应提供用量，未提供单次金额 | `/user/balance` 提供分币种的总余额、赠送余额和充值余额 | 保存用量；费用未知；首版不开放余额刷新（仅保留解析声明） |
 | OpenRouter | 响应 `usage.cost`；也可按 generation ID 查询 | `/api/v1/credits` 返回累计 credits 和使用量，需要 management key | 保存上游报告费用；必要时查询补全；支持余额刷新 |
 | 阿里云百炼 | 尚未确认可按推理请求 ID 查询单次实际金额的接口 | `QueryAccountBalance` 查询阿里云账户，区分可用额度和现金余额 | 保存用量；费用未知；首版不开放账户余额查询（仅保留解析声明） |
-| Yunwu/Openlux | 原 Token 分页拉取日志，本地精确匹配 `other.request_id` 与 `x-api-request-id`，按站点口径解析 quota | 不提供余额查询，Token 用量不视为账户余额 | 已接入自动核对和手动补查；详见第 3.6 节 |
+| Yunwu/Openlux | 原 Token 分页拉取日志，本地精确匹配 `other.request_id` 与 `x-api-request-id`，按站点口径解析 quota | 当前适配未接入账户余额查询，Token 用量不视为账户余额 | 已接入自动核对和手动补查；详见第 3.6 节 |
+| NewAPI（newapiai.com） | 当前只保存用量，单次费用查询未接入 | 未接入账户余额查询 | 支持文本生成和模型列表查询；费用保持未知 |
 
 DeepSeek 的余额解析保留接口返回的币种，总余额已经包含赠送和充值部分，不重复相加；首版未开放查询，因此余额状态为 unavailable。费用未知仅表示当前接入能力不足，不断言供应商永远没有相应能力。依据：[余额接口](https://api-docs.deepseek.com/api/get-user-balance/)、[对话响应](https://api-docs.deepseek.com/api/create-chat-completion/)。
+
+Openlux/Yunwu 尚未接入账户余额查询表示 Keystone 的适配范围，不断言供应商没有相应接口。Openlux 官方区分推理 API Key 与账户管理的 System Access Token，管理接口还要求 `New-Api-User` 用户 ID；不能直接把推理 Key 或 Token 限额当作账户余额凭据/余额。依据：[Openlux 接入与鉴权说明](https://doc.openlux.ai/)。
+
+管理者可通过 `GET /api/v1/model-channels/{id}/models` 使用渠道已保存的推理 Key 查询上游模型列表。OpenRouter、Openlux、Yunwu 和 NewAPI 的查询路径由渠道声明为 `/models`，只允许固定官方地址、有界 GET，不跟随跳转或自动重试；返回去重排序后的模型 ID，不返回原始元数据或秘密。查询在事务外完成，返回前复查权限及配置。控制台选择渠道后自动加载，也可刷新或手填；缺失的当前模型会提示核对 ID/Key 权限，不自动替换或停用配置。模型列表不自动创建 ModelEntry，不声明操作能力、价格或可调用性；管理员仍确认业务 key 与操作能力。Openlux 的入口依据：[官方接入说明](https://doc.openlux.ai/)。
+
+Openlux/Yunwu 的模型、状态和 Token 日志路径属于 New API 兼容接口族，但服务商仍分别配置，金额单位和原生任务按各站规则处理。这里的 `newapi` 渠道专指 NewAPI AI 商业站点，不是开源网关项目的通用别名，不接受 Openlux/Yunwu 地址。NewAPI AI 的文本及模型列表接口依据：[站点文档](https://docs.newapiai.com/)。Kling 原生图片任务仍仅允许已验证的 Openlux 站点；NewAPI AI 的余额、单次费用及媒体协议需另行核验后接入。
 
 OpenRouter 的 `usage.cost` 表示该账户被收取的 credits；流式用量在最后的 SSE 消息中。不要用 `upstream_inference_cost` 替换账户费用，尤其 BYOK 还涉及外部供应商收费。余额由 `total_credits - total_usage` 得到，保留 credits 口径，不能当作某个 API Key 的独享额度。依据：[用量与费用](https://openrouter.ai/docs/cookbook/administration/usage-accounting)、[余额与凭据要求](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits)。
 
@@ -336,7 +344,7 @@ read 与 read_all 都属于代码权限目录，不增加授权表。会话与 P
 
 Channel、ModelEntry 是管理配置，保留四个审计字段。ModelInvocation 是调用事实记录，保留 user_id、created_at、finished_at、updated_at 和费用来源即可，不增加 created_by、updated_by。正常的调用完成、用量与费用补全记录在调用记录内，不为每次自动补全再复制一条通用管理审计。
 
-Channel、ModelEntry 不论是否已被引用，首版均不提供物理删除或软删除；管理变更、启停和凭据变更记录审计。配置只停用的规则不改变调用记录的保留策略：ModelInvocation 不提供普通用户修改/删除接口，仍承担 Flow 恢复防重发作用的记录必须保留，确认对应运行不再有恢复或协调义务后才能按保留期清理，不在这里扩展成归档领域。
+Channel、ModelEntry 的删除按第 2.2 节引用规则执行；管理变更、改名、启停、删除和凭据变更记录审计。成功删除与成功审计同事务，失败时均回滚。改名不修改选择、凭据、余额或费用范围；删除检查在持有配置行锁的事务内进行，Flow 受理绑定使用相同行锁顺序，查到调用或快照引用时返回 409。Flow 自己的公开查询负责识别新快照与旧输入中的 Selection/model_key，由 composition 显式注入查询函数，模型领域不读取 Flow ORM。调用记录的保留策略不变：ModelInvocation 不提供普通用户修改/删除接口，仍承担 Flow 恢复防重发作用的记录必须保留，确认对应运行不再有恢复或协调义务后才能按保留期清理，不在这里扩展成归档领域。
 
 不为这三个对象增加 deleted_at、deleted_by。首版不提供调用记录的删除或归档入口，也不逐条增加删除字段；未来清理须记录任务范围、数量和结果，并保留仍有恢复义务的记录；已有审计独立保留。首版不采用保留连接行、设置 deleted 并清除秘密和授权的删除模型，也不引入相关协调机制。
 
@@ -360,22 +368,24 @@ Channel、ModelEntry 不论是否已被引用，首版均不提供物理删除�
 
 ### 5.2 接口与权限
 
-以下路径统一带 /api/v1。配置 PATCH 接收完整非秘密可编辑字段；凭据字段可省略以保留原值。Channel.provider 和 ModelEntry.key 创建后不可编辑；已填写账户标识不可更换，原为空时可补录。没有删除接口。
+以下路径统一带 /api/v1。配置 PATCH 接收完整非秘密可编辑字段；凭据字段可省略以保留原值。Channel.provider 和 ModelEntry.key 创建后不可编辑；已填写账户标识不可更换，原为空时可补录。显示名称可通过完整编辑或独立 name PATCH 修改；独立改名只接收 name，不要求重新提交渠道连接或凭据。
 
 | 接口 | 要求与用途 |
 |---|---|
 | GET /model-access/options | model:manage；返回支持的服务商列表 |
 | GET/POST /model-channels；PATCH /model-channels/{id} | model:manage；查询、创建、编辑和启停渠道 |
+| PATCH /model-channels/{id}/name；PATCH /model-entries/{id}/name | model:manage；快捷修改显示名称，保留模型 key 和固定选择 |
+| DELETE /model-channels/{id}；DELETE /model-entries/{id} | model:manage；未被引用时删除并返回 204，有引用时 409，不级联删除 |
 | POST /model-channels/{id}/balance | model:manage；同步刷新，失败保留旧快照，返回查询状态 |
 | GET/POST /model-entries；PATCH /model-entries/{id} | model:manage；查询、创建、编辑和启停模型选择 |
-| GET /models | model:invoke；只返回可用 key 和调用能力，不暴露渠道凭据配置 |
+| GET /models | model:invoke；只返回可用 key、显示名称和调用能力，不暴露渠道凭据配置 |
 | POST /models/invoke | model:invoke；消息文本调用，stream=true 返回 start/delta/done/error SSE 事件 |
 | GET /model-invocations；GET /model-invocations/{id}；GET /model-invocations/summary | read 限本人，read + read_all 扩大范围；明细、分页与汇总使用相同归属过滤 |
 | POST /model-invocations/{id}/cost | 同时要求 model:manage 与该记录读取权限；仅补查已结束记录，更新费用，不改变调用状态 |
 
 渠道和模型列表默认 50 条、最多 100 条；调用历史默认最近 30 天、范围最多 366 天，支持时间、渠道、FlowRun 过滤，列表另可按状态过滤。汇总在一个 SQL 快照内按状态计数，已知费用按渠道/单位分别求和，未知费用单独计数。数值以十进制解析，费用用 Numeric(38,18)，API 返回十进制字符串；只保留上游明确报告的用量字段，不补算缺失 token 或价格。
 
-管理页提供配置、启停、余额、普通/流式调用、记录和费用汇总；所有权和 PAT 范围仍由服务端当前授权决定。只有历史权限时不会取得配置；只有调用权限时不会取得历史。当前分页选择、筛选及详情交互见 7.7。
+管理页提供配置、启停、余额、非流式调用、记录和费用汇总；所有权和 PAT 范围仍由服务端当前授权决定。只有历史权限时不会取得配置；只有调用权限时不会取得历史。当前分页选择、筛选及详情交互见 7.7。
 
 ### 5.3 发送与故障规则
 
@@ -384,7 +394,7 @@ Channel、ModelEntry 不论是否已被引用，首版均不提供物理删除�
 - 已明确拒绝的 4xx 记录 failed；402 映射为 model_insufficient_credits。超时、5xx、断流、中断或无法解析的结果记 unknown。HTTP 200 中的 error 或 finish_reason=error 同样按未知结果处理，返回安全错误码，保留已经收到的编号、用量和费用，不暴露上游原始错误。SSE 必须同时收到完成原因与结束标记；完整响应但没有 usage/cost 仍可成功，费用保持未知。失败与费用是否已知分别判断。
 - 已发送请求即使身份撤销或配置停用，也补全原记录；不因此再发请求。补全写入失败返回 model_result_unavailable，可能遗留 running，不自动重发或按时间猜测失败。稳定 ID 的防重发记录仍保留。
 - 文本消息最多 32 条，内容总计不超过 64 KiB；max_tokens 默认 1024、上限 4096。单进程模型调用/查询并发 4，文本调用执行最长 60 秒、SDK I/O 超时 30 秒；响应观测最多 4 MiB，单条流事件缓冲 64 KiB。取消后的事实收尾最多等待 5 秒，不留下后台发送重试任务。
-- 默认不保存消息或输出正文。记录必要用量、上游请求 ID、费用来源及稳定错误代码；OpenAI/httpx2/httpcore2 日志不随应用 DEBUG 输出请求体和认证信息。
+- 默认不保存消息或输出正文。记录必要用量、上游请求 ID、费用来源及稳定错误代码；OpenAI/httpx2/httpcore2 日志不随应用 DEBUG 输出请求体和认证信息。失败时在 API/Worker 输出结构化诊断日志，关联调用 ID、HTTP 请求 ID、固定渠道/模型、失败阶段、耗时、报文字节数、上游状态与请求编号、异常链类型及代码位置；不记录异常原文、局部变量、URL、提示词、结果正文或认证头。上游错误 code/type 仅保留明确白名单；`context_length_exceeded` 在明确的 400/413/422 拒绝中映射为 `model_context_length_exceeded`，网络异常映射为 `model_connection_error`，仍保持 unknown 且不重发。回执及结果保存失败在包装为公开错误前保留原异常类型与位置。日志查询见[调用失败排查](../deployment.md#21-调用失败排查)。
 
 余额查询外部 I/O 最长 10 秒；每进程最多 2 个余额刷新，同渠道通过 PostgreSQL 会话锁协调，协调连接退出时释放，业务事务不跨外部 I/O。写回前核对配置，旧查询结果丢弃；失败保留上次成功快照，配置修改使余额来源变化时清空。余额采集不改 Channel.updated_at/updated_by；查询发生及结果进入 AuditLog。费用补查失败保留已知费用，重复查询只替换同一次费用，不累加。
 
@@ -410,7 +420,7 @@ keystone recover-model-calls --confirm-api-stopped
 
 ### 5.6 控制台
 
-/console/models 按管理、调用和历史读取权限分别加载配置、调用和记录区域。渠道与模型配置使用独立编辑弹窗和 50 条分页；渠道选择器、可用模型选择器也支持分页，不只查询前 100 条。当前所选渠道不在这一页时保留 ID，提交后由 API 校验。服务商、模型 key 及已确定的账户标识不可修改，配置只停用不删除；推理与账务 Key 通过密码输入框提交，保存后仅显示已设置状态，不回显内容。
+/console/models 按管理、调用和历史读取权限分别加载配置、调用和记录区域。渠道与模型配置使用独立编辑弹窗和 50 条分页；渠道选择器、可用模型选择器也支持分页，不只查询前 100 条。当前所选渠道不在这一页时保留 ID，提交后由 API 校验。服务商、模型 key 及已确定的账户标识不可修改，名称可在列表快捷修改，未引用配置可确认删除，有引用时明确提示改为停用；推理与账务 Key 通过密码输入框提交，保存后仅显示已设置状态，不回显内容。
 
 余额同时显示最近查询状态、最近尝试和成功采集时间；本次查询失败时保留的旧快照明确标为历史成功结果。未知余额、未知调用费用都不视为零，不跨渠道或单位合并。调用详情显示当前结果、错误码、上游请求编号、费用来源/说明、用量和 Flow 关联，不包含消息正文。费用补查仍只调用现有账务查询接口，不重发模型请求。
 
@@ -418,7 +428,7 @@ keystone recover-model-calls --confirm-api-stopped
 
 首次加载也固定相同的起止时间，翻页沿用该范围。刷新或真实调用完成后，默认结束时间同步推进，列表回到第一页；显式填写的结束时间保持不变。刷新使用已提交的筛选条件，不应用仍在编辑的输入。
 
-普通和流式响应的按钮统一为“发送真实请求”，提示可能计费，打开页面或保存配置不会自动调用。Flow 发起表单同样提示真实调用。停止接收只中断浏览器接收，不表示上游撤销或没有费用，不自动重发；离开页面中断接收并清空输入输出。HTTP 错误和流内 error 事件共用会话失效处理。配置变化后可手动刷新模型目录，实际发送仍复查当前配置和权限。
+控制台测试调用固定提交 stream=false，不提供流式响应开关，完成后一次性展示结果。按钮为“发送真实请求”，提示可能计费，打开页面或保存配置不会自动调用。Flow 发起表单同样提示真实调用。停止接收只中断浏览器等待，不表示上游撤销或没有费用，不自动重发；离开页面中断等待并清空输入输出。公开 API 的流式协议保留，HTTP 错误和流内 error 事件共用会话失效处理。配置变化后可手动刷新模型目录，实际发送仍复查当前配置和权限。
 
 操作隔离和失效结果处理沿用本后台的 Element Plus 弹窗/详情抽屉、分页及请求代次控制；不引入通用连接授权或多模态探测功能。
 

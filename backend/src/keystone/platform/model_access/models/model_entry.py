@@ -25,6 +25,7 @@ class ModelEntry(Base):
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     key: Mapped[str] = mapped_column(String(64), unique=True)
+    name: Mapped[str] = mapped_column(String(128), default="", server_default="")
     channel_id: Mapped[UUID] = mapped_column(ForeignKey("keystone.model_channels.id"), index=True)
     provider_model: Mapped[str] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(default=True)

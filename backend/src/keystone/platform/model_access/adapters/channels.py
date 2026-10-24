@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from keystone.platform.model_access.adapters.billing.aliyun_bailian import AliyunBailian
 from keystone.platform.model_access.adapters.billing.deepseek import DeepSeek
+from keystone.platform.model_access.adapters.billing.newapi import Newapi
 from keystone.platform.model_access.adapters.billing.openlux import Openlux
 from keystone.platform.model_access.adapters.billing.openrouter import OpenRouter
 from keystone.platform.model_access.adapters.billing.yunwu import Yunwu
@@ -28,6 +29,7 @@ class ChannelAdapter:
     protocols: tuple
     billing: object
     authorize: Callable = bearer_auth
+    models_path: str | None = None
 
     def protocol(self, operation, delivery=None, *, model=None):
         return next(
@@ -64,11 +66,18 @@ CHANNELS = {
             OpenRouterImages(),
         ),
         OpenRouter(),
+        models_path="/models",
     ),
     "openlux": ChannelAdapter(
-        "https://api.openlux.ai/v1", (CHAT, RELAY_IMAGES, KlingImages()), Openlux()
+        "https://api.openlux.ai/v1",
+        (CHAT, RELAY_IMAGES, KlingImages()),
+        Openlux(),
+        models_path="/models",
     ),
-    "yunwu": ChannelAdapter("https://yunwu.ai/v1", (CHAT, RELAY_IMAGES), Yunwu()),
+    "yunwu": ChannelAdapter(
+        "https://yunwu.ai/v1", (CHAT, RELAY_IMAGES), Yunwu(), models_path="/models"
+    ),
+    "newapi": ChannelAdapter("https://newapiai.com/v1", (CHAT,), Newapi(), models_path="/models"),
     # Billing declarations are retained; no inference protocol is installed for these yet.
     "deepseek": ChannelAdapter("https://api.deepseek.com", (), DeepSeek()),
     "aliyun_bailian": ChannelAdapter(

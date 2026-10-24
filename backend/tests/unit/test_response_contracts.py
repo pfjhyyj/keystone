@@ -29,7 +29,7 @@ CASES = [
     ),
     (
         entry_view,
-        """id key channel_id provider_model operations is_active created_at created_by
+        """id key name channel_id provider_model operations is_active created_at created_by
                    updated_at updated_by""",
     ),
     (

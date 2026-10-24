@@ -52,7 +52,7 @@ def upgrade():
             name="channel_balance_status",
         ),
         sa.CheckConstraint(
-            "provider IN ('deepseek','openrouter','aliyun_bailian','openlux','yunwu')",
+            "provider IN ('deepseek','openrouter','aliyun_bailian','newapi','openlux','yunwu')",
             name="channel_provider",
         ),
         sa.PrimaryKeyConstraint("id"),
@@ -69,6 +69,7 @@ def upgrade():
         "model_entries",
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("key", sa.String(length=64), nullable=False),
+        sa.Column("name", sa.String(length=128), server_default="", nullable=False),
         sa.Column("channel_id", sa.Uuid(), nullable=False),
         sa.Column("provider_model", sa.String(length=128), nullable=False),
         sa.Column(

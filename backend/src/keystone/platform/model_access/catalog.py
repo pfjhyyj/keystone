@@ -10,6 +10,8 @@ CATALOG = Catalog(
         "model_invocation:read_all": "扩大模型调用查询至全部用户",
     },
     audit_actions={
+        "model.channel.delete": {"name", "provider"},
+        "model.entry.delete": {"key", "name"},
         "model.cost.recheck": {"previous_status"},
         "model.channel.create": {
             "after",
@@ -37,6 +39,7 @@ CATALOG = Catalog(
             "upstream_account_ref",
         },
         "model.entry.create": {
+            "name",
             "after",
             "before",
             "channel_id",
@@ -46,6 +49,7 @@ CATALOG = Catalog(
             "operations",
         },
         "model.entry.update": {
+            "name",
             "before",
             "channel_id",
             "is_active",

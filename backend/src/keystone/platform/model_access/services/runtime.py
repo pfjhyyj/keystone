@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 from contextlib import AsyncExitStack, aclosing, nullcontext
+from time import monotonic
 from uuid import uuid4
 
 from sqlalchemy.dialects.postgresql import insert
@@ -27,6 +28,7 @@ from keystone.platform.model_access.schemas.images import (
 )
 from keystone.platform.model_access.services.cost_context import bind_channel
 from keystone.platform.model_access.services.cost_policy import initialize_check
+from keystone.platform.model_access.services.diagnostics import log_failure
 from keystone.platform.model_access.services.dispatch import ModelDispatchService
 from keystone.platform.model_access.services.queries import locked
 
@@ -265,16 +267,41 @@ class ModelRuntime:
         worker_identity=None,
     ):
         identifier = invocation_id or uuid4()
-        async with self.identity.database.transaction() as session:
-            channel = await session.get(Channel, selected.channel_id)
-            if channel is None:
-                raise ServiceError(404, "model_not_found", "渠道配置不存在")
-            provider = channel.provider
-            self.clients.inference.check_operation(
-                provider, selected.operation, selected.delivery, model=selected.provider_model
-            )
+        started = monotonic()
+        registered = finished = False
+        provider, observation = selected.provider, None
         receipt = Receipt()
-        adapter = self.clients.billing.adapter(provider)
+
+        def failed(error, stage):
+            log_failure(
+                error,
+                identifier=identifier,
+                selected=selected,
+                provider=provider,
+                correlation_id=self.identity.correlation_id,
+                started=started,
+                stage=stage,
+                registered=registered,
+                finished=finished,
+                observation=observation,
+                upstream_request_id=receipt.request_id,
+                flow_context=flow_context,
+                worker_identity=worker_identity,
+            )
+
+        try:
+            async with self.identity.database.transaction() as session:
+                channel = await session.get(Channel, selected.channel_id)
+                if channel is None:
+                    raise ServiceError(404, "model_not_found", "渠道配置不存在")
+                provider = channel.provider
+                self.clients.inference.check_operation(
+                    provider, selected.operation, selected.delivery, model=selected.provider_model
+                )
+            adapter = self.clients.billing.adapter(provider)
+        except BaseException as error:
+            failed(error, "preflight")
+            raise
 
         def observed(observation):
             incoming = adapter.receipt(observation.receipt_ids, observation.reported_cost)
@@ -289,7 +316,6 @@ class ModelRuntime:
             if selected.operation in {"image.generate", "image.edit"}
             else 4 * 1024 * 1024,
         )
-        registered = finished = False
         budget = AsyncExitStack()
         dispatch_scope = None
 
@@ -405,7 +431,8 @@ class ModelRuntime:
                     if row.status == "running":
                         row.upstream_request_id = receipt.request_id
                         row.receipt_ids = dict(observation.receipt_ids)
-            except Exception:
+            except Exception as error:
+                failed(error, "persist_receipt")
                 raise ServiceError(
                     503, "model_result_unavailable", "调用回执保存失败，禁止重新发送"
                 ) from None
@@ -440,7 +467,8 @@ class ModelRuntime:
                     initialize_check(row, row.finished_at)
                     await session.flush()
                 finished = True
-            except Exception:
+            except Exception as error:
+                failed(error, "persist_result")
                 raise ServiceError(
                     503, "model_result_unavailable", "调用记录补全失败，禁止自动重发"
                 ) from None
@@ -498,6 +526,7 @@ class ModelRuntime:
                         "content": event["content"],
                     }
         except BaseException as error:
+            failed(error, "inference")
             http_status, code, detail, status = classify_error(error)
             if not finished:
                 try:

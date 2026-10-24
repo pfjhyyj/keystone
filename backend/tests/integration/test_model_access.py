@@ -14,6 +14,7 @@ from test_files_dictionary import client as client
 from test_identity import PASSWORD, assign, bearer, create_user, login, query, role, token
 
 from keystone.core.errors import ServiceError
+from keystone.core.logging import JsonFormatter
 from keystone.entrypoints import cli
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.identity.schemas.credentials import Credential
@@ -255,6 +256,111 @@ def install_transport(client, monkeypatch, handler):
     )
 
 
+@pytest.mark.parametrize("kind", ["newapi", "openlux", "yunwu"])
+def test_upstream_model_discovery_requires_management_and_does_not_import(
+    client, monkeypatch, kind
+):
+    from keystone.platform.model_access.adapters.channels import CHANNELS
+
+    c = channel(client, kind, api_base=CHANNELS[kind].api_base)
+    calls = []
+
+    async def respond(provider, request):
+        calls.append(request)
+        assert provider == kind and request.method == "GET"
+        assert request.headers["Authorization"] == "Bearer " + SECRET
+        return httpx2.Response(200, json={"data": [{"id": "available-chat", "internal": SECRET}]})
+
+    install_transport(client, monkeypatch, respond)
+    path = f"/api/v1/model-channels/{c['id']}/models"
+    invoke_pat = token(client, ["model:invoke"])["token"]
+    assert client.get(path, headers=bearer(invoke_pat)).status_code == 403
+    assert not calls
+    response = client.get(path)
+    assert response.status_code == 200
+    assert response.json() == {"items": [{"id": "available-chat"}]}
+    assert client.get("/api/v1/model-entries").json() == []
+    assert client.get("/api/v1/model-invocations").json() == []
+    options = client.get("/api/v1/model-access/options").json()
+    assert "newapi" in options["providers"]
+    assert {"openlux", "yunwu"} <= set(options["providers"])
+    assert options["default_api_bases"]["newapi"] == "https://newapiai.com/v1"
+    assert "openrouter" in options["balance_providers"]
+    assert "newapi" not in options["balance_providers"]
+
+
+@pytest.mark.parametrize(
+    "site,unit", [("openlux", "USD"), ("yunwu", "yunwu_credits"), ("newapi", None)]
+)
+def test_independent_channel_sites_keep_their_targets_and_billing_scopes(
+    client, monkeypatch, site, unit
+):
+    from keystone.platform.model_access.adapters.channels import CHANNELS
+
+    base = CHANNELS[site].api_base
+    c = channel(client, site, api_base=base)
+    entry(client, c)
+    assert client.get("/api/v1/models").json()["items"][0]["key"] == "chat"
+
+    async def respond(provider, request):
+        assert provider == site
+        assert str(request.url) == base + "/chat/completions"
+        return await mock.transport(site).handle_async_request(request)
+
+    install_transport(client, monkeypatch, respond)
+    response = invoke(client)
+    assert response.status_code == 200, response.text
+
+    async def original_scope(session):
+        from keystone.platform.model_access.models import Channel
+
+        owner = await session.get(Channel, UUID(c["id"]))
+        row = await session.get(ModelInvocation, UUID(response.json()["invocation_id"]))
+        assert owner.provider == site
+        if site == "newapi":
+            assert row.cost_context is None
+            assert row.cost_check_status == "unavailable"
+        else:
+            assert row.cost_context["provider"] == site
+            assert row.cost_context["api_base"] == base
+            assert row.cost_context["unit"] == unit
+
+    query(client, original_scope)
+    other = "https://yunwu.ai/v1" if site != "yunwu" else "https://api.openlux.ai/v1"
+    assert edit_channel(client, c, api_base=other).status_code == 409
+
+
+@pytest.mark.parametrize("change", ["config", "permission"])
+def test_discovery_discards_results_after_configuration_change_or_revocation(
+    client, monkeypatch, change
+):
+    c = channel(client)
+    pat = token(client, ["model:manage"])
+    entered, release = Event(), Event()
+
+    async def respond(provider, request):
+        entered.set()
+        await asyncio.to_thread(release.wait, 10)
+        return httpx2.Response(200, json={"data": [{"id": "private-model"}]})
+
+    install_transport(client, monkeypatch, respond)
+    with ThreadPoolExecutor() as pool:
+        result = pool.submit(
+            client.get, f"/api/v1/model-channels/{c['id']}/models", headers=bearer(pat["token"])
+        )
+        assert entered.wait(10)
+        try:
+            if change == "config":
+                assert edit_channel(client, c, api_key="replacement-key").status_code == 200
+            else:
+                assert client.delete(f"/api/v1/auth/tokens/{pat['id']}").status_code == 204
+        finally:
+            release.set()
+        response = result.result(10)
+    assert response.status_code == (409 if change == "config" else 401)
+    assert "private-model" not in response.text
+
+
 @pytest.mark.parametrize(
     "provider,unit,cost",
     [
@@ -286,8 +392,8 @@ def test_sdk_nonstream_and_stream_receipts_no_messages_persist(client, provider,
     assert summary["unknown_cost_attempts"] == (0 if unit else 2)
 
 
-def test_no_retry_actual_send_registered_and_secret_only_on_transport(client, monkeypatch):
-    entry(client, channel(client))
+def test_no_retry_actual_send_registered_and_secret_only_on_transport(client, monkeypatch, caplog):
+    configured = entry(client, channel(client))
     sends = []
 
     async def respond(provider, request):
@@ -297,7 +403,11 @@ def test_no_retry_actual_send_registered_and_secret_only_on_transport(client, mo
             row = await session.get(ModelInvocation, identifier)
             assert row is not None and row.status == "running"  # committed before HTTP send
         assert request.headers["authorization"] == "Bearer " + SECRET
-        return httpx2.Response(500, json={"error": {"message": SECRET + " private-prompt"}})
+        return httpx2.Response(
+            500,
+            json={"error": {"message": SECRET + " private-prompt"}},
+            headers={"x-request-id": "upstream-debug-id"},
+        )
 
     install_transport(client, monkeypatch, respond)
     r = invoke(client)
@@ -306,6 +416,25 @@ def test_no_retry_actual_send_registered_and_secret_only_on_transport(client, mo
     row = client.get("/api/v1/model-invocations").json()[0]
     assert row["status"] == "unknown" and row["cost_amount"] is None
     assert row["error_code"] == "model_upstream_error"
+    logs = [r for r in caplog.records if r.message == "model_call_failed"]
+    assert len(logs) == 1
+    logged = json.loads(JsonFormatter().format(logs[0]))
+    assert logged["request_id"] == r.headers["x-request-id"]
+    details = logged["diagnostic"]
+    assert details["invocation_id"] == row["id"]
+    assert details["model_entry_id"] == configured["id"]
+    assert details["channel_id"] == configured["channel_id"]
+    assert details["provider"] == "openrouter"
+    assert details["provider_model"] == "mock-chat"
+    assert details["upstream_status"] == 500
+    assert details["upstream_request_id"] == "upstream-debug-id"
+    assert details["registered"] is True
+    assert details["request_bytes"] > 0 and details["response_bytes"] > 0
+    assert details["elapsed_ms"] >= 0 and details["stage"] == "inference"
+    assert logged["exception"][0]["type"] == "InternalServerError"
+    encoded = json.dumps(logged)
+    assert SECRET not in encoded and "private-prompt" not in encoded
+    assert "authorization" not in encoded.lower()
 
 
 def test_stable_id_concurrent_claim_and_missing_checkpoint_never_resends(client, monkeypatch):
@@ -346,14 +475,22 @@ def test_stable_id_concurrent_claim_and_missing_checkpoint_never_resends(client,
     assert invoke(client, flow_context={"flow_run_id": str(uuid4())}).status_code == 422
 
 
-def test_timeout_and_incomplete_stream_remain_unknown(client, monkeypatch):
+def test_timeout_and_incomplete_stream_remain_unknown(client, monkeypatch, caplog):
     entry(client, channel(client))
 
     async def timeout(provider, request):
         raise httpx2.ReadTimeout("unsafe secret " + SECRET, request=request)
 
     install_transport(client, monkeypatch, timeout)
-    assert invoke(client).status_code == 504
+    timed_out = invoke(client)
+    assert timed_out.status_code == 504
+    logged = [r for r in caplog.records if r.message == "model_call_failed"][-1]
+    assert logged.request_id == timed_out.headers["x-request-id"]
+    assert logged.diagnostic["network_reason"] == "read_timeout"
+    assert logged.diagnostic["transport_phase"] == "sending"
+    assert logged.diagnostic["upstream_status"] is None
+    assert {e["type"] for e in logged.exception} >= {"APITimeoutError", "ReadTimeout"}
+    assert SECRET not in JsonFormatter().format(logged)
 
     async def interrupted(provider, request):
         event = {
@@ -458,8 +595,8 @@ def test_disabled_channel_models_independent_and_snapshot_mapping(client):
     edit_channel(client, second, is_active=False)
     assert invoke(client).status_code == 409 and client.get("/api/v1/models").json()["items"] == []
     assert client.get("/api/v1/model-entries").json()[0]["is_active"] is True
-    assert client.delete("/api/v1/model-channels/" + c["id"]).status_code == 405
-    assert client.delete("/api/v1/model-entries/" + e["id"]).status_code == 405
+    assert client.delete("/api/v1/model-channels/" + c["id"]).status_code == 409
+    assert client.delete("/api/v1/model-entries/" + e["id"]).status_code == 409
 
 
 def test_balance_refresh_capabilities_secret_selection_and_failed_snapshot(client, monkeypatch):
@@ -671,7 +808,7 @@ def test_channel_credentials_are_write_only_and_missing_master_key_is_not_replac
 
 
 @pytest.mark.parametrize("failure_phase", ["register", "complete"])
-def test_database_failure_never_causes_model_resend(client, monkeypatch, failure_phase):
+def test_database_failure_never_causes_model_resend(client, monkeypatch, failure_phase, caplog):
     entry(client, channel(client))
     sends = []
 
@@ -705,6 +842,12 @@ def test_database_failure_never_causes_model_resend(client, monkeypatch, failure
             client.portal.call(call)
     finally:
         event.remove(engine, "before_cursor_execute", fail)
+    logs = [r for r in caplog.records if r.message == "model_call_failed"]
+    assert any(e["type"] == "RuntimeError" for r in logs for e in r.exception)
+    assert all(r.diagnostic["invocation_id"] == str(identifier) for r in logs)
+    assert "sensitive details" not in " ".join(JsonFormatter().format(r) for r in logs)
+    if failure_phase == "complete":
+        assert any(r.diagnostic["stage"] == "persist_result" for r in logs)
     if failure_phase == "register":
         assert sends == [] and client.get("/api/v1/model-invocations").json() == []
     else:
@@ -794,3 +937,33 @@ def test_http_rejection_is_failed_and_not_a_free_call_claim(client, monkeypatch)
     assert (
         row["status"] == "failed" and row["cost_source"] == "unknown" and row["cost_amount"] is None
     )
+
+
+def test_context_length_rejection_is_specific_and_safe(client, monkeypatch, caplog):
+    entry(client, channel(client))
+    calls = []
+
+    async def respond(provider, request):
+        calls.append(1)
+        return httpx2.Response(
+            400,
+            json={
+                "error": {
+                    "code": "context_length_exceeded",
+                    "type": "invalid_request_error",
+                    "message": SECRET + " private-prompt-must-not-persist",
+                }
+            },
+        )
+
+    install_transport(client, monkeypatch, respond)
+    response = invoke(client)
+    assert response.status_code == 502
+    assert response.json()["code"] == "model_context_length_exceeded"
+    row = client.get("/api/v1/model-invocations").json()[0]
+    assert row["status"] == "failed" and row["error_code"] == "model_context_length_exceeded"
+    assert calls == [1]
+    logged = [r for r in caplog.records if r.message == "model_call_failed"][-1]
+    assert logged.diagnostic["upstream_error_code"] == "context_length_exceeded"
+    assert logged.diagnostic["upstream_error_type"] == "invalid_request_error"
+    assert SECRET not in JsonFormatter().format(logged) + response.text

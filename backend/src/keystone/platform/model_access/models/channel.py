@@ -12,7 +12,7 @@ class Channel(Base):
     __tablename__ = "model_channels"
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('deepseek','openrouter','aliyun_bailian','openlux','yunwu')",
+            "provider IN ('deepseek','openrouter','aliyun_bailian','newapi','openlux','yunwu')",
             name="channel_provider",
         ),
         CheckConstraint(

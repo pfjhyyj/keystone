@@ -1,11 +1,12 @@
 import asyncio
 import os
+import socket
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
 import httpx2
 import pytest
-from openai import APIStatusError
+from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import SecretStr
 from pydantic_ai.exceptions import ModelHTTPError
 
@@ -17,7 +18,11 @@ from keystone.platform.model_access.adapters.inference.client import (
     OPENROUTER_BASE,
     InferenceClient,
 )
-from keystone.platform.model_access.adapters.inference.errors import classify_error
+from keystone.platform.model_access.adapters.inference.errors import (
+    classify_error,
+    network_reason,
+    upstream_error,
+)
 from keystone.platform.model_access.schemas.errors import AdapterError
 
 
@@ -146,3 +151,59 @@ def test_wrapped_timeout_cancellation_and_safe_errors_remain_unknown():
     wrapper = RuntimeError("sensitive")
     wrapper.__cause__ = wrapper
     assert classify_error(wrapper)[1] == "model_response_unknown"
+
+
+@pytest.mark.parametrize(
+    "cause,reason,code",
+    [
+        (httpx2.ConnectTimeout("secret"), "connect_timeout", "model_timeout"),
+        (httpx2.ReadTimeout("secret"), "read_timeout", "model_timeout"),
+        (socket.gaierror(-2, "secret URL"), "dns_error", "model_connection_error"),
+        (ConnectionResetError("secret"), "connection_reset", "model_connection_error"),
+        (httpx2.RemoteProtocolError("secret"), "protocol_error", "model_connection_error"),
+    ],
+)
+def test_connection_wrappers_retain_specific_network_cause(cause, reason, code):
+    wrapper = APIConnectionError(request=httpx2.Request("POST", "https://example.invalid"))
+    wrapper.__cause__ = cause
+    outer = RuntimeError("secret")
+    outer.__context__ = wrapper
+    assert classify_error(outer)[1::2] == (code, "unknown")
+    assert network_reason(outer) == reason
+
+
+def test_sdk_timeout_without_transport_cause_still_classifies_as_timeout():
+    error = APITimeoutError(request=httpx2.Request("POST", "https://example.invalid"))
+    assert classify_error(error)[1] == "model_timeout"
+
+
+@pytest.mark.parametrize("sdk_error", [APIStatusError, ModelHTTPError])
+def test_upstream_error_codes_are_whitelisted_and_context_limit_is_specific(sdk_error):
+    body = {
+        "error": {
+            "code": "context_length_exceeded",
+            "type": "invalid_request_error",
+            "message": "secret key and entire private prompt",
+            "param": "secret",
+        }
+    }
+    if sdk_error is APIStatusError:
+        error = sdk_error(
+            "secret",
+            response=httpx2.Response(
+                400, request=httpx2.Request("POST", "https://example.invalid")
+            ),
+            body=body,
+        )
+    else:
+        error = sdk_error(status_code=400, model_name="test", body=body)
+    assert classify_error(error)[1::2] == ("model_context_length_exceeded", "failed")
+    assert upstream_error(error) == {
+        "upstream_status": 400,
+        "upstream_error_code": "context_length_exceeded",
+        "upstream_error_type": "invalid_request_error",
+    }
+    body["error"]["code"] = "secret"
+    body["error"]["type"] = "secret"
+    assert upstream_error(error) == {"upstream_status": 400}
+    assert classify_error(error)[1] == "model_invalid_request"

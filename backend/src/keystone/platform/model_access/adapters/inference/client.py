@@ -12,6 +12,7 @@ from keystone.core.errors import ServiceError
 from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.adapters.channels import OPENROUTER_BASE as OPENROUTER_BASE
 from keystone.platform.model_access.adapters.errors import adapter_errors
+from keystone.platform.model_access.adapters.inference.discovery import discover
 from keystone.platform.model_access.adapters.inference.images import verify_image
 from keystone.platform.model_access.adapters.inference.protocols import validate_request
 from keystone.platform.model_access.adapters.inference.transport import SendTransport
@@ -28,6 +29,10 @@ class InferenceClient:
         if adapter is None or not adapter.protocols:
             raise ServiceError(503, "model_provider_unavailable", "当前服务商尚未开放发送")
         return adapter
+
+    async def list_models(self, provider, base, secret):
+        with adapter_errors():
+            return await discover(self.http, self.adapter(provider), provider, base, secret)
 
     def check_operation(self, provider, operation, delivery="sync", *, model=None):
         protocol = self.adapter(provider).protocol(operation, delivery, model=model)

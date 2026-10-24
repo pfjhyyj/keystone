@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 
 from keystone.core.http import Page
 from keystone.platform.identity.controllers.dependencies import access_context
@@ -28,6 +28,17 @@ async def create_entry(data: schemas.EntryCreate, request: Request):
 @router.patch("/model-entries/{identifier}")
 async def edit_entry(identifier: UUID, data: schemas.EntryEdit, request: Request):
     return await _service(request).save_entry(data, identifier)
+
+
+@router.patch("/model-entries/{identifier}/name")
+async def rename_entry(identifier: UUID, data: schemas.NameEdit, request: Request):
+    return await _service(request).rename(identifier, data)
+
+
+@router.delete("/model-entries/{identifier}", status_code=204)
+async def delete_entry(identifier: UUID, request: Request):
+    await _service(request).delete(identifier)
+    return Response(status_code=204)
 
 
 @router.get("/models")

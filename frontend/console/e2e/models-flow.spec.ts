@@ -1,5 +1,5 @@
-import { expect, test } from '@playwright/test'
-import { choose, check, watchWindowErrors } from './controls'
+import { expect, test, type Page } from '@playwright/test'
+import { choose, watchWindowErrors } from './controls'
 
 test('three simulated providers and a real DBOS Flow through the console UI', async ({ page }) => {
   test.setTimeout(90000)
@@ -38,14 +38,20 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
     dialog = page.getByRole('dialog')
     await dialog.getByLabel('模型 key', { exact: true }).fill(`${provider}_chat`)
     await choose(dialog, '模型渠道', `${provider} 模拟`)
-    await dialog.getByLabel('上游模型', { exact: true }).fill('mock-chat')
+    if (provider === 'openrouter') {
+      await expect(dialog).toContainText('已获取 1 个模型')
+      await choose(dialog, '上游模型', 'mock-chat')
+    } else {
+      await dialog.getByRole('combobox', { name: '上游模型', exact: true }).fill('mock-chat')
+      await dialog.getByRole('option', { name: 'mock-chat', exact: true }).click()
+    }
     await dialog.getByRole('button', { name: '保存模型', exact: true }).click()
     await expect(dialog).toBeHidden()
     const probe = page.getByRole('region', { name: '真实调用', exact: true })
     await probe.getByRole('button', { name: '刷新可用模型' }).click()
     await choose(probe, '模型', `${provider}_chat`)
     await probe.getByLabel('测试消息', { exact: true }).fill('验证渠道，不调用真实模型。')
-    await check(probe.getByLabel('流式响应', { exact: true }), provider === 'openrouter')
+    await expect(probe.getByLabel('流式响应', { exact: true })).toHaveCount(0)
     await probe.getByRole('button', { name: '发送真实请求', exact: true }).click()
     await expect(probe.locator('pre')).toContainText('模拟渠道响应')
     await expect(
@@ -147,5 +153,84 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
   await page.getByRole('button', { name: '重置筛选', exact: true }).click()
   await expect(runRows).toHaveCount(1)
   await expect(runRows.first()).toContainText(original!)
+  await renameAndDeleteUnusedConfiguration(page)
   expect(errors).toEqual([])
 })
+
+async function renameAndDeleteUnusedConfiguration(page: Page) {
+  await page.goto('models')
+  await page.getByRole('button', { name: '新建渠道', exact: true }).click()
+  let dialog = page.getByRole('dialog')
+  await dialog.getByLabel('渠道名称', { exact: true }).fill('待清理渠道')
+  let releaseVerification!: () => void
+  let verifying = false
+  const verificationGate = new Promise<void>((resolve) => {
+    releaseVerification = resolve
+  })
+  await page.route(
+    '**/api/v1/auth/me',
+    async (route) => {
+      verifying = true
+      await verificationGate
+      await route.continue()
+    },
+    { times: 1 },
+  )
+  const verified = page.waitForResponse((response) => response.url().endsWith('/api/v1/auth/me'))
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  try {
+    await expect.poll(() => verifying).toBe(true)
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByLabel('渠道名称', { exact: true })).toHaveValue('待清理渠道')
+  } finally {
+    releaseVerification()
+  }
+  await verified
+  await expect(dialog.getByLabel('渠道名称', { exact: true })).toHaveValue('待清理渠道')
+  await dialog.getByLabel('推理 API Key', { exact: true }).fill('fake-inference')
+  await dialog.getByRole('button', { name: '保存渠道', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  const channelRow = page
+    .getByRole('region', { name: '渠道账户', exact: true })
+    .getByRole('row')
+    .filter({ hasText: '待清理渠道' })
+  await channelRow.getByRole('button', { name: '修改渠道名称', exact: true }).click()
+  dialog = page.getByRole('dialog')
+  await dialog.getByLabel('显示名称', { exact: true }).fill('可删除渠道')
+  await dialog.getByRole('button', { name: '保存名称', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await page.getByRole('button', { name: '新建模型', exact: true }).click()
+  dialog = page.getByRole('dialog')
+  await dialog.getByLabel('模型 key', { exact: true }).fill('unused_cleanup')
+  await choose(dialog, '模型渠道', '可删除渠道')
+  await choose(dialog, '上游模型', 'mock-chat')
+  await dialog.getByRole('button', { name: '保存模型', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  const modelRow = page.getByRole('row').filter({ hasText: 'unused_cleanup' })
+  await modelRow.getByRole('button', { name: '修改模型名称', exact: true }).click()
+  dialog = page.getByRole('dialog')
+  await dialog.getByLabel('显示名称', { exact: true }).fill('临时模型')
+  await dialog.getByRole('button', { name: '保存名称', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(modelRow).toContainText('临时模型')
+  await expect(modelRow).toContainText('unused_cleanup')
+  await modelRow.getByRole('button', { name: '编辑模型', exact: true }).click()
+  dialog = page.getByRole('dialog')
+  await dialog.getByLabel('模型显示名称', { exact: true }).fill('')
+  await dialog.getByRole('button', { name: '保存模型', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  await expect(modelRow).not.toContainText('临时模型')
+  await expect(modelRow).toContainText('unused_cleanup')
+  await modelRow.getByRole('button', { name: '删除模型', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click()
+  await expect(page.getByRole('dialog')).toBeHidden()
+  await expect(modelRow).toHaveCount(0)
+  const renamedChannel = page
+    .getByRole('region', { name: '渠道账户', exact: true })
+    .getByRole('row')
+    .filter({ hasText: '可删除渠道' })
+  await renamedChannel.getByRole('button', { name: '删除渠道', exact: true }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click()
+  await expect(page.getByRole('dialog')).toBeHidden()
+  await expect(renamedChannel).toHaveCount(0)
+}

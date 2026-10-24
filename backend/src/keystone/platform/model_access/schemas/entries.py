@@ -5,10 +5,15 @@ from pydantic import Field, field_validator
 from keystone.core.schemas import Input
 
 from .operations import Operation
-from .types import Key, ModelName
+from .types import Key, Label, ModelName
+
+
+class NameEdit(Input):
+    name: Label
 
 
 class EntryEdit(Input):
+    name: Label | None = None
     channel_id: UUID
     provider_model: ModelName
     is_active: bool = True
@@ -45,4 +50,4 @@ def entry_view(row):
             "updated_by",
         )
     }
-    return values
+    return {**values, "name": row.name or row.key}

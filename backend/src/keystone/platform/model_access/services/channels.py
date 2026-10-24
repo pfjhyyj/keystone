@@ -9,7 +9,7 @@ from keystone.platform.audit.services.writer import Actor
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.adapters.channels import CHANNELS
-from keystone.platform.model_access.models import Channel
+from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.services.cost_context import bind_channel
 from keystone.platform.model_access.services.queries import balance_config, locked
 
@@ -22,7 +22,32 @@ class ChannelService:
         async with self.identity.access("model:manage"):
             return {
                 "providers": [key for key, adapter in CHANNELS.items() if adapter.protocols],
+                "default_api_bases": {
+                    key: adapter.api_base for key, adapter in CHANNELS.items() if adapter.protocols
+                },
+                "balance_providers": [
+                    key
+                    for key, adapter in CHANNELS.items()
+                    if getattr(adapter.billing, "enabled", False)
+                    and getattr(adapter.billing, "balance_path", None)
+                ],
             }
+
+    async def upstream_models(self, identifier):
+        async with self.clients.coordination.balance_slots:
+            async with self.identity.access("model:manage") as (session, _):
+                row = await self.identity.existing(session, Channel, identifier)
+                config = (row.provider, row.api_base, row.api_key_encrypted)
+            provider, base, encrypted = config
+            secret = self.clients.credentials.decrypt(encrypted, identifier, "inference")
+            items = await self.clients.inference.list_models(provider, base, secret)
+            async with self.identity.access("model:manage") as (session, _):
+                row = await self.identity.existing(session, Channel, identifier)
+                if (row.provider, row.api_base, row.api_key_encrypted) != config:
+                    raise ServiceError(
+                        409, "model_configuration_changed", "渠道配置已改变，请重新查询模型列表"
+                    )
+                return {"items": items}
 
     async def update_keys(self, session, row, data):
         if data.api_key is None and not row.api_key_encrypted:
@@ -159,6 +184,63 @@ class ChannelService:
                 credential_id=audit_details.get("credential_id"),
             )
             raise
+
+    async def rename(self, identifier, data):
+        async with self.identity.access(
+            "model:manage",
+            action="model.channel.update",
+            target="model.channel",
+            target_id=identifier,
+        ) as (session, auth):
+            row = await locked(session, Channel, identifier)
+            before = row.name
+            row.name = data.name
+            self.identity.touch(row, auth)
+            await self.identity.log(
+                session,
+                auth,
+                "model.channel.update",
+                "model.channel",
+                row.id,
+                {"before": {"name": before}, "after": {"name": row.name}},
+            )
+            return schemas.channel_view(row)
+
+    async def delete(self, identifier):
+        async with self.identity.access(
+            "model:manage",
+            action="model.channel.delete",
+            target="model.channel",
+            target_id=identifier,
+        ) as (session, auth):
+            row = await locked(session, Channel, identifier)
+            configured = await session.scalar(
+                select(ModelEntry.id).where(ModelEntry.channel_id == identifier).limit(1)
+            )
+            if configured:
+                raise ServiceError(
+                    409,
+                    "model_channel_referenced",
+                    "渠道仍有模型配置，请先删除未使用的模型；有引用时只能停用",
+                )
+            called = await session.scalar(
+                select(ModelInvocation.id).where(ModelInvocation.channel_id == identifier).limit(1)
+            )
+            if called or await self.clients.model_referenced(session, channel_id=identifier):
+                raise ServiceError(
+                    409,
+                    "model_channel_referenced",
+                    "渠道已有调用记录或流程引用，只能停用，不能删除",
+                )
+            await self.identity.log(
+                session,
+                auth,
+                "model.channel.delete",
+                "model.channel",
+                row.id,
+                {"name": row.name, "provider": row.provider},
+            )
+            await session.delete(row)
 
     async def _refresh_balance(self, identifier, actor, audit_details):
         action = "model.balance.refresh"

@@ -39,7 +39,7 @@ watch(
           v-for="row in rows"
           :key="row.key"
           :value="row.key"
-          :label="row.key"
+          :label="row.name && row.name !== row.key ? `${row.name}（${row.key}）` : row.key"
       /></AppSelect>
     </div>
     <div class="row-actions">

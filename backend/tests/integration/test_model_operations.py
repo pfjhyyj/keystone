@@ -29,7 +29,14 @@ def test_operations_are_explicit_filtered_and_preserved_on_old_client_edit(clien
     )
     assert [r["key"] for r in client.get("/api/v1/models").json()["items"]] == ["chat"]
     result = client.get("/api/v1/models?operation=text.structured&limit=1").json()["items"]
-    assert result == [{"key": "structured", "operations": ["text.structured"], "capabilities": []}]
+    assert result == [
+        {
+            "key": "structured",
+            "name": "structured",
+            "operations": ["text.structured"],
+            "capabilities": [],
+        }
+    ]
     assert [
         r["key"] for r in client.get("/api/v1/models?operation=image.generate").json()["items"]
     ] == ["image-only"]

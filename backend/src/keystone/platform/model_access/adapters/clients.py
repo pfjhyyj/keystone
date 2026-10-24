@@ -1,5 +1,6 @@
 """Dependencies assembled per process; no service rules or implicit registrations."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from keystone.platform.model_access.adapters.billing.registry import BillingClient
@@ -16,3 +17,4 @@ class ModelClients:
     billing: BillingClient
     credentials: ChannelCredentials
     coordination: QueryCoordination
+    model_referenced: Callable

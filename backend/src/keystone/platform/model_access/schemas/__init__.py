@@ -3,6 +3,7 @@ from .channels import ChannelEdit as ChannelEdit
 from .channels import channel_view as channel_view
 from .entries import EntryCreate as EntryCreate
 from .entries import EntryEdit as EntryEdit
+from .entries import NameEdit as NameEdit
 from .entries import entry_view as entry_view
 from .invocations import InvocationContext as InvocationContext
 from .invocations import Invoke as Invoke

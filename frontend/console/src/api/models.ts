@@ -29,6 +29,7 @@ export const operationLabels: Record<ModelOperation, string> = {
 export interface ModelEntry {
   id: string
   key: string
+  name?: string
   channel_id: string
   provider_model: string
   operations: ModelOperation[]
@@ -68,6 +69,8 @@ export interface Costs {
 }
 export interface ModelOptions {
   providers: string[]
+  balance_providers: string[]
+  default_api_bases: Record<string, string>
 }
 export const modelApi = {
   channels: (offset: number) => request<Channel[]>(`/model-channels?offset=${offset}&limit=50`),
@@ -77,7 +80,7 @@ export const modelApi = {
     operation: ModelOperation = 'text.generate',
     delivery: ModelDelivery = 'sync',
   ) =>
-    request<{ items: { key: string; operations: ModelOperation[] }[] }>(
+    request<{ items: { key: string; name?: string; operations: ModelOperation[] }[] }>(
       `/models?offset=${offset}&limit=50&operation=${encodeURIComponent(operation)}&delivery=${delivery}`,
     ),
   calls: (offset: number, filters: Record<string, string>) =>
@@ -101,6 +104,7 @@ export const balanceStates: Record<string, string> = {
 }
 export const providers = {
   openrouter: 'OpenRouter',
+  newapi: 'NewAPI',
   openlux: 'Openlux',
   yunwu: 'Yunwu',
   deepseek: 'DeepSeek',
