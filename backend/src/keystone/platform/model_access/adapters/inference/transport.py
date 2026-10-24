@@ -116,13 +116,44 @@ class ObservedResponse(httpx2.Response):
 
 class SendTransport(httpx2.AsyncBaseTransport):
     def __init__(
-        self, source, before_send, observation, on_receipt, validate, identifier, *, authorize
+        self,
+        source,
+        before_send,
+        observation,
+        on_receipt,
+        validate,
+        identifier,
+        *,
+        authorize,
+        max_request_bytes=12 * 1024 * 1024,
     ):
         self.source, self.before_send, self.observation = source, before_send, observation
         self.on_receipt, self.validate, self.identifier = on_receipt, validate, identifier
         self.authorize = authorize
+        self.max_request_bytes = max_request_bytes
 
     async def handle_async_request(self, request):
+        # SDK multipart requests stream by default. Bound the actual encoded body before
+        # registration, then validate exactly the bytes that will reach the relay.
+        try:
+            content = request.content
+        except httpx2.RequestNotRead:
+            content = bytearray()
+            async for chunk in request.stream:
+                if len(content) + len(chunk) > self.max_request_bytes:
+                    raise ServiceError(
+                        413, "model_input_too_large", "模型请求超过本操作上限"
+                    ) from None
+                content.extend(chunk)
+            request = httpx2.Request(
+                request.method,
+                request.url,
+                headers=request.headers,
+                content=bytes(content),
+                extensions=request.extensions,
+            )
+        if len(content) > self.max_request_bytes:
+            raise ServiceError(413, "model_input_too_large", "模型请求超过本操作上限")
         self.observation.request_budget = self.validate(request)
         secret = await self.before_send()
         # Authorization and committed registration precede the only physical send.

@@ -49,7 +49,7 @@ class HttpClient:
             raise ServiceError(502, "model_result_source_denied", "图片来源不是公网地址")
         return values[0]
 
-    async def get_public_bytes(self, provider, url, *, hostname, limit, check_status):
+    async def get_public_bytes(self, provider, url, *, hostname, limit, check_status, timeout=None):
         """Adapter-approved HTTPS host, pinned public address, no credentials/redirects."""
         from keystone.core.errors import ServiceError
 
@@ -63,10 +63,10 @@ class HttpClient:
         address = await self.public_address(hostname)
         target = original.copy_with(host=address)
         async with (
-            asyncio.timeout(15),
+            asyncio.timeout(15 if timeout is None else timeout),
             httpx2.AsyncClient(
                 transport=self.transport(provider),
-                timeout=10,
+                timeout=10 if timeout is None else timeout,
                 follow_redirects=False,
                 trust_env=False,
             ) as client,

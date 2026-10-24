@@ -40,3 +40,5 @@ cd backend
 - 领域终态、调用收尾与 DBOS 检查点完成是独立事实；需要 Workflow 完成时等待 SUCCESS，取消中的步骤历史可以暂缺，保留真实发送位置。
 - `test_model_flow_migrations.py` 使用原始隔离库验证模型/Flow 完整基线、默认值与约束、含数据的升级/回滚，以及不可解析的旧 revision 拒绝后数据与版本不变；不导入自动升级 head 的应用夹具。回滚只发生在测试库。
 - 架构检查递归覆盖平台/业务、相对导入、嵌套任务与例外绕过；脚手架输出遵守相同规范。
+
+`test_relay_image_contracts.py` 用真实 SDK 校验两站共用的 JSON/multipart 报文、默认值、超时、旧摘要和有界下载。`test_relay_images.py` 使用真实 PostgreSQL/DBOS Worker 验证九图编辑、加密结果恢复、unknown 不重发及原 Token 实际费用核对；全部 HTTP 为确定性协议桩，不触发付费生成。

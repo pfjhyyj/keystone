@@ -168,11 +168,13 @@ class OpenRouterImages:
         return selected.api_base, "/images", "model"
 
     async def invoke(self, sdk, selected, data, inputs, identifier, digest, run_sync):
+        if data.aspect_ratio is not None or data.quality is not None:
+            raise AdapterError(422, "model_invalid_request", "该图片协议不支持比例或画质参数")
         references = []
         for content_type, content, _ in inputs:
             encoded = await run_sync(images.image_data_uri, content, content_type)
             references.append({"type": "image_url", "image_url": {"url": encoded}})
-        body = data.model_dump(mode="json", exclude={"images"})
+        body = data.model_dump(mode="json", exclude={"images", "aspect_ratio", "quality"})
         body["model"] = selected.provider_model
         body["provider"] = {"allow_fallbacks": False}
         if selected.operation == "image.edit":

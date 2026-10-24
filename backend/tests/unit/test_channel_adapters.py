@@ -233,7 +233,8 @@ def test_protocol_implementations_do_not_import_host_or_execution_dependencies()
     root = Path(__file__).parents[2] / "src/keystone/platform/model_access"
     files = [root / "adapters/channels.py", root / "schemas/errors.py"]
     files += [
-        root / "adapters/inference" / name for name in ("protocols.py", "images.py", "kling.py")
+        root / "adapters/inference" / name
+        for name in ("protocols.py", "images.py", "kling.py", "openai_images.py")
     ]
     files += [p for p in (root / "adapters/billing").glob("*.py") if p.name != "registry.py"]
     for path in files:

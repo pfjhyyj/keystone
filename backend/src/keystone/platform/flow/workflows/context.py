@@ -523,7 +523,7 @@ class FlowContext:
                 await settle(tasks.abandon(identifier, selected, context))
             raise
 
-    async def _image_inputs(self, references):
+    async def _image_inputs(self, references, *, max_total=None):
         from keystone.platform.model_access.schemas.images import (
             MAX_IMAGE_BYTES,
             MAX_INPUT_IMAGE_BYTES,
@@ -535,7 +535,7 @@ class FlowContext:
                 image.file_id, max_bytes=MAX_IMAGE_BYTES
             )
             total += len(content)
-            if total > MAX_INPUT_IMAGE_BYTES:
+            if total > (MAX_INPUT_IMAGE_BYTES if max_total is None else max_total):
                 raise ServiceError(413, "model_input_too_large", "图片累计大小超过上限")
             images.append((content_type, content, image.detail))
         return images
@@ -595,7 +595,7 @@ class FlowContext:
         return await self._image_result(role, request, node_key=node_key, operation="image.edit")
 
     async def _image_result(self, role, request, *, node_key, operation):
-        from keystone.platform.model_access.schemas.images import ImageResult
+        from keystone.platform.model_access.schemas.images import ImageManifest, ImageResult
 
         permissions = ("model:invoke", "file:create", "file:content_read")
         async with self.execution_scope(permissions=permissions) as check:
@@ -609,13 +609,26 @@ class FlowContext:
             )
             files = []
             if manifest is not None:
-                files = await self._restore_images(manifest)
+                files = (
+                    await self._restore_images(manifest)
+                    if isinstance(manifest, ImageManifest)
+                    else None
+                )
                 if files is None:
-                    raise ServiceError(
-                        409, "model_result_unavailable", "原图片产物未完整保存，禁止重发"
+                    if isinstance(manifest, ImageManifest) and manifest.download is None:
+                        raise ServiceError(
+                            409, "model_result_unavailable", "原图片产物未完整保存，禁止重发"
+                        )
+                    batch = await model.recover_image(
+                        identifier, selection=selected, context=context, evidence=manifest
                     )
+                    files = await self._publish_images(batch)
             else:
-                images = await self._image_inputs(getattr(request, "images", ()))
+                max_images, max_total = model.image_limits(selected)
+                references = getattr(request, "images", ())
+                if len(references) > max_images:
+                    raise ServiceError(422, "model_invalid_request", "图片数量超过协议上限")
+                images = await self._image_inputs(references, max_total=max_total)
                 await check()
                 batch = await model.invoke_image(
                     request,

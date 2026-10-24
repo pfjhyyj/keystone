@@ -20,7 +20,9 @@ from keystone.platform.model_access.adapters.inference.transport import Observat
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.schemas.images import (
     ImageBatch,
+    ImageDownloadReceipt,
     ImageManifest,
+    ImageSources,
     ImageTaskReceipt,
 )
 from keystone.platform.model_access.services.cost_context import bind_channel
@@ -95,8 +97,13 @@ class ModelRuntime:
 
     @staticmethod
     def image_digest(data, operation):
+        values = data.model_dump(mode="json")
+        # Preserve old digests: newly added optional controls were absent from old DTOs.
+        for key in ("aspect_ratio", "quality"):
+            if values.get(key) is None:
+                values.pop(key, None)
         raw = json.dumps(
-            [operation, data.model_dump(mode="json")],
+            [operation, values],
             sort_keys=True,
             ensure_ascii=False,
             separators=(",", ":"),
@@ -122,24 +129,37 @@ class ModelRuntime:
                     409, "model_result_unavailable", "原图片调用无法恢复，禁止重新发送"
                 )
             try:
-                manifest = ImageManifest.model_validate(row.result_context)
+                manifest = (
+                    ImageDownloadReceipt.model_validate(row.result_context)
+                    if row.result_context.get("kind") == "download"
+                    else ImageManifest.model_validate(row.result_context)
+                )
                 if (
                     manifest.operation != selection.operation
                     or manifest.request_digest != self.image_digest(data, selection.operation)
                 ):
                     raise ValueError()
-                for index, output in enumerate(manifest.outputs):
+                for index, output in enumerate(getattr(manifest, "outputs", ())):
                     if output.artifact_key != f"model.{identifier}.{index}":
                         raise ValueError()
                 return manifest
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, AttributeError):
                 raise ServiceError(409, "model_result_unavailable", "原图片结果证据无效") from None
+
+    def image_limits(self, selected):
+        return self.clients.inference.image_limits(selected)
+
+    async def recover_image(self, identifier, *, selection, context, evidence):
+        from keystone.platform.model_access.services.image_results import ImageResultService
+
+        return await ImageResultService(self.identity, self.clients).fetch(
+            identifier, selected=selection, context=context, evidence=evidence
+        )
 
     async def invoke_image(
         self, data, *, images, selection, invocation_id, context, worker_identity
     ):
         from keystone.platform.model_access.schemas.images import (
-            MAX_INPUT_IMAGE_BYTES,
             ImageEditRequest,
             ImageGenerateRequest,
         )
@@ -150,7 +170,8 @@ class ModelRuntime:
         data = contract.model_validate(data.model_dump(mode="json"))
         if selection.operation != operation or len(images) != (len(data.images) if edit else 0):
             raise ServiceError(422, "model_invalid_request", "图片操作与请求类型不匹配")
-        if sum(len(image[1]) for image in images) > MAX_INPUT_IMAGE_BYTES:
+        max_images, max_bytes = self.image_limits(selection)
+        if len(images) > max_images or sum(len(image[1]) for image in images) > max_bytes:
             raise ServiceError(413, "model_input_too_large", "图片累计大小超过上限")
         digest = self.image_digest(data, operation)
 
@@ -159,13 +180,21 @@ class ModelRuntime:
                 sdk, selection, data, images, invocation_id, digest
             )
 
-        return await self.invoke_sdk(
+        result = await self.invoke_sdk(
             selection=selection,
             invocation_id=invocation_id,
             sdk_request=send,
             flow_context=context,
             worker_identity=worker_identity,
         )
+        if isinstance(result, ImageSources):
+            evidence = await self.image_manifest(
+                invocation_id, data=data, selection=selection, context=context
+            )
+            return await self.recover_image(
+                invocation_id, selection=selection, context=context, evidence=evidence
+            )
+        return result
 
     async def invoke_vision(
         self, data, *, images, selection, invocation_id, context, worker_identity
@@ -451,6 +480,14 @@ class ModelRuntime:
                         if isinstance(event["content"], ImageBatch)
                         else None
                     )
+                    if isinstance(event["content"], ImageSources):
+                        from keystone.platform.model_access.services.image_results import (
+                            seal_sources,
+                        )
+
+                        result_context = seal_sources(
+                            self.clients, selected, identifier, event["content"]
+                        ).model_dump(mode="json")
                     if isinstance(event["content"], ImageTaskReceipt):
                         await accepted_task(event["content"])
                     else:

@@ -383,7 +383,7 @@ Channel、ModelEntry 不论是否已被引用，首版均不提供物理删除�
 - SDK max_retries=0，禁止自动跳转和环境代理；相同可信 invocation_id 的并发或重放拒绝再次发送，包括原调用已成功但没有可恢复响应的情况。公开 HTTP 只接收 key/messages/max_tokens/stream，不能提交 user_id、Flow 上下文、固定目标或内部调用 ID。
 - 已明确拒绝的 4xx 记录 failed；402 映射为 model_insufficient_credits。超时、5xx、断流、中断或无法解析的结果记 unknown。HTTP 200 中的 error 或 finish_reason=error 同样按未知结果处理，返回安全错误码，保留已经收到的编号、用量和费用，不暴露上游原始错误。SSE 必须同时收到完成原因与结束标记；完整响应但没有 usage/cost 仍可成功，费用保持未知。失败与费用是否已知分别判断。
 - 已发送请求即使身份撤销或配置停用，也补全原记录；不因此再发请求。补全写入失败返回 model_result_unavailable，可能遗留 running，不自动重发或按时间猜测失败。稳定 ID 的防重发记录仍保留。
-- 文本消息最多 32 条，内容总计不超过 64 KiB；max_tokens 默认 1024、上限 4096。单进程模型调用/查询并发 4，调用执行最长 60 秒，SDK I/O 超时 30 秒；响应观测最多 4 MiB，单条流事件缓冲 64 KiB。取消后的事实收尾最多等待 5 秒，不留下后台发送重试任务。
+- 文本消息最多 32 条，内容总计不超过 64 KiB；max_tokens 默认 1024、上限 4096。单进程模型调用/查询并发 4，文本调用执行最长 60 秒、SDK I/O 超时 30 秒；响应观测最多 4 MiB，单条流事件缓冲 64 KiB。取消后的事实收尾最多等待 5 秒，不留下后台发送重试任务。
 - 默认不保存消息或输出正文。记录必要用量、上游请求 ID、费用来源及稳定错误代码；OpenAI/httpx2/httpcore2 日志不随应用 DEBUG 输出请求体和认证信息。
 
 余额查询外部 I/O 最长 10 秒；每进程最多 2 个余额刷新，同渠道通过 PostgreSQL 会话锁协调，协调连接退出时释放，业务事务不跨外部 I/O。写回前核对配置，旧查询结果丢弃；失败保留上次成功快照，配置修改使余额来源变化时清空。余额采集不改 Channel.updated_at/updated_by；查询发生及结果进入 AuditLog。费用补查失败保留已知费用，重复查询只替换同一次费用，不累加。
@@ -449,12 +449,12 @@ ModelRole.operation 描述需要执行的操作。ModelEntry.operations 描述�
 | text.generate | TextRequest | TextResult | 已实现 |
 | text.structured | StructuredRequest | StructuredResult | 已接通 OpenRouter；本地严格校验结果 |
 | image.understand | VisionRequest（受控 File ID） | TextResult | 已接通 OpenRouter；仅运行内受权 PNG/JPEG/WebP |
-| image.generate | ImageGenerateRequest（sync）/ ImageTaskRequest（async） | ImageResult（File ID）/ ImageTask | OpenRouter 同步、OpenLux Kling 异步已实现 |
-| image.edit | ImageEditRequest（受控 File ID） | ImageResult（File ID） | OpenRouter 同步已实现 |
+| image.generate | ImageGenerateRequest（sync）/ ImageTaskRequest（async） | ImageResult（File ID）/ ImageTask | OpenRouter、Yunwu/Openlux 同步及 OpenLux Kling 异步已实现 |
+| image.edit | ImageEditRequest（受控 File ID） | ImageResult（File ID） | OpenRouter、Yunwu/Openlux 同步已实现 |
 
 Selection 保存 operation 和 delivery（sync / async），历史缺失分别按 text.generate / sync 读取。受理保存所需 operation；发送前核对角色操作、Entry.operations、协议能力及固定渠道/provider/model/base。修改其他能力不改写历史选择；移除本次所需能力阻止新发送。原凭据、权限、配置锁、取消、调用登记及费用规则继续生效。
 
-ModelEntry.operations 非空、无重复、最多五项，未知枚举拒绝。目录 GET /models 可按 operation 和 delivery 筛选，分页在过滤之后；返回 capabilities/operations 与实际可发送交集。旧条目通过增量迁移默认 text.generate。OpenLux 图片任务另限制为已核验的 kling-v1、kling-v1-5、kling-v2、kling-v2-1；目录分页前过滤，受理与发送均复查，不能用任意模型名声明该原生协议。
+ModelEntry.operations 非空、无重复、最多五项，未知枚举拒绝。目录 GET /models 可按 operation 和 delivery 筛选，分页在过滤之后；返回 capabilities/operations 与实际可发送交集。模型基线的 operations 默认 text.generate。OpenLux 图片任务另限制为已核验的 kling-v1、kling-v1-5、kling-v2、kling-v2-1；目录分页前过滤，受理与发送均复查，不能用任意模型名声明该原生协议。
 
 ### 6.2 请求与结果边界
 
@@ -462,7 +462,7 @@ ModelEntry.operations 非空、无重复、最多五项，未知枚举拒绝。�
 
 图片请求使用有界 File ID 列表，发送前检查 Run 使用范围、当前内容权、MIME/实际文件格式、单图和累计字节。客户端不能提交远程 URL、data URI、本地路径或媒体字节；发送时编码为协议支持的图片输入。现有文本大小限制保持原值。
 
-生成/编辑返回小型 ImageResult，包含 invocation_id 与文件 ID，不含 base64 或签名 URL。产物保存使用稳定逻辑键与原运行引用，失败不能遗留虚假的输出引用。当前 FlowContext 提供 invoke_structured(role, StructuredRequest, node_key=...) 与 invoke_vision(role, VisionRequest, node_key=...)，均在持久 Step 内使用；分别只允许匹配角色操作。图片最多四份，单图最多 4 MiB、合计最多 8 MiB、最多 16M 像素，只接受单帧 PNG/JPEG/WebP；实际解码验证与 MIME 一致，取消等待原生校验完成。媒体请求单独限制为 12 MiB，文本请求保持原 256 KiB 传输上限。
+生成/编辑返回小型 ImageResult，包含 invocation_id 与文件 ID，不含 base64 或签名 URL。产物保存使用稳定逻辑键与原运行引用，失败不能遗留虚假的输出引用。当前 FlowContext 提供 invoke_structured(role, StructuredRequest, node_key=...) 与 invoke_vision(role, VisionRequest, node_key=...)，均在持久 Step 内使用；分别只允许匹配角色操作。图片理解及 OpenRouter 编辑最多四份、合计最多 8 MiB；Yunwu/Openlux 编辑最多九份、合计最多 32 MiB。每份仍最多 4 MiB、16M 像素，只接受单帧 PNG/JPEG/WebP，实际解码与 MIME 一致；取消等待原生校验完成。原媒体请求保持 12 MiB，Yunwu/Openlux multipart 请求上限为 32 MiB 加 128 KiB 封装；文本保持原 256 KiB。图片数量及累计大小在发送前再次按所选协议检查。
 
 ### 6.3 外部事实与恢复
 
@@ -481,7 +481,7 @@ ModelEntry.operations 非空、无重复、最多五项，未知枚举拒绝。�
 
 ### 6.5 图片产物
 
-模型接入基线直接包含 ModelInvocation.operation（默认 text.generate）和可空 result_context。后者是受限证据，公共调用投影不返回它；不复用 cost_context，不保存提示词、base64、签名 URL 或供应商正文。
+模型接入基线直接包含 ModelInvocation.operation（默认 text.generate）和可空 result_context。后者是受限证据，公共调用投影不返回它；不复用 cost_context，不保存提示词、base64、明文签名 URL 或供应商正文。Yunwu/Openlux 的受限取回凭据见第 6.7 节。
 
 同步图片接口的 result_context 使用明确 ImageManifest：format_version=1、request_digest、operation 和 outputs；每个 output 只保存稳定 artifact_key、checksum_sha256、size_bytes、content_type。artifact_key 由 invocation_id 与序号派生，不接受客户端任意 owner/slot。最多两份输出、每份 8 MiB、总计 16 MiB；媒体 HTTP 响应单独有界，文本响应上限不变。
 
@@ -511,6 +511,26 @@ ImageManifest 可保留原 TaskReceipt，保证“查询结果已取得、文件
 
 下载仅接受适配器声明的 HTTPS CDN 来源，拒绝凭据、非 443 端口、跳转和非公网目标；DNS 验证后固定本次连接 IP 并保留原 TLS SNI/Host，防止二次 DNS 解析改变目标。下载不携带渠道 Authorization，字节与实际图片格式仍有界校验，URL 不进入日志、公开响应或持久回执。取消、原凭据或权限撤销、配置变化阻止新查询/下载/文件发布；本地中断保存原调用证据，不取消或重建供应商任务。
 
+### 6.7 Yunwu/Openlux 同步图片
+
+两个站点共用 OpenAIImages，沿用原 provider、固定地址与 TokenLogs 账务实现，不迁移或合并历史渠道/币种。同步操作限制为 gpt-image-2、gpt-image-2-c、gpt-image-2.5-sunburst、gpt-image-2.5-flare；ModelEntry 仍须显式声明 image.generate / image.edit。
+
+文生图 POST /images/generations 使用 JSON；编辑 POST /images/edits 使用 multipart，重复 image 文件字段。模型、路径、参数、文件数量与实际编码体均在登记前检查。生成与编辑走原发送登记，鉴权及唯一物理 POST 只能发生在提交之后，SDK 与传输不自动重试。
+
+ImageGenerateRequest / ImageEditRequest 增加可选 aspect_ratio（1:1、16:9、9:16、4:3、3:4）及 quality（low、medium、high）。本协议省略时使用 1:1 / medium，resolution 沿用 1K/2K/4K；代码将比例和档位转换为精确比例、16 倍数且处于模型像素/边长限制内的 size。output_format 沿用 png/jpeg/webp。OpenRouter 不接受新增控制，既有报文及默认值不变。新增字段为空时不进入请求摘要，旧请求的摘要和 Manifest 仍可读取。
+
+只有本同步图片协议将 SDK 总窗口及读写超时设为 600 秒，文本和 Kling 不变。此窗口包含发送协调等待和报文处理，不是后台任务承诺。流程作者须显式设置足够的 FlowDefinition.timeout_seconds；覆盖生成、最多两份结果下载及文件保存时建议至少 900 秒，原快照期限不自动延长。
+
+返回 data[].b64_json 时校验真实图片并形成原 Manifest；支持匹配 MIME 的 data URI 前缀。返回 URL 时，先将原位置加密写为私有 ImageDownloadReceipt：绑定 channel_id、invocation_id、operation 和 request_digest，最多两份、单 URL 最多 3072 字符，密文及 Manifest 保持 16 KiB 数据库上限。取回凭据本地有效期最多一小时，上游签名可能更早失效；公开 API、日志及 DBOS 检查点不返回这些地址或密文。
+
+每份下载最多三次尝试、两次跳转，总窗口 120 秒，单请求 30 秒、结果最多 8 MiB。每次请求/跳转重新检查原运行权限、固定模型/渠道和来源；仅 HTTPS/443，DNS 必须全部指向公网并固定实际连接 IP，跳转同样检查，CDN 请求不携带渠道 Token。下载失败只重试 GET，不重新生成。
+
+上游有效 URL 回应落库时调用状态为 succeeded，费用核对可独立开始；这不代表文件或 Flow 已完成。下载后形成带原取回凭据的 Manifest，再按原 artifact_key 保存 Files；重启可从取回凭据、Manifest 或已保存文件继续，部分文件保存后不会多出另一份逻辑产物。已有 Manifest 与重新下载的摘要、大小或 MIME 冲突时拒绝覆盖。无结果证据、签名失效、密钥不可用或权限失效均禁止补发。恢复限原运行仍可执行的重启/重放，不自动重启终态 Flow。只有 Base64 且文件未保存的响应无法靠哈希取回，仍按原有不可恢复窗口结束，不承诺第三方 exactly-once。
+
+图片费用沿用原 Token 日志核对：仅以 x-api-request-id 精确匹配 other.request_id 和上游模型；响应体 id、usage.cost 或余额差不作为本渠道实扣证据。缺回执为 unavailable/cost_request_id_missing，缺日志保持 pending，模型或账务口径冲突为 blocked。生成失败或产物不可用仍可保存实际查得的费用；重复补查只补全原调用。Yunwu 的自定义额度与 Openlux USD 按原范围保存，不因共用协议而换算或合并。
+
+该实现按 EP 现有 Yunwu 报文与本地真实 SDK/DBOS 协议桩验证，没有执行付费线上验收。New API 的公开 generations/edits 形状相近，但其示例使用 image[]，具体模型与结果取回能力也可能不同，不能据此宣称通用 New API 完全兼容；核验实际站点后再扩充代码声明。参考[New API 图片调用说明](https://github.com/QuantumNous/new-api-docs-v1/blob/main/content/docs/en/plugins/usage.mdx)。
+
 ## 7. 发送节奏与 Flow 关联
 
 ModelDispatchScope 以真实站点/Token 的 HMAC 为主键，保存 next_send_at、blocked_until、updated_at，不保存 Token 或正文。相同凭据的重复 Channel、API 和 Worker 共用节奏，不同 Token 独立。model_send_interval_ms 默认 0（0～60000）；冷却默认 5 秒（1～300），最高默认 300（1～3600，且不小于默认）。公共配置摘要包含这些参数。
@@ -532,7 +552,7 @@ Run 关联调用按显式 Run 查询，不套默认 30 天窗口；SQL 权限在
 | 范围 | 当前实现 |
 |---|---|
 | 渠道声明 | CHANNELS 显式组合每种渠道的协议与账务实现；目录、角色绑定、发送和余额查询共用同一声明 |
-| 协议实现 | 兼容文本、OpenRouter 图片、Openlux 原生图片任务与各渠道查费，使用轻量类型和协议错误 |
+| 协议实现 | 兼容文本、OpenRouter 图片、Yunwu/Openlux 同步图片、Openlux 原生图片任务与各渠道查费，使用轻量类型和协议错误 |
 | 宿主接入 | InferenceClient / BillingClient 接入受控传输、发送登记钩子，并将协议错误转换为 ServiceError |
 | 数据与运行 | 现有 Service 负责身份、事务、原任务/产物恢复及费用核对；数据库结构保持不变 |
 | 扩展状态 | 没有新增渠道或自由配置站点；视频和独立发包均未实现 |
@@ -556,7 +576,7 @@ Run 关联调用按显式 Run 查询，不套默认 30 天窗口；SQL 权限在
 
 ### 8.3 渠道组合与模型能力
 
-composition 显式装配渠道入口。一个入口在代码中组合所需的文本、图片、原生任务和账务实现；同类协议使用普通函数和对象复用，不动态扫描或在线加载插件。例如 OpenRouter 组合兼容文本、其图片实现和 OpenRouter 查费；Openlux 组合兼容文本、原生图片任务和 Openlux 查费。渠道内部的组合不暴露为管理配置。
+composition 显式装配渠道入口。一个入口在代码中组合所需的文本、图片、原生任务和账务实现；同类协议使用普通函数和对象复用，不动态扫描或在线加载插件。例如 OpenRouter 组合兼容文本、其图片实现和 OpenRouter 查费；Yunwu/Openlux 共用 GPT Image 同步协议，Openlux 还组合原生图片任务，各自保留原账务范围。渠道内部的组合不暴露为管理配置。
 
 沿用现有明确的操作和请求 DTO，参数默认值、限制和特例放在对应实现中。有效能力取代码支持、ModelEntry.operations 和 Flow 角色要求的交集，未知参数/不支持组合在登记发送前拒绝。新增上游模型只有在既有实现已支持它时才只改映射；不能因模型名存在或兼容文本格式，就宣称支持图片、结构化、视频或查费。
 
@@ -610,12 +630,12 @@ usage 按上游提供的已知计量保存；新增图片数量或视频计费�
 | 位置 | 当前职责 |
 |---|---|
 | adapters/channels.py | ChannelAdapter 与显式 CHANNELS 组合；声明固定基址、协议和账务实现 |
-| adapters/inference/protocols.py、images.py、kling.py | 请求校验、文本/流/识图、图片报文与验证、原生任务协议；不导入宿主权限或执行器 |
+| adapters/inference/protocols.py、openai_images.py、images.py、kling.py | 请求校验、文本/流/识图、共用 GPT Image 报文与验证、原生任务协议；不导入宿主权限或执行器 |
 | adapters/billing/（除 registry.py） | 费用/余额协议、原范围绑定与精确回执解析；协议错误独立于 ServiceError |
 | adapters/inference/client.py、transport.py、errors.py；adapters/billing/registry.py | Keystone SDK 生命周期、受控发送、观察、错误转换和客户端分派 |
 | adapters/http.py、credentials.py、coordination.py、errors.py | 宿主 HTTP/下载边界、密钥、共享协调及协议错误转换 |
 | services/entries.py、channels.py、queries.py | 从同一渠道声明读取能力及账务类型；保留授权、SQL 过滤和模型角色绑定 |
-| services/runtime.py、image_tasks.py、costs.py | 调用登记、预算、回执/产物持久化、原任务恢复及费用核对 |
+| services/runtime.py、image_results.py、image_tasks.py、costs.py | 调用登记、预算、回执/产物持久化、原任务恢复及费用核对 |
 | 模块外 keystone/composition.py | 将渠道声明与宿主依赖注入客户端，保留原生命周期 |
 
 渠道适配不增加表结构、独立包或新配置字段；当前完整迁移基线及旧库切换规则见[迁移说明](../../backend/migrations/README.md)。provider、Selection、Flow 快照、图片回执/Manifest 和费用证据继续使用原格式，历史不改写、不推测回填。代码及其目录变化仍影响 execution_version，旧在途运行遵守第 8.7 节。

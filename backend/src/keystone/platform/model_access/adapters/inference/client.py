@@ -4,6 +4,7 @@ import asyncio
 from contextlib import aclosing, asynccontextmanager
 from functools import partial
 
+import httpx2
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from keystone.core.asyncio import blocking
@@ -62,17 +63,35 @@ class InferenceClient:
 
     def validate_request(self, request, provider, selected):
         target = self.request_target(provider, selected)
+        protocol = self.protocol(selected, provider=provider)
         with adapter_errors():
+            if hasattr(protocol, "validate_request"):
+                return protocol.validate_request(request, selected, target)
             return validate_request(
                 request,
                 selected,
                 target,
-                require_parameters=self.protocol(selected, provider=provider).require_parameters,
+                require_parameters=protocol.require_parameters,
             )
+
+    def image_limits(self, selected):
+        from keystone.platform.model_access.schemas.images import MAX_INPUT_IMAGE_BYTES
+
+        protocol = self.protocol(selected)
+        return getattr(protocol, "max_images", 4), getattr(
+            protocol, "max_input_bytes", MAX_INPUT_IMAGE_BYTES
+        )
 
     @asynccontextmanager
     async def connect(self, provider, selected, observation, before_send, on_receipt, identifier):
         base, _, _ = self.request_target(provider, selected)
+        protocol = self.protocol(selected, provider=provider)
+        seconds = getattr(protocol, "timeout_seconds", 60)
+        maximum = (
+            getattr(protocol, "max_input_bytes", 0) + 128 * 1024
+            if selected.operation == "image.edit" and hasattr(protocol, "max_input_bytes")
+            else 12 * 1024 * 1024
+        )
         transport = SendTransport(
             self.transport(provider),
             before_send,
@@ -81,19 +100,23 @@ class InferenceClient:
             lambda request: self.validate_request(request, provider, selected),
             identifier,
             authorize=self.adapter(provider).authorize,
+            max_request_bytes=maximum,
         )
         async with (
             self.slots,
-            asyncio.timeout(60),
+            asyncio.timeout(seconds),
             DefaultAsyncHttpxClient(
-                transport=transport, timeout=30, follow_redirects=False, trust_env=False
+                transport=transport,
+                timeout=seconds if seconds > 60 else 30,
+                follow_redirects=False,
+                trust_env=False,
             ) as http,
             AsyncOpenAI(
                 api_key="runtime-resolved",
                 base_url=base,
                 http_client=http,
                 max_retries=0,
-                timeout=30,
+                timeout=seconds if seconds > 60 else 30,
             ) as sdk,
         ):
             yield sdk
@@ -132,6 +155,71 @@ class InferenceClient:
             return await self.protocol(selected).invoke(
                 sdk, selected, data, images, identifier, digest, blocking
             )
+
+    async def download_image(self, selected, url, authorize):
+        from urllib.parse import urljoin
+
+        from keystone.platform.model_access.adapters.inference.openai_images import download_host
+        from keystone.platform.model_access.schemas.errors import (
+            AdapterError,
+            QueryLater,
+            ResponseTooLarge,
+        )
+        from keystone.platform.model_access.schemas.images import MAX_OUTPUT_IMAGE_BYTES
+
+        class Redirect(Exception):
+            pass
+
+        def check(response):
+            if response.status_code in {301, 302, 303, 307, 308}:
+                raise Redirect(response.headers.get("location"))
+            if response.status_code in {404, 429} or response.status_code >= 500:
+                raise QueryLater()
+            if response.status_code != 200:
+                raise AdapterError(502, "model_result_download_unavailable", "原图片结果无法取回")
+
+        redirects = 0
+        with adapter_errors():
+            async with asyncio.timeout(120):
+                for attempt in range(3):
+                    while True:
+                        await authorize()
+                        try:
+                            return await self.http.get_public_bytes(
+                                selected.provider,
+                                url,
+                                hostname=download_host(url),
+                                limit=MAX_OUTPUT_IMAGE_BYTES,
+                                check_status=check,
+                                timeout=30,
+                            )
+                        except Redirect as redirect:
+                            if redirects >= 2 or not isinstance(redirect.args[0], str):
+                                raise AdapterError(
+                                    502, "model_result_source_denied", "图片来源跳转无效"
+                                ) from None
+                            url = urljoin(url, redirect.args[0])
+                            download_host(url)
+                            redirects += 1
+                        except ResponseTooLarge:
+                            raise AdapterError(
+                                502, "model_response_too_large", "原图片结果超过上限"
+                            ) from None
+                        except (
+                            QueryLater,
+                            TimeoutError,
+                            OSError,
+                            httpx2.NetworkError,
+                            httpx2.TimeoutException,
+                        ):
+                            if attempt == 2:
+                                raise AdapterError(
+                                    502,
+                                    "model_result_download_unavailable",
+                                    "原图片结果暂时无法取回，可恢复原结果",
+                                ) from None
+                            await asyncio.sleep(attempt + 1)
+                            break
 
     async def vision(self, sdk, selected, data, images):
         with adapter_errors():

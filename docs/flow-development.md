@@ -109,6 +109,8 @@ async def generate_images(run_id):
 
 平台保存原提交的截止时间和查询次数，重启不会重置。同步图片响应尚未保存或缺少原字节时不能重生成；已保存的稳定文件可继续确认。异步回执已保存后只查询原任务、重新获取原产物，文件使用原逻辑键；摘要冲突安全停止。取消、撤权或配置变化阻止新查询和文件发布。上述循环是流程自身的原生 DBOS 编排，不新增平台任务引擎。
 
+Yunwu/Openlux 的 GPT Image 同步调用支持九份参考图及 aspect_ratio / quality，流程仍通过 invoke_image / edit_image 使用。生成等待最多 600 秒，图片 Flow 应显式设置 timeout_seconds（建议至少 900 秒覆盖下载和落文件）；不要套用默认 300 秒或为超时整体重试生成。URL 结果的原取回凭据由 Model Access 加密保存，Context 重放仅取回原结果或原 File，业务代码不保存 URL。具体限制与不可恢复窗口见[同步图片](domains/model-access.md#67-yunwuopenlux-同步图片)。
+
 ## 2. 输出验收：结构、业务事实与副作用
 
 执行顺序为：准备可信源信息 → Agent/工具 → 业务验收 → 保存报告。

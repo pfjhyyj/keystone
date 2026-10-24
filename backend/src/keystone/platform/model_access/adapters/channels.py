@@ -9,6 +9,7 @@ from keystone.platform.model_access.adapters.billing.openlux import Openlux
 from keystone.platform.model_access.adapters.billing.openrouter import OpenRouter
 from keystone.platform.model_access.adapters.billing.yunwu import Yunwu
 from keystone.platform.model_access.adapters.inference.kling import KlingImages
+from keystone.platform.model_access.adapters.inference.openai_images import OpenAIImages
 from keystone.platform.model_access.adapters.inference.protocols import (
     ChatCompletions,
     OpenRouterImages,
@@ -51,6 +52,7 @@ class ChannelAdapter:
 
 # Multiple channel types reuse the same compatible implementation, with explicit limits.
 CHAT = ChatCompletions()
+RELAY_IMAGES = OpenAIImages()
 CHANNELS = {
     "openrouter": ChannelAdapter(
         OPENROUTER_BASE,
@@ -63,8 +65,10 @@ CHANNELS = {
         ),
         OpenRouter(),
     ),
-    "openlux": ChannelAdapter("https://api.openlux.ai/v1", (CHAT, KlingImages()), Openlux()),
-    "yunwu": ChannelAdapter("https://yunwu.ai/v1", (CHAT,), Yunwu()),
+    "openlux": ChannelAdapter(
+        "https://api.openlux.ai/v1", (CHAT, RELAY_IMAGES, KlingImages()), Openlux()
+    ),
+    "yunwu": ChannelAdapter("https://yunwu.ai/v1", (CHAT, RELAY_IMAGES), Yunwu()),
     # Billing declarations are retained; no inference protocol is installed for these yet.
     "deepseek": ChannelAdapter("https://api.deepseek.com", (), DeepSeek()),
     "aliyun_bailian": ChannelAdapter(
