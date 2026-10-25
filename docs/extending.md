@@ -2,6 +2,8 @@
 
 本文维护脚手架、权限/审计、迁移及 Task/Flow 的当前接入方式。执行设施见[任务执行](execution-design.md)，Flow 契约见[领域说明](domains/flow.md)。
 
+业务面向同一企业，以模块接入现有工程，复用平台身份和公共能力，随 API/Worker 同制品发布。新增业务不要求独立服务、远程 Worker 协议或独立部署；扩展边界与真实业务验证目标以[整体架构](architecture.md)为准。
+
 Keystone 不在运行时扫描或热加载业务。一个业务由**显式声明**和**显式导入**组成：目录中的代码只有被 `composition.py`、`bootstrap.py` 和 `model_registry.py` 引用后才生效。启动时校验命名空间、权限、审计动作、路由和 Flow 契约，声明错误直接阻止启动。
 
 业务可以只使用身份、文件、字典、模型和 Flow 等底座能力，也可以拥有自己的 ORM 实体、HTTP 接口和 Flow/Agent。先按需增加，不要预建空目录或插件层。
@@ -183,7 +185,7 @@ Flow 只保存运行记录、权限和结果协调；业务结论、实体和采
 
 ## 7. 前端（可选）
 
-console 是平台控制台，业务页面应放进独立的业务前端工程，或按现有 `views/<页面>/` 结构新增。需要为某个 Flow 提供专用输入表单时，在 `frontend/console/src/views/flows/forms.ts` 注册组件；未注册的定义继续使用通用 JSON 表单：
+console 可直接承载业务页面，优先按现有 `views/<页面>/` 结构新增页面和路由并复用登录、权限与组件。业务确有界面或交付需求时也可使用独立前端工程。需要为某个 Flow 提供专用输入表单时，在 `frontend/console/src/views/flows/forms.ts` 注册组件；未注册的定义继续使用通用 JSON 表单：
 
 ```ts
 import type { Component } from 'vue'
@@ -194,7 +196,7 @@ export const flowForms: Readonly<Record<string, Component>> = {
 }
 ```
 
-业务前端独立构建、独立部署，共用后端 Cookie 会话和权限。不要为业务扩展复制一套 console 或引入共享组件包。
+集成到 console 的业务页面随现有前端构建和部署；选择独立前端时才单独构建、部署，通过同源 API 代理接入，并继续遵守后端 Cookie 会话、Origin、CSRF 和权限契约，详见[身份与访问控制](domains/identity.md#7-最小实现约定)。不要为普通业务扩展复制一套 console 或预建共享组件包。
 
 ## 8. 检查清单
 

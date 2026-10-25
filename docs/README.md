@@ -1,6 +1,8 @@
 # Keystone 文档
 
-Keystone 是模块化单体：API、Worker、CLI 共用后端工程，控制台使用 Vue 与 Element Plus。Flow、模型、文件及持久后台 Task 使用同一身份和授权边界。
+Keystone 面向单企业内部多个业务模块，采用模块化单体：业务直接模块化接入，API、Worker、CLI 共用后端工程和发布制品，控制台使用 Vue 与 Element Plus。Flow、模型、文件及持久后台 Task 使用同一身份和授权边界。
+
+当前优先简单开发和部署。业务独立发布、独立 Worker、多企业租户隔离和分布式部署均不作为接入前提；扩展边界及尚待实际业务验证的目标统一见[整体架构](architecture.md)。
 
 | 用途 | 文档 |
 |---|---|

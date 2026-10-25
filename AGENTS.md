@@ -16,7 +16,8 @@
 
 ## 实现约束
 
-- Keystone 是模块化单体。API、Worker、CLI 共用工程和镜像，领域 Service 用 Python 调用协作，不建立内部 HTTP 服务。
+- Keystone 面向单企业内部多个业务模块，采用模块化单体。业务直接模块化接入；API、Worker、CLI 共用工程、镜像和发布制品，领域 Service 用 Python 调用协作，不建立内部 HTTP 服务。
+- 优先简单开发和部署，业务页面可直接集成到控制台。不以业务独立发布、独立 Worker、多租户、跨宿主或滚动发布作为当前平台目标；按真实需求扩展现有 Service/Schema 和显式装配，不预建分布式协议或插件体系。适用性按架构文档的真实业务验证目标评估。
 - 先明确资源、操作、事实归属和权限；优先普通函数、Service 对象和显式依赖注入，不引入通用 CRUD/Repository/BaseService、动态扫描、在线插件或第二执行引擎。
 - composition/bootstrap 显式装配声明和依赖；平台不导入业务/examples，core 不依赖领域，跨模块只使用公开 Service/Schema，不导入其他模块 ORM/Adapter。
 - 模块根目录只保留 __init__.py 与轻量 catalog.py；一级目录按需使用 controllers、schemas、models、services、adapters、tasks、workflows，不预建空目录。每个持久实体一个文件，显式导出。
