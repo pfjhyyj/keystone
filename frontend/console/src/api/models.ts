@@ -38,6 +38,10 @@ export interface ModelEntry {
   is_active: boolean
 }
 export interface Invocation {
+  channel_name?: string
+  model_name?: string
+  model_key?: string
+  user_name?: string | null
   id: string
   operation: ModelOperation
   user_id: string | null
@@ -128,4 +132,20 @@ export const costCheckStates: Record<string, string> = {
   exhausted: '自动核对已结束',
 }
 export const money = (value: string) =>
-  value.includes('.') ? value.replace(/0+$/, '').replace(/\.$/, '') : value
+  /^[+-]?\d+\.\d+$/.test(value) ? value.replace(/0+$/, '').replace(/\.$/, '') : value
+
+// Display only: ledger values and detail views retain the original decimal string.
+export function compactMoney(value: string) {
+  const exact = money(value)
+  const parts = /^(-?)(\d+)\.(\d+)$/.exec(exact)
+  if (!parts || parts[3]!.length <= 8) return exact
+  const sign = parts[1]!,
+    integer = parts[2]!,
+    fraction = parts[3]!
+  const first = fraction.search(/[1-9]/)
+  if (/^0+$/.test(integer) && first >= 8) {
+    const digits = fraction.slice(first)
+    return `${sign}${digits[0]}${digits.length > 1 ? `.${digits.slice(1, 4)}` : ''}${digits.length > 4 ? '…' : ''}e-${first + 1}`
+  }
+  return `${sign}${integer}.${fraction.slice(0, 8)}…`
+}

@@ -1,10 +1,16 @@
-import { afterEach, expect, it, vi } from 'vitest'
-import { flushPromises, mount, RouterLinkStub, type VueWrapper } from '@vue/test-utils'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import {
+  config,
+  DOMWrapper,
+  flushPromises,
+  mount,
+  RouterLinkStub,
+  type VueWrapper,
+} from '@vue/test-utils'
 import ModelManager from '../views/models/ModelsView.vue'
 import ModelProbe from '../views/models/components/ModelProbe.vue'
 import UpstreamModelPicker from '../views/models/components/UpstreamModelPicker.vue'
 import ModelPicker from '../components/models/ModelPicker.vue'
-import InvocationHistory from '../views/models/components/InvocationHistory.vue'
 import FlowManager from '../views/flows/FlowsView.vue'
 import FlowRunDialog from '../views/flows/components/FlowRunDialog.vue'
 import FlowStartDialog from '../views/flows/components/FlowStartDialog.vue'
@@ -67,7 +73,11 @@ const definition = {
 }
 const button = (wrapper: VueWrapper, label: string) =>
   wrapper.findAll('button').find((node) => node.text() === label)!
+beforeEach(() => {
+  config.global.stubs = { ...config.global.stubs, RouterLink: RouterLinkStub }
+})
 afterEach(() => {
+  delete (config.global.stubs as Record<string, unknown>).RouterLink
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -100,9 +110,8 @@ it('keeps history readers out of configuration and invocation APIs', async () =>
   await flushPromises()
   expect(wrapper.text()).not.toContain('新建渠道')
   expect(wrapper.text()).not.toContain('发送真实请求')
-  expect(wrapper.text()).toContain('费用未知：1')
-  expect(wrapper.text()).toContain('0.0012 credits')
-  expect(paths.every((path) => path.startsWith('/model-invocations'))).toBe(true)
+  expect(wrapper.text()).not.toContain('调用记录与费用')
+  expect(paths).toEqual([])
 })
 it('preserves channel fields and labels stale balance; provider and account are immutable', async () => {
   authorize(['model:manage'])
@@ -117,7 +126,7 @@ it('preserves channel fields and labels stale balance; provider and account are 
   })
   const wrapper = mount(ModelManager)
   await flushPromises()
-  expect(wrapper.text()).toContain('这是上次成功结果，不代表当前余额')
+  expect(wrapper.text()).toContain('上次成功结果 · 查询失败')
   await button(wrapper, '编辑渠道').trigger('click')
   expect(selectControl(wrapper, '服务商').props('disabled')).toBe(true)
   expect(wrapper.findAll('[role=dialog] input').at(-2)!.attributes('disabled')).toBeDefined()
@@ -212,7 +221,13 @@ it('loads channel models, selects an upstream ID and suggests a model key', asyn
   const wrapper = mount(ModelManager)
   await flushPromises()
   expect(button(wrapper, '刷新余额').attributes('disabled')).toBeDefined()
-  expect(wrapper.text()).toContain('当前渠道尚未接入账户余额查询')
+  await button(wrapper, '额度详情').trigger('click')
+  await flushPromises()
+  expect(new DOMWrapper(document.body).get('[role=dialog]').text()).toContain(
+    '当前渠道尚未接入账户余额查询',
+  )
+  await new DOMWrapper(document.body).get('[aria-label="关闭对话框"]').trigger('click')
+  await flushPromises()
   await button(wrapper, '新建模型').trigger('click')
   await flushPromises()
   await chooseSelect(wrapper, channelId, '模型渠道')
@@ -377,8 +392,10 @@ it('shows unlimited NewAPI Token quota without suggesting a zero account balance
   const wrapper = mount(ModelManager)
   await flushPromises()
   expect(wrapper.text()).toContain('当前 Token 不限额')
-  expect(wrapper.text()).toContain('不是账户总余额')
   expect(button(wrapper, '刷新余额').attributes('disabled')).toBeUndefined()
+  await button(wrapper, '额度详情').trigger('click')
+  await flushPromises()
+  expect(new DOMWrapper(document.body).get('[role=dialog]').text()).toContain('不是账户总余额')
 })
 it.each([true, false])(
   'shows account remaining separately from Token quota (unlimited=%s)',
@@ -407,9 +424,16 @@ it.each([true, false])(
     const wrapper = mount(ModelManager)
     await flushPromises()
     expect(wrapper.text()).toContain('账户余额')
-    expect(wrapper.text()).toContain('剩余：192.851716 USD')
-    expect(wrapper.text()).toContain('当前 Key 的 Token 额度')
-    expect(wrapper.text().includes('当前 Token 不限额')).toBe(unlimited)
+    expect(wrapper.text()).toContain('192.851716 USD')
+    expect(wrapper.text()).not.toContain('当前 Key 的 Token 额度')
+    await button(wrapper, '额度详情').trigger('click')
+    await flushPromises()
+    expect(new DOMWrapper(document.body).get('[role=dialog]').text()).toContain(
+      '当前 Key 的 Token 额度',
+    )
+    expect(
+      new DOMWrapper(document.body).get('[role=dialog]').text().includes('当前 Token 不限额'),
+    ).toBe(unlimited)
     expect(wrapper.text()).not.toContain('上游未返回账户余额')
   },
 )
@@ -497,90 +521,6 @@ it.each(['渠道', '模型'])(
     expect(deletes).toHaveLength(2)
   },
 )
-it('uses identical bounded filters for history and summary and rejects invalid IDs', async () => {
-  authorize(['model_invocation:read'])
-  const paths: string[] = []
-  fakeApi((path) => {
-    paths.push(path)
-    return path.includes('/summary') ? costs : []
-  })
-  const wrapper = mount(InvocationHistory, { props: { version: 0 } })
-  await flushPromises()
-  const initial = paths.map((path) => new URLSearchParams(path.split('?')[1]))
-  expect(initial[0]!.get('since')).toBeTruthy()
-  expect(initial[0]!.get('until')).toBeTruthy()
-  expect(initial[0]!.get('since')).toBe(initial[1]!.get('since'))
-  expect(initial[0]!.get('until')).toBe(initial[1]!.get('until'))
-  paths.length = 0
-  await wrapper.findAll('input')[0]!.setValue(channelId)
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  const params = paths.map((path) => new URLSearchParams(path.split('?')[1]))
-  for (const key of ['channel_id', 'since', 'until'])
-    expect(params[0]!.get(key)).toBe(params[1]!.get(key))
-  paths.length = 0
-  await wrapper.findAll('input')[0]!.setValue('invalid')
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(paths).toEqual([])
-  expect(wrapper.text()).toContain('完整 UUID')
-})
-it('keeps the model history window on paging and updates it for a completed invocation without applying drafts', async () => {
-  authorize(['model_invocation:read'])
-  let now = Date.parse('2026-10-20T10:00:00Z')
-  vi.spyOn(Date, 'now').mockImplementation(() => now)
-  const paths: string[] = []
-  fakeApi((path) => {
-    paths.push(path)
-    return path.includes('/summary')
-      ? costs
-      : Array.from({ length: 50 }, (_, i) => ({
-          id: `call-${i}`,
-          channel_id: channelId,
-          provider_model: 'chat',
-          status: 'succeeded',
-          created_at: stamp,
-          cost_amount: null,
-          cost_source: 'unknown',
-        }))
-  })
-  const wrapper = mount(InvocationHistory, { props: { version: 0 } })
-  await flushPromises()
-  const original = new URLSearchParams(paths[0]!.split('?')[1])
-  now += 60000
-  await button(wrapper, '下一页').trigger('click')
-  await flushPromises()
-  expect(new URLSearchParams(paths.at(-1)!.split('?')[1]).get('until')).toBe(original.get('until'))
-  await wrapper.findAll('input')[0]!.setValue('unapplied-draft')
-  paths.length = 0
-  await wrapper.setProps({ version: 1 })
-  await flushPromises()
-  expect(paths).toHaveLength(2)
-  for (const path of paths) {
-    const params = new URLSearchParams(path.split('?')[1])
-    expect(params.get('until')).toBe(new Date(now).toISOString())
-    expect(params.get('since')).toBe(new Date(now - 30 * 86400000).toISOString())
-    expect(params.has('channel_id')).toBe(false)
-  }
-  expect(paths.some((path) => path.includes('offset=50'))).toBe(false)
-  await wrapper.findAll('input')[0]!.setValue(channelId)
-  const dates = wrapper.findAll('input[type=datetime-local]')
-  await dates[0]!.setValue('2026-10-01T00:00')
-  await dates[1]!.setValue('2026-10-19T00:00')
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  const bounded = new URLSearchParams(paths.at(-1)!.split('?')[1])
-  paths.length = 0
-  now += 60000
-  await wrapper.setProps({ version: 2 })
-  await flushPromises()
-  for (const path of paths) {
-    const params = new URLSearchParams(path.split('?')[1])
-    expect(params.get('channel_id')).toBe(channelId)
-    expect(params.get('since')).toBe(bounded.get('since'))
-    expect(params.get('until')).toBe(bounded.get('until'))
-  }
-})
 it('paginates the model catalog while retaining selection', async () => {
   authorize(['model:invoke'])
   const paths: string[] = []
@@ -658,7 +598,7 @@ it('uses the official address and no fake upstream model when configuring live m
   fakeApi((path) => (path === '/model-access/options' ? { providers: ['openrouter'] } : []))
   const wrapper = mount(ModelManager)
   await flushPromises()
-  expect(wrapper.text()).toContain('真实发送（OpenRouter、NewAPI、Yunwu）')
+  expect(wrapper.text()).toContain('配置渠道、管理模型并测试调用')
   await button(wrapper, '新建渠道').trigger('click')
   await flushPromises()
   expect(selectControl(wrapper, '服务商').text()).not.toContain('DeepSeek')
@@ -825,7 +765,9 @@ it('distinguishes catalog loading and failure, retries and opens the selected Fl
     }
     return []
   })
-  const wrapper = mount(FlowManager, { global: { stubs: { RouterLink: RouterLinkStub } } })
+  const wrapper = mount(FlowManager, {
+    global: { stubs: { RouterLink: RouterLinkStub } },
+  })
   await flushPromises()
   expect(wrapper.text()).toContain('正在加载流程目录')
   expect(wrapper.text()).not.toContain('尚未启用')
@@ -1000,4 +942,42 @@ it('filters model choices by role operation and reloads when the operation chang
   await flushPromises()
   expect(paths.at(-1)).toContain('operation=image.understand')
   expect(wrapper.text()).toContain('vision')
+})
+
+it('keeps balance details open and replaces only the refreshed channel snapshot', async () => {
+  authorize(['model:manage'])
+  let writes = 0
+  const updated = {
+    ...channel,
+    balance_check_status: 'ok',
+    balance_snapshot: {
+      scope: 'provider_account',
+      items: [{ kind: 'remaining', amount: '3.50', unit: 'credits' }],
+    },
+  }
+  fakeApi((path, init) => {
+    if (path === '/model-access/options')
+      return { providers: ['openrouter'], balance_providers: ['openrouter'] }
+    if (init.method === 'POST') {
+      writes++
+      return updated
+    }
+    if (path.startsWith('/model-channels')) return [channel]
+    return []
+  })
+  const wrapper = mount(ModelManager)
+  await flushPromises()
+  await button(wrapper, '额度详情').trigger('click')
+  await flushPromises()
+  const dialog = new DOMWrapper(document.body).get('[role=dialog]')
+  expect(dialog.text()).toContain('这是上次成功结果，不代表当前余额')
+  await dialog
+    .findAll('button')
+    .find((node) => node.text() === '刷新余额')!
+    .trigger('click')
+  await flushPromises()
+  expect(new DOMWrapper(document.body).find('[role=dialog]').exists()).toBe(true)
+  expect(new DOMWrapper(document.body).get('[role=dialog]').text()).toContain('3.5 credits')
+  expect(new DOMWrapper(document.body).get('[role=dialog]').text()).toContain('查询成功')
+  expect(writes).toBe(1)
 })

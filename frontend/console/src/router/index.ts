@@ -16,8 +16,9 @@ export const navigation = [
   {
     path: '/models',
     label: '模型接入',
-    permissions: ['model:invoke', 'model:manage', 'model_invocation:read'],
+    permissions: ['model:invoke', 'model:manage'],
   },
+  { path: '/model-usage', label: '用量与费用', permissions: ['model_invocation:read'] },
   { path: '/flows', label: 'Flow 流程', permissions: ['flow:start', 'flow:read'] },
 ]
 export function loginDestination(value: unknown) {
@@ -37,6 +38,7 @@ export function makeRouter(history: RouterHistory = createWebHistory(import.meta
       { path: '/files', component: () => import('../views/files/FilesView.vue') },
       { path: '/dictionary', component: () => import('../views/dictionary/DictionaryView.vue') },
       { path: '/models', component: () => import('../views/models/ModelsView.vue') },
+      { path: '/model-usage', component: () => import('../views/usage/UsageView.vue') },
       { path: '/flows', component: () => import('../views/flows/FlowsView.vue') },
       { path: '/login', component: () => import('../views/login/LoginView.vue') },
       {

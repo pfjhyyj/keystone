@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onScopeDispose, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import { can } from '../../../stores/session'
 import { invokeModel } from '../../../api/client'
 import ModelPicker from '../../../components/models/ModelPicker.vue'
@@ -87,6 +88,13 @@ async function invoke() {
       </div>
     </form>
     <pre v-if="output" class="model-output" aria-live="polite">{{ output }}</pre>
-    <p v-if="invocation">本次调用：{{ invocation }}</p>
+    <p v-if="invocation">
+      本次调用：{{ invocation }}
+      <RouterLink
+        v-if="can('model_invocation:read')"
+        :to="{ path: '/model-usage', query: { tab: 'details', invocation } }"
+        >查看调用与费用</RouterLink
+      >
+    </p>
   </section>
 </template>

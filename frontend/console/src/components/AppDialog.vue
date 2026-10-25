@@ -1,8 +1,14 @@
 <script setup lang="ts">
 import { ElDialog, ElDrawer } from 'element-plus'
 const props = withDefaults(
-  defineProps<{ title: string; busy?: boolean; drawer?: boolean; width?: string }>(),
-  { width: '620px' },
+  defineProps<{
+    title: string
+    busy?: boolean
+    drawer?: boolean
+    width?: string
+    appendToBody?: boolean
+  }>(),
+  { width: '620px', appendToBody: false },
 )
 const emit = defineEmits<{ close: [] }>()
 function close() {
@@ -19,7 +25,7 @@ function close() {
     :close-on-click-modal="false"
     :close-on-press-escape="!busy"
     :show-close="false"
-    :append-to-body="false"
+    :append-to-body="props.appendToBody"
     class="app-dialog"
     destroy-on-close
     @update:model-value="close"

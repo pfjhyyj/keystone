@@ -4,7 +4,7 @@ import { choose, watchWindowErrors } from './controls'
 test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through the console UI', async ({
   page,
 }) => {
-  test.setTimeout(90000)
+  test.setTimeout(180000)
   const errors: string[] = []
   await watchWindowErrors(page, errors)
   page.on('pageerror', (error) => errors.push(error.message))
@@ -19,6 +19,7 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await expect(page.getByRole('heading', { name: '模型接入', exact: true })).toBeVisible()
   const channels = page.getByRole('region', { name: '渠道账户', exact: true })
   for (const provider of ['openrouter', 'newapi_prefix', 'newapi_other']) {
+    await page.getByRole('tab', { name: '渠道配置', exact: true }).click()
     await page.getByRole('button', { name: '新建渠道', exact: true }).click()
     let dialog = page.getByRole('dialog')
     await dialog.getByLabel('渠道名称', { exact: true }).fill(`${provider} 模拟`)
@@ -48,8 +49,28 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
       await expect(row).toContainText('查询成功')
       await expect(row).toContainText('当前 Token 不限额')
       await expect(row).toContainText('账户余额')
-      await expect(row).toContainText('剩余：192.851716 USD')
+      await expect(row).toContainText('192.851716 USD')
+      expect((await row.boundingBox())!.height).toBeLessThan(170)
+      await row.getByRole('button', { name: '额度详情', exact: true }).click({ timeout: 10000 })
+      const balance = page.getByRole('dialog')
+      await expect(balance).toContainText('当前 Key 的 Token 额度')
+      const close = await balance
+        .getByRole('button', { name: '关闭对话框', exact: true })
+        .boundingBox()
+      expect(close!.y).toBeGreaterThanOrEqual(0)
+      await page.screenshot({
+        path: '../../.artifacts/console-channel-balance.png',
+        fullPage: true,
+        animations: 'disabled',
+      })
+      await balance.getByRole('button', { name: '刷新余额', exact: true }).click()
+      await expect(balance).toBeVisible()
+      await expect(balance).toContainText('查询成功')
+      await balance
+        .getByRole('button', { name: '关闭对话框', exact: true })
+        .click({ timeout: 10000 })
     }
+    await page.getByRole('tab', { name: '模型配置', exact: true }).click()
     await page.getByRole('button', { name: '新建模型', exact: true }).click()
     dialog = page.getByRole('dialog')
     await dialog.getByLabel('模型 key', { exact: true }).fill(`${provider}_chat`)
@@ -63,6 +84,7 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
     }
     await dialog.getByRole('button', { name: '保存模型', exact: true }).click()
     await expect(dialog).toBeHidden()
+    await page.getByRole('tab', { name: '调用测试', exact: true }).click()
     const probe = page.getByRole('region', { name: '真实调用', exact: true })
     await probe.getByRole('button', { name: '刷新可用模型' }).click()
     await choose(probe, '模型', `${provider}_chat`)
@@ -70,13 +92,99 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
     await expect(probe.getByLabel('流式响应', { exact: true })).toHaveCount(0)
     await probe.getByRole('button', { name: '发送真实请求', exact: true }).click()
     await expect(probe.locator('pre')).toContainText('模拟渠道响应')
-    await expect(
-      page.getByRole('region', { name: '调用记录与费用', exact: true }).locator('tbody tr'),
-    ).toHaveCount(['openrouter', 'newapi_prefix', 'newapi_other'].indexOf(provider) + 1)
+    await expect(page.getByRole('region', { name: '调用记录与费用', exact: true })).toHaveCount(0)
   }
-  const history = page.getByRole('region', { name: '调用记录与费用', exact: true })
-  await expect(history).toContainText('费用未知：2 次')
-  await expect(history).toContainText('0.0012 credits')
+  await page.getByRole('tab', { name: '渠道配置', exact: true }).click()
+  for (const provider of ['openrouter', 'newapi_prefix', 'newapi_other']) {
+    const row = channels.getByRole('row').filter({ hasText: `${provider} 模拟` })
+    await expect(row.getByText('启用', { exact: true })).toBeVisible()
+    await expect(row.getByRole('button', { name: '编辑渠道', exact: true })).toBeVisible()
+    await expect(row.getByRole('button', { name: '额度详情', exact: true })).toBeVisible()
+  }
+  await page.screenshot({
+    path: '../../.artifacts/console-model-channels.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.screenshot({
+    path: '../../.artifacts/console-model-channels-mobile.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  )
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await page.getByRole('tab', { name: '模型配置', exact: true }).click()
+  await page.screenshot({
+    path: '../../.artifacts/console-model-entries.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.getByRole('link', { name: '用量与费用', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '用量与费用', exact: true })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: '统计时区', exact: true })).toHaveCount(0)
+  const overview = page.getByRole('region', { name: '用量费用总览', exact: true })
+  await expect(overview).toContainText('费用未知：2 次')
+  await expect(overview).toContainText('0.0012')
+  for (const label of ['趋势指标', '分析维度', '分组排序']) {
+    const control = page.getByRole('combobox', { name: label, exact: true })
+    expect(
+      (await control
+        .locator('xpath=ancestor::div[contains(@class, "app-select")][1]')
+        .boundingBox())!.width,
+    ).toBeGreaterThan(180)
+  }
+  await page.screenshot({
+    path: '../../.artifacts/console-model-usage-overview.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page
+    .getByRole('group', { name: '可点击的时间趋势', exact: true })
+    .getByRole('button')
+    .first()
+    .click()
+  await expect(
+    page.getByRole('region', { name: '调用明细', exact: true }).locator('tbody tr'),
+  ).toHaveCount(3)
+  await expect(page).toHaveURL(/range=custom/)
+  await page.goBack()
+  await expect(overview).toBeVisible()
+  await page
+    .getByRole('region', { name: '维度分析', exact: true })
+    .getByRole('button', { name: 'newapi_prefix 模拟', exact: true })
+    .click()
+  const history = page.getByRole('region', { name: '调用明细', exact: true })
+  await expect(history.locator('tbody tr')).toHaveCount(1)
+  await expect(page).toHaveURL(/channel_id=/)
+  const channelPicker = page
+    .getByRole('combobox', { name: '渠道筛选', exact: true })
+    .locator('xpath=ancestor::div[contains(@class, "app-select")][1]')
+  const selectedChannel = channelPicker.locator('.el-select__placeholder')
+  await expect(selectedChannel).toHaveText('newapi_prefix 模拟')
+  await page.getByRole('tab', { name: '维度分析', exact: true }).click()
+  await expect(selectedChannel).toHaveText('newapi_prefix 模拟')
+  await page.getByRole('tab', { name: '调用明细', exact: true }).click()
+  const options = page.getByRole('listbox', { name: '渠道筛选', exact: true })
+  const input = channelPicker.getByRole('combobox')
+  await input.fill('newapi_prefix')
+  await expect(
+    options.getByRole('option', { name: 'newapi_prefix 模拟', exact: true }),
+  ).toBeVisible()
+  await expect(options.getByRole('option', { name: 'newapi_prefix', exact: true })).toHaveCount(0)
+  await input.press('Escape')
+  await expect(selectedChannel).toHaveText('newapi_prefix 模拟')
+  // Tab changes are intentionally part of the history; restore the unfiltered overview.
+  await page.getByRole('button', { name: '重置筛选', exact: true }).click()
+  await page.getByRole('tab', { name: '总览', exact: true }).click()
+  await expect(overview).toBeVisible()
+  await choose(page, '分析维度', '业务模型')
+  await choose(page, '分组排序', '已知费用从高到低 · credits')
+  await expect(page).toHaveURL(/sort_unit=credits/)
+  await page.getByRole('tab', { name: '调用明细', exact: true }).click()
+  await expect(history.locator('tbody tr')).toHaveCount(3)
   await history.locator('tbody tr').last().getByRole('button', { name: '查看调用' }).click()
   let dialog = page.getByRole('dialog')
   await expect(dialog).toContainText('mock-')
@@ -85,19 +193,57 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await expect(dialog).toContainText('来源 query')
   await dialog.getByRole('button', { name: '关闭对话框' }).click()
   await page.screenshot({
-    path: '../../.artifacts/console-models.png',
+    path: '../../.artifacts/console-model-usage.png',
     fullPage: true,
     animations: 'disabled',
   })
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({
-    path: '../../.artifacts/console-models-mobile.png',
+    path: '../../.artifacts/console-model-usage-mobile.png',
     fullPage: true,
     animations: 'disabled',
   })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   )
+  await page.setViewportSize({ width: 1440, height: 1000 })
+
+  // Exercise extreme display values without changing the real test ledger.
+  await page.route('**/api/v1/model-invocations/statistics?*', async (route) => {
+    const response = await route.fetch()
+    const body = await response.json()
+    const group = body.groups.find((row: { costs: unknown[] }) => row.costs.length)
+    group.label = '较长的渠道显示名称与上游模型配置说明'.repeat(5)
+    group.costs[0].amount = '0.002306'
+    group.costs[0].avg_cost = '0.000768666666666667'
+    await route.fulfill({ response, json: body })
+  })
+  await page.getByRole('tab', { name: '总览', exact: true }).click()
+  await page.getByRole('button', { name: '刷新统计', exact: true }).click()
+  const groups = page.getByRole('region', { name: '维度分析', exact: true })
+  const average = groups.locator('.average-cost .money-amount').first()
+  await expect(average).toHaveText('0.00076866… credits')
+  await expect(average).toHaveAttribute('title', '0.000768666666666667 credits')
+  const longLabel = groups.locator('.group-link .truncate').first()
+  await expect
+    .poll(() => longLabel.evaluate((node) => node.scrollWidth > node.clientWidth))
+    .toBe(true)
+  expect(await longLabel.evaluate((node) => getComputedStyle(node).textOverflow)).toBe('ellipsis')
+  await page.screenshot({
+    path: '../../.artifacts/console-usage-truncation.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true)
+  await page.screenshot({
+    path: '../../.artifacts/console-usage-truncation-mobile.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.unroute('**/api/v1/model-invocations/statistics?*')
   await page.setViewportSize({ width: 1440, height: 1000 })
 
   await page.getByRole('link', { name: 'Flow 流程', exact: true }).click()
@@ -169,6 +315,18 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await page.getByRole('button', { name: '重置筛选', exact: true }).click()
   await expect(runRows).toHaveCount(1)
   await expect(runRows.first()).toContainText(original!)
+  await page.getByRole('link', { name: '用量与费用', exact: true }).click()
+  await choose(page, '分析维度', 'Flow 运行')
+  await page
+    .getByRole('region', { name: '维度分析', exact: true })
+    .getByRole('button', { name: original!.trim(), exact: true })
+    .click()
+  await expect(
+    page.getByRole('region', { name: '调用明细', exact: true }).locator('tbody tr'),
+  ).toHaveCount(2)
+  await page.getByRole('button', { name: '查看流程运行', exact: true }).first().click()
+  await expect(page.getByRole('dialog')).toContainText('模拟审查已完成')
+  await page.getByRole('dialog').getByRole('button', { name: '关闭对话框' }).click()
   await renameAndDeleteUnusedConfiguration(page)
   expect(errors).toEqual([])
 })
@@ -178,6 +336,7 @@ async function renameAndDeleteUnusedConfiguration(page: Page) {
   await page.getByRole('button', { name: '新建渠道', exact: true }).click()
   let dialog = page.getByRole('dialog')
   await dialog.getByLabel('渠道名称', { exact: true }).fill('待清理渠道')
+  await choose(dialog, '服务商', 'Yunwu')
   let releaseVerification!: () => void
   let verifying = false
   const verificationGate = new Promise<void>((resolve) => {
@@ -210,11 +369,15 @@ async function renameAndDeleteUnusedConfiguration(page: Page) {
     .getByRole('region', { name: '渠道账户', exact: true })
     .getByRole('row')
     .filter({ hasText: '待清理渠道' })
+  await expect(channelRow).toContainText('暂不支持查询')
+  await expect(channelRow.getByRole('button', { name: '刷新余额', exact: true })).toBeDisabled()
+  expect((await channelRow.boundingBox())!.height).toBeLessThan(170)
   await channelRow.getByRole('button', { name: '修改渠道名称', exact: true }).click()
   dialog = page.getByRole('dialog')
   await dialog.getByLabel('显示名称', { exact: true }).fill('可删除渠道')
   await dialog.getByRole('button', { name: '保存名称', exact: true }).click()
   await expect(dialog).toBeHidden()
+  await page.getByRole('tab', { name: '模型配置', exact: true }).click()
   await page.getByRole('button', { name: '新建模型', exact: true }).click()
   dialog = page.getByRole('dialog')
   await dialog.getByLabel('模型 key', { exact: true }).fill('unused_cleanup')
@@ -241,6 +404,7 @@ async function renameAndDeleteUnusedConfiguration(page: Page) {
   await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeHidden()
   await expect(modelRow).toHaveCount(0)
+  await page.getByRole('tab', { name: '渠道配置', exact: true }).click()
   const renamedChannel = page
     .getByRole('region', { name: '渠道账户', exact: true })
     .getByRole('row')

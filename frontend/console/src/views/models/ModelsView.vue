@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
+import type { TableInstance } from 'element-plus'
+import { RouterLink } from 'vue-router'
 import { can } from '../../stores/session'
 import { request } from '../../api/client'
 import {
@@ -7,7 +9,6 @@ import {
   operationLabels,
   type ModelOperation,
   providers,
-  balanceStates,
   channelProvider,
   type Channel,
   type ModelEntry,
@@ -20,14 +21,26 @@ import ListPager from '../../components/ListPager.vue'
 import ChannelPicker from './components/ChannelPicker.vue'
 import UpstreamModelPicker from './components/UpstreamModelPicker.vue'
 import ModelProbe from './components/ModelProbe.vue'
-import InvocationHistory from './components/InvocationHistory.vue'
+import ChannelBalance from './components/ChannelBalance.vue'
 const channels = usePagedList('model:manage', modelApi.channels),
   entries = usePagedList('model:manage', modelApi.entries)
 const { busy, error, notice, run } = useAction()
-const balanceKinds: Record<string, string> = { remaining: '剩余', used: '已用', granted: '总额' }
 const options = ref<ModelOptions | null>(null),
-  optionsError = ref(''),
-  historyVersion = ref(0)
+  optionsError = ref('')
+const configurationTab = ref(can('model:manage') ? 'channels' : 'test')
+const channelTable = ref<TableInstance>(),
+  modelTable = ref<TableInstance>()
+watch(configurationTab, async (tab) => {
+  await nextTick()
+  if (tab === 'channels') channelTable.value?.doLayout()
+  if (tab === 'models') modelTable.value?.doLayout()
+})
+
+watch([() => can('model:manage'), () => can('model:invoke')], ([manage, invoke]) => {
+  const available = [...(manage ? ['channels', 'models'] : []), ...(invoke ? ['test'] : [])]
+  if (!available.includes(configurationTab.value)) configurationTab.value = available[0] ?? ''
+})
+
 const form = ref<'channel' | 'entry' | null>(null),
   editingChannel = ref<Channel | null>(null),
   editingEntry = ref<ModelEntry | null>(null)
@@ -151,9 +164,11 @@ async function save() {
 }
 async function balance(row: Channel) {
   await run(async () => {
-    await request(`/model-channels/${row.id}/balance`, 'POST')
+    const updated = await request<Channel>(`/model-channels/${row.id}/balance`, 'POST')
     notice.value = '余额查询已结束，请查看最新查询状态与成功采集时间。'
-    await channels.reload()
+    channels.rows.value = channels.rows.value.map((channel) =>
+      channel.id === updated.id ? updated : channel,
+    )
   })
 }
 watch(form, (value) => {
@@ -187,12 +202,15 @@ onMounted(() => {
 })
 </script>
 <template>
-  <section aria-label="模型接入">
+  <section aria-label="模型接入" class="models-page">
     <div class="heading">
       <div>
         <h1>模型接入</h1>
-        <p>管理渠道、模型与每次调用的费用。模型调用使用真实服务，未知费用不代表零费用。</p>
+        <p>配置渠道、管理模型并测试调用。</p>
       </div>
+      <RouterLink v-if="can('model_invocation:read')" class="usage-entry" to="/model-usage"
+        >查看用量与费用 →</RouterLink
+      >
     </div>
     <el-alert
       v-if="error && !form && !selectedAction"
@@ -205,257 +223,257 @@ onMounted(() => {
     <el-alert v-if="notice" role="status" type="success" show-icon :closable="false">{{
       notice
     }}</el-alert>
-    <template v-if="can('model:manage')">
-      <el-alert v-if="optionsError" role="alert" type="error" show-icon :closable="false">{{
-        optionsError
-      }}</el-alert>
-      <div class="row-actions">
-        <span>真实发送（OpenRouter、NewAPI、Yunwu）</span
-        ><el-button :disabled="busy" @click="run(loadOptions)" native-type="button" type="default"
-          >刷新服务商</el-button
-        >
-      </div>
-      <section aria-label="渠道账户">
-        <div class="heading">
-          <h2>渠道账户</h2>
-          <div class="row-actions">
-            <el-button
-              :disabled="busy || !options"
-              @click="channel(null)"
-              native-type="button"
-              type="primary"
-              >新建渠道</el-button
-            ><el-button
-              :disabled="busy || channels.loading.value"
-              @click="channels.reload"
-              native-type="button"
-              type="default"
-            >
-              刷新渠道
-            </el-button>
+    <el-alert v-if="optionsError && can('model:manage')" role="alert" type="error" :closable="false"
+      >{{ optionsError }}
+      <el-button link native-type="button" :disabled="busy" @click="run(loadOptions)"
+        >重试加载服务商</el-button
+      ></el-alert
+    >
+    <el-tabs v-model="configurationTab" class="model-config-tabs">
+      <el-tab-pane v-if="can('model:manage')" label="渠道配置" name="channels">
+        <section id="configuration-channels" aria-label="渠道账户">
+          <div class="heading">
+            <h2>渠道账户</h2>
+            <div class="row-actions">
+              <el-button
+                :disabled="busy || !options"
+                @click="channel(null)"
+                native-type="button"
+                type="primary"
+                >新建渠道</el-button
+              ><el-button
+                :disabled="busy || channels.loading.value"
+                @click="channels.reload"
+                native-type="button"
+                type="default"
+              >
+                刷新渠道
+              </el-button>
+            </div>
           </div>
-        </div>
-        <el-alert
-          v-if="channels.error.value"
-          role="alert"
-          type="error"
-          show-icon
-          :closable="false"
-          >{{ channels.error.value }}</el-alert
-        >
-        <p v-if="channels.loading.value" role="status">正在加载渠道…</p>
-        <div class="table-scroll">
-          <el-table
-            :fit="false"
-            native-scrollbar
-            :data="channels.rows.value"
-            row-key="id"
-            stripe
-            class="data-table"
+          <el-alert
+            v-if="channels.error.value"
+            role="alert"
+            type="error"
+            show-icon
+            :closable="false"
+            >{{ channels.error.value }}</el-alert
           >
-            <el-table-column label="渠道" min-width="180"
-              ><template #default="{ row: row }"
-                >{{ row.name }}<small>{{ row.id }}</small></template
-              ></el-table-column
+          <p v-if="channels.loading.value" role="status">正在加载渠道…</p>
+          <div class="table-scroll">
+            <el-table
+              ref="channelTable"
+              native-scrollbar
+              :data="channels.rows.value"
+              row-key="id"
+              stripe
+              class="data-table configuration-table"
             >
-            <el-table-column label="服务商" min-width="180"
-              ><template #default="{ row: row }">{{
-                providers[channelProvider(row) as keyof typeof providers] ?? row.provider
-              }}</template></el-table-column
-            >
-            <el-table-column label="状态" min-width="120"
-              ><template #default="{ row: row }"
-                ><StatusTag :status="row.is_active ? 'active' : 'disabled'">{{
-                  row.is_active ? '启用' : '停用'
-                }}</StatusTag></template
-              ></el-table-column
-            >
-            <el-table-column label="最近成功余额/额度" min-width="180"
-              ><template #default="{ row: row }"
-                ><p v-if="row.balance_snapshot?.scope === 'provider_account'">账户余额</p>
-                <p v-if="row.balance_snapshot?.scope === 'token_quota'">
-                  上游未返回账户余额，以下仅为当前 Key 的 Token 额度，不是账户总余额。
-                </p>
-                <p v-for="item in row.balance_snapshot?.items" :key="item.kind + item.unit">
-                  {{ balanceKinds[item.kind] ?? item.kind }}：{{ item.amount }} {{ item.unit }}
-                </p>
-                <p v-if="row.balance_snapshot?.token_items">当前 Key 的 Token 额度</p>
-                <p v-if="row.balance_snapshot?.unlimited">当前 Token 不限额</p>
-                <p
-                  v-for="item in row.balance_snapshot?.token_items"
-                  :key="'token-' + item.kind + item.unit"
-                >
-                  {{ balanceKinds[item.kind] ?? item.kind }}：{{ item.amount }} {{ item.unit }}
-                </p>
-                <p v-if="!row.balance_snapshot">未知，不代表零余额</p>
-                <p v-if="options && !options.balance_providers?.includes(channelProvider(row))">
-                  当前渠道尚未接入账户余额查询，请在服务商控制台查看。
-                </p>
-                <small
-                  >查询状态：{{ balanceStates[row.balance_check_status] }}<br />最近尝试：{{
-                    row.balance_last_attempt_at
-                      ? new Date(row.balance_last_attempt_at).toLocaleString()
-                      : '无'
-                  }}<br />成功采集：{{
-                    row.balance_checked_at
-                      ? new Date(row.balance_checked_at).toLocaleString()
-                      : '无'
-                  }}</small
-                >
-                <p v-if="row.balance_snapshot && row.balance_check_status !== 'ok'">
-                  这是上次成功结果，不代表当前余额。
-                </p></template
-              ></el-table-column
-            >
-            <el-table-column label="操作" min-width="340"
-              ><template #default="{ row: row }"
-                ><div class="row-actions">
-                  <el-button
-                    :disabled="busy || !options"
-                    @click="channel(row)"
-                    native-type="button"
-                    type="primary"
-                    link
-                    >编辑渠道</el-button
-                  ><el-button
-                    :disabled="busy"
-                    native-type="button"
-                    type="primary"
-                    link
-                    @click="configureAction('channel', row, 'rename')"
-                    >修改渠道名称</el-button
-                  >
-                  <el-button
-                    :disabled="busy"
-                    native-type="button"
-                    type="danger"
-                    link
-                    @click="configureAction('channel', row, 'delete')"
-                    >删除渠道</el-button
-                  >
-                  <el-button
-                    :disabled="busy || !options?.balance_providers?.includes(channelProvider(row))"
-                    @click="balance(row)"
-                    native-type="button"
-                    type="primary"
-                    link
-                    >刷新余额</el-button
-                  >
-                </div></template
-              ></el-table-column
-            >
-            <template #empty><el-empty :image-size="64" description="暂无渠道" /></template
-          ></el-table>
-        </div>
-        <ListPager
-          :page="channels.page.value"
-          :count="channels.rows.value.length"
-          :loading="busy || channels.loading.value"
-          @change="channels.page.value = $event"
-        />
-      </section>
-      <section aria-label="模型配置">
-        <div class="heading">
-          <h2>模型配置</h2>
-          <div class="row-actions">
-            <el-button :disabled="busy" @click="entry(null)" native-type="button" type="primary"
-              >新建模型</el-button
-            ><el-button
-              :disabled="busy || entries.loading.value"
-              @click="entries.reload"
-              native-type="button"
-              type="default"
-            >
-              刷新模型配置
-            </el-button>
+              <el-table-column label="渠道" min-width="190"
+                ><template #default="{ row: row }"
+                  ><span class="truncate" :title="row.name">{{ row.name }}</span
+                  ><small :title="row.id">{{ row.id.slice(0, 8) }}…</small></template
+                ></el-table-column
+              >
+              <el-table-column label="服务商" min-width="110"
+                ><template #default="{ row: row }">{{
+                  providers[channelProvider(row) as keyof typeof providers] ?? row.provider
+                }}</template></el-table-column
+              >
+              <el-table-column label="状态" min-width="90"
+                ><template #default="{ row: row }"
+                  ><StatusTag :status="row.is_active ? 'active' : 'disabled'">{{
+                    row.is_active ? '启用' : '停用'
+                  }}</StatusTag></template
+                ></el-table-column
+              >
+              <el-table-column label="余额 / Key 额度" min-width="240"
+                ><template #default="{ row }"
+                  ><ChannelBalance
+                    :channel="row"
+                    :available="!!options?.balance_providers?.includes(channelProvider(row))"
+                    :busy="busy"
+                    :error="error"
+                    @inspect="error = ''"
+                    @refresh="balance(row)" /></template
+              ></el-table-column>
+              <el-table-column label="操作" min-width="220"
+                ><template #default="{ row: row }"
+                  ><div class="configuration-actions">
+                    <el-button
+                      :disabled="busy || !options"
+                      @click="channel(row)"
+                      native-type="button"
+                      type="primary"
+                      link
+                      >编辑渠道</el-button
+                    ><el-button
+                      :disabled="busy"
+                      native-type="button"
+                      type="primary"
+                      link
+                      @click="configureAction('channel', row, 'rename')"
+                      >修改渠道名称</el-button
+                    ><RouterLink
+                      v-if="can('model_invocation:read')"
+                      :to="{ path: '/model-usage', query: { channel_id: row.id } }"
+                      >查看用量</RouterLink
+                    >
+                    <el-button
+                      :disabled="busy"
+                      native-type="button"
+                      type="danger"
+                      link
+                      @click="configureAction('channel', row, 'delete')"
+                      >删除渠道</el-button
+                    >
+                  </div></template
+                ></el-table-column
+              >
+              <template #empty><el-empty :image-size="64" description="暂无渠道" /></template
+            ></el-table>
           </div>
-        </div>
-        <el-alert
-          v-if="entries.error.value"
-          role="alert"
-          type="error"
-          show-icon
-          :closable="false"
-          >{{ entries.error.value }}</el-alert
-        >
-        <p v-if="entries.loading.value" role="status">正在加载模型…</p>
-        <div class="table-scroll">
-          <el-table
-            :fit="false"
-            native-scrollbar
-            :data="entries.rows.value"
-            row-key="id"
-            stripe
-            class="data-table"
+          <ListPager
+            :page="channels.page.value"
+            :count="channels.rows.value.length"
+            :loading="busy || channels.loading.value"
+            @change="channels.page.value = $event"
+          />
+        </section>
+      </el-tab-pane>
+      <el-tab-pane v-if="can('model:manage')" label="模型配置" name="models">
+        <section id="configuration-models" aria-label="模型配置">
+          <div class="heading">
+            <h2>模型配置</h2>
+            <div class="row-actions">
+              <el-button :disabled="busy" @click="entry(null)" native-type="button" type="primary"
+                >新建模型</el-button
+              ><el-button
+                :disabled="busy || entries.loading.value"
+                @click="entries.reload"
+                native-type="button"
+                type="default"
+              >
+                刷新模型配置
+              </el-button>
+            </div>
+          </div>
+          <el-alert
+            v-if="entries.error.value"
+            role="alert"
+            type="error"
+            show-icon
+            :closable="false"
+            >{{ entries.error.value }}</el-alert
           >
-            <el-table-column label="模型名称 / key" min-width="180"
-              ><template #default="{ row: row }"
-                >{{ row.name || row.key }}<small>{{ row.key }}</small></template
-              ></el-table-column
+          <p v-if="entries.loading.value" role="status">正在加载模型…</p>
+          <div class="table-scroll">
+            <el-table
+              ref="modelTable"
+              native-scrollbar
+              :data="entries.rows.value"
+              row-key="id"
+              stripe
+              class="data-table configuration-table"
             >
-            <el-table-column label="渠道 ID" min-width="180"
-              ><template #default="{ row: row }">{{ row.channel_id }}</template></el-table-column
-            >
-            <el-table-column label="上游模型" min-width="180"
-              ><template #default="{ row: row }">{{
-                row.provider_model
-              }}</template></el-table-column
-            >
-            <el-table-column label="操作能力" min-width="160"
-              ><template #default="{ row }">{{
-                (row.operations ?? ['text.generate'])
-                  .map((op: ModelOperation) => operationLabels[op])
-                  .join('、')
-              }}</template></el-table-column
-            >
-            <el-table-column label="状态" min-width="120"
-              ><template #default="{ row: row }"
-                ><StatusTag :status="row.is_active ? 'active' : 'disabled'">{{
-                  row.is_active ? '启用' : '停用'
-                }}</StatusTag></template
-              ></el-table-column
-            >
-            <el-table-column label="操作" min-width="300"
-              ><template #default="{ row: row }"
-                ><el-button
-                  :disabled="busy"
-                  @click="entry(row)"
-                  native-type="button"
-                  type="primary"
-                  link
-                  >编辑模型</el-button
-                >
-                <el-button
-                  :disabled="busy"
-                  native-type="button"
-                  type="primary"
-                  link
-                  @click="configureAction('entry', row, 'rename')"
-                  >修改模型名称</el-button
-                >
-                <el-button
-                  :disabled="busy"
-                  native-type="button"
-                  type="danger"
-                  link
-                  @click="configureAction('entry', row, 'delete')"
-                  >删除模型</el-button
-                >
-              </template></el-table-column
-            >
-            <template #empty><el-empty :image-size="64" description="暂无模型配置" /></template
-          ></el-table>
-        </div>
-        <ListPager
-          :page="entries.page.value"
-          :count="entries.rows.value.length"
-          :loading="busy || entries.loading.value"
-          @change="entries.page.value = $event"
-        />
-      </section>
-    </template>
-    <ModelProbe v-if="can('model:invoke')" @completed="historyVersion++" />
-    <InvocationHistory v-if="can('model_invocation:read')" :version="historyVersion" />
+              <el-table-column label="模型名称 / key" min-width="200"
+                ><template #default="{ row: row }"
+                  ><span class="truncate" :title="row.name || row.key">{{
+                    row.name || row.key
+                  }}</span
+                  ><small
+                    v-if="row.name && row.name !== row.key"
+                    class="truncate"
+                    :title="row.key"
+                    >{{ row.key }}</small
+                  ></template
+                ></el-table-column
+              >
+              <el-table-column label="所属渠道" min-width="170"
+                ><template #default="{ row: row }"
+                  ><span
+                    class="truncate"
+                    :title="
+                      channels.rows.value.find((channel) => channel.id === row.channel_id)?.name ??
+                      row.channel_id
+                    "
+                    >{{
+                      channels.rows.value.find((channel) => channel.id === row.channel_id)?.name ??
+                      `${row.channel_id.slice(0, 8)}…`
+                    }}</span
+                  ></template
+                ></el-table-column
+              >
+              <el-table-column label="上游模型" min-width="180"
+                ><template #default="{ row: row }"
+                  ><span class="truncate" :title="row.provider_model">{{
+                    row.provider_model
+                  }}</span></template
+                ></el-table-column
+              >
+              <el-table-column label="操作能力" min-width="160"
+                ><template #default="{ row }">{{
+                  (row.operations ?? ['text.generate'])
+                    .map((op: ModelOperation) => operationLabels[op])
+                    .join('、')
+                }}</template></el-table-column
+              >
+              <el-table-column label="状态" min-width="90"
+                ><template #default="{ row: row }"
+                  ><StatusTag :status="row.is_active ? 'active' : 'disabled'">{{
+                    row.is_active ? '启用' : '停用'
+                  }}</StatusTag></template
+                ></el-table-column
+              >
+              <el-table-column label="操作" min-width="220"
+                ><template #default="{ row: row }"
+                  ><div class="configuration-actions">
+                    <el-button
+                      :disabled="busy"
+                      @click="entry(row)"
+                      native-type="button"
+                      type="primary"
+                      link
+                      >编辑模型</el-button
+                    >
+                    <el-button
+                      :disabled="busy"
+                      native-type="button"
+                      type="primary"
+                      link
+                      @click="configureAction('entry', row, 'rename')"
+                      >修改模型名称</el-button
+                    ><RouterLink
+                      v-if="can('model_invocation:read')"
+                      :to="{ path: '/model-usage', query: { model_entry_id: row.id } }"
+                      >查看用量</RouterLink
+                    >
+                    <el-button
+                      :disabled="busy"
+                      native-type="button"
+                      type="danger"
+                      link
+                      @click="configureAction('entry', row, 'delete')"
+                      >删除模型</el-button
+                    >
+                  </div>
+                </template></el-table-column
+              >
+              <template #empty><el-empty :image-size="64" description="暂无模型配置" /></template
+            ></el-table>
+          </div>
+          <ListPager
+            :page="entries.page.value"
+            :count="entries.rows.value.length"
+            :loading="busy || entries.loading.value"
+            @change="entries.page.value = $event"
+          />
+        </section>
+      </el-tab-pane>
+      <el-tab-pane v-if="can('model:invoke')" label="调用测试" name="test"
+        ><ModelProbe id="configuration-test"
+      /></el-tab-pane>
+    </el-tabs>
     <AppDialog
       v-if="form"
       :title="
@@ -613,3 +631,60 @@ onMounted(() => {
     </AppDialog>
   </section>
 </template>
+
+<style scoped>
+.models-page > .heading {
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.usage-entry {
+  color: var(--el-color-primary);
+  font-size: 13px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.model-config-tabs :deep(.el-tabs__header) {
+  margin-bottom: 22px;
+}
+.model-config-tabs :deep(.el-tabs__item) {
+  height: 44px;
+}
+.configuration-actions {
+  display: grid;
+  grid-template-columns: max-content max-content;
+  align-items: center;
+  justify-content: start;
+  gap: 8px 14px;
+}
+.configuration-actions :deep(.el-button) {
+  margin-left: 0;
+  justify-self: start;
+}
+.configuration-actions a {
+  color: var(--el-color-primary);
+  text-decoration: none;
+  font-size: 12px;
+  line-height: 24px;
+}
+.configuration-table :deep(td.el-table__cell) {
+  vertical-align: top;
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+.configuration-table :deep(.cell > small) {
+  white-space: nowrap;
+}
+.truncate {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 600px) {
+  .models-page > .heading {
+    align-items: flex-start;
+    gap: 8px;
+  }
+}
+</style>

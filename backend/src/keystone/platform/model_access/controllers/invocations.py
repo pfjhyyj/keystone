@@ -1,18 +1,23 @@
 import json
 from contextlib import aclosing
-from datetime import datetime
-from typing import Literal
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
-from keystone.core.http import Page
 from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.model_access import schemas
+from keystone.platform.model_access.schemas.statistics import (
+    InvocationFilters,
+    InvocationListQuery,
+    StatisticsOptionsQuery,
+    StatisticsQuery,
+)
 from keystone.platform.model_access.services.entries import ModelEntryService
 from keystone.platform.model_access.services.invocations import InvocationService
 from keystone.platform.model_access.services.runtime import ModelRuntime, safe_error
+from keystone.platform.model_access.services.statistics import StatisticsService
 
 router = APIRouter(prefix="/api/v1", tags=["models"])
 
@@ -50,37 +55,23 @@ async def invoke(data: schemas.Invoke, request: Request):
 
 
 @router.get("/model-invocations/summary")
-async def summary(
-    request: Request,
-    since: datetime | None = None,
-    until: datetime | None = None,
-    channel_id: UUID | None = None,
-    flow_run_id: UUID | None = None,
-):
-    return await _service(request).summary(
-        since=since, until=until, channel_id=channel_id, flow_run_id=flow_run_id
-    )
+async def summary(request: Request, query: Annotated[InvocationFilters, Query()]):
+    return await _service(request).summary(**query.filters())
+
+
+@router.get("/model-invocations/statistics")
+async def statistics(request: Request, query: Annotated[StatisticsQuery, Query()]):
+    return await StatisticsService(access_context(request)).statistics(query)
+
+
+@router.get("/model-invocations/options")
+async def statistics_options(request: Request, query: Annotated[StatisticsOptionsQuery, Query()]):
+    return await StatisticsService(access_context(request)).options(query)
 
 
 @router.get("/model-invocations")
-async def invocations(
-    request: Request,
-    page: Page,
-    since: datetime | None = None,
-    until: datetime | None = None,
-    channel_id: UUID | None = None,
-    flow_run_id: UUID | None = None,
-    status: Literal["running", "succeeded", "failed", "unknown"] | None = None,
-):
-    return await _service(request).invocations(
-        page.offset,
-        page.limit,
-        since=since,
-        until=until,
-        channel_id=channel_id,
-        status=status,
-        flow_run_id=flow_run_id,
-    )
+async def invocations(request: Request, query: Annotated[InvocationListQuery, Query()]):
+    return await _service(request).invocations(query.offset, query.limit, **query.filters())
 
 
 @router.get("/model-invocations/{identifier}")

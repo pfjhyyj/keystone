@@ -36,7 +36,7 @@ const groups = [
   { title: '工作台', paths: ['/'] },
   { title: '访问控制', paths: ['/users', '/roles', '/audit'] },
   { title: '平台资源', paths: ['/files', '/dictionary'] },
-  { title: 'AI 与流程', paths: ['/models', '/flows'] },
+  { title: 'AI 与流程', paths: ['/models', '/model-usage', '/flows'] },
 ]
 const icons = {
   '/': Grid,
@@ -45,7 +45,8 @@ const icons = {
   '/audit': Document,
   '/files': Files,
   '/dictionary': Collection,
-  '/models': Coin,
+  '/models': Setting,
+  '/model-usage': Coin,
   '/flows': Management,
 }
 const visible = computed(() =>

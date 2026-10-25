@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import case, or_, select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time_range import history_range
@@ -40,7 +40,28 @@ def history_scope(auth):
 
 
 async def history_filters(
-    session, auth, since=None, until=None, channel_id=None, status=None, flow_run_id=None
+    session,
+    auth,
+    since=None,
+    until=None,
+    channel_id=None,
+    status=None,
+    flow_run_id=None,
+    model_entry_id=None,
+    provider_model=None,
+    user_id=None,
+    node_key=None,
+    model_role=None,
+    agent_key=None,
+    agent_call_id=None,
+    operation=None,
+    source=None,
+    cost_status=None,
+    cost_source=None,
+    cost_known=None,
+    cost_unit=None,
+    error_code=None,
+    missing=None,
 ):
     since, until = await history_range(session, since, until)
     filters = history_scope(auth) + [
@@ -53,4 +74,59 @@ async def history_filters(
         filters.append(ModelInvocation.status == status)
     if flow_run_id:
         filters.append(ModelInvocation.flow_context["flow_run_id"].astext == str(flow_run_id))
+    for column, value in (
+        (ModelInvocation.model_entry_id, model_entry_id),
+        (ModelInvocation.provider_model, provider_model),
+        (ModelInvocation.operation, operation),
+        (ModelInvocation.cost_check_status, cost_status),
+        (ModelInvocation.cost_source, cost_source),
+        (ModelInvocation.cost_unit, cost_unit),
+        (ModelInvocation.error_code, error_code),
+        (ModelInvocation.flow_context["node_key"].astext, node_key),
+        (ModelInvocation.flow_context["model_role"].astext, model_role),
+        (ModelInvocation.flow_context["agent_key"].astext, agent_key),
+        (
+            ModelInvocation.flow_context["agent_call_id"].astext,
+            str(agent_call_id) if agent_call_id is not None else None,
+        ),
+    ):
+        if value is not None:
+            filters.append(column == value)
+    if user_id is not None:
+        filters.append(
+            ModelInvocation.user_id.is_(None)
+            if user_id == "system"
+            else ModelInvocation.user_id == user_id
+        )
+    if source is not None:
+        filters.append(invocation_source() == source)
+    if cost_known is not None:
+        filters.append(
+            ModelInvocation.cost_amount.is_not(None)
+            if cost_known
+            else ModelInvocation.cost_amount.is_(None)
+        )
+    for dimension in missing.split(",") if missing else []:
+        columns = {
+            "flow_run": ModelInvocation.flow_context["flow_run_id"].astext,
+            "node": ModelInvocation.flow_context["node_key"].astext,
+            "model_role": ModelInvocation.flow_context["model_role"].astext,
+            "agent": ModelInvocation.flow_context["agent_key"].astext,
+            "error": ModelInvocation.error_code,
+        }
+        filters.append(columns[dimension].is_(None))
     return filters
+
+
+def invocation_source():
+    return case(
+        (
+            or_(
+                ModelInvocation.flow_context["agent_key"].astext.is_not(None),
+                ModelInvocation.flow_context["agent_call_id"].astext.is_not(None),
+            ),
+            "agent",
+        ),
+        (ModelInvocation.flow_context["flow_run_id"].astext.is_not(None), "flow"),
+        else_="direct",
+    )

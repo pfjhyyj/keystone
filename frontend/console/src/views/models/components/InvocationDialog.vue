@@ -5,6 +5,7 @@ import { request } from '../../../api/client'
 import { callStates, costCheckStates, money, type Invocation } from '../../../api/models'
 import { useAction } from '../../../composables/useAction'
 import AppDialog from '../../../components/AppDialog.vue'
+import { statisticsTime } from '../../usage/time'
 const props = defineProps<{ id: string }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 const row = ref<Invocation | null>(null)
@@ -36,13 +37,16 @@ onMounted(() => run(load))
         <dt>调用 ID</dt>
         <dd>{{ row.id }}</dd>
         <dt>调用人 / 渠道 / 模型</dt>
-        <dd>{{ row.user_id ?? '系统' }}<br />{{ row.channel_id }}<br />{{ row.provider_model }}</dd>
+        <dd>
+          {{ row.user_name ?? row.user_id ?? '系统' }}<br />{{ row.channel_name ?? row.channel_id
+          }}<br />{{ row.model_name ?? row.provider_model }} · {{ row.provider_model }}
+        </dd>
         <dt>结果</dt>
         <dd>{{ callStates[row.status] }} · {{ row.error_code || '无错误码' }}</dd>
         <dt>登记 / 完成</dt>
         <dd>
-          {{ new Date(row.created_at).toLocaleString() }} /
-          {{ row.finished_at ? new Date(row.finished_at).toLocaleString() : '尚未完成' }}
+          {{ statisticsTime(row.created_at) }} /
+          {{ row.finished_at ? statisticsTime(row.finished_at) : '尚未完成' }}
         </dd>
         <dt>上游请求 ID</dt>
         <dd>{{ row.upstream_request_id ?? '未提供' }}</dd>
@@ -56,11 +60,9 @@ onMounted(() => run(load))
           <dd>
             {{ costCheckStates[row.cost_check_status] ?? row.cost_check_status }}
             <span v-if="row.cost_check_reason"> · {{ row.cost_check_reason }}</span>
-            <br />最近核对：{{
-              row.cost_checked_at ? new Date(row.cost_checked_at).toLocaleString() : '无'
-            }}
+            <br />最近核对：{{ row.cost_checked_at ? statisticsTime(row.cost_checked_at) : '无' }}
             <span v-if="row.cost_next_check_at">
-              <br />下次核对：{{ new Date(row.cost_next_check_at).toLocaleString() }}
+              <br />下次核对：{{ statisticsTime(row.cost_next_check_at) }}
             </span>
           </dd>
         </template>

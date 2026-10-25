@@ -5,8 +5,9 @@ from sqlalchemy import func, select
 from keystone.core.errors import ServiceError
 from keystone.platform.audit.services.writer import Actor
 from keystone.platform.identity.services.access import AccessContext
+from keystone.platform.identity.services.subjects import user_labels_in_transaction
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.models import ModelInvocation
+from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.schemas.diagnostics import (
     ImageSource,
     InvocationDiagnostics,
@@ -111,7 +112,7 @@ class InvocationService:
                 .offset(offset)
                 .limit(limit)
             )
-            return [schemas.invocation_view(row) for row in rows]
+            return await self._views(session, list(rows))
 
     async def invocation(self, identifier):
         async with self.identity.access("model_invocation:read") as (session, auth):
@@ -122,7 +123,46 @@ class InvocationService:
             )
             if row is None:
                 raise ServiceError(404, "not_found", "调用记录不存在或不可访问")
-            return schemas.invocation_view(row)
+            return (await self._views(session, [row]))[0]
+
+    async def _views(self, session, rows):
+        if not rows:
+            return []
+        channels = dict(
+            (
+                await session.execute(
+                    select(Channel.id, Channel.name).where(
+                        Channel.id.in_({row.channel_id for row in rows})
+                    )
+                )
+            ).all()
+        )
+        entries = {
+            row.id: (row.key, row.name)
+            for row in (
+                await session.execute(
+                    select(ModelEntry.id, ModelEntry.key, ModelEntry.name).where(
+                        ModelEntry.id.in_({row.model_entry_id for row in rows})
+                    )
+                )
+            )
+        }
+        users = {
+            row["id"]: row["label"]
+            for row in await user_labels_in_transaction(
+                session, [row.user_id for row in rows if row.user_id is not None]
+            )
+        }
+        return [
+            {
+                **schemas.invocation_view(row),
+                "channel_name": channels[row.channel_id],
+                "model_key": entries[row.model_entry_id][0],
+                "model_name": entries[row.model_entry_id][1],
+                "user_name": users.get(str(row.user_id)) if row.user_id is not None else "系统调用",
+            }
+            for row in rows
+        ]
 
     async def summary(self, **filters):
         async with self.identity.access("model_invocation:read") as (session, auth):

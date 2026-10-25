@@ -29,6 +29,7 @@ function validate() {
       @update:model-value="update"
     >
       <slot />
+      <template v-if="$slots.label" #label="value"><slot name="label" v-bind="value" /></template>
     </ElSelect>
     <input
       v-if="props.required"
