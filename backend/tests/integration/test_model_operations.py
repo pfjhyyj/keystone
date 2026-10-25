@@ -23,7 +23,7 @@ def test_operations_are_explicit_filtered_and_preserved_on_old_client_edit(clien
     entry(client, first, key="image-only", operations=["image.generate"])
     entry(
         client,
-        channel(client, provider="yunwu", api_base="https://yunwu.ai/v1"),
+        channel(client, provider="deepseek", api_base="https://api.deepseek.com"),
         key="not-implemented",
         operations=["text.structured"],
     )
@@ -109,11 +109,22 @@ def test_delivery_and_native_model_support_are_checked_before_admission(client, 
 
 
 @pytest.mark.parametrize("remove_before_send", [False, True])
+@pytest.mark.parametrize(
+    "provider,base",
+    [
+        ("openrouter", "https://openrouter.ai/api/v1"),
+        ("openlux", "https://api.openlux.ai/v1"),
+        ("yunwu", "https://yunwu.ai/v1"),
+        ("newapi", "https://relay.example/gateway/v1"),
+    ],
+)
 def test_structured_operation_routes_and_revalidates_with_real_worker(
     client,
     tmp_path,
     monkeypatch,
     remove_before_send,
+    provider,
+    base,
 ):
     from support.operation_flow import PACKAGE, definition
     from test_flow import wait_run, worker
@@ -122,7 +133,7 @@ def test_structured_operation_routes_and_revalidates_with_real_worker(
 
     runtime = install_package(client, monkeypatch, PACKAGE)
     runtime.flow_definitions = {definition.key: definition}
-    first = channel(client)
+    first = channel(client, provider=provider, api_base=base)
     selected = entry(client, first, operations=["text.generate", "text.structured"])
     data = {
         "definition_key": definition.key,

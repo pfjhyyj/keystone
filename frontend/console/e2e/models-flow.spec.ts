@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { choose, watchWindowErrors } from './controls'
+import { testDirectMedia } from './models-media'
 
 test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through the console UI', async ({
   page,
@@ -328,6 +329,7 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await expect(page.getByRole('dialog')).toContainText('模拟审查已完成')
   await page.getByRole('dialog').getByRole('button', { name: '关闭对话框' }).click()
   await renameAndDeleteUnusedConfiguration(page)
+  await testDirectMedia(page)
   expect(errors).toEqual([])
 })
 

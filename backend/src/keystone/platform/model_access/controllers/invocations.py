@@ -6,8 +6,16 @@ from uuid import UUID
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
 
+from keystone.platform.files.services.files import FileService
 from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.model_access import schemas
+from keystone.platform.model_access.schemas.images import (
+    ImageEditInvoke,
+    ImageGenerateInvoke,
+    ImageResult,
+    VisionInvoke,
+)
+from keystone.platform.model_access.schemas.invocations import TextResult
 from keystone.platform.model_access.schemas.statistics import (
     InvocationFilters,
     InvocationListQuery,
@@ -16,6 +24,7 @@ from keystone.platform.model_access.schemas.statistics import (
 )
 from keystone.platform.model_access.services.entries import ModelEntryService
 from keystone.platform.model_access.services.invocations import InvocationService
+from keystone.platform.model_access.services.media import ModelMediaService
 from keystone.platform.model_access.services.runtime import ModelRuntime, safe_error
 from keystone.platform.model_access.services.statistics import StatisticsService
 
@@ -24,6 +33,27 @@ router = APIRouter(prefix="/api/v1", tags=["models"])
 
 def _service(request: Request) -> InvocationService:
     return InvocationService(access_context(request), request.app.state.runtime.models)
+
+
+def _media(request: Request) -> ModelMediaService:
+    identity = access_context(request)
+    runtime = request.app.state.runtime
+    return ModelMediaService(identity, runtime.models, FileService(identity, runtime.storage))
+
+
+@router.post("/models/images/generate", response_model=ImageResult)
+async def generate_image(data: ImageGenerateInvoke, request: Request):
+    return await _media(request).invoke(data, "image.generate")
+
+
+@router.post("/models/images/edit", response_model=ImageResult)
+async def edit_image(data: ImageEditInvoke, request: Request):
+    return await _media(request).invoke(data, "image.edit")
+
+
+@router.post("/models/vision", response_model=TextResult)
+async def understand_image(data: VisionInvoke, request: Request):
+    return await _media(request).invoke(data, "image.understand")
 
 
 @router.post("/models/invoke")

@@ -54,16 +54,13 @@ class ChannelAdapter:
 
 
 # Multiple channel types reuse the same compatible implementation, with explicit limits.
-CHAT = ChatCompletions()
+CHAT = ChatCompletions(frozenset({"text.generate", "text.structured", "image.understand"}))
 RELAY_IMAGES = OpenAIImages()
 CHANNELS = {
     "openrouter": ChannelAdapter(
         OPENROUTER_BASE,
         (
-            ChatCompletions(
-                frozenset({"text.generate", "text.structured", "image.understand"}),
-                require_parameters=True,
-            ),
+            replace(CHAT, require_parameters=True),
             OpenRouterImages(),
         ),
         OpenRouter(),
@@ -116,7 +113,7 @@ def channel_adapter(provider, base=None, *, channels=None):
 
 
 def channel_targets():
-    """Catalog predicates: generic NewAPI text plus explicitly verified site capabilities."""
+    """Catalog predicates: compatible chat/vision plus site-specific image generation."""
     for provider, adapter in CHANNELS.items():
         yield (
             provider,

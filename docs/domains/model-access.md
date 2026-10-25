@@ -8,7 +8,7 @@
 
 为后续业务提供统一的模型调用入口，记录每次调用的用量、上游报告的费用，并展示渠道账户的余额。采用“成熟调用 SDK＋少量渠道适配代码”，不要求独立网关。
 
-新建渠道提供 OpenRouter、NewAPI 和 Yunwu，复用 OpenAI SDK 的文本对话及流式协议。NewAPI 表示兼容接口类型，默认 `https://newapiai.com/v1`，可配置HTTPS API 地址及路径前缀；使用 Key 查询参数与分页日志的 Openlux、Yunwu 兼容分支统一选择 Yunwu，分别填写 `https://api.openlux.ai/v1`、`https://yunwu.ai/v1`。已有渠道的内部 provider 与历史快照保留，Openlux 在界面归为 Yunwu 类。OpenRouter 可保存响应费用并按请求 ID 补查，Openlux/Yunwu 使用原 Token 分页核对日志；标准 NewAPI 接入文本、模型列表、Bearer Token 日志查费、账户余额与 Token 额度；Yunwu 类接入 Key 参数分页日志查费。媒体能力仍按已验证站点选择，不因接口兼容推断其他站点支持媒体。DeepSeek、阿里云百炼保留适配声明，尚未开放发送。阿里云暂按百炼/DashScope 按量付费服务设计，不把订阅额度混为账户余额。图片与异步任务能力见[模型操作与产物](#6-模型操作与产物)。
+新建渠道提供 OpenRouter、NewAPI 和 Yunwu，复用 OpenAI SDK 的文本对话及流式协议。NewAPI 表示兼容接口类型，默认 `https://newapiai.com/v1`，可配置HTTPS API 地址及路径前缀；使用 Key 查询参数与分页日志的 Openlux、Yunwu 兼容分支统一选择 Yunwu，分别填写 `https://api.openlux.ai/v1`、`https://yunwu.ai/v1`。已有渠道的内部 provider 与历史快照保留，Openlux 在界面归为 Yunwu 类。OpenRouter 可保存响应费用并按请求 ID 补查，Openlux/Yunwu 使用原 Token 分页核对日志；标准 NewAPI 接入文本、模型列表、Bearer Token 日志查费、账户余额与 Token 额度；Yunwu 类接入 Key 参数分页日志查费。图片理解复用受控 Chat Completions 多模态输入，仍要求模型显式声明 image.understand；图片生成和原生媒体任务按已验证站点选择，不因聊天接口兼容推断支持。DeepSeek、阿里云百炼保留适配声明，尚未开放发送。阿里云暂按百炼/DashScope 按量付费服务设计，不把订阅额度混为账户余额。图片与异步任务能力见[模型操作与产物](#6-模型操作与产物)。
 
 渠道、模型配置、调用记录是三个主要对象；第 8 节的代码适配层继续复用它们。不做用户钱包、充值、额度扣减、计费倍率、价格表、自动渠道切换或智能路由。这里记录的是供应商侧成本，不是向 Keystone 用户收费；已有 Flow 次数/token/文件预算仍属于资源限制。
 
@@ -180,7 +180,7 @@ Openlux/Yunwu 尚未接入账户余额查询表示 Keystone 的适配范围，�
 
 管理者可通过 `GET /api/v1/model-channels/{id}/models` 使用渠道已保存的推理 Key 查询上游模型列表。模型查询在完整 API 前缀后追加 `/models`；OpenRouter 使用固定地址，NewAPI 使用保存的HTTPS 地址，均为有界 GET，不跟随跳转或自动重试；返回去重排序后的模型 ID，不返回原始元数据或秘密。查询在事务外完成，返回前复查权限及配置。控制台选择渠道后自动加载，也可刷新或手填；缺失的当前模型会提示核对 ID/Key 权限，不自动替换或停用配置。模型列表不自动创建 ModelEntry，不声明操作能力、价格或可调用性；管理员仍确认业务 key 与操作能力。Openlux 的入口依据：[官方接入说明](https://doc.openlux.ai/)。
 
-Openlux/Yunwu 的模型、状态和 Token 日志路径属于 New API 兼容接口族，归入 Yunwu 选项；金额单位和原生任务仍按已验证的站点规则处理。NewAPI 默认使用 NewAPI AI 商业站点，也接受其他HTTPS API 地址及路径前缀。NewAPI AI 的文本及模型列表接口依据：[站点文档](https://docs.newapiai.com/)。Kling 原生图片任务仍仅允许已验证的 Openlux 站点；媒体协议需要对应站点的额外接入；普通 Token 额度不视为账户余额，标准 NewAPI 的账户余额仅取明确的 `user_quota` 字段。
+Openlux/Yunwu 的模型、状态和 Token 日志路径属于 New API 兼容接口族，归入 Yunwu 选项；金额单位和原生任务仍按已验证的站点规则处理。NewAPI 默认使用 NewAPI AI 商业站点，也接受其他HTTPS API 地址及路径前缀。NewAPI AI 的文本及模型列表接口依据：[站点文档](https://docs.newapiai.com/)。Kling 原生图片任务仍仅允许已验证的 Openlux 站点；生成类媒体协议需要对应站点的额外接入；普通 Token 额度不视为账户余额，标准 NewAPI 的账户余额仅取明确的 `user_quota` 字段。
 
 OpenRouter 的 `usage.cost` 表示该账户被收取的 credits；流式用量在最后的 SSE 消息中。不要用 `upstream_inference_cost` 替换账户费用，尤其 BYOK 还涉及外部供应商收费。余额由 `total_credits - total_usage` 得到，保留 credits 口径，不能当作某个 API Key 的独享额度。依据：[用量与费用](https://openrouter.ai/docs/cookbook/administration/usage-accounting)、[余额与凭据要求](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits)。
 
@@ -478,10 +478,12 @@ ModelRole.operation 描述需要执行的操作。ModelEntry.operations 描述�
 | operation | 请求 | 结果 | 当前状态 |
 |---|---|---|---|
 | text.generate | TextRequest | TextResult | 已实现 |
-| text.structured | StructuredRequest | StructuredResult | 已接通 OpenRouter；本地严格校验结果 |
-| image.understand | VisionRequest（受控 File ID） | TextResult | 已接通 OpenRouter；仅运行内受权 PNG/JPEG/WebP |
+| text.structured | StructuredRequest | StructuredResult | OpenRouter、NewAPI、Openlux/Yunwu 的兼容 Chat Completions；模型须显式声明，本地严格校验结果；OpenRouter 另要求 provider.require_parameters |
+| image.understand | VisionRequest（受控 File ID） | TextResult | OpenRouter、NewAPI、Openlux/Yunwu 的兼容 Chat Completions；仅受权 PNG/JPEG/WebP，模型须显式声明该操作 |
 | image.generate | ImageGenerateRequest（sync）/ ImageTaskRequest（async） | ImageResult（File ID）/ ImageTask | OpenRouter、Yunwu/Openlux 同步及 OpenLux Kling 异步已实现 |
 | image.edit | ImageEditRequest（受控 File ID） | ImageResult（File ID） | OpenRouter、Yunwu/Openlux 同步已实现 |
+
+兼容聊天协议的结构化输出统一发送严格 response_format.json_schema，不因模型名自动开启；依据：[云雾结构化输出](https://lrbebhrbp1.apifox.cn/api-417728203)、[NewAPI 请求类型](https://github.com/QuantumNous/new-api/blob/main/relaykit/dto/openai_request.go)。
 
 Selection 保存 operation 和 delivery（sync / async），历史缺失分别按 text.generate / sync 读取。受理保存所需 operation；发送前核对角色操作、Entry.operations、协议能力及固定渠道/provider/model/base。修改其他能力不改写历史选择；移除本次所需能力阻止新发送。原凭据、权限、配置锁、取消、调用登记及费用规则继续生效。
 
@@ -506,6 +508,7 @@ ModelEntry.operations 非空、无重复、最多五项，未知枚举拒绝。�
 实施采用官方文档并以本地确定性协议服务验证，不访问付费模型。能力按完成的 Adapter 逐项开放：
 
 - [OpenRouter 结构化输出](https://openrouter.ai/docs/guides/features/structured-outputs)：请求携带 response_format，支持能力按端点而异，宿主仍校验最终结果。
+- [New API 多模态输入](https://docs.newapi.pro/en/docs/api/ai-model/chat/gemini/geminirelayv1beta-391536411)、[云雾 Chat 识图](https://lrbebhrbp1.apifox.cn/api-417728221)：图片理解沿用 Chat Completions 的 image_url 内容块；Keystone 只发送经文件授权与校验的 Base64，不开放任意图片 URL。兼容渠道类型表示协议可用，不保证其每个上游模型支持图片。
 - [OpenRouter 图片理解](https://openrouter.ai/docs/guides/overview/multimodal/image-understanding)：使用图片内容输入；Keystone 将受权 File 转换为受控协议值。
 - [OpenRouter 图片生成](https://openrouter.ai/docs/guides/overview/multimodal/image-generation)：专用图片接口及 base64 结果；产物落为 File，不暴露大正文。
 - [OpenLux 官方 Kling 规范](https://doc.openlux.ai/api/docs/public/specs/platform/kling)：原生图片提交、查询、任务状态与结果来源已逐项核验，未实现的音视频与编辑任务不开放。
@@ -561,6 +564,25 @@ ImageGenerateRequest / ImageEditRequest 增加可选 aspect_ratio（1:1、16:9�
 图片费用沿用原 Token 日志核对：仅以 x-api-request-id 精确匹配 other.request_id 和上游模型；响应体 id、usage.cost 或余额差不作为本渠道实扣证据。缺回执为 unavailable/cost_request_id_missing，缺日志保持 pending，模型或账务口径冲突为 blocked。生成失败或产物不可用仍可保存实际查得的费用；重复补查只补全原调用。Yunwu 的自定义额度与 Openlux USD 按原范围保存，不因共用协议而换算或合并。
 
 该实现按 EP 现有 Yunwu 报文与本地真实 SDK/DBOS 协议桩验证，没有执行付费线上验收。New API 的公开 generations/edits 形状相近，但其示例使用 image[]，具体模型与结果取回能力也可能不同，不能据此宣称通用 New API 完全兼容；核验实际站点后再扩充代码声明。参考[New API 图片调用说明](https://github.com/QuantumNous/new-api-docs-v1/blob/main/content/docs/en/plugins/usage.mdx)。
+
+### 6.8 直接调用与控制台测试
+
+控制台「模型接入 → 调用测试」复用现有 Element Plus，支持文本、图片生成、图片编辑和图片理解。模型目录按 operation 和 sync 交付过滤；图片目录按本次 operation 和 delivery 返回协议实际支持的 image_parameters（比例／画质）、max_reference_images 和 max_input_bytes；同一个模型的编辑与理解限制分别计算，前端直接使用目录值。不支持的可选参数不显示、不静默丢弃。异步上游任务仍使用原有 Flow 接口，本测试入口不创建 FlowRun、后台任务或额外测试账本。
+
+| POST 接口 | 请求与响应 |
+|---|---|
+| `/models/invoke` | 原有 Invoke 文本契约，保持 JSON/SSE 行为 |
+| `/models/images/generate` | model_key + ImageGenerateRequest → invocation_id、files[].file_id |
+| `/models/images/edit` | model_key + ImageEditRequest → invocation_id、files[].file_id |
+| `/models/vision` | model_key + VisionRequest → invocation_id、content |
+
+路径统一加 `/api/v1`。图片输入只接收 Files 的 file_id；上传通过原文件接口完成，按顺序发送。ModelMediaService 经 Files 公开 Service 检查输入对象与内容权限，通过同一 ModelRuntime 完成发送登记、共享节奏、渠道协议、回执与费用记录，生成结果按原 Invocation 的产物键保存 Files。直接调用没有 flow_context 或 Worker 归属；下载回执继续绑定当前用户、原渠道与调用，不能读取其他用户的结果证据。文本和提示词不新增持久化，素材与生成文件按 Files 生命周期保存。
+
+四种操作均需 model:invoke；生成／编辑另需 file:create，使用参考图另需 file:content_read。图片理解读取已有授权文件不要求 file:create；控制台选择本地文件上传时需同时具备该权限。预览和下载独立检查文件内容读取权限。调用成功不授予其他用户文件访问权。
+
+推理模型的输出 Token 上限包含推理用量，预算耗尽时可能没有可显示正文；控制台对空文本给出明确提示并保留调用编号，费用仍按原调用事实记录。
+
+每次明确发送产生一次新调用，没有自动生成重试。页面「停止接收」、断线或离开不证明上游取消或免费；结果未知时先查原调用记录。生成已成功而下载／保存失败时保留原调用成功和费用事实，不补发生图。直接请求不承诺跨进程恢复；需要持久编排的业务继续使用 Flow。同步图片协议的 600 秒生成窗口及每份 120 秒下载窗口不变，控制台图片路由代理允许 900 秒等待；外层部署代理应保留相应时限。
 
 ## 7. 发送节奏与 Flow 关联
 

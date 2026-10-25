@@ -57,14 +57,16 @@ class ImageResultService:
             raise ServiceError(409, "model_result_unavailable", "原图片取回凭据已过期，禁止重发")
 
         async def authorize():
-            async with self.identity.access("model:invoke") as (session, _):
+            async with self.identity.access("model:invoke") as (session, auth):
                 row = await session.get(ModelInvocation, identifier)
                 entry = await session.get(ModelEntry, selected.model_entry_id)
                 channel = await session.get(Channel, selected.channel_id)
                 if (
                     row is None
                     or row.status != "succeeded"
-                    or row.flow_context != context.model_dump(mode="json", exclude_none=True)
+                    or row.flow_context
+                    != (context.model_dump(mode="json", exclude_none=True) if context else None)
+                    or (context is None and row.user_id != auth.user.id)
                     or row.model_entry_id != selected.model_entry_id
                     or row.channel_id != selected.channel_id
                     or row.provider_model != selected.provider_model

@@ -5,22 +5,39 @@ from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.adapters.channels import channel_adapter, channel_targets
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
+from keystone.platform.model_access.schemas.images import MAX_INPUT_IMAGE_BYTES
 from keystone.platform.model_access.schemas.operations import Delivery, Operation
 from keystone.platform.model_access.services.queries import locked
 
 
-def catalog_entry(row, provider, base=None):
+def catalog_entry(row, provider, base=None, *, operation="text.generate", delivery="sync"):
     adapter = channel_adapter(provider, base)
     operations = sorted(
         operation
         for operation in row.operations
         if adapter is not None and adapter.protocol(operation, model=row.provider_model) is not None
     )
+    image_protocol = (
+        adapter.protocol(operation, delivery, model=row.provider_model)
+        if adapter and operation.startswith("image.")
+        else None
+    )
     return {
         "key": row.key,
         "name": getattr(row, "name", None) or row.key,
         "operations": operations,
         "capabilities": ["text", "stream"] if "text.generate" in operations else [],
+        **(
+            {
+                "image_parameters": list(getattr(image_protocol, "image_parameters", ())),
+                "max_reference_images": getattr(image_protocol, "max_images", 4),
+                "max_input_bytes": getattr(
+                    image_protocol, "max_input_bytes", MAX_INPUT_IMAGE_BYTES
+                ),
+            }
+            if image_protocol
+            else {}
+        ),
     }
 
 
@@ -81,7 +98,9 @@ class ModelEntryService:
                 ):
                     available[channel.id] = (channel.provider, channel.api_base)
             return [
-                catalog_entry(row, *available[row.channel_id])
+                catalog_entry(
+                    row, *available[row.channel_id], operation=operation, delivery=delivery
+                )
                 if catalog
                 else schemas.entry_view(row)
                 for row in rows
@@ -178,12 +197,12 @@ class ModelEntryService:
             )
             await session.delete(row)
 
-    async def selection(self, key):
+    async def selection(self, key, *, operation="text.generate", delivery="sync"):
         async with self.identity.access("model:invoke") as (session, _):
-            return await select_model(session, key)
+            return await select_model(session, key, operation=operation, delivery=delivery)
 
 
-async def select_model(session, key, *, lock=False):
+async def select_model(session, key, *, lock=False, operation="text.generate", delivery="sync"):
     """Trusted internal selection; caller owns authorization and transaction."""
     query = select(ModelEntry).where(ModelEntry.key == key)
     entry = await session.scalar(query.with_for_update(read=True) if lock else query)
@@ -192,7 +211,12 @@ async def select_model(session, key, *, lock=False):
     channel = await session.get(Channel, entry.channel_id)
     if channel is None or not entry.is_active or not channel.is_active:
         raise ServiceError(409, "model_disabled", "模型或渠道已停用")
-    if "text.generate" not in entry.operations:
+    adapter = channel_adapter(channel.provider, channel.api_base)
+    if operation not in entry.operations:
+        raise ServiceError(409, "model_operation_unavailable", "模型不支持所需操作")
+    if adapter is None or not adapter.protocols:
+        raise ServiceError(503, "model_provider_unavailable", "当前服务商尚未开放发送")
+    if not adapter.supports(operation, delivery, model=entry.provider_model):
         raise ServiceError(409, "model_operation_unavailable", "模型不支持所需操作")
     return schemas.Selection(
         model_entry_id=entry.id,
@@ -200,6 +224,8 @@ async def select_model(session, key, *, lock=False):
         provider_model=entry.provider_model,
         api_base=channel.api_base,
         provider=channel.provider,
+        operation=operation,
+        delivery=delivery,
     )
 
 

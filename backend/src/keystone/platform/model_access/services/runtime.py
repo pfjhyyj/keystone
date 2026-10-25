@@ -114,13 +114,14 @@ class ModelRuntime:
         return hashlib.sha256(raw).hexdigest()
 
     async def image_manifest(self, identifier, *, data, selection, context):
-        async with self.identity.access("model:invoke") as (session, _):
+        async with self.identity.access("model:invoke") as (session, auth):
             row = await session.get(ModelInvocation, identifier)
             if row is None:
                 return None
-            expected = context.model_dump(mode="json", exclude_none=True)
+            expected = context.model_dump(mode="json", exclude_none=True) if context else None
             if (
                 row.flow_context != expected
+                or (context is None and row.user_id != auth.user.id)
                 or row.operation != selection.operation
                 or row.model_entry_id != selection.model_entry_id
                 or row.channel_id != selection.channel_id

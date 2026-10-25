@@ -123,9 +123,9 @@ def test_newapi_defaults_to_newapiai_and_resolves_verified_site_capabilities():
         )
         assert BillingClient(None).adapter("newapi", base).cost_query_mode == "logs"
         sender.check_operation("newapi", "image.generate", api_base=base)
-    for operation in ("image.generate", "image.understand"):
-        with pytest.raises(ServiceError):
-            sender.check_operation("newapi", operation)
+    sender.check_operation("newapi", "image.understand")
+    with pytest.raises(ServiceError):
+        sender.check_operation("newapi", "image.generate")
 
 
 async def test_custom_newapi_prefix_and_hostname_are_preserved_for_discovery_and_send():

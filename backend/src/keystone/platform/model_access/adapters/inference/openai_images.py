@@ -140,6 +140,7 @@ def validate_request(request, selected, target):
 
 
 class OpenAIImages:
+    image_parameters = ("aspect_ratio", "quality")
     operations = frozenset({"image.generate", "image.edit"})
     delivery = "sync"
     models = MODELS

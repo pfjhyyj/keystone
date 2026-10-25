@@ -1,6 +1,11 @@
 <script setup lang="ts">
-import { watch } from 'vue'
-import { modelApi, type ModelDelivery, type ModelOperation } from '../../api/models'
+import { ref, watch } from 'vue'
+import {
+  modelApi,
+  type CatalogModel,
+  type ModelDelivery,
+  type ModelOperation,
+} from '../../api/models'
 import { usePagedList } from '../../composables/usePagedList'
 import ListPager from '../ListPager.vue'
 const props = withDefaults(
@@ -13,6 +18,8 @@ const props = withDefaults(
   { label: '模型', operation: 'text.generate', delivery: 'sync' },
 )
 const model = defineModel<string>({ required: true })
+const emit = defineEmits<{ selected: [model: CatalogModel | null] }>()
+const selection = ref<CatalogModel | null>(null)
 const { rows, page, loading, error, reload, search } = usePagedList(
   'model:invoke',
   async (offset) => {
@@ -23,8 +30,20 @@ const { rows, page, loading, error, reload, search } = usePagedList(
 watch(
   () => [props.operation, props.delivery],
   () => {
+    selection.value = null
+    emit('selected', null)
     search()
   },
+)
+watch(
+  [model, rows],
+  () => {
+    selection.value =
+      rows.value.find((row) => row.key === model.value) ??
+      (selection.value?.key === model.value ? selection.value : null)
+    emit('selected', selection.value)
+  },
+  { immediate: true },
 )
 </script>
 <template>
