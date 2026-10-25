@@ -13,6 +13,21 @@ from keystone.platform.model_access.adapters.billing.http import cost_get
 from keystone.platform.model_access.adapters.receipts import request_id
 
 
+def quota_scale(payload):
+    value = payload["data"]["quota_per_unit"]
+    if (
+        payload.get("success") is not True
+        or isinstance(value, bool)
+        or not isinstance(value, (int, Decimal))
+        or isinstance(value, Decimal)
+        and not value.is_finite()
+        or not 0 < value <= 2**53
+        or int(value) != value
+    ):
+        raise ValueError("Invalid quota scale")
+    return int(value)
+
+
 class TokenLogs(ResponseBilling):
     """Verified token log contract; response body IDs are not billing request IDs."""
 
@@ -39,20 +54,26 @@ class TokenLogs(ResponseBilling):
             or (items and total < (page - 1) * page_size + len(items))
         ):
             raise ValueError("Invalid log pagination")
+        return self.log_records(items, policy), len(items) < page_size or page * page_size >= total
+
+    def log_identifier(self, item):
+        other = item.get("other", {})
+        if isinstance(other, str):
+            if len(other.encode()) > 8192:
+                raise ValueError("Oversized log metadata")
+            other = json.loads(other)
+        if not isinstance(other, dict):
+            raise ValueError("Invalid log metadata")
+        return request_id(other.get("request_id"))
+
+    def log_records(self, items, policy):
         receipts = []
         for item in items:
             if not isinstance(item, dict):
                 raise ValueError("Invalid log")
             if item.get("type") != 2:
                 continue
-            other = item.get("other", {})
-            if isinstance(other, str):
-                if len(other.encode()) > 8192:
-                    raise ValueError("Oversized log metadata")
-                other = json.loads(other)
-            if not isinstance(other, dict):
-                raise ValueError("Invalid log metadata")
-            identifier = request_id(other.get("request_id"))
+            identifier = self.log_identifier(item)
             if identifier is None:
                 continue
             quota = item.get("quota")
@@ -78,7 +99,7 @@ class TokenLogs(ResponseBilling):
                     "model": item["model_name"],
                 }
             )
-        return receipts, len(items) < page_size or page * page_size >= total
+        return receipts
 
     def binding(self, api_base):
         if api_base != self.api_base:

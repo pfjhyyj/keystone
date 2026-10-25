@@ -132,7 +132,6 @@ def test_relay_images_and_actual_cost_are_independent_and_idempotent(
         from keystone.platform.model_access.adapters.http import HttpClient
 
         patch.setattr(HttpClient, "transport", HttpClient.transport)
-        patch.setattr(HttpClient, "public_address", HttpClient.public_address)
         install(request_log)
         due(client, identifier)
         process(client, identifier)
@@ -153,7 +152,7 @@ def test_relay_images_and_actual_cost_are_independent_and_idempotent(
     posts = [r for r in requests if r["method"] == "POST"]
     assert len(posts) == 1 and posts[0]["references"] == (9 if edit else 0)
     assert all(
-        not r["auth"] and r["sni"] == "cdn.example.test" for r in requests if r["method"] == "GET"
+        not r["auth"] and r["host"] == "cdn.example.test" for r in requests if r["method"] == "GET"
     )
 
 
@@ -185,7 +184,7 @@ def test_relay_url_recovery_never_repeats_generation(client, monkeypatch, tmp_pa
         assert after.status == "unknown" and done["error_code"] == "model_result_unavailable"
 
 
-@pytest.mark.parametrize("case", ["header", "model", "currency", "unsafe", "generation"])
+@pytest.mark.parametrize("case", ["header", "model", "currency", "local", "generation"])
 def test_image_failures_keep_real_cost_and_delivery_facts_separate(
     client, monkeypatch, tmp_path, case
 ):
@@ -193,12 +192,12 @@ def test_image_failures_keep_real_cost_and_delivery_facts_separate(
     run_id = accept(client, monkeypatch, "openlux")
     options = {
         "header": case != "header",
-        "unsafe": case == "unsafe",
+        "local": case == "local",
         "generation_error": case == "generation",
     }
     with worker(client, tmp_path, code=code(request_log, **options)) as (handle, log):
         done = wait_run(client, run_id, handle, log)
-        assert done["status"] == ("failed" if case in {"unsafe", "generation"} else "succeeded"), (
+        assert done["status"] == ("failed" if case == "generation" else "succeeded"), (
             done,
             log.read_text(),
         )
@@ -208,7 +207,6 @@ def test_image_failures_keep_real_cost_and_delivery_facts_separate(
         from keystone.platform.model_access.adapters.http import HttpClient
 
         patch.setattr(HttpClient, "transport", HttpClient.transport)
-        patch.setattr(HttpClient, "public_address", HttpClient.public_address)
         install(
             request_log,
             model="different-model" if case == "model" else None,
@@ -231,7 +229,8 @@ def test_image_failures_keep_real_cost_and_delivery_facts_separate(
         assert str(current.cost_amount) == "0.002656000000000000"
         assert current.cost_check_status == "confirmed"
         assert current.status == ("unknown" if case == "generation" else "succeeded")
-        assert not query(client, lambda s: s.scalars(select(File))).all()
+        files = query(client, lambda s: s.scalars(select(File))).all()
+        assert bool(files) == (case == "local")
     requests = [json.loads(line) for line in request_log.read_text().splitlines()]
     assert sum(r["method"] == "POST" for r in requests) == 1
 

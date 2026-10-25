@@ -10,7 +10,9 @@ export interface Channel {
   is_active: boolean
   balance_snapshot: {
     scope: string
+    unlimited?: boolean
     items: { kind: string; amount: string; unit: string }[]
+    token_items?: { kind: string; amount: string; unit: string }[]
   } | null
   balance_check_status: string
   balance_checked_at: string | null
@@ -105,10 +107,18 @@ export const balanceStates: Record<string, string> = {
 export const providers = {
   openrouter: 'OpenRouter',
   newapi: 'NewAPI',
-  openlux: 'Openlux',
+  openlux: 'Yunwu',
   yunwu: 'Yunwu',
   deepseek: 'DeepSeek',
   aliyun_bailian: '阿里云百炼',
+}
+export function channelProvider(row: Pick<Channel, 'provider' | 'api_base'>) {
+  return row.provider === 'openlux' ||
+    row.provider === 'yunwu' ||
+    (row.provider === 'newapi' &&
+      ['https://api.openlux.ai/v1', 'https://yunwu.ai/v1'].includes(row.api_base))
+    ? 'yunwu'
+    : row.provider
 }
 export const costCheckStates: Record<string, string> = {
   pending: '等待核对',

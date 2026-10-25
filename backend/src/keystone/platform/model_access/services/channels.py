@@ -8,7 +8,7 @@ from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.adapters.channels import CHANNELS
+from keystone.platform.model_access.adapters.channels import CHANNELS, PROVIDERS
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.services.cost_context import bind_channel
 from keystone.platform.model_access.services.queries import balance_config, locked
@@ -21,10 +21,8 @@ class ChannelService:
     async def options(self):
         async with self.identity.access("model:manage"):
             return {
-                "providers": [key for key, adapter in CHANNELS.items() if adapter.protocols],
-                "default_api_bases": {
-                    key: adapter.api_base for key, adapter in CHANNELS.items() if adapter.protocols
-                },
+                "providers": list(PROVIDERS),
+                "default_api_bases": {key: CHANNELS[key].api_base for key in PROVIDERS},
                 "balance_providers": [
                     key
                     for key, adapter in CHANNELS.items()
@@ -103,7 +101,9 @@ class ChannelService:
             )
             if identifier:
                 row = await locked(session, Channel, identifier)
-                if self.clients.billing.adapter(row.provider).cost_query_mode == "logs" and (
+                if self.clients.billing.adapter(
+                    row.provider, row.api_base
+                ).cost_query_mode == "logs" and (
                     data.api_base != row.api_base
                     or (
                         data.api_key is not None
@@ -252,7 +252,7 @@ class ChannelService:
                 channel = await session.get(Channel, identifier)
                 config = balance_config(channel)
             provider, base, encrypted, _ = config
-            adapter = self.clients.billing.adapter(provider)
+            adapter = self.clients.billing.adapter(provider, base)
             attempted = utcnow()
             snapshot = None
             status = "unavailable"

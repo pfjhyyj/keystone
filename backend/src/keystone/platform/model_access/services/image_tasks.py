@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.model_access.adapters.channels import CHANNELS
+from keystone.platform.model_access.adapters.channels import channel_adapter
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.schemas.errors import QueryLater
 from keystone.platform.model_access.schemas.images import (
@@ -86,7 +86,7 @@ class ImageTaskService:
             )
         except ValueError:
             original = None
-        adapter = CHANNELS.get(selected.provider)
+        adapter = channel_adapter(selected.provider, selected.api_base)
         if (
             row is None
             or row.operation != "image.generate"

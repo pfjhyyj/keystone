@@ -1,7 +1,7 @@
 """Installed channel compositions. These are code, never database protocol configuration."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from keystone.platform.model_access.adapters.billing.aliyun_bailian import AliyunBailian
 from keystone.platform.model_access.adapters.billing.deepseek import DeepSeek
@@ -15,6 +15,7 @@ from keystone.platform.model_access.adapters.inference.protocols import (
     ChatCompletions,
     OpenRouterImages,
 )
+from keystone.platform.model_access.schemas.channels import normalize_api_base
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
@@ -84,3 +85,45 @@ CHANNELS = {
         "https://dashscope.aliyuncs.com/compatible-mode/v1", (), AliyunBailian()
     ),
 }
+
+# Historical provider IDs remain valid in saved channels, billing evidence and Flow snapshots.
+LEGACY_NEWAPI = ("openlux", "yunwu")
+PROVIDERS = ("openrouter", "newapi", "yunwu")
+
+
+def channel_adapter(provider, base=None, *, channels=None):
+    installed = CHANNELS if channels is None else channels
+    adapter = installed.get(provider)
+    if provider not in {"newapi", "yunwu"} or base is None or adapter is None:
+        return adapter
+    try:
+        if normalize_api_base(base) != base:
+            return None
+    except (ValueError, UnicodeError):
+        return None
+    for legacy in LEGACY_NEWAPI:
+        site = installed.get(legacy)
+        if site is not None and base == site.api_base:
+            return site
+    return replace(
+        adapter,
+        api_base=base,
+        protocols=(CHAT,) if provider == "yunwu" else adapter.protocols,
+        billing=adapter.billing.for_base(base)
+        if isinstance(adapter.billing, (Newapi, Yunwu))
+        else adapter.billing,
+    )
+
+
+def channel_targets():
+    """Catalog predicates: generic NewAPI text plus explicitly verified site capabilities."""
+    for provider, adapter in CHANNELS.items():
+        yield (
+            provider,
+            None if provider in {"newapi", "yunwu"} else adapter.api_base,
+            (replace(adapter, protocols=(CHAT,)) if provider == "yunwu" else adapter),
+        )
+    for provider in ("newapi", "yunwu"):
+        for legacy in LEGACY_NEWAPI:
+            adapter = CHANNELS[legacy]
+            yield provider, adapter.api_base, adapter

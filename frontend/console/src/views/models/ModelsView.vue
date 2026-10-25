@@ -8,6 +8,7 @@ import {
   type ModelOperation,
   providers,
   balanceStates,
+  channelProvider,
   type Channel,
   type ModelEntry,
   type ModelOptions,
@@ -23,6 +24,7 @@ import InvocationHistory from './components/InvocationHistory.vue'
 const channels = usePagedList('model:manage', modelApi.channels),
   entries = usePagedList('model:manage', modelApi.entries)
 const { busy, error, notice, run } = useAction()
+const balanceKinds: Record<string, string> = { remaining: '剩余', used: '已用', granted: '总额' }
 const options = ref<ModelOptions | null>(null),
   optionsError = ref(''),
   historyVersion = ref(0)
@@ -92,7 +94,7 @@ async function loadOptions() {
 function channel(row: Channel | null) {
   editingChannel.value = row
   name.value = row?.name ?? ''
-  provider.value = row?.provider ?? 'openrouter'
+  provider.value = row ? channelProvider(row) : 'openrouter'
   apiBase.value = row?.api_base ?? 'https://openrouter.ai/api/v1'
   credential.value = ''
   billing.value = ''
@@ -166,7 +168,6 @@ watch(provider, (value) => {
     const bases: Record<string, string> = {
       openrouter: 'https://openrouter.ai/api/v1',
       newapi: 'https://newapiai.com/v1',
-      openlux: 'https://api.openlux.ai/v1',
       yunwu: 'https://yunwu.ai/v1',
     }
     apiBase.value = options.value?.default_api_bases?.[value] ?? bases[value] ?? ''
@@ -209,7 +210,7 @@ onMounted(() => {
         optionsError
       }}</el-alert>
       <div class="row-actions">
-        <span>真实发送（OpenRouter、Openlux、Yunwu、NewAPI）</span
+        <span>真实发送（OpenRouter、NewAPI、Yunwu）</span
         ><el-button :disabled="busy" @click="run(loadOptions)" native-type="button" type="default"
           >刷新服务商</el-button
         >
@@ -259,7 +260,7 @@ onMounted(() => {
             >
             <el-table-column label="服务商" min-width="180"
               ><template #default="{ row: row }">{{
-                providers[row.provider as keyof typeof providers] ?? row.provider
+                providers[channelProvider(row) as keyof typeof providers] ?? row.provider
               }}</template></el-table-column
             >
             <el-table-column label="状态" min-width="120"
@@ -269,13 +270,25 @@ onMounted(() => {
                 }}</StatusTag></template
               ></el-table-column
             >
-            <el-table-column label="最近成功余额" min-width="180"
+            <el-table-column label="最近成功余额/额度" min-width="180"
               ><template #default="{ row: row }"
-                ><p v-for="item in row.balance_snapshot?.items" :key="item.kind + item.unit">
-                  {{ item.kind }}：{{ item.amount }} {{ item.unit }}
+                ><p v-if="row.balance_snapshot?.scope === 'provider_account'">账户余额</p>
+                <p v-if="row.balance_snapshot?.scope === 'token_quota'">
+                  上游未返回账户余额，以下仅为当前 Key 的 Token 额度，不是账户总余额。
+                </p>
+                <p v-for="item in row.balance_snapshot?.items" :key="item.kind + item.unit">
+                  {{ balanceKinds[item.kind] ?? item.kind }}：{{ item.amount }} {{ item.unit }}
+                </p>
+                <p v-if="row.balance_snapshot?.token_items">当前 Key 的 Token 额度</p>
+                <p v-if="row.balance_snapshot?.unlimited">当前 Token 不限额</p>
+                <p
+                  v-for="item in row.balance_snapshot?.token_items"
+                  :key="'token-' + item.kind + item.unit"
+                >
+                  {{ balanceKinds[item.kind] ?? item.kind }}：{{ item.amount }} {{ item.unit }}
                 </p>
                 <p v-if="!row.balance_snapshot">未知，不代表零余额</p>
-                <p v-if="options && !options.balance_providers?.includes(row.provider)">
+                <p v-if="options && !options.balance_providers?.includes(channelProvider(row))">
                   当前渠道尚未接入账户余额查询，请在服务商控制台查看。
                 </p>
                 <small
@@ -321,7 +334,7 @@ onMounted(() => {
                     >删除渠道</el-button
                   >
                   <el-button
-                    :disabled="busy || !options?.balance_providers?.includes(row.provider)"
+                    :disabled="busy || !options?.balance_providers?.includes(channelProvider(row))"
                     @click="balance(row)"
                     native-type="button"
                     type="primary"
@@ -496,13 +509,15 @@ onMounted(() => {
             Key；可选的账户余额查询使用同一账户的 Management Key。
           </p>
           <p v-else-if="provider === 'newapi'">
-            NewAPI 地址为 https://newapiai.com/v1。当前支持文本生成与模型列表查询；
-            账户余额和单次费用查询尚未接入，请在服务商控制台查看。
+            填写标准 NewAPI 的 HTTPS API 地址，默认 https://newapiai.com/v1，可包含路径前缀。 普通
+            Key 用于模型列表、调用费用核对和额度查询。上游允许时同时查询账户剩余额度，与当前 Key
+            的额度分开展示；Token 不限额仍受账户余额限制。更换站点或 Key
+            时请新建渠道，保留历史查费凭据。
           </p>
-          <p v-else-if="provider === 'openlux' || provider === 'yunwu'">
-            Openlux 地址为 https://api.openlux.ai/v1，Yunwu 地址为 https://yunwu.ai/v1。
-            费用自动使用原推理 Key 查询；更换 Token 或站点请新建渠道，保留旧渠道用于历史查费。
-            当前尚未接入账户余额查询，Token 额度不等于账户余额。
+          <p v-else-if="provider === 'yunwu'">
+            Yunwu 类使用 Key 查询参数和分页日志，包含 Yunwu、Openlux 等兼容站点。 默认
+            https://yunwu.ai/v1，Openlux 填 https://api.openlux.ai/v1；也可填写兼容站点的 API 地址。
+            此类暂未接入账户余额查询，更换站点或 Key 时请新建渠道，保留历史查费凭据。
           </p>
           <label v-if="!['newapi', 'openlux', 'yunwu'].includes(provider)"
             >账务 API Key<el-input

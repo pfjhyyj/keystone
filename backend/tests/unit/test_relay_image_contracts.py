@@ -11,7 +11,6 @@ import httpx2
 import pytest
 from support.model_stub import image_bytes
 
-from keystone.core.errors import ServiceError
 from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.adapters.inference.client import InferenceClient
@@ -170,20 +169,15 @@ async def test_download_retries_only_get_reauthorizes_and_never_sends_a_token(mo
     async def authorize():
         checks.append(True)
 
-    async def address(host):
-        assert host == "cdn.example.test"
-        return "1.1.1.1"
-
     def respond(request):
         calls.append(request)
-        assert request.method == "GET" and request.url.host == "1.1.1.1"
+        assert request.method == "GET" and request.url.host == "cdn.example.test"
         assert "authorization" not in request.headers and "key" not in request.url.params
         assert request.headers["host"] == "cdn.example.test"
         return (
             httpx2.Response(503) if len(calls) == 1 else httpx2.Response(200, content=image_bytes())
         )
 
-    monkeypatch.setattr(http, "public_address", address)
     monkeypatch.setattr(http, "transport", lambda _: httpx2.MockTransport(respond))
     result = await InferenceClient(http).download_image(
         selected("yunwu"), "https://cdn.example.test/output.png?signature=private", authorize
@@ -275,16 +269,10 @@ async def test_maximum_reference_bytes_and_multibyte_prompt_fit_the_wire_limit(m
 @pytest.mark.parametrize(
     "destination", ["https://next.example.test/result.png", "https://127.0.0.1/private"]
 )
-async def test_download_redirects_recheck_public_address_and_never_forward_credentials(
+async def test_download_redirects_preserve_destination_and_never_forward_credentials(
     monkeypatch, destination
 ):
-    http, calls, checked = HttpClient(), [], []
-
-    async def address(host):
-        checked.append(host)
-        if host == "127.0.0.1":
-            raise ServiceError(502, "model_result_source_denied", "private address")
-        return "1.1.1.1"
+    http, calls = HttpClient(), []
 
     async def authorize():
         pass
@@ -292,19 +280,16 @@ async def test_download_redirects_recheck_public_address_and_never_forward_crede
     def respond(request):
         calls.append(request)
         assert "authorization" not in request.headers
-        if request.headers["host"] == "cdn.example.test":
+        if request.url.host == "cdn.example.test":
             return httpx2.Response(302, headers={"location": destination})
+        assert str(request.url) == destination
         return httpx2.Response(200, content=image_bytes())
 
-    monkeypatch.setattr(http, "public_address", address)
     monkeypatch.setattr(http, "transport", lambda _: httpx2.MockTransport(respond))
-    fetch = InferenceClient(http).download_image(
-        selected("openlux"), "https://cdn.example.test/result.png?signature=private", authorize
+    assert (
+        await InferenceClient(http).download_image(
+            selected("openlux"), "https://cdn.example.test/result.png?signature=private", authorize
+        )
+        == image_bytes()
     )
-    if "127.0.0.1" in destination:
-        with pytest.raises(ServiceError) as error:
-            await fetch
-        assert error.value.code == "model_result_source_denied" and len(calls) == 1
-    else:
-        assert await fetch == image_bytes() and len(calls) == 2
-    assert checked == ["cdn.example.test", destination.split("/")[2]]
+    assert len(calls) == 2

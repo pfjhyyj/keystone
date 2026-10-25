@@ -87,18 +87,27 @@ class CostService:
             identifier, provider, base, encrypted, context = config
             try:
                 secret = self.clients.credentials.decrypt(encrypted, identifier, "inference")
-                if self.clients.credentials.scope(context["origin"], secret) != scope:
+                if (
+                    self.clients.credentials.scope(
+                        context.get("scope_origin", context["origin"]), secret
+                    )
+                    != scope
+                ):
                     raise BillingQueryError("cost_scope_changed", blocked=True)
                 async with asyncio.timeout(25):
                     if context["mode"] == "logs":
                         if not checkpoint["policy_checked"]:
-                            await self.clients.billing.validate_policy(provider, context, secret)
+                            policy = await self.clients.billing.validate_policy(
+                                provider, context, secret
+                            )
+                            if policy is not None:
+                                checkpoint["billing_policy"] = policy
                             checkpoint["policy_checked"] = True
                         for _ in range(PAGES_PER_PASS):
                             page = checkpoint["page"]
                             result = await self.clients.billing.page(
                                 provider,
-                                context,
+                                {**context, **checkpoint.get("billing_policy", {})},
                                 secret,
                                 start=checkpoint["start"],
                                 end=checkpoint["end"],
@@ -106,6 +115,8 @@ class CostService:
                                 page_size=PAGE_SIZE,
                             )
                             receipts, done = result.records, result.complete
+                            if result.covered_since is not None:
+                                checkpoint["covered_since"] = result.covered_since
                             targets = set(checkpoint["requests"].values())
                             for receipt in receipts:
                                 request = receipt["request_id"]
@@ -172,7 +183,12 @@ class CostService:
             context = owner.cost_context
             if not context:
                 return None
-            if owner.api_base != context["api_base"] or owner.provider != context["provider"]:
+            billing_provider = getattr(
+                self.clients.billing.adapter(owner.provider, owner.api_base),
+                "provider",
+                owner.provider,
+            )
+            if owner.api_base != context["api_base"] or billing_provider != context["provider"]:
                 owner.cost_block_reason = "cost_scope_changed"
             if force_id is not None:
                 row = await locked(session, ModelInvocation, force_id)
@@ -398,6 +414,11 @@ class CostService:
                     row.cost_amount, row.cost_unit, row.cost_source = cost, receipt["unit"], "query"
                     row.cost_note = None
                     stop_check(row, "confirmed")
+                elif (
+                    checkpoint.get("covered_since") is not None
+                    and row.created_at.timestamp() < checkpoint["covered_since"]
+                ):
+                    stop_check(row, "unavailable", "cost_log_window_unavailable")
                 else:
                     anchor = (
                         row.cost_deadline_at - WINDOW if row.cost_deadline_at else row.finished_at

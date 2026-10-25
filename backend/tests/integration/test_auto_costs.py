@@ -31,6 +31,24 @@ from keystone.platform.model_access.tasks import workflows as jobs
 pytestmark = pytest.mark.postgres
 
 
+def test_newapi_and_original_site_channels_share_original_token_billing_scope(client, billing):
+    old = channel(client, "openlux", api_base="https://api.openlux.ai/v1")
+    new = channel(client, "newapi", api_base=old["api_base"])
+    entry(client, old, key="original")
+    entry(client, new, key="unified")
+    ids = [invoke(client, key=key).json()["invocation_id"] for key in ("original", "unified")]
+    for identifier in ids:
+        response = client.post(f"/api/v1/model-invocations/{identifier}/cost")
+        assert response.status_code == 200, response.text
+        assert response.json()["cost_check_status"] == "confirmed"
+        assert response.json()["cost_unit"] == "USD"
+    owners = []
+    for config in (old, new):
+        identifier = UUID(config["id"])
+        owners.append(query(client, lambda s, cid=identifier: s.get(Channel, cid)))
+    assert owners[0].cost_context == owners[1].cost_context
+
+
 def receipt(identifier, quota=1328, **overrides):
     return {
         "id": 1,

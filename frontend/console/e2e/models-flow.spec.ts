@@ -1,7 +1,9 @@
 import { expect, test, type Page } from '@playwright/test'
 import { choose, watchWindowErrors } from './controls'
 
-test('three simulated providers and a real DBOS Flow through the console UI', async ({ page }) => {
+test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through the console UI', async ({
+  page,
+}) => {
   test.setTimeout(90000)
   const errors: string[] = []
   await watchWindowErrors(page, errors)
@@ -16,24 +18,38 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByRole('heading', { name: '模型接入', exact: true })).toBeVisible()
   const channels = page.getByRole('region', { name: '渠道账户', exact: true })
-  for (const provider of ['openrouter', 'deepseek', 'aliyun_bailian']) {
+  for (const provider of ['openrouter', 'newapi_prefix', 'newapi_other']) {
     await page.getByRole('button', { name: '新建渠道', exact: true }).click()
     let dialog = page.getByRole('dialog')
     await dialog.getByLabel('渠道名称', { exact: true }).fill(`${provider} 模拟`)
-    await choose(
-      dialog,
-      '服务商',
-      { openrouter: 'OpenRouter', deepseek: 'DeepSeek', aliyun_bailian: '阿里云百炼' }[provider]!,
-    )
-    // The backend fixture maps these simulated providers to this single mock target.
-    await dialog.getByLabel('服务地址', { exact: true }).fill('https://openrouter.ai/api/v1')
+    await choose(dialog, '服务商', provider === 'openrouter' ? 'OpenRouter' : 'NewAPI')
+    await expect(dialog.getByRole('option', { name: 'Openlux', exact: true })).toHaveCount(0)
+
+    await dialog
+      .getByLabel('服务地址', { exact: true })
+      .fill(
+        provider === 'openrouter'
+          ? 'https://openrouter.ai/api/v1'
+          : provider === 'newapi_prefix'
+            ? 'https://relay.example/gateway/v1'
+            : 'https://relay-other.example/v1',
+      )
     await dialog.getByLabel('推理 API Key', { exact: true }).fill('fake-inference')
-    await dialog.getByLabel('账务 API Key', { exact: true }).fill('fake-billing')
+    if (provider === 'openrouter')
+      await dialog.getByLabel('账务 API Key', { exact: true }).fill('fake-billing')
     await dialog.getByRole('button', { name: '保存渠道', exact: true }).click()
     await expect(dialog).toBeHidden()
     const row = channels.getByRole('row').filter({ hasText: `${provider} 模拟` })
-    await row.getByRole('button', { name: '刷新余额', exact: true }).click()
-    await expect(row).toContainText('查询成功')
+    if (provider === 'openrouter') {
+      await row.getByRole('button', { name: '刷新余额', exact: true }).click()
+      await expect(row).toContainText('查询成功')
+    } else {
+      await row.getByRole('button', { name: '刷新余额', exact: true }).click()
+      await expect(row).toContainText('查询成功')
+      await expect(row).toContainText('当前 Token 不限额')
+      await expect(row).toContainText('账户余额')
+      await expect(row).toContainText('剩余：192.851716 USD')
+    }
     await page.getByRole('button', { name: '新建模型', exact: true }).click()
     dialog = page.getByRole('dialog')
     await dialog.getByLabel('模型 key', { exact: true }).fill(`${provider}_chat`)
@@ -56,7 +72,7 @@ test('three simulated providers and a real DBOS Flow through the console UI', as
     await expect(probe.locator('pre')).toContainText('模拟渠道响应')
     await expect(
       page.getByRole('region', { name: '调用记录与费用', exact: true }).locator('tbody tr'),
-    ).toHaveCount(['openrouter', 'deepseek', 'aliyun_bailian'].indexOf(provider) + 1)
+    ).toHaveCount(['openrouter', 'newapi_prefix', 'newapi_other'].indexOf(provider) + 1)
   }
   const history = page.getByRole('region', { name: '调用记录与费用', exact: true })
   await expect(history).toContainText('费用未知：2 次')

@@ -8,7 +8,7 @@
 
 为后续业务提供统一的模型调用入口，记录每次调用的用量、上游报告的费用，并展示渠道账户的余额。采用“成熟调用 SDK＋少量渠道适配代码”，不要求独立网关。
 
-当前实际发送开放 OpenRouter、Openlux、Yunwu 和 NewAPI，复用 OpenAI SDK 的文本对话及流式协议。四者为独立渠道类型：Openlux 使用 `https://api.openlux.ai/v1`，Yunwu 使用 `https://yunwu.ai/v1`，NewAPI 指 newapiai.com 站点，使用 `https://newapiai.com/v1`。OpenRouter 可保存响应费用并按请求 ID 补查，Openlux/Yunwu 使用原 Token 分页核对日志；NewAPI 当前只开放文本生成和模型列表查询，未核实的账务、图片和原生任务协议不直接沿用其他站点。DeepSeek、阿里云百炼保留适配声明，尚未开放发送。阿里云暂按百炼/DashScope 按量付费服务设计，不把订阅额度混为账户余额。图片与异步任务能力见[模型操作与产物](#6-模型操作与产物)。
+新建渠道提供 OpenRouter、NewAPI 和 Yunwu，复用 OpenAI SDK 的文本对话及流式协议。NewAPI 表示兼容接口类型，默认 `https://newapiai.com/v1`，可配置HTTPS API 地址及路径前缀；使用 Key 查询参数与分页日志的 Openlux、Yunwu 兼容分支统一选择 Yunwu，分别填写 `https://api.openlux.ai/v1`、`https://yunwu.ai/v1`。已有渠道的内部 provider 与历史快照保留，Openlux 在界面归为 Yunwu 类。OpenRouter 可保存响应费用并按请求 ID 补查，Openlux/Yunwu 使用原 Token 分页核对日志；标准 NewAPI 接入文本、模型列表、Bearer Token 日志查费、账户余额与 Token 额度；Yunwu 类接入 Key 参数分页日志查费。媒体能力仍按已验证站点选择，不因接口兼容推断其他站点支持媒体。DeepSeek、阿里云百炼保留适配声明，尚未开放发送。阿里云暂按百炼/DashScope 按量付费服务设计，不把订阅额度混为账户余额。图片与异步任务能力见[模型操作与产物](#6-模型操作与产物)。
 
 渠道、模型配置、调用记录是三个主要对象；第 8 节的代码适配层继续复用它们。不做用户钱包、充值、额度扣减、计费倍率、价格表、自动渠道切换或智能路由。这里记录的是供应商侧成本，不是向 Keystone 用户收费；已有 Flow 次数/token/文件预算仍属于资源限制。
 
@@ -34,7 +34,7 @@ erDiagram
 | 字段 | 含义 |
 |---|---|
 | `id`、`name` | 稳定 ID、展示名 |
-| `provider` | 新建可用渠道为 `openrouter`、`openlux`、`yunwu`、`newapi`；`deepseek`、`aliyun_bailian` 保留声明 |
+| `provider` | 新建可选 `openrouter`、`newapi`、`yunwu`；`openlux` 作为已有渠道内部标识保留，`deepseek`、`aliyun_bailian` 保留声明 |
 | `api_base` | 经管理员配置的服务地址，包含相应地域/站点差异 |
 | `api_key_encrypted` | 推理 API Key 密文，接口不返回 |
 | `billing_api_key_encrypted` | 可空，账务 API Key 密文，接口不返回 |
@@ -158,6 +158,12 @@ Agent 一次运行可能发起多次模型请求，每次实际请求都独立�
 
 ### 3.3 渠道能力
 
+标准 NewAPI 与 Yunwu 是两种已观察到的查费协议分支，不据此断言底层架构完全不同。标准 NewAPI 使用 Bearer Key，`GET /api/log/token` 返回最多 1000 条最近记录；部分兼容实现也返回分页对象。用响应头 `x-oneapi-request-id`（其次 `x-api-request-id`）匹配日志顶层 `request_id`（其次 `other.request_id`），不把模型供应商响应体 ID 当成网关账单 ID。只保存消费记录的精确编号、模型、quota、实际 `quota_per_unit` 与金额证据；标准 NewAPI 的系统基准单位为 USD，显示币种、兑换率和充值价格不参与二次换算。依据：[日志接口](https://docs.newapi.pro/en/docs/guide/feature-guide/user/log)、[额度换算实现](https://github.com/QuantumNous/new-api/blob/main/web/src/lib/currency.ts)。
+
+最近记录达到 1000 条时保存可见时间边界；匹配到的原请求可以确认，超出可见范围的未匹配调用标为 `cost_log_window_unavailable`，不会按空结果记零或把相同列表当分页无限重读。本轮额度比例与分页位置一起进入 checkpoint，后续页沿用同一比例。Yunwu/Openlux 的既有账务口径与历史上下文保持不变；其他 Yunwu 兼容站点以 `yunwu_credits` 保存该站额度，按其公开比例归一化，不推断为美元。
+
+余额按钮对标准 NewAPI 使用普通 Key 查询 `GET /api/usage/token/`。接口提供 `user_quota` 时，直接读取其中的账户剩余和已用额度，按公开 `quota_per_unit` 换算，快照 `scope=provider_account`，`items` 保存账户额度，`token_items` 单独保存当前 Key 的额度；`unlimited` 仅表示 Key 不限额，不表示账户余额无限。上游未返回 `user_quota` 时退回 `scope=token_quota`，明确说明账户余额未提供；不限额 Key 不展示零剩余额度。账户余额为真实零或负数时按实显示。账户额度查询受上游令牌的 `allow_user_quota_query` 设置控制，不需要额外管理凭据；不会主动修改上游令牌权限。模型列表仍使用普通 Key 的 OpenAI 兼容 `/v1/models`，账户管理的 `/api/user/models` 使用另一种身份，不混用。依据：[Token 与账户额度实现](https://github.com/QuantumNous/new-api/blob/main/controller/token.go)、[模型路由](https://github.com/QuantumNous/new-api/blob/main/router/relay-router.go)。
+
 OpenRouter 等官方能力依据下列文档；Yunwu/Openlux 另有实测依据。Keystone 回归使用隔离数据库和本地协议桩，没有发送付费模型请求。
 
 | 渠道 | 单次调用费用 | 账户余额 | 首版处理 |
@@ -166,15 +172,15 @@ OpenRouter 等官方能力依据下列文档；Yunwu/Openlux 另有实测依据�
 | OpenRouter | 响应 `usage.cost`；也可按 generation ID 查询 | `/api/v1/credits` 返回累计 credits 和使用量，需要 management key | 保存上游报告费用；必要时查询补全；支持余额刷新 |
 | 阿里云百炼 | 尚未确认可按推理请求 ID 查询单次实际金额的接口 | `QueryAccountBalance` 查询阿里云账户，区分可用额度和现金余额 | 保存用量；费用未知；首版不开放账户余额查询（仅保留解析声明） |
 | Yunwu/Openlux | 原 Token 分页拉取日志，本地精确匹配 `other.request_id` 与 `x-api-request-id`，按站点口径解析 quota | 当前适配未接入账户余额查询，Token 用量不视为账户余额 | 已接入自动核对和手动补查；详见第 3.6 节 |
-| NewAPI（newapiai.com） | 当前只保存用量，单次费用查询未接入 | 未接入账户余额查询 | 支持文本生成和模型列表查询；费用保持未知 |
+| NewAPI（标准协议） | Bearer Key 查询 `/api/log/token`，精确匹配网关请求编号，按公开 `quota_per_unit` 换算系统 USD 额度 | `/api/usage/token/` 的 `user_quota` 查询账户余额，当前 Key 额度及不限额状态单独展示；未授权返回账户额度时明确标示 | 自动核对与手动补查、模型列表、账户与 Token 额度均已接入 |
 
 DeepSeek 的余额解析保留接口返回的币种，总余额已经包含赠送和充值部分，不重复相加；首版未开放查询，因此余额状态为 unavailable。费用未知仅表示当前接入能力不足，不断言供应商永远没有相应能力。依据：[余额接口](https://api-docs.deepseek.com/api/get-user-balance/)、[对话响应](https://api-docs.deepseek.com/api/create-chat-completion/)。
 
 Openlux/Yunwu 尚未接入账户余额查询表示 Keystone 的适配范围，不断言供应商没有相应接口。Openlux 官方区分推理 API Key 与账户管理的 System Access Token，管理接口还要求 `New-Api-User` 用户 ID；不能直接把推理 Key 或 Token 限额当作账户余额凭据/余额。依据：[Openlux 接入与鉴权说明](https://doc.openlux.ai/)。
 
-管理者可通过 `GET /api/v1/model-channels/{id}/models` 使用渠道已保存的推理 Key 查询上游模型列表。OpenRouter、Openlux、Yunwu 和 NewAPI 的查询路径由渠道声明为 `/models`，只允许固定官方地址、有界 GET，不跟随跳转或自动重试；返回去重排序后的模型 ID，不返回原始元数据或秘密。查询在事务外完成，返回前复查权限及配置。控制台选择渠道后自动加载，也可刷新或手填；缺失的当前模型会提示核对 ID/Key 权限，不自动替换或停用配置。模型列表不自动创建 ModelEntry，不声明操作能力、价格或可调用性；管理员仍确认业务 key 与操作能力。Openlux 的入口依据：[官方接入说明](https://doc.openlux.ai/)。
+管理者可通过 `GET /api/v1/model-channels/{id}/models` 使用渠道已保存的推理 Key 查询上游模型列表。模型查询在完整 API 前缀后追加 `/models`；OpenRouter 使用固定地址，NewAPI 使用保存的HTTPS 地址，均为有界 GET，不跟随跳转或自动重试；返回去重排序后的模型 ID，不返回原始元数据或秘密。查询在事务外完成，返回前复查权限及配置。控制台选择渠道后自动加载，也可刷新或手填；缺失的当前模型会提示核对 ID/Key 权限，不自动替换或停用配置。模型列表不自动创建 ModelEntry，不声明操作能力、价格或可调用性；管理员仍确认业务 key 与操作能力。Openlux 的入口依据：[官方接入说明](https://doc.openlux.ai/)。
 
-Openlux/Yunwu 的模型、状态和 Token 日志路径属于 New API 兼容接口族，但服务商仍分别配置，金额单位和原生任务按各站规则处理。这里的 `newapi` 渠道专指 NewAPI AI 商业站点，不是开源网关项目的通用别名，不接受 Openlux/Yunwu 地址。NewAPI AI 的文本及模型列表接口依据：[站点文档](https://docs.newapiai.com/)。Kling 原生图片任务仍仅允许已验证的 Openlux 站点；NewAPI AI 的余额、单次费用及媒体协议需另行核验后接入。
+Openlux/Yunwu 的模型、状态和 Token 日志路径属于 New API 兼容接口族，归入 Yunwu 选项；金额单位和原生任务仍按已验证的站点规则处理。NewAPI 默认使用 NewAPI AI 商业站点，也接受其他HTTPS API 地址及路径前缀。NewAPI AI 的文本及模型列表接口依据：[站点文档](https://docs.newapiai.com/)。Kling 原生图片任务仍仅允许已验证的 Openlux 站点；媒体协议需要对应站点的额外接入；普通 Token 额度不视为账户余额，标准 NewAPI 的账户余额仅取明确的 `user_quota` 字段。
 
 OpenRouter 的 `usage.cost` 表示该账户被收取的 credits；流式用量在最后的 SSE 消息中。不要用 `upstream_inference_cost` 替换账户费用，尤其 BYOK 还涉及外部供应商收费。余额由 `total_credits - total_usage` 得到，保留 credits 口径，不能当作某个 API Key 的独享额度。依据：[用量与费用](https://openrouter.ai/docs/cookbook/administration/usage-accounting)、[余额与凭据要求](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits)。
 
@@ -244,7 +250,7 @@ GET https://api.openlux.ai/api/log/token?key=<原调用API_KEY>&start_timestamp=
 
 样本为 `quota=1328`、`quota_per_unit=500000`、`currency_type=USD`，得到 `0.002656 USD`。金额按 Decimal 精确计算；样本中的人民币换算只是展示参考，不是实际充值成本。复核时 [Openlux 公开配置](https://api.openlux.ai/api/status)为 USD，而[旧 Yunwu 公开配置](https://yunwu.ai/api/status)为自定义额度，不能统一视为美元。原站点和换算口径须随调用保存；历史口径不明时保留额度证据和未知原因，不套用当前配置重解释旧费用。旧 Yunwu 和 Openlux 不通过修改原 Channel 地址混用历史。
 
-实现只允许 Openlux `https://api.openlux.ai/v1`、Yunwu `https://yunwu.ai/v1`。调用保存适配器口径；每轮日志查询先读取公开 `/api/status` 校验 quota_per_unit=500000、对应币种。Openlux 为 USD，Yunwu 要求 CUSTOM 且 custom_currency_exchange_rate=1，落库单位为 yunwu_credits。变化时 blocked/cost_policy_changed，不用新口径解释旧调用。只解析 type=2、非负整数 quota，并校验匹配日志的模型名。
+本节的固定站点口径适用于已验证的 Openlux `https://api.openlux.ai/v1`、Yunwu `https://yunwu.ai/v1`。调用保存适配器口径；每轮日志查询先读取公开 `/api/status` 校验 quota_per_unit=500000、对应币种。Openlux 为 USD，Yunwu 要求 CUSTOM 且 custom_currency_exchange_rate=1，落库单位为 yunwu_credits。变化时 blocked/cost_policy_changed，不用新口径解释旧调用。只解析 type=2、非负整数 quota，并校验匹配日志的模型名。
 
 #### 3.6.3 回执、查询范围与凭据
 
@@ -264,7 +270,7 @@ model_access/tasks/workflows.py 由 composition 显式装配：启动投递一�
 
 当前每批最多 20 条调用、每页 20 条日志、每次最多 2 页/25 秒，单次 HTTP 最长 10 秒。窗口从本批最早登记时间前 120 秒到本轮开始时间；后续分页不修改边界。未扫完约 5 秒后继续，完整覆盖后才确认费用。相同站点/Token 通过服务端 HMAC 生成不含秘密的 scope，选最早创建的 Channel 保存共享 checkpoint、阻塞和冷却；API 与 Worker 共用 PostgreSQL session advisory lock，查询期间不持有业务事务。
 
-每进程最多 2 个查费流程，取得数据库协调连接之前即受限，避免大量手动补查占满连接池。日志响应上限 256 KiB、公开口径响应上限 1 MiB；只保存有界请求 ID、模型名、额度及单位等规范化证据，拒绝过深 JSON 或异常结构。
+每进程最多 2 个查费流程，取得数据库协调连接之前即受限，避免大量手动补查占满连接池。Yunwu 分页日志响应上限 256 KiB、标准 NewAPI 最近日志上限 4 MiB、公开口径响应上限 1 MiB；只保存有界请求 ID、模型名、额度及单位等规范化证据，拒绝过深 JSON 或异常结构。
 
 分页未完成只表示本轮未覆盖完，不判定未找到，不消耗一次完整“未找到”核对轮次。完成一轮仍未匹配时，才安排下一轮退避。后续轮次从窗口起点重新扫描，允许重叠以捕获延迟写入或分页移动的记录；不能仅凭最后一个日志 id 或最高时间永久跳过旧窗口。新待办不能不断改写正在扫描的窗口，扫描顺序须避免少数渠道或历史大窗口饿死后续待办。
 
@@ -303,7 +309,7 @@ cost_check_status 与调用 status 分开，查到账务不改变 succeeded/fail
 
 重复结果只补全同一调用，不创建新 ModelInvocation、不累加金额或用量。保留 Numeric(38,18) 和 Decimal，不能经过二进制浮点估价；按渠道及单位汇总，不跨旧 Yunwu 自定义额度、Openlux USD、OpenRouter credits 或人民币参考值相加。查询失败不清空已知金额；新的可信实际查询替换原响应费用时保留前后证据，矛盾记录不能静默覆盖。
 
-外部 HTTP 在短业务事务之外；写回前检查原查询范围、配置、调用状态及本轮 checkpoint。费用、证据、进度和需要的审计同事务保存，旧查询或失去协调所有权的执行不得推进新轮次。常规自动确认保存在调用记录及必要证据中，不为每页或每次未找到复制管理审计；显式重查仍写 `model.cost.recheck`，保留实际操作者与原核对状态。
+外部 HTTP 在短业务事务之外；写回前检查原查询范围、配置、调用状态及本轮 checkpoint。费用、证据、进度和需要的审计同事务保存，旧查询或失去协调所有权的执行不得推进新轮次。常规自动确认保存在调用记录及必要证据中，不为每页或每次未找到复制管理审计；显式重查仍写 `model.cost.recheck`，保留实际操作者与原核对状态。 新支持协议的旧调用缺少 cost_context 时，仅在原渠道配置自调用前未改动且已保存网关回执的情况下，允许补建查询范围并记录 `model.cost.bind`；范围、回执与审计同事务写入，仍不重新发送模型。
 
 确认后停止自动轮询，本阶段不自动推断退款、负数费用、冲正或长期账单修订。不明历史口径、矛盾记录和窗口耗尽均保留未决；不能把已知费用汇总称为全部调用的最终实扣。
 
@@ -362,7 +368,7 @@ Channel、ModelEntry 的删除按第 2.2 节引用规则执行；管理变更、
 
 加密使用 Fernet，绑定渠道 ID 与推理/账务用途，防止凭据密文跨渠道或用途替换。首次保存时在现有 FILE_COORDINATION_ROOT 自动原子生成 `.model-credentials.key`（Linux/macOS 文件权限为 0600），不增加配置项或初始化命令。API 与 Worker 共用该协调目录；已有密文而密钥丢失时拒绝密钥写入和调用，不静默重新生成。备份应保留完整协调目录。实现依据 [Fernet 文档](https://cryptography.io/en/latest/fernet/)。
 
-当前支持 OpenRouter、Openlux、Yunwu 的固定地址，普通目录只返回启用且支持发送的渠道模型；DeepSeek/阿里云既有配置仍可管理，但不能发送，也不开放余额查询。缺少或撤销凭据时在发送前拒绝。启动或保存配置不会自动发起模型调用。
+当前支持 OpenRouter 固定地址及 NewAPI 的HTTPS API 地址，普通目录只返回启用且支持发送的渠道模型；DeepSeek/阿里云既有配置仍可管理，但不能发送，也不开放余额查询。缺少或撤销凭据时在发送前拒绝。启动或保存配置不会自动发起模型调用。
 
 确定性响应只通过测试目录中的 HTTP 传输替身注入，不随应用包或部署镜像发布。旧开发模拟数据不得用作真实调用的费用或恢复依据，应使用独立数据库和文件卷。
 
@@ -388,6 +394,8 @@ Channel、ModelEntry 的删除按第 2.2 节引用规则执行；管理变更、
 管理页提供配置、启停、余额、非流式调用、记录和费用汇总；所有权和 PAT 范围仍由服务端当前授权决定。只有历史权限时不会取得配置；只有调用权限时不会取得历史。当前分页选择、筛选及详情交互见 7.7。
 
 ### 5.3 发送与故障规则
+
+NewAPI 的 `api_base` 保存完整 API 前缀，系统只追加已实现协议的路径，不允许凭据、查询参数、片段或路径穿越。自定义地址直接使用保存的域名和系统网络解析，可用于内网及代理 Fake-IP 环境；不做公网 IP 判定或预解析固定 IP，不自动跳转。NewAPI 与 Yunwu 类按各自协议核对费用，媒体能力仅在已验证站点启用。相同已验证站点与 Token 的新旧渠道使用一致的账务口径，共用原费用核对范围，保留历史记录与原凭据。通用渠道的查费范围同时区分协议及 API 前缀，避免根路径与 `/v1` 配置互相占用不同的查询上下文；既有 `/v1` 范围保持不变。
 
 - 每次进入 SDK 的实际 POST 发送边界，重新校验身份、model:invoke、原模型/渠道启用状态、固定地址与当前秘密。短事务原子插入 ModelInvocation 并提交后才允许发送；登记失败不发送。
 - SDK max_retries=0，禁止自动跳转和环境代理；相同可信 invocation_id 的并发或重放拒绝再次发送，包括原调用已成功但没有可恢复响应的情况。公开 HTTP 只接收 key/messages/max_tokens/stream，不能提交 user_id、Flow 上下文、固定目标或内部调用 ID。
@@ -519,11 +527,11 @@ TaskReceipt 持久化 protocol、task_id、request_digest、数量、原截止�
 
 ImageManifest 可保留原 TaskReceipt，保证“查询结果已取得、文件尚未完整保存”时仍能取回原任务结果。已确认输出的摘要不能被后续下载偷偷替换。临时获取错误返回 pending，由显式有界循环继续；原提交起 300 秒、最多 60 次查询、最早查询时刻均持久保存，跨重启不重置。退避只用于查询/取回原结果，不会重新发送生成。已确认生成成功后，下载失败不倒改生成事实；Run 可以失败而调用仍成功，费用另行核对。
 
-下载仅接受适配器声明的 HTTPS CDN 来源，拒绝凭据、非 443 端口、跳转和非公网目标；DNS 验证后固定本次连接 IP 并保留原 TLS SNI/Host，防止二次 DNS 解析改变目标。下载不携带渠道 Authorization，字节与实际图片格式仍有界校验，URL 不进入日志、公开响应或持久回执。取消、原凭据或权限撤销、配置变化阻止新查询/下载/文件发布；本地中断保存原调用证据，不取消或重建供应商任务。
+下载使用适配器声明的 HTTPS CDN 来源与普通 HTTP 连接，拒绝 URL 中的凭据、非 443 端口和跳转；域名解析交由系统网络处理。下载不携带渠道 Authorization，字节与实际图片格式仍有界校验，URL 不进入日志、公开响应或持久回执。取消、原凭据或权限撤销、配置变化阻止新查询/下载/文件发布；本地中断保存原调用证据，不取消或重建供应商任务。
 
 ### 6.7 Yunwu/Openlux 同步图片
 
-两个站点共用 OpenAIImages，沿用原 provider、固定地址与 TokenLogs 账务实现，不迁移或合并历史渠道/币种。同步操作限制为 gpt-image-2、gpt-image-2-c、gpt-image-2.5-sunburst、gpt-image-2.5-flare；ModelEntry 仍须显式声明 image.generate / image.edit。
+两个站点共用 OpenAIImages，NewAPI 按精确站点地址选择对应 TokenLogs 账务实现；原 provider 继续处理既有渠道，不迁移或合并历史渠道/币种。同步操作限制为 gpt-image-2、gpt-image-2-c、gpt-image-2.5-sunburst、gpt-image-2.5-flare；ModelEntry 仍须显式声明 image.generate / image.edit。
 
 文生图 POST /images/generations 使用 JSON；编辑 POST /images/edits 使用 multipart，重复 image 文件字段。模型、路径、参数、文件数量与实际编码体均在登记前检查。生成与编辑走原发送登记，鉴权及唯一物理 POST 只能发生在提交之后，SDK 与传输不自动重试。
 
@@ -533,7 +541,7 @@ ImageGenerateRequest / ImageEditRequest 增加可选 aspect_ratio（1:1、16:9�
 
 返回 data[].b64_json 时校验真实图片并形成原 Manifest；支持匹配 MIME 的 data URI 前缀。返回 URL 时，先将原位置加密写为私有 ImageDownloadReceipt：绑定 channel_id、invocation_id、operation 和 request_digest，最多两份、单 URL 最多 3072 字符，密文及 Manifest 保持 16 KiB 数据库上限。取回凭据本地有效期最多一小时，上游签名可能更早失效；公开 API、日志及 DBOS 检查点不返回这些地址或密文。
 
-每份下载最多三次尝试、两次跳转，总窗口 120 秒，单请求 30 秒、结果最多 8 MiB。每次请求/跳转重新检查原运行权限、固定模型/渠道和来源；仅 HTTPS/443，DNS 必须全部指向公网并固定实际连接 IP，跳转同样检查，CDN 请求不携带渠道 Token。下载失败只重试 GET，不重新生成。
+每份下载最多三次尝试、两次跳转，总窗口 120 秒，单请求 30 秒、结果最多 8 MiB。每次请求/跳转重新检查原运行权限、固定模型/渠道和来源；仅 HTTPS/443，按原 URL 域名连接且不限制解析所得 IP 范围，跳转同样检查，CDN 请求不携带渠道 Token。下载失败只重试 GET，不重新生成。
 
 上游有效 URL 回应落库时调用状态为 succeeded，费用核对可独立开始；这不代表文件或 Flow 已完成。下载后形成带原取回凭据的 Manifest，再按原 artifact_key 保存 Files；重启可从取回凭据、Manifest 或已保存文件继续，部分文件保存后不会多出另一份逻辑产物。已有 Manifest 与重新下载的摘要、大小或 MIME 冲突时拒绝覆盖。无结果证据、签名失效、密钥不可用或权限失效均禁止补发。恢复限原运行仍可执行的重启/重放，不自动重启终态 Flow。只有 Base64 且文件未保存的响应无法靠哈希取回，仍按原有不可恢复窗口结束，不承诺第三方 exactly-once。
 

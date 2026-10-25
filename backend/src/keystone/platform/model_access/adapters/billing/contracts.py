@@ -41,6 +41,7 @@ class LogPage:
     records: list[CostRecord]
     next_page: int
     complete: bool
+    covered_since: int | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class Binding:
     unit: str
     quota_per_unit: int | None
     policy: str
+    scope_origin: str | None = None
 
     def snapshot(self, scope, provider, api_base):
         return {
@@ -61,6 +63,7 @@ class Binding:
             "unit": self.unit,
             "quota_per_unit": self.quota_per_unit,
             "policy": self.policy,
+            **({"scope_origin": self.scope_origin} if self.scope_origin else {}),
         }
 
 

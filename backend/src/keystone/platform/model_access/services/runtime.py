@@ -296,9 +296,13 @@ class ModelRuntime:
                     raise ServiceError(404, "model_not_found", "渠道配置不存在")
                 provider = channel.provider
                 self.clients.inference.check_operation(
-                    provider, selected.operation, selected.delivery, model=selected.provider_model
+                    provider,
+                    selected.operation,
+                    selected.delivery,
+                    model=selected.provider_model,
+                    api_base=selected.api_base,
                 )
-            adapter = self.clients.billing.adapter(provider)
+            adapter = self.clients.billing.adapter(provider, selected.api_base)
         except BaseException as error:
             failed(error, "preflight")
             raise

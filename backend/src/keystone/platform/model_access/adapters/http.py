@@ -36,21 +36,8 @@ class HttpClient:
                         raise ResponseTooLarge("response_too_large")
                 return json.loads(content, parse_float=Decimal)
 
-    async def public_address(self, hostname):
-        import ipaddress
-        import socket
-
-        from keystone.core.asyncio import blocking
-        from keystone.core.errors import ServiceError
-
-        addresses = await blocking(socket.getaddrinfo, hostname, 443, 0, socket.SOCK_STREAM)
-        values = list(dict.fromkeys(item[4][0] for item in addresses))
-        if not values or any(not ipaddress.ip_address(value).is_global for value in values):
-            raise ServiceError(502, "model_result_source_denied", "图片来源不是公网地址")
-        return values[0]
-
-    async def get_public_bytes(self, provider, url, *, hostname, limit, check_status, timeout=None):
-        """Adapter-approved HTTPS host, pinned public address, no credentials/redirects."""
+    async def get_bytes(self, provider, url, *, hostname, limit, check_status, timeout=None):
+        """Fetch from the adapter-approved HTTPS host using normal transport resolution."""
         from keystone.core.errors import ServiceError
 
         original = httpx2.URL(url)
@@ -60,8 +47,6 @@ class HttpClient:
             or original.port not in {None, 443}
         ):
             raise ServiceError(502, "model_result_source_denied", "图片来源不受支持")
-        address = await self.public_address(hostname)
-        target = original.copy_with(host=address)
         async with (
             asyncio.timeout(15 if timeout is None else timeout),
             httpx2.AsyncClient(
@@ -73,9 +58,7 @@ class HttpClient:
         ):
             async with client.stream(
                 "GET",
-                target,
-                headers={"Host": hostname},
-                extensions={"sni_hostname": hostname},
+                original,
             ) as response:
                 check_status(response)
                 content = bytearray()

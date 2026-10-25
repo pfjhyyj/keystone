@@ -201,7 +201,8 @@ it('loads channel models, selects an upstream ID and suggests a model key', asyn
       writes.push(JSON.parse(String(init.body)))
       return entry
     }
-    if (path === '/model-access/options') return { providers: ['openlux'], balance_providers: [] }
+    if (path === '/model-access/options')
+      return { providers: ['openrouter', 'newapi', 'yunwu'], balance_providers: [] }
     if (path.endsWith('/models')) {
       discoveryCalls++
       return { items: [{ id: 'vendor/chat-v1' }] }
@@ -263,22 +264,19 @@ it.each(['', '   '])('resets a cleared model display name to its fixed key (%j)'
   expect(writes[0]!.body).not.toHaveProperty('key')
 })
 it.each([
-  ['newapi', 'https://newapiai.com/v1'],
-  ['openlux', 'https://api.openlux.ai/v1'],
-  ['yunwu', 'https://yunwu.ai/v1'],
-])('keeps %s separate and fills its own default address', async (provider, base) => {
+  'https://newapiai.com/v1',
+  'https://api.openlux.ai/v1',
+  'https://yunwu.ai/v1',
+  'https://relay.example/gateway/api/v1',
+])('uses one NewAPI option and saves its configured API base (%s)', async (base) => {
   authorize(['model:manage'])
   const writes: unknown[] = []
   fakeApi((path, init) => {
     if (path === '/model-access/options')
       return {
-        providers: ['openrouter', 'openlux', 'yunwu', 'newapi'],
+        providers: ['openrouter', 'newapi', 'yunwu'],
         balance_providers: ['openrouter'],
-        default_api_bases: {
-          newapi: 'https://newapiai.com/v1',
-          openlux: 'https://api.openlux.ai/v1',
-          yunwu: 'https://yunwu.ai/v1',
-        },
+        default_api_bases: { newapi: 'https://newapiai.com/v1' },
       }
     if (init.method === 'POST') {
       writes.push(JSON.parse(String(init.body)))
@@ -289,20 +287,132 @@ it.each([
   const wrapper = mount(ModelManager)
   await flushPromises()
   await button(wrapper, '新建渠道').trigger('click')
-  await chooseSelect(wrapper, provider, '服务商')
-  expect((wrapper.get('input[type=url]').element as HTMLInputElement).value).toBe(base)
-  expect(selectControl(wrapper, '服务商').text()).toContain('Openlux')
+  await chooseSelect(wrapper, 'newapi', '服务商')
+  const address = wrapper.get('input[type=url]')
+  expect((address.element as HTMLInputElement).value).toBe('https://newapiai.com/v1')
+  expect(selectControl(wrapper, '服务商').text()).not.toContain('Openlux')
   expect(selectControl(wrapper, '服务商').text()).toContain('Yunwu')
+  await address.setValue(base)
   await wrapper.get('[role=dialog] input').setValue('My NewAPI')
   await wrapper.get('input[type=password]').setValue('private-key')
   await wrapper.get('[role=dialog] form').trigger('submit')
   await flushPromises()
-  expect(writes[0]).toMatchObject({
-    provider,
-    api_base: base,
-    api_key: 'private-key',
-  })
+  expect(writes[0]).toMatchObject({ provider: 'newapi', api_base: base, api_key: 'private-key' })
 })
+it.each(['openlux', 'yunwu'])(
+  'edits a legacy %s channel through the Yunwu UI',
+  async (provider) => {
+    authorize(['model:manage'])
+    fakeApi((path) =>
+      path === '/model-access/options'
+        ? { providers: ['openrouter', 'newapi', 'yunwu'], balance_providers: ['openrouter'] }
+        : path.startsWith('/model-channels')
+          ? [{ ...channel, provider }]
+          : [],
+    )
+    const wrapper = mount(ModelManager)
+    await flushPromises()
+    await button(wrapper, '编辑渠道').trigger('click')
+    const control = selectControl(wrapper, '服务商')
+    expect(control.props('modelValue')).toBe('yunwu')
+    expect(control.text()).not.toContain('Openlux')
+    expect(control.text()).toContain('Yunwu')
+    expect((wrapper.get('input[type=url]').element as HTMLInputElement).value).toBe(
+      channel.api_base,
+    )
+  },
+)
+it('creates a Yunwu protocol channel for Openlux and keeps it separate from NewAPI', async () => {
+  authorize(['model:manage'])
+  const writes: unknown[] = []
+  fakeApi((path, init) => {
+    if (path === '/model-access/options')
+      return {
+        providers: ['openrouter', 'newapi', 'yunwu'],
+        balance_providers: ['openrouter', 'newapi'],
+        default_api_bases: { yunwu: 'https://yunwu.ai/v1' },
+      }
+    if (init.method === 'POST') {
+      writes.push(JSON.parse(String(init.body)))
+      return channel
+    }
+    return []
+  })
+  const wrapper = mount(ModelManager)
+  await flushPromises()
+  await button(wrapper, '新建渠道').trigger('click')
+  await chooseSelect(wrapper, 'yunwu', '服务商')
+  const address = wrapper.get('input[type=url]')
+  expect((address.element as HTMLInputElement).value).toBe('https://yunwu.ai/v1')
+  await address.setValue('https://api.openlux.ai/v1')
+  await wrapper.get('[role=dialog] input').setValue('Openlux 渠道')
+  await wrapper.get('input[type=password]').setValue('private-key')
+  await wrapper.get('[role=dialog] form').trigger('submit')
+  await flushPromises()
+  expect(writes[0]).toMatchObject({ provider: 'yunwu', api_base: 'https://api.openlux.ai/v1' })
+})
+it('shows unlimited NewAPI Token quota without suggesting a zero account balance', async () => {
+  authorize(['model:manage'])
+  fakeApi((path) =>
+    path === '/model-access/options'
+      ? {
+          providers: ['openrouter', 'newapi', 'yunwu'],
+          balance_providers: ['openrouter', 'newapi'],
+        }
+      : path.startsWith('/model-channels')
+        ? [
+            {
+              ...channel,
+              provider: 'newapi',
+              api_base: 'https://relay.example/v1',
+              balance_snapshot: {
+                scope: 'token_quota',
+                unlimited: true,
+                items: [{ kind: 'used', amount: '0.1', unit: 'USD' }],
+              },
+            },
+          ]
+        : [],
+  )
+  const wrapper = mount(ModelManager)
+  await flushPromises()
+  expect(wrapper.text()).toContain('当前 Token 不限额')
+  expect(wrapper.text()).toContain('不是账户总余额')
+  expect(button(wrapper, '刷新余额').attributes('disabled')).toBeUndefined()
+})
+it.each([true, false])(
+  'shows account remaining separately from Token quota (unlimited=%s)',
+  async (unlimited) => {
+    authorize(['model:manage'])
+    fakeApi((path) =>
+      path === '/model-access/options'
+        ? { providers: ['newapi'], balance_providers: ['newapi'] }
+        : path.startsWith('/model-channels')
+          ? [
+              {
+                ...channel,
+                provider: 'newapi',
+                balance_snapshot: {
+                  scope: 'provider_account',
+                  unlimited,
+                  items: [{ kind: 'remaining', amount: '192.851716', unit: 'USD' }],
+                  token_items: unlimited
+                    ? [{ kind: 'used', amount: '0.1', unit: 'USD' }]
+                    : [{ kind: 'remaining', amount: '0', unit: 'USD' }],
+                },
+              },
+            ]
+          : [],
+    )
+    const wrapper = mount(ModelManager)
+    await flushPromises()
+    expect(wrapper.text()).toContain('账户余额')
+    expect(wrapper.text()).toContain('剩余：192.851716 USD')
+    expect(wrapper.text()).toContain('当前 Key 的 Token 额度')
+    expect(wrapper.text().includes('当前 Token 不限额')).toBe(unlimited)
+    expect(wrapper.text()).not.toContain('上游未返回账户余额')
+  },
+)
 it('discards a stale channel model list and preserves an unavailable current model', async () => {
   authorize(['model:manage'])
   const pending = deferred<unknown>()
@@ -548,7 +658,7 @@ it('uses the official address and no fake upstream model when configuring live m
   fakeApi((path) => (path === '/model-access/options' ? { providers: ['openrouter'] } : []))
   const wrapper = mount(ModelManager)
   await flushPromises()
-  expect(wrapper.text()).toContain('真实发送（OpenRouter、Openlux、Yunwu、NewAPI）')
+  expect(wrapper.text()).toContain('真实发送（OpenRouter、NewAPI、Yunwu）')
   await button(wrapper, '新建渠道').trigger('click')
   await flushPromises()
   expect(selectControl(wrapper, '服务商').text()).not.toContain('DeepSeek')

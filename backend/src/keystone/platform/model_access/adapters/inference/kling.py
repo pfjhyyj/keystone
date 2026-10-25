@@ -15,7 +15,7 @@ MODELS = {"kling-v1", "kling-v1-5", "kling-v2", "kling-v2-1"}
 
 def submit_body(selected, data):
     if (
-        selected.provider != "openlux"
+        selected.provider not in {"openlux", "newapi", "yunwu"}
         or selected.api_base != BASE
         or selected.provider_model not in MODELS
     ):
@@ -130,7 +130,7 @@ async def download(http, url):
     from keystone.platform.model_access.schemas.images import MAX_OUTPUT_IMAGE_BYTES
 
     try:
-        return await http.get_public_bytes(
+        return await http.get_bytes(
             "openlux",
             url,
             hostname=download_host(url),

@@ -13,6 +13,7 @@ CATALOG = Catalog(
         "model.channel.delete": {"name", "provider"},
         "model.entry.delete": {"key", "name"},
         "model.cost.recheck": {"previous_status"},
+        "model.cost.bind": {"source"},
         "model.channel.create": {
             "after",
             "api_base",

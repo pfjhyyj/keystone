@@ -283,14 +283,14 @@ def test_upstream_model_discovery_requires_management_and_does_not_import(
     assert client.get("/api/v1/model-invocations").json() == []
     options = client.get("/api/v1/model-access/options").json()
     assert "newapi" in options["providers"]
-    assert {"openlux", "yunwu"} <= set(options["providers"])
+    assert options["providers"] == ["openrouter", "newapi", "yunwu"]
     assert options["default_api_bases"]["newapi"] == "https://newapiai.com/v1"
     assert "openrouter" in options["balance_providers"]
-    assert "newapi" not in options["balance_providers"]
+    assert "newapi" in options["balance_providers"]
 
 
 @pytest.mark.parametrize(
-    "site,unit", [("openlux", "USD"), ("yunwu", "yunwu_credits"), ("newapi", None)]
+    "site,unit", [("openlux", "USD"), ("yunwu", "yunwu_credits"), ("newapi", "USD")]
 )
 def test_independent_channel_sites_keep_their_targets_and_billing_scopes(
     client, monkeypatch, site, unit
@@ -317,13 +317,9 @@ def test_independent_channel_sites_keep_their_targets_and_billing_scopes(
         owner = await session.get(Channel, UUID(c["id"]))
         row = await session.get(ModelInvocation, UUID(response.json()["invocation_id"]))
         assert owner.provider == site
-        if site == "newapi":
-            assert row.cost_context is None
-            assert row.cost_check_status == "unavailable"
-        else:
-            assert row.cost_context["provider"] == site
-            assert row.cost_context["api_base"] == base
-            assert row.cost_context["unit"] == unit
+        assert row.cost_context["provider"] == site
+        assert row.cost_context["api_base"] == base
+        assert row.cost_context["unit"] == unit
 
     query(client, original_scope)
     other = "https://yunwu.ai/v1" if site != "yunwu" else "https://api.openlux.ai/v1"
@@ -359,6 +355,35 @@ def test_discovery_discards_results_after_configuration_change_or_revocation(
         response = result.result(10)
     assert response.status_code == (409 if change == "config" else 401)
     assert "private-model" not in response.text
+
+
+def test_newapi_custom_prefix_is_available_for_discovery_catalog_and_invocation(
+    client, monkeypatch
+):
+    base = "https://relay.example/gateway/api/v1"
+    c = channel(client, "newapi", api_base=base)
+    e = entry(client, c)
+    calls = []
+
+    async def respond(provider, request):
+        calls.append((request.method, request.url.path, request.headers["host"]))
+        return await mock.transport(provider).handle_async_request(request)
+
+    install_transport(client, monkeypatch, respond)
+    assert client.get(f"/api/v1/model-channels/{c['id']}/models").json() == {
+        "items": [{"id": "mock-chat"}]
+    }
+    assert client.get("/api/v1/models").json()["items"][0]["key"] == e["key"]
+    response = invoke(client)
+    assert response.status_code == 200, response.text
+    assert calls == [
+        ("GET", "/gateway/api/v1/models", "relay.example"),
+        ("POST", "/gateway/api/v1/chat/completions", "relay.example"),
+    ]
+    assert (
+        client.get("/api/v1/model-invocations").json()[0]["cost_check_reason"]
+        == "cost_request_id_missing"
+    )
 
 
 @pytest.mark.parametrize(

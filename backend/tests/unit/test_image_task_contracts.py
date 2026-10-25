@@ -1,6 +1,5 @@
 """Native task and download contracts reject unsafe targets before network I/O."""
 
-import socket
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -8,7 +7,6 @@ import httpx2
 import pytest
 from pydantic import ValidationError
 
-from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.flow.schemas.definitions import ModelRole
 from keystone.platform.model_access.adapters.http import HttpClient, ResponseTooLarge
@@ -98,34 +96,27 @@ def test_retry_after_is_bounded_even_for_untrusted_numeric_header(header, second
     assert error.value.seconds == seconds
 
 
-async def test_download_uses_one_pinned_public_address_original_sni_and_no_secret(monkeypatch):
-    addresses, calls = [], []
-
-    def resolve(host, *args):
-        addresses.append(host)
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.1.1.1", 443))]
+async def test_download_preserves_hostname_and_has_no_credentials(monkeypatch):
+    calls = []
 
     async def send(request):
         calls.append(request)
         return httpx2.Response(200, content=b"bounded")
 
-    monkeypatch.setattr(socket, "getaddrinfo", resolve)
     http = HttpClient()
     monkeypatch.setattr(http, "transport", lambda provider: httpx2.MockTransport(send))
-    result = await http.get_public_bytes(
+    result = await http.get_bytes(
         "openlux",
         "https://p2-fdl.klingai.com/result.png?signature=private",
         hostname="p2-fdl.klingai.com",
         limit=7,
         check_status=kling.check_download,
     )
-    assert result == b"bounded" and addresses == ["p2-fdl.klingai.com"]
-    assert len(calls) == 1
-    assert calls[0].url.host == "1.1.1.1" and calls[0].headers["host"] == "p2-fdl.klingai.com"
-    assert calls[0].extensions["sni_hostname"] == "p2-fdl.klingai.com"
+    assert result == b"bounded" and len(calls) == 1
+    assert calls[0].url.host == "p2-fdl.klingai.com"
     assert "authorization" not in calls[0].headers
     with pytest.raises(ResponseTooLarge):
-        await http.get_public_bytes(
+        await http.get_bytes(
             "openlux",
             "https://p2-fdl.klingai.com/result.png",
             hostname="p2-fdl.klingai.com",
@@ -134,27 +125,27 @@ async def test_download_uses_one_pinned_public_address_original_sni_and_no_secre
         )
 
 
-@pytest.mark.parametrize("address", ["127.0.0.1", "169.254.169.254", "10.0.0.1", "::1"])
-async def test_private_download_addresses_are_denied_before_transport(monkeypatch, address):
-    monkeypatch.setattr(
-        socket,
-        "getaddrinfo",
-        lambda *args: [
-            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443)),
-        ],
-    )
+@pytest.mark.parametrize("host", ["127.0.0.1", "10.0.0.1", "198.18.1.236", "::1"])
+async def test_download_accepts_configured_private_and_fake_ip_hosts(monkeypatch, host):
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        assert request.url.host == host
+        assert "authorization" not in request.headers
+        return httpx2.Response(200, content=b"bounded")
+
     http = HttpClient()
-
-    def forbidden(provider):
-        raise AssertionError("No transport may open for a private address")
-
-    monkeypatch.setattr(http, "transport", forbidden)
-    with pytest.raises(ServiceError) as error:
-        await http.get_public_bytes(
+    monkeypatch.setattr(http, "transport", lambda _: httpx2.MockTransport(respond))
+    netloc = f"[{host}]" if ":" in host else host
+    assert (
+        await http.get_bytes(
             "openlux",
-            "https://p2-fdl.klingai.com/result.png",
-            hostname="p2-fdl.klingai.com",
+            f"https://{netloc}/result.png",
+            hostname=host,
             limit=7,
             check_status=kling.check_download,
         )
-    assert error.value.code == "model_result_source_denied"
+        == b"bounded"
+    )
+    assert len(calls) == 1

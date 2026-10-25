@@ -3,14 +3,14 @@ from sqlalchemy import and_, false, or_, select
 from keystone.core.errors import ServiceError
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.adapters.channels import CHANNELS
+from keystone.platform.model_access.adapters.channels import channel_adapter, channel_targets
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.schemas.operations import Delivery, Operation
 from keystone.platform.model_access.services.queries import locked
 
 
-def catalog_entry(row, provider):
-    adapter = CHANNELS.get(provider)
+def catalog_entry(row, provider, base=None):
+    adapter = channel_adapter(provider, base)
     operations = sorted(
         operation
         for operation in row.operations
@@ -60,12 +60,12 @@ class ModelEntryService:
                         *(
                             and_(
                                 Channel.provider == provider,
-                                Channel.api_base == adapter.api_base,
+                                Channel.api_base == base if base is not None else True,
                                 ModelEntry.provider_model.in_(protocol.models)
                                 if protocol.models is not None
                                 else True,
                             )
-                            for provider, adapter in CHANNELS.items()
+                            for provider, base, adapter in channel_targets()
                             if (protocol := adapter.protocol(operation, delivery)) is not None
                         ),
                     )
@@ -79,9 +79,9 @@ class ModelEntryService:
                 for channel in await session.scalars(
                     select(Channel).where(Channel.id.in_({row.channel_id for row in rows}))
                 ):
-                    available[channel.id] = channel.provider
+                    available[channel.id] = (channel.provider, channel.api_base)
             return [
-                catalog_entry(row, available[row.channel_id])
+                catalog_entry(row, *available[row.channel_id])
                 if catalog
                 else schemas.entry_view(row)
                 for row in rows
@@ -238,7 +238,7 @@ async def resolve_bindings_in_transaction(session, auth, *, roles, bindings):
         channel = by_id.get(entry.channel_id)
         if channel is None or not channel.is_active or not entry.is_active:
             raise ServiceError(409, "model_disabled", "模型或渠道不可用")
-        adapter = CHANNELS.get(channel.provider)
+        adapter = channel_adapter(channel.provider, channel.api_base)
         if (
             adapter is None
             or channel.api_base != adapter.api_base

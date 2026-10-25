@@ -20,7 +20,7 @@ def install(
     header=True,
     currency=None,
     model=None,
-    unsafe=False,
+    local=False,
     generation_error=False,
     crash=None,
     download_format="PNG",
@@ -35,13 +35,6 @@ def install(
 
     def calls():
         return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
-
-    async def address(self, host):
-        if host == "127.0.0.1":
-            from keystone.core.errors import ServiceError
-
-            raise ServiceError(502, "model_result_source_denied", "图片来源不是公网地址")
-        return "1.1.1.1"
 
     def transport(self, provider):
         async def respond(request):
@@ -82,7 +75,7 @@ def install(
                 n = int(fields["n"])
                 if generation_error:
                     return httpx2.Response(502, headers={"x-api-request-id": identifier})
-                hostname = "127.0.0.1" if unsafe else "cdn.example.test"
+                hostname = "127.0.0.1" if local else "cdn.example.test"
                 items = (
                     [{"b64_json": base64.b64encode(image_bytes()).decode()} for _ in range(n)]
                     if kind == "base64"
@@ -101,14 +94,17 @@ def install(
                         "usage": {"total_tokens": 17, "cost": "999"},
                     },
                 )
-            if request.method == "GET" and request.headers.get("host") == "cdn.example.test":
+            if request.method == "GET" and request.headers.get("host") in {
+                "cdn.example.test",
+                "127.0.0.1",
+            }:
                 before = sum(c["method"] == "GET" and c["path"].endswith(".png") for c in calls())
                 record(
                     {
                         "method": "GET",
                         "path": request.url.path,
                         "auth": "authorization" in request.headers,
-                        "sni": request.extensions.get("sni_hostname"),
+                        "host": request.headers.get("host"),
                     }
                 )
                 if retry and before == 0:
@@ -149,4 +145,4 @@ def install(
 
         return httpx2.MockTransport(respond)
 
-    HttpClient.transport, HttpClient.public_address = transport, address
+    HttpClient.transport = transport

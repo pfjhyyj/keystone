@@ -58,7 +58,7 @@ def transport(self, provider):
         with Path({str(request_log)!r}).open('a') as log:
             log.write(json.dumps({{'method': request.method, 'path': request.url.path,
                 'host': request.headers.get('host'), 'auth': 'authorization' in request.headers,
-                'sni': request.extensions.get('sni_hostname')}}) + '\\n')
+                'url_host': request.url.host}}) + '\\n')
         if request.method == 'POST' and {crash!r} == 'registered':
             os._exit(71)
         if request.method == 'GET' and '/kling/v1/images/generations/' in request.url.path:
@@ -163,7 +163,9 @@ def test_native_task_recovery_preserves_original_submission(client, monkeypatch,
         manifest["task"]["task_id"]
     }
     downloads = [r for r in sent if r["host"] == "p2-fdl.klingai.com"]
-    assert downloads and all(not r["auth"] and r["sni"] == "p2-fdl.klingai.com" for r in downloads)
+    assert downloads and all(
+        not r["auth"] and r["url_host"] == "p2-fdl.klingai.com" for r in downloads
+    )
     files = query(client, lambda s: s.scalars(select(File))).all()
     assert len(files) == 1
     assert done["result"]["files"] == [{"file_id": str(files[0].id)}]

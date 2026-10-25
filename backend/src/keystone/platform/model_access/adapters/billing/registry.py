@@ -3,7 +3,7 @@
 from keystone.core.errors import ServiceError
 from keystone.platform.model_access.adapters.billing.contracts import BillingQueryError
 from keystone.platform.model_access.adapters.billing.http import balance_get
-from keystone.platform.model_access.adapters.channels import CHANNELS
+from keystone.platform.model_access.adapters.channels import CHANNELS, channel_adapter
 from keystone.platform.model_access.adapters.errors import adapter_errors
 
 
@@ -12,27 +12,36 @@ class BillingClient:
         self.http = http
         self.channels = channels if channels is not None else CHANNELS
 
-    def adapter(self, provider):
-        channel = self.channels.get(provider)
+    def adapter(self, provider, base=None):
+        channel = channel_adapter(provider, base, channels=self.channels)
         if channel is None:
             raise ServiceError(503, "model_provider_unavailable", "当前服务商尚未开放账务查询")
         return channel.billing
 
-    def operation(self, provider, name):
-        method = getattr(self.adapter(provider), name, None)
+    def operation(self, provider, name, base=None):
+        method = getattr(self.adapter(provider, base), name, None)
         if method is None:
             raise BillingQueryError("cost_query_unavailable", blocked=True)
         return method
 
     async def validate_policy(self, provider, context, secret):
-        await self.operation(provider, "validate_policy")(self.http, context, secret)
+        return await self.operation(provider, "validate_policy", context.get("api_base"))(
+            self.http, context, secret
+        )
 
     async def page(self, provider, context, secret, **window):
-        return await self.operation(provider, "page")(self.http, context, secret, **window)
+        return await self.operation(provider, "page", context.get("api_base"))(
+            self.http, context, secret, **window
+        )
 
     async def lookup(self, provider, context, secret, identifier):
-        return await self.operation(provider, "lookup")(self.http, context, secret, identifier)
+        return await self.operation(provider, "lookup", context.get("api_base"))(
+            self.http, context, secret, identifier
+        )
 
     async def balance(self, provider, base, secret):
         with adapter_errors():
-            return await balance_get(self.http, self.adapter(provider), base, secret)
+            adapter = self.adapter(provider, base)
+            if token_balance := getattr(adapter, "token_balance", None):
+                return await token_balance(self.http, base, secret)
+            return await balance_get(self.http, adapter, base, secret)

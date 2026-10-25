@@ -9,7 +9,7 @@ from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from keystone.core.asyncio import blocking
 from keystone.core.errors import ServiceError
-from keystone.platform.model_access.adapters.channels import CHANNELS
+from keystone.platform.model_access.adapters.channels import CHANNELS, channel_adapter
 from keystone.platform.model_access.adapters.channels import OPENROUTER_BASE as OPENROUTER_BASE
 from keystone.platform.model_access.adapters.errors import adapter_errors
 from keystone.platform.model_access.adapters.inference.discovery import discover
@@ -24,18 +24,18 @@ class InferenceClient:
         self.channels = channels if channels is not None else CHANNELS
         self.slots = asyncio.Semaphore(4)
 
-    def adapter(self, provider):
-        adapter = self.channels.get(provider)
+    def adapter(self, provider, base=None):
+        adapter = channel_adapter(provider, base, channels=self.channels)
         if adapter is None or not adapter.protocols:
             raise ServiceError(503, "model_provider_unavailable", "当前服务商尚未开放发送")
         return adapter
 
     async def list_models(self, provider, base, secret):
         with adapter_errors():
-            return await discover(self.http, self.adapter(provider), provider, base, secret)
+            return await discover(self.http, self.adapter(provider, base), provider, base, secret)
 
-    def check_operation(self, provider, operation, delivery="sync", *, model=None):
-        protocol = self.adapter(provider).protocol(operation, delivery, model=model)
+    def check_operation(self, provider, operation, delivery="sync", *, model=None, api_base=None):
+        protocol = self.adapter(provider, api_base).protocol(operation, delivery, model=model)
         if protocol is None:
             raise ServiceError(409, "model_operation_unavailable", "协议不支持所需操作")
         return protocol
@@ -46,10 +46,11 @@ class InferenceClient:
             selected.operation,
             selected.delivery,
             model=selected.provider_model,
+            api_base=selected.api_base,
         )
 
     def check_target(self, provider, base, path, *, method="POST"):
-        if not self.adapter(provider).allows_target(base, path, method):
+        if not self.adapter(provider, base).allows_target(base, path, method):
             raise ServiceError(
                 409, "model_target_not_allowed", "渠道须使用受支持的官方地址、路径和方法"
             )
@@ -97,34 +98,33 @@ class InferenceClient:
             if selected.operation == "image.edit" and hasattr(protocol, "max_input_bytes")
             else 12 * 1024 * 1024
         )
-        transport = SendTransport(
-            self.transport(provider),
-            before_send,
-            observation,
-            on_receipt,
-            lambda request: self.validate_request(request, provider, selected),
-            identifier,
-            authorize=self.adapter(provider).authorize,
-            max_request_bytes=maximum,
-        )
-        async with (
-            self.slots,
-            asyncio.timeout(seconds),
-            DefaultAsyncHttpxClient(
-                transport=transport,
-                timeout=seconds if seconds > 60 else 30,
-                follow_redirects=False,
-                trust_env=False,
-            ) as http,
-            AsyncOpenAI(
-                api_key="runtime-resolved",
-                base_url=base,
-                http_client=http,
-                max_retries=0,
-                timeout=seconds if seconds > 60 else 30,
-            ) as sdk,
-        ):
-            yield sdk
+        async with self.slots, asyncio.timeout(seconds):
+            transport = SendTransport(
+                self.transport(provider),
+                before_send,
+                observation,
+                on_receipt,
+                lambda request: self.validate_request(request, provider, selected),
+                identifier,
+                authorize=self.adapter(provider, selected.api_base).authorize,
+                max_request_bytes=maximum,
+            )
+            async with (
+                DefaultAsyncHttpxClient(
+                    transport=transport,
+                    timeout=seconds if seconds > 60 else 30,
+                    follow_redirects=False,
+                    trust_env=False,
+                ) as http,
+                AsyncOpenAI(
+                    api_key="runtime-resolved",
+                    base_url=base,
+                    http_client=http,
+                    max_retries=0,
+                    timeout=seconds if seconds > 60 else 30,
+                ) as sdk,
+            ):
+                yield sdk
 
     async def events(
         self,
@@ -190,7 +190,7 @@ class InferenceClient:
                     while True:
                         await authorize()
                         try:
-                            return await self.http.get_public_bytes(
+                            return await self.http.get_bytes(
                                 selected.provider,
                                 url,
                                 hostname=download_host(url),

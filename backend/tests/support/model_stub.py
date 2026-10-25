@@ -43,6 +43,29 @@ class MockStream(httpx2.AsyncByteStream):
 
 def transport(provider):
     async def respond(request):
+        if request.method == "GET" and request.url.path.endswith("/api/status"):
+            return httpx2.Response(
+                200,
+                json={
+                    "success": True,
+                    "data": {"quota_per_unit": 500000, "quota_display_type": "USD"},
+                },
+            )
+        if request.method == "GET" and request.url.path.endswith("/api/usage/token/"):
+            return httpx2.Response(
+                200,
+                json={
+                    "code": True,
+                    "data": {
+                        "object": "token_usage",
+                        "total_used": 42,
+                        "total_granted": 42,
+                        "total_available": 0,
+                        "unlimited_quota": True,
+                        "user_quota": {"total_available": 96425858, "total_used": 32226924},
+                    },
+                },
+            )
         if request.method == "GET" and request.url.path.endswith("/models"):
             return httpx2.Response(200, json={"data": [{"id": "mock-chat"}]})
         if request.method == "POST" and request.url.path.endswith("/kling/v1/images/generations"):
@@ -275,8 +298,4 @@ def install(monkeypatch=None):
             provider, replace(adapter, api_base=OPENROUTER_BASE, protocols=(ChatCompletions(),))
         )
 
-    async def address(self, hostname):
-        return "1.1.1.1"
-
-    set_value(HttpClient, "public_address", address)
     set_value(HttpClient, "transport", lambda self, provider: transport(provider))
