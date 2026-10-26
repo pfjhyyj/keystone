@@ -69,8 +69,16 @@ def test_resource_boundaries_and_host_version_fail_closed(package, monkeypatch):
             PackageResource("external_workflows", path)
     with pytest.raises(ValueError):
         replace(composition.FLOW_PACKAGES[0], host_api_version=2)
+
+
+def test_symlink_resource_fails_closed(package):
     (package / "child.py").unlink()
-    (package / "child.py").symlink_to(package / "rules.bin")
+    try:
+        (package / "child.py").symlink_to(package / "rules.bin")
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Windows account cannot create symbolic links")
+        raise
     with pytest.raises(ServiceError):
         version()
 
