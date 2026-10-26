@@ -127,16 +127,16 @@ def test_model_baseline_contains_newapi_and_editable_display_name(model_baseline
     "table,column,value",
     [
         ("model_entries", "operations", "[]"),
-        ("model_entries", "operations", '["video.generate"]'),
-        ("model_invocations", "operation", "video.generate"),
+        ("model_entries", "operations", "{}"),
+        ("model_entries", "operations", "null"),
         ("model_invocations", "result_context", "[]"),
         ("model_invocations", "result_context", json.dumps({"task_id": "x" * 16384})),
         ("model_dispatch_scopes", "scope", "invalid-scope"),
     ],
     ids=[
         "empty-operations",
-        "unsupported-operation",
-        "unsupported-invocation",
+        "object-operations",
+        "json-null-operations",
         "nonobject-evidence",
         "oversized-evidence",
         "invalid-dispatch-scope",
@@ -148,6 +148,26 @@ def test_model_baseline_enforces_operation_and_evidence_bounds(
     _, engine = model_baseline
     with pytest.raises(IntegrityError), engine.begin() as connection:
         connection.execute(text(f"UPDATE keystone.{table} SET {column}=:value"), {"value": value})
+
+
+def test_model_baseline_stores_new_operation_identifiers_without_schema_changes(model_baseline):
+    _, engine = model_baseline
+    operations = [f"custom.operation{number}" for number in range(7)]
+    with engine.begin() as connection:
+        connection.execute(
+            text("UPDATE keystone.model_entries SET operations=CAST(:operations AS jsonb)"),
+            {"operations": json.dumps(operations)},
+        )
+        connection.execute(
+            text("UPDATE keystone.model_invocations SET operation=:operation"),
+            {"operation": operations[0]},
+        )
+        assert (
+            connection.scalar(text("SELECT operations FROM keystone.model_entries")) == operations
+        )
+        assert set(
+            connection.scalars(text("SELECT operation FROM keystone.model_invocations"))
+        ) == {operations[0]}
 
 
 @pytest.mark.parametrize("with_budget", [False, True])

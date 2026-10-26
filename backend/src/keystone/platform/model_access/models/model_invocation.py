@@ -23,11 +23,6 @@ class ModelInvocation(Base):
             name="invocation_cost",
         ),
         CheckConstraint(
-            "operation IN ('text.generate','text.structured','image.understand',"
-            "'image.generate','image.edit','text.embed')",
-            name="invocation_operation",
-        ),
-        CheckConstraint(
             "result_context IS NULL OR (jsonb_typeof(result_context) = 'object' "
             "AND octet_length(result_context::text) <= 16384)",
             name="invocation_result_context",

@@ -22,7 +22,7 @@
 
 新库执行 `keystone init`，一次建立完整业务结构、DBOS 的 `dbos` schema、文件存储与初始管理员。相同迁移链上重复执行保留已有数据和密码。API/Worker 启动只检查结构，不执行 DDL。
 
-当前基线从 `0001` 重新编号。合并前的数据库不能仅凭相同 revision 认定结构兼容，须核对完整结构后按下述方式处理；本次整理不提供旧链的自动转换。操作约束仍缺少 `text.embed` 的同号旧库也不兼容。已移除的 embedding revision `0008`、旧链的 `0008`～`0012` 及旧语义 revision（`identity`、`audit`、`dictionary`、`files`、`model_access`、`flow`、`core`、`model_costs`、`multi_workers`、`worker_registration`）均不能由当前链解析，须按完整结构核对。
+当前基线从 `0001` 重新编号。合并前的数据库不能仅凭相同 revision 认定结构兼容，须核对完整结构后按下述方式处理；本次整理不提供旧链的自动转换。仍带操作枚举白名单的同号旧库也不兼容；当前操作校验边界见[模型操作](../../docs/domains/model-access.md#61-操作与固定选择)。已移除的 embedding revision `0008`、旧链的 `0008`～`0012` 及旧语义 revision（`identity`、`audit`、`dictionary`、`files`、`model_access`、`flow`、`core`、`model_costs`、`multi_workers`、`worker_registration`）均不能由当前链解析，须按完整结构核对。
 
 这些旧库需要在停写窗口备份并核对结构：无保留需求时可另建新库初始化；需保留数据时，先在新库初始化当前结构，再按实际结构迁移所需数据并校验，不能直接导入旧版本表或用 `stamp` 跳过差异。用户/PAT、密文及其加密密钥、文件源、调用原状态、金额、回执和 Flow 快照须保持原义；旧模型能力不按名称推断，没有预算的历史 Run 不补造预算。在途执行先由原制品收尾，DBOS 与业务数据按[备份恢复](../../docs/backup-restore.md)联合保留，不通过删除执行记录绕过恢复。
 

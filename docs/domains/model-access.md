@@ -475,6 +475,8 @@ keystone recover-model-calls --confirm-api-stopped
 
 ModelRole.operation 描述需要执行的操作。ModelEntry.operations 描述管理员为该配置确认的能力；协议适配器描述宿主实际实现的能力，三者必须匹配。能力不从任意模型名猜测，也不因渠道支持图片而认定全部模型都支持图片。
 
+合法操作由应用层的 Operation 类型统一声明，模型配置必须非空、无重复，并按操作名排序保存，不另设与操作种数绑定的数量上限。数据库仅约束 operations 为非空 JSON 数组、operation 为非 NULL 的 VARCHAR(32)，不重复枚举操作名；新增操作无需修改数据库约束。数据库能保存某个标识不代表当前代码可以执行，模型选择与发送仍检查已实现的渠道协议及请求契约。
+
 | operation | 请求 | 结果 | 当前状态 |
 |---|---|---|---|
 | text.generate | TextRequest | TextResult | 已实现 |

@@ -223,7 +223,7 @@ SIGINT/SIGTERM 停止领取并报告 draining，心跳在有界等待期间继�
 
 ### 4.7 当前版本基线与切换
 
-本版本使用七个完整模块基线（`0001`～`0007`），模型操作、产物证据、发送协调、Run 预算及查询索引直接包含在各自基线中，模型接入基线已包含 `text.embed` 操作约束，后续只追加。新库运行 keystone init；合并前的数据库不能仅凭相同 revision 认定结构兼容，也不能只改版本号；已移除的 revision 无法由当前链解析。旧库停写、备份、另库初始化与数据保留规则见[迁移说明](../backend/migrations/README.md#初始化与已有数据库)。API/Worker 的发送节奏配置须一致，历史调用、费用、快照及缺失预算保持原义。旧配置中的 `worker_ids` / `KEYSTONE_WORKER_IDS` 与 `flow_enabled` / `KEYSTONE_FLOW_ENABLED` 已移除，配置校验会拒绝这些字段，切换前须一并删除。
+本版本使用七个完整模块基线（`0001`～`0007`），模型操作字段、产物证据、发送协调、Run 预算及查询索引直接包含在各自基线中，后续只追加。新库运行 keystone init；合并前的数据库不能仅凭相同 revision 认定结构兼容，也不能只改版本号；已移除的 revision 无法由当前链解析。旧库停写、备份、另库初始化与数据保留规则见[迁移说明](../backend/migrations/README.md#初始化与已有数据库)。API/Worker 的发送节奏配置须一致，历史调用、费用、快照及缺失预算保持原义。旧配置中的 `worker_ids` / `KEYSTONE_WORKER_IDS` 与 `flow_enabled` / `KEYSTONE_FLOW_ENABLED` 已移除，配置校验会拒绝这些字段，切换前须一并删除。
 
 新环境无需旧身份清单，Worker 首次启动时由准入流程登记。迁移历史数据时须保留原登记与退役状态、每个身份的最新心跳和运行中调用的归属，不能只根据当下在线进程重建成员，也不猜测退役或清空调用结果。
 
