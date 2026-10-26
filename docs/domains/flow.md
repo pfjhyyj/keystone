@@ -63,6 +63,10 @@ POST /api/v1/flow-runs 接收 definition_key、request_key、input，以及可�
 
 FlowService.start_in_transaction(session, auth, data) 供已持 AccessContext 身份锁的上层业务使用；不另开事务或自行提交。Worker 从持久 pending 记录发现并投递，提交后临时协程不是可靠投递依据。
 
+同一事务可用 `get_in_transaction(session, auth, run_id)` 读取当前授权下的运行回执，或用 `cancel_in_transaction(session, auth, run_id)` 登记取消意图。读取仍要求 `flow:read` 和本人／管理范围；取消另要求 `flow:cancel`，业务权限不能替代运行权限。查询、幂等回执和取消前的锁定读取刷新当前状态，不依赖共享 Session 中已缓存的旧记录。取消意图、成功审计及业务变更一起提交或回滚，重复受理不重复审计，终态不被强改；真实执行由 Worker 收尾。普通 HTTP 详情与取消复用这些入口，接口不提交、不另开事务、不访问执行引擎。
+
+回执丢失后使用原操作键和原请求重试 `start_in_transaction`；已有业务记录可在当前业务授权后通过其固定 Run ID 查询。业务负责自身请求键、原请求一致性和对象归属，不增加任意业务 owner 的查询接口，也不通过重新发送模型或重建 Run 来恢复回执。
+
 ## 4. 文件路径与引用
 
 路径使用 `serialization/by_alias=False` 字段名；数组用 `*`，例如 `documents.*.file_id`。可空字段、对象联合和终点 UUID/UUID 列表按编译规则处理；拒绝数字下标、重叠路径、非法类型、递归与远程 Schema 引用。

@@ -91,9 +91,9 @@ class FlowService:
         )
         await session.execute(text("SELECT pg_advisory_xact_lock(73190423, :key)"), {"key": lock})
         old = await session.scalar(
-            select(FlowRun).where(
-                FlowRun.actor_id == auth.user.id, FlowRun.request_key == data.request_key
-            )
+            select(FlowRun)
+            .where(FlowRun.actor_id == auth.user.id, FlowRun.request_key == data.request_key)
+            .execution_options(populate_existing=True)
         )
         if old:
             snapshot = read_snapshot(old.definition_snapshot)
@@ -174,7 +174,11 @@ class FlowService:
 
     async def detail(self, identifier):
         async with self.identity.access("flow:read") as (session, auth):
-            return view(await self.visible(session, auth, identifier))
+            return await self.get_in_transaction(session, auth, identifier)
+
+    async def get_in_transaction(self, session, auth, identifier):
+        """Current Run view under the existing read/actor scope, without another transaction."""
+        return view(await self.visible(session, auth, identifier))
 
     async def budget_diagnostic_in_transaction(self, session, auth, identifier):
         run = await self.visible(session, auth, identifier)
@@ -193,7 +197,9 @@ class FlowService:
 
     async def visible(self, session, auth, identifier, *, lock=False):
         stmt = select(FlowRun).where(FlowRun.id == identifier, *scope(auth))
-        run = await session.scalar(stmt.with_for_update() if lock else stmt)
+        run = await session.scalar(
+            (stmt.with_for_update() if lock else stmt).execution_options(populate_existing=True)
+        )
         if run is None:
             raise ServiceError(404, "flow_not_found", "流程不存在或不可访问")
         return run
@@ -202,11 +208,20 @@ class FlowService:
         async with self.identity.access(
             "flow:cancel", action="flow.cancel", target="flow.run", target_id=identifier
         ) as (session, auth):
-            run = await self.visible(session, auth, identifier, lock=True)
-            if run.status not in TERMINAL and run.cancel_requested_at is None:
-                run.cancel_requested_at = utcnow()
-                await self.identity.log(session, auth, "flow.cancel", "flow.run", run.id, {})
-            return view(run)
+            return await self.cancel_in_transaction(session, auth, identifier)
+
+    async def cancel_in_transaction(self, session, auth, identifier):
+        """Persist cancellation intent and audit with the caller's business facts.
+
+        Current cancel/read permissions and Run visibility still apply. No commit,
+        execution-engine I/O or forced terminal state; rollback withdraws the intent.
+        """
+        auth.require("flow:cancel")
+        run = await self.visible(session, auth, identifier, lock=True)
+        if run.status not in TERMINAL and run.cancel_requested_at is None:
+            run.cancel_requested_at = utcnow()
+            await self.identity.log(session, auth, "flow.cancel", "flow.run", run.id, {})
+        return view(run)
 
     async def steps(self, identifier, engine):
         await self.detail(identifier)

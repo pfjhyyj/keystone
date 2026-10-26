@@ -152,9 +152,24 @@ class FileService:
 
     async def detail(self, identifier):
         async with self.identity.access("file:inspect") as (session, auth):
-            file = await session.get(File, identifier)
-            await policy.require(session, auth, file, "inspect")
-            return view(file)
+            return await self.metadata_in_transaction(session, auth, identifier)
+
+    async def metadata_in_transaction(self, session, auth, identifier, *, manage=False, lock=False):
+        """Current public metadata in a caller-authorized identity transaction.
+
+        Optional management checking and row pinning do not imply content access.
+        Lock multiple files in ID order, respecting the enclosing Flow/budget locks.
+        No independent transaction, commit, storage access or private file fields.
+        """
+        file = (
+            await policy.locked(session, identifier)
+            if lock
+            else await session.get(File, identifier, populate_existing=True)
+        )
+        await policy.require(session, auth, file, "inspect")
+        if manage:
+            await policy.require(session, auth, file, "manage")
+        return view(file)
 
     async def upload(self, data, content):
         return await self._upload_content(data, content)

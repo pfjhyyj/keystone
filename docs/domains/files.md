@@ -266,6 +266,8 @@ FileService.transfer() 取得本机跨进程槽位，返回仅在该作用域内
 
 ### 事务组合入口
 
+`FileService.metadata_in_transaction(session, auth, file_id, manage=False, lock=False)` 在调用方身份事务内核对当前 inspect 权限及对象范围，返回与普通详情相同的公开字段；不读取文件内容，也不暴露物理定位。`manage=True` 额外核对当前管理权限，`lock=True` 按现有文件行锁固定记录。多个文件按 ID 排序，并遵守 Flow／模型／预算先于 File 的锁序。原 HTTP 详情复用此入口；业务仍需按其用途检查内容读取资格并登记引用，元数据查询不授予内容或管理权限。
+
 `FileReferenceService(identity).release_in_transaction(session, auth, references)` 接收可信业务已经授权的精确 `(owner, slot, file_id)` 清单，按文件 ID 排序锁定后解除引用。只删除三个键都匹配的使用记录，去重及重复调用不重复审计，不按 owner 前缀清空。每条实际移除的引用记录 `file.reference` 成功审计，并保留用户、PAT 与 correlation_id。与 `FileReferences.release` 一样，解除已授权业务自身的使用记录不要求重新取得内容读取或对象管理授权；它不授予文件访问权。owner、slot 和文件清单必须由业务服务核对，不能从客户端直接透传，也不开放 HTTP 引用释放接口。
 
 `FileService.request_delete_in_transaction(session, auth, file_id)` 在当前身份事务内检查 `file:manage`、文件对象管理授权及剩余引用，再标记 `deleting` 并记录删除受理审计。原 HTTP 删除复用同一入口，权限、上传中/失败文件的删除、重复受理及 deleted 墓碑行为保持不变，不提供跳过文件授权的参数。已删除文件的业务回执恢复应由调用方根据自己冻结的业务清单确认，不把它变成通用文件授权例外。
