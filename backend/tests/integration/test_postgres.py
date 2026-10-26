@@ -122,7 +122,6 @@ def test_initial_schema_is_complete_reversible_and_preserves_dbos(empty_database
         ("0005", {"model_channels", "model_entries", "model_invocations", "model_dispatch_scopes"}),
         ("0006", {"flow_runs", "flow_run_budgets", "flow_budget_claims"}),
         ("0007", {"worker_registrations", "worker_heartbeats"}),
-        ("0008", set()),
     ]
     tables = set().union(*(tables for _, tables in domains))
     config = migration_config(Settings(config_file=None, database_url=empty_database_url))
@@ -159,7 +158,7 @@ def test_initial_schema_is_complete_reversible_and_preserves_dbos(empty_database
         with engine.connect() as connection:
             assert (
                 connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
-                == "0008"
+                == "0007"
             )
         for index in reversed(range(len(domains))):
             command.downgrade(config, domains[index - 1][0] if index else "base")

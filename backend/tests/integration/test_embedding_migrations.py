@@ -1,4 +1,4 @@
-"""Embedding constraints are additive and cannot silently discard existing facts."""
+"""The model baseline supports embeddings and preserves their facts across the chain."""
 
 import pytest
 from alembic import command
@@ -9,7 +9,7 @@ from test_model_flow_migrations import model_baseline as model_baseline
 pytestmark = pytest.mark.postgres
 
 
-def test_embedding_upgrade_preserves_existing_records_and_guards_downgrade(model_baseline):
+def test_embedding_baseline_roundtrip_preserves_existing_records(model_baseline):
     config, engine = model_baseline
     tables = ("model_channels", "model_entries", "model_invocations", "model_dispatch_scopes")
 
@@ -20,13 +20,8 @@ def test_embedding_upgrade_preserves_existing_records_and_guards_downgrade(model
                 for name in tables
             }
 
-    before = facts()
-    command.upgrade(config, "head")
-    assert facts() == before
-    command.downgrade(config, "0007")
-    assert facts() == before
-    command.upgrade(config, "head")
     with engine.begin() as connection:
+        assert connection.scalar(text("SELECT version_num FROM keystone.alembic_version")) == "0005"
         connection.execute(
             text("""INSERT INTO keystone.model_entries
         (id,key,channel_id,provider_model,operations,is_active)
@@ -43,8 +38,13 @@ def test_embedding_upgrade_preserves_existing_records_and_guards_downgrade(model
         'unknown','{}','{}')""")
         )
     with_embedding = facts()
-    with pytest.raises(RuntimeError, match="Embedding records require"):
-        command.downgrade(config, "0007")
-    assert facts() == with_embedding
-    with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM keystone.alembic_version")) == "0008"
+    for _ in range(2):
+        command.upgrade(config, "head")
+        assert facts() == with_embedding
+        command.downgrade(config, "0005")
+        assert facts() == with_embedding
+        with engine.connect() as connection:
+            assert (
+                connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
+                == "0005"
+            )
