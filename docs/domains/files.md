@@ -276,6 +276,16 @@ FileService.transfer() 取得本机跨进程槽位，返回仅在该作用域内
 
 `FileGrantService.grant_in_transaction(session, auth, file_id, data, grant_id=...)` 在调用方当前身份事务内新增或撤销授权，仍检查功能权限、文件 manage 范围、目标主体与生命周期。调用方从 `AccessContext.access()` 取得 session/auth，完成业务对象授权后传入；内部不提交、不另开事务。与 `FileReferences`、业务记录及 `FlowService.start_in_transaction` 一起提交或回滚，成功审计在同一事务；HTTP 原入口继续自管事务。
 
+可信业务维护任务可使用 `FileReferenceService.retire_in_transaction`，在同事务中释放精确引用并登记派生产物删除。调用方持业务锁，证明保留期限已到、相关执行已结束及每条引用归其所有；`claims_in_transaction` 可在调用方授权精确 owner 后有界查询其引用，仅返回 owner／slot／文件 ID，不代替清理授权。先用 `validate_retirement_scope` 核对清单上限，再持全部待删产物的排他 OS 租约直至事务提交。
+
+服务按文件 ID 排序加锁，核对所属用户及当前引用；外部引用、归属不符或未被清单实际引用的 active/disabled 文件使整组返回 `False`，不释放部分引用。待删内容以外的输入仅解除批准的引用，不删除原文件。成功、审计与业务回执必须同事务提交；物理删除沿用文件维护，崩溃后继续原清单。原文件已处于 deleting/deleted 时允许幂等核对。
+
+该入口只供代码内显式装配的系统维护，使用 system 审计，不依赖原用户继续有效；不能连接到任意用户请求，也不扩展用户的 file:manage 权限。普通业务操作继续使用原身份的 `release_in_transaction` 和 `request_delete_in_transaction`。平台不定义业务保留天数、不扫描业务表，也不自动判定哪些文件应当过期。
+
+### 本地文件定位
+
+本地业务确需定位原文件时，可显式调用 `FileService.local_origin(file_id)`：要求当前 `file:inspect`、`file:content_read` 及对应对象授权，只接受有实际本地目录的 filesystem 源；按现有有界读取核验内容，并在返回前复查权限和存储定位。返回实际路径、大小和校验和，不返回存储凭据，不提供新的通用 HTTP 路由，也不向普通文件元数据加入路径。部署角色准入由调用方负责；NAS 允许目录及原片身份属于业务规则。核验期间取消沿用文件读取的 I/O 收尾与租约释放规则。
+
 整文件字节读取入口 `FileService.content` 默认限制为 64 MiB，显式 max_bytes 也必须为非负上限；媒体调用使用流式读取或 Worker 落盘入口，上传容量扩展不会自动放大内存读取上限。
 
 

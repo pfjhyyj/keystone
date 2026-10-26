@@ -441,6 +441,35 @@ class FileService:
                         )
                     yield ContentReader(*metadata, stream)
 
+    async def local_origin(self, identifier):
+        """Explicit local integration only; ordinary metadata never includes a path.
+
+        Both inspect and content authority are current, including after native I/O.
+        Only a locally mounted filesystem source can resolve a location. Deployment
+        admission belongs to the caller; this service has no cloud/business roles.
+        """
+        async with self.identity.access("file:inspect") as (session, auth):
+            file = await session.get(File, identifier)
+            await policy.require(session, auth, file, "inspect")
+            await policy.require(session, auth, file, "content_read")
+            source = self.storage.get(file.storage_key)
+            if source.config.driver != "filesystem" or source.root is None:
+                raise ServiceError(409, "local_file_required", "文件不在本地受管存储中")
+            path = source.root / file.object_key
+            location = file.storage_key, file.object_key, file.storage_fingerprint
+        async with self.open_content(identifier) as reader:
+            async with self.identity.access("file:inspect") as (session, auth):
+                file = await session.get(File, identifier)
+                await policy.require(session, auth, file, "inspect")
+                await policy.require(session, auth, file, "content_read")
+                if (file.storage_key, file.object_key, file.storage_fingerprint) != location:
+                    raise ServiceError(409, "file_changed", "文件定位已变化，请重新查询")
+                return {
+                    "path": str(path.absolute()),
+                    "size_bytes": reader.size,
+                    "checksum_sha256": reader.checksum,
+                }
+
     async def edit(self, identifier, data):
         async with self.identity.access(
             "file:manage", action="file.update", target="file", target_id=identifier

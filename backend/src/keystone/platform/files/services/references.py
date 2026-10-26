@@ -3,9 +3,10 @@
 import hashlib
 from uuid import UUID
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, tuple_
 
 from keystone.core.errors import ServiceError
+from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor, record
 from keystone.platform.files.models import File, FileReference
@@ -103,6 +104,113 @@ class FileReferences:
 class FileReferenceService:
     def __init__(self, identity: AccessContext):
         self.identity = identity
+
+    async def claims_in_transaction(self, session, owners):
+        """Trusted caller authorizes each exact business/Run owner before lookup.
+
+        Bounded ID/slot projection only. No HTTP owner selector, storage location,
+        content grant or deletion authority; the caller still approves retirement.
+        """
+        keys = set(owners)
+        if len(keys) > 500 or any(not isinstance(k, str) or not 1 <= len(k) <= 160 for k in keys):
+            raise ServiceError(422, "file_reference_limit", "引用核对范围过大")
+        rows = list(
+            (
+                await session.execute(
+                    select(FileReference.owner, FileReference.slot, FileReference.file_id)
+                    .where(FileReference.owner.in_(keys))
+                    .order_by(FileReference.file_id, FileReference.owner, FileReference.slot)
+                    .limit(5001)
+                )
+            ).all()
+        )
+        if len(rows) > 5000:
+            raise ServiceError(422, "file_reference_limit", "引用核对范围过大")
+        return [tuple(row) for row in rows]
+
+    @staticmethod
+    def validate_retirement_scope(references, artifacts):
+        """Normalize a bounded, exact maintenance manifest before acquiring leases."""
+        raw_claims, raw_ids = set(references), set(artifacts)
+        if len(raw_claims) > 5000 or len(raw_ids) > 500:
+            raise ServiceError(422, "file_reference_limit", "清理范围过大")
+        claims, ids = set(), {UUID(str(value)) for value in raw_ids}
+        for owner, slot, identifier in raw_claims:
+            if (
+                not isinstance(owner, str)
+                or not 1 <= len(owner) <= 160
+                or not isinstance(slot, str)
+                or not 1 <= len(slot) <= 100
+            ):
+                raise ValueError("Invalid reference key")
+            claims.add((owner, slot, UUID(str(identifier))))
+        if len(ids | {claim[2] for claim in claims}) > 1000:
+            raise ServiceError(422, "file_reference_limit", "清理范围过大")
+        return claims, ids
+
+    async def retire_in_transaction(self, session, *, references, artifacts, owner_id):
+        """Trusted system maintenance only, never an HTTP or user-authorized shortcut.
+
+        Caller proves business expiry/terminal execution under its business locks,
+        and holds exclusive artifact OS leases through transaction commit. This
+        method knows no expiry policy and performs no storage I/O or commit.
+        Foreign usage, wrong ownership or unproven active artifacts defer the whole
+        group. Input claims may be released without deleting their content.
+        """
+        claims, ids = self.validate_retirement_scope(references, artifacts)
+        owner_id = UUID(str(owner_id))
+        files = {}
+        for identifier in sorted(ids | {claim[2] for claim in claims}):
+            file = await policy.locked(session, identifier)
+            if identifier in ids:
+                if file.owner_id != owner_id or file.status not in {
+                    "active",
+                    "disabled",
+                    "deleting",
+                    "deleted",
+                }:
+                    return False
+                files[identifier] = file
+        statement = select(FileReference.file_id).where(FileReference.file_id.in_(ids))
+        if claims:
+            statement = statement.where(
+                tuple_(FileReference.owner, FileReference.slot, FileReference.file_id).not_in(
+                    claims
+                )
+            )
+        if await session.scalar(statement.limit(1)):
+            return False
+        proven = set(
+            await session.scalars(
+                select(FileReference.file_id).where(FileReference.file_id.in_(ids)).distinct()
+            )
+        )
+        if any(f.status in {"active", "disabled"} and f.id not in proven for f in files.values()):
+            return False
+        for owner, slot, identifier in sorted(claims):
+            result = await session.execute(
+                delete(FileReference).where(
+                    FileReference.owner == owner,
+                    FileReference.slot == slot,
+                    FileReference.file_id == identifier,
+                )
+            )
+            if result.rowcount:
+                await audit.record(
+                    session,
+                    "file.reference",
+                    Actor("system"),
+                    "file",
+                    identifier,
+                    details={"owner": owner, "slot": slot, "added": False},
+                )
+        for identifier, file in files.items():
+            if file.status in {"active", "disabled"}:
+                file.status, file.updated_at, file.updated_by = "deleting", utcnow(), None
+                await audit.record(
+                    session, "file.delete.request", Actor("system"), "file", identifier
+                )
+        return True
 
     async def flow_diagnostics_in_transaction(self, session, auth, run_id, offset, limit):
         """Trusted caller authorizes this Run under its current identity transaction.
