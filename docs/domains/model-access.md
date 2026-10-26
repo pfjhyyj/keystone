@@ -455,7 +455,7 @@ keystone recover-model-calls --confirm-api-stopped
 
 ### 5.7 OpenRouter 接入
 
-沿用现有 OpenAI SDK、受控 transport 和 OpenRouter 费用适配，不增加网关、SDK 依赖或领域表。实际发送使用 httpx2.AsyncHTTPTransport(retries=0, trust_env=False)，SDK 同样禁止重试；忽略 Retry-After，不自动重发计费请求。只允许 `https://openrouter.ai/api/v1`，发送前逐次核对完整地址、POST /chat/completions 和固定模型；账务查询只允许 GET /generation、GET /credits，拒绝跳转和自定义代理地址。
+沿用现有 OpenAI SDK、受控 transport 和 OpenRouter 费用适配，不增加网关、SDK 依赖或领域表。实际发送使用 httpx2.AsyncHTTPTransport(retries=0, trust_env=False)，SDK 同样禁止重试；忽略 Retry-After，不自动重发计费请求。只允许 `https://openrouter.ai/api/v1`，发送前逐次核对完整地址、POST /chat/completions、/embeddings 和固定模型；账务查询只允许 GET /generation、GET /credits，拒绝跳转和自定义代理地址。
 
 | 能力 | 凭据与口径 |
 |---|---|
@@ -478,6 +478,7 @@ ModelRole.operation 描述需要执行的操作。ModelEntry.operations 描述�
 | operation | 请求 | 结果 | 当前状态 |
 |---|---|---|---|
 | text.generate | TextRequest | TextResult | 已实现 |
+| text.embed | EmbeddingRequest | EmbeddingResult | OpenRouter、NewAPI 的同步 /embeddings 协议，模型须显式声明 |
 | text.structured | StructuredRequest | StructuredResult | OpenRouter、NewAPI、Openlux/Yunwu 的兼容 Chat Completions；模型须显式声明，本地严格校验结果；OpenRouter 另要求 provider.require_parameters |
 | image.understand | VisionRequest（受控 File ID） | TextResult | OpenRouter、NewAPI、Openlux/Yunwu 的兼容 Chat Completions；仅受权 PNG/JPEG/WebP，模型须显式声明该操作 |
 | image.generate | ImageGenerateRequest（sync）/ ImageTaskRequest（async） | ImageResult（File ID）/ ImageTask | OpenRouter、Yunwu/Openlux 同步及 OpenLux Kling 异步已实现 |
@@ -694,3 +695,11 @@ usage 按上游提供的已知计量保存；新增图片数量或视频计费�
 渠道适配不增加表结构、独立包或新配置字段；当前完整迁移基线及旧库切换规则见[迁移说明](../../backend/migrations/README.md)。provider、Selection、Flow 快照、图片回执/Manifest 和费用证据继续使用原格式，历史不改写、不推测回填。代码及其目录变化仍影响 execution_version，旧在途运行遵守第 8.7 节。
 
 测试覆盖协议代码的依赖边界、多个渠道复用文本协议时的不同回执/费用口径、Agent 参数来自渠道代码、登记先于渠道鉴权和发送、能力与目录/发送一致、协议错误到宿主错误的转换，并保留真实 PostgreSQL/DBOS 的旧快照、原任务恢复、未知不重发、取消、共享容量及费用核对回归。自动验证使用本地协议桩，不触发付费调用；视频与独立分发待具体实现后再验证。
+
+### 8.9 文本向量
+
+`ModelRuntime.invoke_embedding` 与持久 Step 内的 `FlowContext.invoke_embedding(role, request, node_key=...)` 使用 `EmbeddingRequest(texts, dimensions)`；Runtime 返回向量，Flow 返回包含向量和原调用 ID 的 `EmbeddingResult`。每次 1～16 条非空文本，每条最多 8 KiB、合计最多 32 KiB，维度 1～4096；编码固定 float，所选模型须支持请求维度。只装配 OpenRouter／NewAPI 已有兼容协议，不按模型名推断能力，也不自动修改已有条目。
+
+实际报文在登记前核对字段、模型和目标；结果检查模型、输入序号、数量、维度、有限数值和非零向量。响应继续使用现有 4 MiB 上限。沿用当前用户／PAT、固定角色绑定、稳定调用 ID、发送登记、预算、实际用量与费用；计入模型请求及实际输入 token，输入用量未知时阻止继续发送，不预留输出 token。模型调用账本不存文本／向量正文；Flow 输入、输出与检查点仍遵循原生持久化规则，不建立通用向量库或索引任务。
+
+已发送但缺少持久结果时保留原调用事实，拒绝自动重发；原 Step 检查点或业务已保存的完整结果可按各自授权恢复。取消和撤权阻止后续操作，真实发送与费用受限收尾。较大的向量不能直接塞进 64 KiB Flow 输出，业务按需保存受控文件或自己的派生索引，并负责对象权限、索引更新及过期结果拒绝。

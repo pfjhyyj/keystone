@@ -163,12 +163,15 @@ def test_budget_reservation_rolls_back_with_its_callers_transaction(client):
 
 
 @pytest.mark.parametrize("reported", [None, 12])
-def test_token_settlement_keeps_original_facts_and_does_not_refund_output(client, reported):
+@pytest.mark.parametrize("operation,output", [("text.generate", 16), ("text.embed", 0)])
+def test_token_settlement_keeps_original_facts_and_does_not_refund_output(
+    client, reported, operation, output
+):
     response, _ = accept(client, limits=FlowLimits(input_tokens=10, output_tokens=16))
     run_id = UUID(response.json()["id"])
     budget = FlowBudgetService(identity(client, run_id))
     identifier = uuid4()
-    request = ModelRequestBudget(operation="text.generate", max_output_tokens=16)
+    request = ModelRequestBudget(operation=operation, max_output_tokens=output)
 
     async def reserve():
         async with budget.identity.access() as (session, _):
@@ -185,7 +188,7 @@ def test_token_settlement_keeps_original_facts_and_does_not_refund_output(client
     client.portal.call(settle)
     client.portal.call(settle)
     current = query(client, lambda s: s.get(FlowRunBudget, run_id))
-    assert current.counters["model_requests"] == 1 and current.counters["output_tokens"] == 16
+    assert current.counters["model_requests"] == 1 and current.counters["output_tokens"] == output
     assert current.counters["input_tokens"] == (reported or 0)
     assert current.counters["unreported_text_requests"] == int(reported is None)
     if reported is not None:

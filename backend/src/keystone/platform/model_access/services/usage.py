@@ -3,7 +3,7 @@
 from sqlalchemy import select
 
 from keystone.platform.model_access.models import ModelInvocation
-from keystone.platform.model_access.schemas.budgets import TEXT_OPERATIONS
+from keystone.platform.model_access.schemas.budgets import TOKEN_OPERATIONS
 
 
 async def has_unreported_completed_text_in_transaction(session, run_id):
@@ -12,7 +12,7 @@ async def has_unreported_completed_text_in_transaction(session, run_id):
             select(ModelInvocation.id)
             .where(
                 ModelInvocation.flow_context["flow_run_id"].astext == str(run_id),
-                ModelInvocation.operation.in_(TEXT_OPERATIONS),
+                ModelInvocation.operation.in_(TOKEN_OPERATIONS),
                 ModelInvocation.status != "running",
                 ModelInvocation.usage["input_tokens"].astext.is_(None),
             )

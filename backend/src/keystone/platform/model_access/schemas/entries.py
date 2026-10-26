@@ -17,7 +17,7 @@ class EntryEdit(Input):
     channel_id: UUID
     provider_model: ModelName
     is_active: bool = True
-    operations: list[Operation] | None = Field(default=None, min_length=1, max_length=5)
+    operations: list[Operation] | None = Field(default=None, min_length=1, max_length=6)
 
     @field_validator("operations")
     @classmethod
@@ -30,7 +30,7 @@ class EntryEdit(Input):
 class EntryCreate(EntryEdit):
     key: Key
     operations: list[Operation] = Field(
-        default_factory=lambda: ["text.generate"], min_length=1, max_length=5
+        default_factory=lambda: ["text.generate"], min_length=1, max_length=6
     )
 
 

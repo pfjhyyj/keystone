@@ -12,9 +12,9 @@ class ModelEntry(Base):
     __tablename__ = "model_entries"
     __table_args__ = (
         CheckConstraint(
-            "jsonb_typeof(operations) = 'array' AND jsonb_array_length(operations) BETWEEN 1 AND 5 "
+            "jsonb_typeof(operations) = 'array' AND jsonb_array_length(operations) BETWEEN 1 AND 6 "
             'AND operations <@ \'["text.generate","text.structured","image.understand",'
-            '"image.generate","image.edit"]\'::jsonb',
+            '"image.generate","image.edit","text.embed"]\'::jsonb',
             name="model_entry_operations",
         ),
     )

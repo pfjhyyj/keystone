@@ -9,6 +9,7 @@ from keystone.platform.model_access.adapters.billing.newapi import Newapi
 from keystone.platform.model_access.adapters.billing.openlux import Openlux
 from keystone.platform.model_access.adapters.billing.openrouter import OpenRouter
 from keystone.platform.model_access.adapters.billing.yunwu import Yunwu
+from keystone.platform.model_access.adapters.inference.embeddings import Embeddings
 from keystone.platform.model_access.adapters.inference.kling import KlingImages
 from keystone.platform.model_access.adapters.inference.openai_images import OpenAIImages
 from keystone.platform.model_access.adapters.inference.protocols import (
@@ -55,6 +56,7 @@ class ChannelAdapter:
 
 # Multiple channel types reuse the same compatible implementation, with explicit limits.
 CHAT = ChatCompletions(frozenset({"text.generate", "text.structured", "image.understand"}))
+EMBEDDINGS = Embeddings()
 RELAY_IMAGES = OpenAIImages()
 CHANNELS = {
     "openrouter": ChannelAdapter(
@@ -62,6 +64,7 @@ CHANNELS = {
         (
             replace(CHAT, require_parameters=True),
             OpenRouterImages(),
+            EMBEDDINGS,
         ),
         OpenRouter(),
         models_path="/models",
@@ -75,7 +78,9 @@ CHANNELS = {
     "yunwu": ChannelAdapter(
         "https://yunwu.ai/v1", (CHAT, RELAY_IMAGES), Yunwu(), models_path="/models"
     ),
-    "newapi": ChannelAdapter("https://newapiai.com/v1", (CHAT,), Newapi(), models_path="/models"),
+    "newapi": ChannelAdapter(
+        "https://newapiai.com/v1", (CHAT, EMBEDDINGS), Newapi(), models_path="/models"
+    ),
     # Billing declarations are retained; no inference protocol is installed for these yet.
     "deepseek": ChannelAdapter("https://api.deepseek.com", (), DeepSeek()),
     "aliyun_bailian": ChannelAdapter(

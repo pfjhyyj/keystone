@@ -3,7 +3,12 @@
 from typing import Literal, get_args
 
 Operation = Literal[
-    "text.generate", "text.structured", "image.understand", "image.generate", "image.edit"
+    "text.generate",
+    "text.structured",
+    "text.embed",
+    "image.understand",
+    "image.generate",
+    "image.edit",
 ]
 Delivery = Literal["sync", "async"]
 

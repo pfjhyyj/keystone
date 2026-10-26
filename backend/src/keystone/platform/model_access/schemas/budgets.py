@@ -6,6 +6,7 @@ from keystone.core.schemas import Input
 from keystone.platform.model_access.schemas.operations import Operation
 
 TEXT_OPERATIONS = frozenset({"text.generate", "text.structured", "image.understand"})
+TOKEN_OPERATIONS = TEXT_OPERATIONS | {"text.embed"}
 
 
 class ModelRequestBudget(Input):

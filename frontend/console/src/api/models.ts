@@ -20,10 +20,16 @@ export interface Channel {
 }
 export type ModelDelivery = 'sync' | 'async'
 export type ModelOperation =
-  'text.generate' | 'text.structured' | 'image.understand' | 'image.generate' | 'image.edit'
+  | 'text.generate'
+  | 'text.structured'
+  | 'text.embed'
+  | 'image.understand'
+  | 'image.generate'
+  | 'image.edit'
 export const operationLabels: Record<ModelOperation, string> = {
   'text.generate': '文本生成',
   'text.structured': '结构化文本',
+  'text.embed': '文本向量',
   'image.understand': '图片理解',
   'image.generate': '图片生成',
   'image.edit': '图片编辑',

@@ -10,7 +10,7 @@ from keystone.core.time import utcnow
 from keystone.platform.flow.models import FlowBudgetClaim, FlowRun, FlowRunBudget
 from keystone.platform.flow.schemas.budgets import BudgetCounters, ClaimKind, FlowLimits
 from keystone.platform.flow.schemas.snapshots import read_snapshot
-from keystone.platform.model_access.schemas.budgets import ModelRequestBudget
+from keystone.platform.model_access.schemas.budgets import TOKEN_OPERATIONS, ModelRequestBudget
 from keystone.platform.model_access.services.usage import (
     has_unreported_completed_text_in_transaction,
 )
@@ -138,7 +138,8 @@ class FlowBudgetService:
         row = await budget_in_transaction(session, self.run_id)
         if row is None:
             return
-        if request.max_output_tokens and (
+        uses_tokens = request.operation in TOKEN_OPERATIONS
+        if uses_tokens and (
             row.counters["input_tokens"] >= row.limits["input_tokens"]
             or await has_unreported_completed_text_in_transaction(session, self.run_id)
         ):
@@ -151,7 +152,7 @@ class FlowBudgetService:
             amounts={
                 "model_requests": 1,
                 "output_tokens": request.max_output_tokens,
-                "unreported_text_requests": int(request.max_output_tokens > 0),
+                "unreported_text_requests": int(uses_tokens),
             },
             request_digest=digest(request.model_dump()),
         )

@@ -230,6 +230,10 @@ class InferenceClient:
         with adapter_errors():
             return await self.protocol(selected).vision(sdk, selected, data, images, blocking)
 
+    async def embedding(self, sdk, selected, data):
+        with adapter_errors():
+            return await self.protocol(selected).invoke(sdk, selected, data)
+
     def sdk_settings(self, selected, settings):
         if selected.provider is None:
             # Legacy snapshots did not select provider-specific Agent settings.

@@ -24,7 +24,7 @@ class ModelInvocation(Base):
         ),
         CheckConstraint(
             "operation IN ('text.generate','text.structured','image.understand',"
-            "'image.generate','image.edit')",
+            "'image.generate','image.edit','text.embed')",
             name="invocation_operation",
         ),
         CheckConstraint(

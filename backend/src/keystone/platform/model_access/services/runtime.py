@@ -113,6 +113,24 @@ class ModelRuntime:
         ).encode()
         return hashlib.sha256(raw).hexdigest()
 
+    async def invoke_embedding(self, data, *, selection, invocation_id, context, worker_identity):
+        from keystone.platform.model_access.schemas.embeddings import EmbeddingRequest
+
+        data = EmbeddingRequest.model_validate(data.model_dump(mode="json"))
+        if selection.operation != "text.embed" or selection.delivery != "sync":
+            raise ServiceError(409, "model_operation_unavailable", "模型角色不支持向量操作")
+
+        async def request(sdk):
+            return await self.clients.inference.embedding(sdk, selection, data)
+
+        return await self.invoke_sdk(
+            selection=selection,
+            invocation_id=invocation_id,
+            sdk_request=request,
+            flow_context=context,
+            worker_identity=worker_identity,
+        )
+
     async def image_manifest(self, identifier, *, data, selection, context):
         async with self.identity.access("model:invoke") as (session, auth):
             row = await session.get(ModelInvocation, identifier)

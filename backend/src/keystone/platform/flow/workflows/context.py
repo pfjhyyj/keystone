@@ -454,6 +454,28 @@ class FlowContext:
         identifier, content = await self._text(role, request, node_key=node_key)
         return TextResult(invocation_id=identifier, content=content)
 
+    async def invoke_embedding(self, role, request, *, node_key):
+        from keystone.platform.model_access.schemas.embeddings import (
+            EmbeddingRequest,
+            EmbeddingResult,
+        )
+
+        if isinstance(request, EmbeddingRequest):
+            request = request.model_dump(mode="json")
+        request = EmbeddingRequest.model_validate(request)
+        model, selected, identifier = await self._model(role, operation="text.embed")
+        vectors = await model.invoke_embedding(
+            request,
+            selection=selected,
+            invocation_id=identifier,
+            context=self._invocation_context(role, node_key=node_key),
+            worker_identity=_runtime().worker_identity,
+        )
+        # The completed attempt keeps its receipts; cancellation/revocation must
+        # still prevent exposing these vectors to a new business publication.
+        await self.check(permissions=("model:invoke",))
+        return EmbeddingResult(invocation_id=identifier, vectors=vectors)
+
     async def submit_image(self, role, request, *, node_key):
         from keystone.platform.model_access.schemas.images import ImageTaskRequest
         from keystone.platform.model_access.services.image_tasks import ImageTaskService

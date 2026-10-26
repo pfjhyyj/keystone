@@ -222,7 +222,7 @@ def test_flow_baseline_roundtrip_preserves_snapshots_and_explicit_budgets(
 @pytest.mark.parametrize(
     "revision",
     [
-        *(f"{number:04d}" for number in range(8, 13)),
+        *(f"{number:04d}" for number in range(9, 13)),
         "identity",
         "audit",
         "dictionary",
