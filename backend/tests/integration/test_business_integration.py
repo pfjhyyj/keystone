@@ -593,7 +593,7 @@ def test_business_audit_whitelist_transaction_and_identity(business_client):
 
     async def save(details, *, fail=False):
         async with context.access(
-            WRITE, write=True, action=ACTION, target="test_notes.note", target_id="42"
+            WRITE, action=ACTION, target="test_notes.note", target_id="42"
         ) as (session, auth):
             # Test-only business write: no permanent entity or migration is introduced.
             await session.execute(text("CREATE TABLE keystone.test_notes_probe (id integer)"))

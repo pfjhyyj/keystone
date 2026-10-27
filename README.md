@@ -133,4 +133,6 @@ API 和 Worker 共用[后端镜像](backend/Dockerfile)，分别执行 `keystone
 | 数据与文件联合备份 | [备份与恢复](docs/backup-restore.md) |
 | 架构与平台边界 | [架构说明](docs/architecture.md) |
 | 新增业务、权限、迁移和 Flow | [新增业务](docs/extending.md) |
+| 从脚手架接入第一个业务页面 | [最小业务接入](docs/business-quickstart.md) |
+| 凭据、审计及维护任务历史保留 | [历史清理](docs/history-retention.md) |
 | 身份、文件、模型和 Flow | [领域索引](docs/README.md#按领域阅读) |

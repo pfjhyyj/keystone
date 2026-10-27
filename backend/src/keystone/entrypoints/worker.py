@@ -84,7 +84,7 @@ async def run_executor(runtime, stop, *, ready, health):
             queues, installers = register_maintenance(runtime, health)
             from keystone.platform.flow.workflows import bootstrap as flow_worker
 
-            register_workflows()
+            register_workflows(runtime)
             await stack.enter_async_context(flow_worker.prepare(runtime, lease=lease))
             queues[flow_worker.QUEUE] = (
                 runtime.settings.flow_worker_concurrency,

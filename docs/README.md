@@ -12,6 +12,8 @@ Keystone 面向单企业内部多个业务模块，采用模块化单体：业�
 | Flow 契约、角色、恢复、预算与诊断 | [Flow 领域](domains/flow.md) |
 | Flow/Agent 的实际接入示例 | [Flow 开发](flow-development.md) |
 | 新业务、权限、审计与迁移 | [模块扩展](extending.md) |
+| 第一个业务从生成到页面与测试 | [最小业务接入](business-quickstart.md) |
+| 凭据、审计及维护任务历史保留 | [历史清理](history-retention.md) |
 | 配置、发布与恢复 | [配置](configuration.md)、[部署](deployment.md)、[备份恢复](backup-restore.md) |
 | 开发、测试和迁移规范 | [开发](development.md)、[测试](../backend/tests/README.md)、[迁移](../backend/migrations/README.md) |
 

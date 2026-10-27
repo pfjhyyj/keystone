@@ -100,7 +100,11 @@ API 按未退役身份登记计算预期数量并自动发现新 Worker，无需
 
 进程健康与共享维护分开：进程检查依赖、DBOS 和队列；共享维护聚合实际执行过的文件清理、Flow 协调及费用扫描结果。任一同版本实例成功扫描即可更新共享结果，空闲实例不因未亲自扫描误报。普通心跳不能刷新陈旧的任务结果，依赖检查也不能掩盖共享维护故障。供应商待出账、限流或 Token 失效保留为费用状态，不等同 Worker 故障。
 
-GET /api/v1/worker/status 返回总体 status、last_heartbeat_at、instances、maintenance、ready_workers 和 expected_workers，控制台每 5 秒刷新并分开展示。未退役身份缺失、不同版本、过期或未就绪时，不能被另一个 ready 实例掩盖；退役身份单独展示且不计入预期数量，没有登记成员时总体为 offline。API /api/v1/ready 只检查自身数据库、schema 与存储，不受 Worker 观测影响。
+GET /api/v1/worker/status 要求当前有效登录身份（会话或 PAT，仍检查用户状态及强制改密），返回总体 status、last_heartbeat_at、instances、maintenance、ready_workers 和 expected_workers，控制台每 5 秒刷新并分开展示。匿名或失效凭据不能读取实例明细；公开的 health/ready 探针继续可用，Worker CLI 直接检查数据库，不使用浏览器会话。未退役身份缺失、不同版本、过期或未就绪时，不能被另一个 ready 实例掩盖；退役身份单独展示且不计入预期数量，没有登记成员时总体为 offline。API /api/v1/ready 只检查自身数据库、schema 与存储，不受 Worker 观测影响。
+
+响应的 backlog 分别报告 pending 状态待协调 Flow、待清理文件和已到查费时间的调用数量、最早时间及距今秒数。Flow 使用创建时间，文件使用最近更新时间，查费使用下次应查时间；文件重试会更新最近更新时间，因此不能将其解释为首次请求后的累计等待。正在运行的 Flow 不计作 pending 积压，已删除 S3 对象的例行残留核对不计作待清理积压。各领域独立查询，失败返回 unknown 和空值，不能当作零或覆盖其他领域已确认的状态。这些观测也不改变 Worker 的进程/维护健康结论。查询前后复查身份，避免撤权期间返回实例或积压数据。
+
+每个 HTTP 请求完成后记录 `http_request` JSON 日志，包含 request_id、方法、路由模板、真实响应状态码、耗时毫秒及 completed/interrupted。流式响应头已发送后失败仍记录原状态及 interrupted，不伪造 500；日志不记录实际路径参数、查询参数、请求体或凭据。历史保留和有界清理见[历史清理](history-retention.md)。
 
 从 backend/ 执行，探针与运行 Worker 使用同一身份环境；以下为 Linux/macOS 示例：
 

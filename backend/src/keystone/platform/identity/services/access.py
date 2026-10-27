@@ -22,7 +22,7 @@ class AccessContext:
         self,
         permission=None,
         *,
-        write=False,
+        identity_write=False,
         action=None,
         target=None,
         target_id=None,
@@ -33,7 +33,7 @@ class AccessContext:
         credential_id = None
         try:
             async with self.database.transaction() as session:
-                await identity_lock(session, write=write)
+                await identity_lock(session, identity_write=identity_write)
                 auth = await self.authorize(session)
                 actor = Actor("user", auth.user.id)
                 credential_id = auth.credential.id if auth.kind == "pat" else None

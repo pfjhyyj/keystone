@@ -30,7 +30,7 @@ class TokenService:
 
     async def issue_token(self, data):
         action = "identity.pat.issue"
-        async with self.context.access(write=True, session_only=True, action=action) as (
+        async with self.context.access(identity_write=True, session_only=True, action=action) as (
             session,
             auth,
         ):
@@ -64,7 +64,7 @@ class TokenService:
     async def revoke_token(self, identifier):
         action = "identity.pat.revoke"
         async with self.context.access(
-            write=True,
+            identity_write=True,
             session_only=True,
             action=action,
             target="identity.pat",

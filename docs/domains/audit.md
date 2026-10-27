@@ -112,7 +112,7 @@ AccessContext 成功取得授权上下文后，失败或拒绝日志与成功日
 
 GET /api/v1/audit-logs 要求 audit:read，支持 since/until、actor_type/actor_id、action、target_type/target_id、outcome、offset/limit，按 occurred_at、id 倒序返回。不提供客户端写入、修改或删除 API，也不依赖目标当前行。当前身份 action 目录统一为 identity.login/logout、identity.password.change/reset、identity.user.create/update/enable/disable、identity.credentials.revoke、identity.role.create/update/delete/assign、identity.pat.issue/revoke、identity.admin.initialize。
 
-文件和字典已接入同一入口：file.upload.start/complete/failure/residue_cleanup、file.update、file.grant、file.reference、file.delete.request/complete、file.cleanup.failure，以及 dictionary.definition/item 的 create/update。用户发起的资料、授权、引用变更和删除请求记录实际用户（PAT 附 credential_id）；上传事实确认、清理及可信引用补齐记录 system。删除完成日志保留 file_id、授权清理范围及数量；失败清理不移除授权。Flow 事实同步已接入；审计保留期清理仍未启用。
+文件和字典已接入同一入口：file.upload.start/complete/failure/residue_cleanup、file.update、file.grant、file.reference、file.delete.request/complete、file.cleanup.failure，以及 dictionary.definition/item 的 create/update。用户发起的资料、授权、引用变更和删除请求记录实际用户（PAT 附 credential_id）；上传事实确认、清理及可信引用补齐记录 system。删除完成日志保留 file_id、授权清理范围及数量；失败清理不移除授权。Flow 事实同步已接入；审计保留期清理已提供，自动删除默认关闭；策略、预览和显式启用见[历史清理](../history-retention.md)。
 
 模型接入使用 model.channel.create/update、model.entry.create/update、model.balance.refresh；显式重查单条调用费用另记 model.cost.recheck（target 为调用，details 保留 previous_status）；为原配置未变化的旧调用补建新增协议的查询范围记录 model.cost.bind（details 仅保留 source），与范围绑定同事务。配置及启停沿用同事务管理审计；details 只保留声明的非秘密字段和密钥是否设置、是否更新的状态，不保存密钥明文或密文、消息或响应正文。手动余额刷新记录发起用户及查询状态，PAT 附 credential_id，不因此修改渠道配置审计字段；调用完成、用量和费用补查保存在 ModelInvocation 内，不重复生成每次调用的 AuditLog。测试传输替身同样遵守这些写入边界。
 

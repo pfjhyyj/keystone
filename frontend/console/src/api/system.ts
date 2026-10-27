@@ -1,4 +1,4 @@
-import { sessionWork } from './client'
+import { request, sessionWork } from './client'
 
 export interface Health {
   status: 'ok'
@@ -12,6 +12,15 @@ export interface Readiness {
 }
 
 export interface WorkerStatus {
+  backlog?: Record<
+    string,
+    {
+      status: 'ok' | 'unknown'
+      pending: number | null
+      oldest_pending_at: string | null
+      oldest_pending_age_seconds: number | null
+    }
+  >
   status: 'ready' | 'unready' | 'offline' | 'unknown'
   last_heartbeat_at: string | null
   ready_workers?: number
@@ -82,7 +91,7 @@ export async function getReadiness(): Promise<Readiness> {
 }
 
 export async function getWorkerStatus(): Promise<WorkerStatus> {
-  const value = await getStatus('/api/v1/worker/status')
+  const value = await request<unknown>('/worker/status', 'GET', undefined, true, undefined, 6000)
   if (
     !record(value) ||
     !['ready', 'unready', 'offline', 'unknown'].includes(String(value.status)) ||
@@ -96,6 +105,28 @@ export async function getWorkerStatus(): Promise<WorkerStatus> {
     throw new Error('无效的 Worker 状态响应')
   const timestamp = (v: unknown) =>
     v === null || (typeof v === 'string' && Number.isFinite(Date.parse(v)))
+  if (
+    value.backlog !== undefined &&
+    (!record(value.backlog) ||
+      Object.values(value.backlog).some(
+        (item) =>
+          !record(item) ||
+          !['ok', 'unknown'].includes(String(item.status)) ||
+          (item.status === 'unknown'
+            ? item.pending !== null ||
+              item.oldest_pending_at !== null ||
+              item.oldest_pending_age_seconds !== null
+            : !Number.isInteger(item.pending) ||
+              Number(item.pending) < 0 ||
+              !timestamp(item.oldest_pending_at) ||
+              !(
+                item.oldest_pending_age_seconds === null ||
+                (Number.isInteger(item.oldest_pending_age_seconds) &&
+                  Number(item.oldest_pending_age_seconds) >= 0)
+              )),
+      ))
+  )
+    throw new Error('无效的积压状态响应')
   if (
     (value.ready_workers !== undefined &&
       (!Number.isInteger(value.ready_workers) || Number(value.ready_workers) < 0)) ||

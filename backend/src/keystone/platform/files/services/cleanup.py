@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
@@ -10,6 +10,19 @@ from keystone.platform.files.adapters.storage import blocking
 from keystone.platform.files.models import File, FileGrant
 from keystone.platform.files.services import access as policy
 from keystone.platform.files.services.references import require_unreferenced
+
+
+async def backlog(database):
+    cutoff = utcnow() - timedelta(hours=1)
+    async with database.transaction() as session:
+        return (
+            await session.execute(
+                select(func.count(), func.min(File.updated_at)).where(
+                    (File.status == "deleting")
+                    | (File.status.in_(["uploading", "failed"]) & (File.updated_at < cutoff))
+                )
+            )
+        ).one()
 
 
 async def cleanup(database, storage, *, limit=20):

@@ -16,7 +16,7 @@ from keystone.platform.identity.services.authorization import ADMIN_KEY, identit
 async def initialize_admin(database, passwords, data):
     hashed = await passwords.hash(data.password.get_secret_value())
     async with database.transaction() as session:
-        await identity_lock(session, write=True)
+        await identity_lock(session, identity_write=True)
         if await session.scalar(select(User.id).limit(1)):
             raise ServiceError(409, "already_initialized", "已有用户，不能重复初始化管理员")
         user = User(

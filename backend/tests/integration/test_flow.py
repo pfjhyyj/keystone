@@ -103,6 +103,11 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
         "file_temp_bytes",
         "file_min_free_bytes",
         "file_upload_timeout_seconds",
+        "history_cleanup_enabled",
+        "session_retention_days",
+        "pat_retention_days",
+        "audit_retention_days",
+        "maintenance_retention_days",
     ):
         env["KEYSTONE_" + name.upper()] = str(getattr(settings, name))
     for key, source in settings.file_storages.items():
@@ -851,7 +856,7 @@ def test_execution_context_preserves_transaction_errors_and_audit(client):
 
     async def conflict():
         async with context.access(
-            "file:create", write=True, action="file.reference", target="file", target_id=file_id
+            "file:create", action="file.reference", target="file", target_id=file_id
         ) as (session, _):
             session.add(
                 FileReference(owner=f"flow:{row['id']}", slot="input", file_id=UUID(file_id))

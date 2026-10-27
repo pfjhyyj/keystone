@@ -133,7 +133,11 @@ CATALOG = Catalog(
         "@NAMESPACE@.@ENTITY@:read": "查看@LABEL@",
         "@NAMESPACE@.@ENTITY@:write": "保存@LABEL@",
     },
-    audit_actions={"@NAMESPACE@.@ENTITY@.save": {"before", "after"}},
+    audit_actions={
+        "@NAMESPACE@.@ENTITY@.save": {
+            "before", "after", "title", "content_length", "content_sha256",
+        },
+    },
 )
 ''',
     "models/__init__.py": """from .@ENTITY@ import @CLASS@ as @CLASS@
@@ -151,6 +155,7 @@ class @CLASS@(Base):
     __tablename__ = "@TABLE@"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    owner_id: Mapped[UUID] = mapped_column(index=True)
     title: Mapped[str] = mapped_column(String(200))
     content: Mapped[str] = mapped_column(String(4000), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -162,7 +167,7 @@ class @CLASS@(Base):
 from .@RESOURCE@ import @CLASS@Edit as @CLASS@Edit
 from .@RESOURCE@ import view as view
 """,
-    "schemas/@RESOURCE@.py": """from pydantic import Field
+    "schemas/@RESOURCE@.py": """from pydantic import Field, field_validator
 
 from keystone.core.schemas import Input
 
@@ -172,13 +177,22 @@ class @CLASS@Create(Input):
     content: str = Field(default="", max_length=4000)
 
 
-class @CLASS@Edit(@CLASS@Create):
-    pass
+class @CLASS@Edit(Input):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    content: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("title", "content")
+    @classmethod
+    def non_null(cls, value):
+        if value is None:
+            raise ValueError("Omit unchanged fields; null is not supported")
+        return value
 
 
 def view(row) -> dict:
     return {
         "id": row.id,
+        "owner_id": row.owner_id,
         "title": row.title,
         "content": row.content,
         "created_at": row.created_at,
@@ -187,7 +201,8 @@ def view(row) -> dict:
 """,
     "services/__init__.py": """from .@RESOURCE@ import @CLASS@Service as @CLASS@Service
 """,
-    "services/@RESOURCE@.py": """from uuid import UUID
+    "services/@RESOURCE@.py": """import hashlib
+from uuid import UUID
 
 from sqlalchemy import select
 
@@ -202,14 +217,23 @@ WRITE = "@NAMESPACE@.@ENTITY@:write"
 SAVE = "@NAMESPACE@.@ENTITY@.save"
 
 
+def audit_snapshot(row):
+    return {
+        "title": row.title,
+        "content_length": len(row.content),
+        "content_sha256": hashlib.sha256(row.content.encode()).hexdigest(),
+    }
+
+
 class @CLASS@Service:
     def __init__(self, context: AccessContext):
         self.context = context
 
     async def listing(self, offset: int, limit: int):
-        async with self.context.access(READ) as (session, _):
+        async with self.context.access(READ) as (session, auth):
             rows = await session.scalars(
                 select(@CLASS@)
+                .where(@CLASS@.owner_id == auth.user.id)
                 .order_by(@CLASS@.created_at.desc(), @CLASS@.id)
                 .offset(offset)
                 .limit(limit)
@@ -218,9 +242,12 @@ class @CLASS@Service:
 
     async def create(self, data: @CLASS@Create):
         async with self.context.access(
-            WRITE, write=True, action=SAVE, target="@NAMESPACE@.@ENTITY@"
+            WRITE, action=SAVE, target="@NAMESPACE@.@ENTITY@"
         ) as (session, auth):
-            row = @CLASS@(**data.model_dump(), created_by=auth.user.id, updated_by=auth.user.id)
+            row = @CLASS@(
+                **data.model_dump(), owner_id=auth.user.id,
+                created_by=auth.user.id, updated_by=auth.user.id,
+            )
             session.add(row)
             await session.flush()
             await self.context.log(
@@ -229,23 +256,29 @@ class @CLASS@Service:
                 SAVE,
                 "@NAMESPACE@.@ENTITY@",
                 row.id,
-                {"after": data.model_dump()},
+                {"after": audit_snapshot(row)},
             )
             return view(row)
 
     async def edit(self, identifier: UUID, data: @CLASS@Edit):
         async with self.context.access(
             WRITE,
-            write=True,
             action=SAVE,
             target="@NAMESPACE@.@ENTITY@",
             target_id=identifier,
         ) as (session, auth):
-            row = await session.get(@CLASS@, identifier, with_for_update=True)
+            row = await session.scalar(
+                select(@CLASS@)
+                .where(@CLASS@.id == identifier, @CLASS@.owner_id == auth.user.id)
+                .with_for_update()
+            )
             if row is None:
                 raise ServiceError(404, "not_found", "记录不存在")
-            before = {key: getattr(row, key) for key in data.model_dump()}
-            for key, value in data.model_dump().items():
+            values = data.model_dump(exclude_unset=True)
+            if not values:
+                return view(row)
+            before = audit_snapshot(row)
+            for key, value in values.items():
                 setattr(row, key, value)
             self.context.touch(row, auth)
             await self.context.log(
@@ -254,7 +287,7 @@ class @CLASS@Service:
                 SAVE,
                 "@NAMESPACE@.@ENTITY@",
                 row.id,
-                {"before": before, "after": data.model_dump()},
+                {"before": before, "after": audit_snapshot(row)},
             )
             return view(row)
 """,
@@ -275,7 +308,7 @@ from keystone.platform.identity.controllers.dependencies import access_context
 from ..schemas import @CLASS@Create, @CLASS@Edit
 from ..services import @CLASS@Service
 
-router = APIRouter(prefix="/api/v1/@RESOURCE@", tags=["@NAMESPACE@"])
+router = APIRouter(prefix="/api/v1/@NAMESPACE@/@RESOURCE@", tags=["@NAMESPACE@"])
 
 
 def _service(request: Request) -> @CLASS@Service:
@@ -316,6 +349,7 @@ def upgrade():
     op.create_table(
         "@TABLE@",
         sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("owner_id", sa.Uuid(), nullable=False),
         sa.Column("title", sa.String(length=200), nullable=False),
         sa.Column("content", sa.String(length=4000), nullable=False),
         sa.Column(
@@ -334,6 +368,9 @@ def upgrade():
         sa.Column("updated_by", sa.Uuid(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
         schema="keystone",
+    )
+    op.create_index(
+        op.f("ix_keystone_@TABLE@_owner_id"), "@TABLE@", ["owner_id"], schema="keystone"
     )
 
 

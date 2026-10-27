@@ -1,5 +1,6 @@
 """Current DB grants + ephemeral Casbin enforcer."""
 
+import asyncio
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -19,12 +20,19 @@ from keystone.platform.identity.models import (
 )
 
 ADMIN_KEY = "admin"
+IDENTITY_LOCK_TIMEOUT_SECONDS = 3
 
 
-async def identity_lock(session, *, write=False):
+async def identity_lock(session, *, identity_write=False):
     # Shared reads and exclusive writes coordinate across processes. No external I/O under lock.
-    fn = "pg_advisory_xact_lock" if write else "pg_advisory_xact_lock_shared"
-    await session.execute(text(f"SELECT {fn}(73190421)"))
+    fn = "pg_try_advisory_xact_lock" if identity_write else "pg_try_advisory_xact_lock_shared"
+    try:
+        async with asyncio.timeout(IDENTITY_LOCK_TIMEOUT_SECONDS):
+            # Do not leave a blocking server query behind when a caller times out or cancels.
+            while not await session.scalar(text(f"SELECT {fn}(73190421)")):
+                await asyncio.sleep(0.05)
+    except TimeoutError:
+        raise ServiceError(503, "identity_busy", "身份操作繁忙，请稍后重试") from None
 
 
 def permission_catalog(session):

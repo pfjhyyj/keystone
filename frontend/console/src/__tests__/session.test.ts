@@ -7,6 +7,32 @@ import { loginDestination, makeRouter } from '../router'
 import App from '../App.vue'
 import { authorize, deferred, fakeApi } from './support'
 
+it('restores registered business detail routes without a menu entry', async () => {
+  authorize([])
+  const signedIn = identity.value!
+  clearSession()
+  let loggedIn = false
+  fakeApi(() => (loggedIn ? signedIn : new Response('{}', { status: 401 })))
+  const router = makeRouter(createMemoryHistory('/console/'))
+  router.addRoute({
+    path: '/notes/:id',
+    component: { template: '<p>业务详情</p>' },
+    meta: { title: '笔记详情' },
+  })
+  const destination = '/notes/42?tab=history#latest'
+  await router.push(destination)
+  expect(router.currentRoute.value.path).toBe('/login')
+  expect(router.currentRoute.value.query.next).toBe(destination)
+  expect(loginDestination(destination, router)).toBe(destination)
+  mount(App, { global: { plugins: [router] } })
+  loggedIn = true
+  authorize([])
+  await vi.waitFor(() => expect(router.currentRoute.value.fullPath).toBe(destination))
+  expect(router.currentRoute.value.fullPath).toBe(destination)
+  router.addRoute({ path: '/loop', redirect: '/login' })
+  expect(loginDestination('/loop', router)).toBe('/')
+})
+
 it('rejects late responses after logout', async () => {
   authorize(['user:read'])
   const late = deferred<unknown>()
@@ -33,11 +59,19 @@ it('clears session on 401 and refreshes permissions on 403', async () => {
   expect(identity.value).toBeNull()
 })
 it('protects direct routes and safe login destinations', async () => {
-  expect(loginDestination('//evil.example')).toBe('/')
-  expect(loginDestination('https://evil.example')).toBe('/')
   initialized.value = false
   fakeApi(() => new Response('{}', { status: 401 }))
   const router = makeRouter(createMemoryHistory('/console/'))
+  for (const value of [
+    '//evil.example',
+    'https://evil.example',
+    '/login',
+    '/login/',
+    '/unknown',
+    '/\\evil.example',
+  ]) {
+    expect(loginDestination(value, router)).toBe('/')
+  }
   await router.push('/users')
   expect(router.currentRoute.value.path).toBe('/login')
   expect(router.currentRoute.value.query.next).toBe('/users')

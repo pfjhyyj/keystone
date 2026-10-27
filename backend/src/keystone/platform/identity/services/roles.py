@@ -60,7 +60,7 @@ class RoleService:
         action = f"identity.role.{operation}"
         async with self.context.access(
             f"role:{operation}",
-            write=True,
+            identity_write=True,
             action=action,
             target="identity.role",
             target_id=identifier,
@@ -155,7 +155,11 @@ class RoleService:
     async def assign_role(self, user_id, role_id, assigned):
         action = "identity.role.assign"
         async with self.context.access(
-            "role:assign", write=True, action=action, target="identity.user", target_id=user_id
+            "role:assign",
+            identity_write=True,
+            action=action,
+            target="identity.user",
+            target_id=user_id,
         ) as (session, auth):
             user = await self.context.existing(session, User, user_id)
             role = await self.context.existing(session, Role, role_id)

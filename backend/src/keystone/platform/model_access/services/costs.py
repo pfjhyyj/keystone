@@ -27,6 +27,19 @@ BATCH_SIZE = 20
 MAX_SCOPES = 20
 
 
+async def backlog(database):
+    async with database.transaction() as session:
+        return (
+            await session.execute(
+                select(func.count(), func.min(ModelInvocation.cost_next_check_at)).where(
+                    ModelInvocation.cost_check_status == "pending",
+                    ModelInvocation.status != "running",
+                    ModelInvocation.cost_next_check_at <= utcnow(),
+                )
+            )
+        ).one()
+
+
 def scope_filter(scope):
     return ModelInvocation.cost_context["scope"].astext == scope
 

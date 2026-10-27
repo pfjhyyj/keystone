@@ -43,7 +43,9 @@ const filtered = computed(() => {
         </el-table-column>
         <el-table-column label="操作" min-width="120">
           <template #default="{ row }">
+            <span v-if="row.business_managed">请从业务页面发起</span>
             <el-button
+              v-else
               :disabled="loading"
               @click="emit('start', row.key)"
               native-type="button"

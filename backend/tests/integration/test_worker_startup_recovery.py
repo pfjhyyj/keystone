@@ -42,7 +42,7 @@ def capture_identity(monkeypatch):
             yield lease
 
     monkeypatch.setattr(worker, "identity_lease", captured)
-    monkeypatch.setattr(worker, "register_workflows", lambda: None)
+    monkeypatch.setattr(worker, "register_workflows", lambda runtime: None)
     return leases
 
 

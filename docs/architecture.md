@@ -78,6 +78,8 @@ DBOS 公共生命周期在 core/execution/；各模块 tasks/ 注册维护入口
 
 三项维护计划 keystone.files.cleanup、keystone.flow.reconcile、keystone.model_access.reconcile_costs 使用 UTC、每 5 秒触发，启动立即运行，不补停机历史，跳过迟到超过 10 秒的触发。多个 Worker 注册同名计划；活动任务按范围和版本合并，完成后新一轮读取当前待办。所有实例的计划、队列和公共预算必须一致。
 
+可显式启用独立的历史清理计划与队列，默认关闭，不改变上述三项的触发和健康口径。凭据、审计及已完成维护历史的边界、批次与保留期限统一见[历史清理](history-retention.md)。
+
 计划名/时间防止重复触发；execution_key 指同一次执行，coalesce_key 合并活动工作；领域唯一约束和行锁保证事实幂等。这些机制各有边界，不能替代模型发送前登记或业务幂等。
 
 ### 3.5 多 Worker、恢复与发布

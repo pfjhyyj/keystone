@@ -90,7 +90,7 @@ def runtime(monkeypatch):
     monkeypatch.setattr(worker, "build_runtime", lambda _: result)
     monkeypatch.setattr(worker, "POLL_SECONDS", 0.01)
     monkeypatch.setattr(worker, "HEARTBEAT_SECONDS", 0.01)
-    monkeypatch.setattr(worker, "register_workflows", lambda: None)
+    monkeypatch.setattr(worker, "register_workflows", lambda runtime: None)
 
     async def executor(runtime, stop, *, ready, health):
         result.health = health

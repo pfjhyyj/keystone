@@ -124,16 +124,32 @@ def test_generated_business_migration_is_discovered_upgraded_and_reversible(
     try:
         command.upgrade(config, "head")
         assert table in inspect(engine).get_table_names(schema="keystone")
+        columns = {
+            column["name"]: column
+            for column in inspect(engine).get_columns(table, schema="keystone")
+        }
+        assert columns["owner_id"]["nullable"] is False
+        owner_index = next(
+            index
+            for index in inspect(engine).get_indexes(table, schema="keystone")
+            if index["column_names"] == ["owner_id"]
+        )
+        assert len(owner_index["name"]) <= 63
         with engine.begin() as connection:
             connection.execute(
                 text(
-                    f"INSERT INTO keystone.{table} (id,title,content) VALUES "
-                    "('00000000-0000-4000-8000-000000000001','Original','Preserved')"
+                    f"INSERT INTO keystone.{table} (id,owner_id,title,content) VALUES "
+                    "('00000000-0000-4000-8000-000000000001',"
+                    "'00000000-0000-4000-8000-000000000002','Original','Preserved')"
                 )
             )
         command.upgrade(config, "head")
         with engine.connect() as connection:
             assert connection.scalar(text(f"SELECT content FROM keystone.{table}")) == "Preserved"
+            assert (
+                str(connection.scalar(text(f"SELECT owner_id FROM keystone.{table}")))
+                == "00000000-0000-4000-8000-000000000002"
+            )
         command.downgrade(config, CURRENT_HEAD)
         assert table not in inspect(engine).get_table_names(schema="keystone")
         assert "users" in inspect(engine).get_table_names(schema="keystone")

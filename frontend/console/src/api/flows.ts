@@ -12,6 +12,7 @@ export interface FlowDefinition {
   key: string
   name: string
   description: string
+  business_managed?: boolean
   input_schema: Record<string, unknown>
 }
 export interface FlowRun {

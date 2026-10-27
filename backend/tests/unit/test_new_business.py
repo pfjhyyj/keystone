@@ -74,19 +74,39 @@ def test_generated_business_is_importable_and_migration_extends_head(tmp_path, m
     assert migration_head(migrations) == revision
 
     monkeypatch.syspath_prepend(str(businesses))
+    from fastapi.routing import iter_route_contexts
     from tiny_notes.catalog import CATALOG
     from tiny_notes.controllers import router
     from tiny_notes.models import TinyNote
-    from tiny_notes.schemas import TinyNoteCreate
+    from tiny_notes.schemas import TinyNoteCreate, TinyNoteEdit
     from tiny_notes.services import TinyNoteService
+
+    assert {route.path for route in iter_route_contexts(router.routes)} == {
+        "/api/v1/tiny_notes/tiny_notes",
+        "/api/v1/tiny_notes/tiny_notes/{identifier}",
+    }
 
     assert CATALOG.permissions == {
         "tiny_notes.tiny_note:read": "查看小笔记",
         "tiny_notes.tiny_note:write": "保存小笔记",
     }
-    assert CATALOG.audit_actions["tiny_notes.tiny_note.save"] == {"before", "after"}
+    assert CATALOG.audit_actions["tiny_notes.tiny_note.save"] == {
+        "before",
+        "after",
+        "title",
+        "content_length",
+        "content_sha256",
+    }
     assert TinyNote.__tablename__ == "tiny_notes_tiny_note"
     assert TinyNoteCreate(title="标题").content == ""
+    assert TinyNoteEdit(title="新标题").model_dump(exclude_unset=True) == {"title": "新标题"}
+    assert TinyNoteEdit(content="新正文").model_dump(exclude_unset=True) == {"content": "新正文"}
+    assert TinyNoteEdit().model_dump(exclude_unset=True) == {}
+    from pydantic import ValidationError
+
+    for values in ({"title": None}, {"content": None}, {"title": ""}, {"owner_id": "other"}):
+        with pytest.raises(ValidationError):
+            TinyNoteEdit(**values)
     assert TinyNoteService and router
     # Importing a scaffolded model must not leak into later migration metadata checks.
     from keystone.core.database import Base

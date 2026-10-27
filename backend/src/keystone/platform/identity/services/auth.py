@@ -48,7 +48,7 @@ class AuthService:
                 encoded = user.password_hash if user else None
             valid = await self.passwords.verify(encoded, data.password.get_secret_value())
             async with self.context.database.transaction() as session:
-                await identity_lock(session, write=True)
+                await identity_lock(session, identity_write=True)
                 user = await session.scalar(select(User).where(User.username == data.username))
                 if not valid or user is None or not user.is_active or user.password_hash != encoded:
                     raise ServiceError(401, "invalid_login", "用户名或密码错误")
@@ -98,7 +98,7 @@ class AuthService:
 
     async def logout(self):
         async with self.context.access(
-            write=True, action="identity.logout", session_only=True, allow_password=True
+            identity_write=True, action="identity.logout", session_only=True, allow_password=True
         ) as (session, auth):
             auth.credential.revoked_at = utcnow()
             await self.context.log(
@@ -120,7 +120,7 @@ class AuthService:
         valid = await self.passwords.verify(encoded, data.current_password.get_secret_value())
         hashed = await self.passwords.hash(data.password.get_secret_value()) if valid else None
         async with self.context.access(
-            write=True, session_only=True, allow_password=True, action=action
+            identity_write=True, session_only=True, allow_password=True, action=action
         ) as (session, auth):
             if not valid or auth.user.password_hash != encoded:
                 raise ServiceError(400, "incorrect_password", "当前密码不正确，请重试")

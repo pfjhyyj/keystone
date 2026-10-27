@@ -1,13 +1,16 @@
 """Small safe error/correlation boundary."""
 
 import logging
+import re
 from http import HTTPStatus
+from time import monotonic
 from typing import Annotated
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.routing import iter_route_contexts
 from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException
 
@@ -29,6 +32,21 @@ class Pagination:
 Page = Annotated[Pagination, Depends()]
 
 
+def validate_http_routes(app: FastAPI) -> None:
+    """Reject duplicate effective paths, including nested included routers."""
+    seen = set()
+    for route in iter_route_contexts(app.routes):
+        if route.path is None or not route.methods:
+            continue
+        # Parameter names do not distinguish routes that match the same URL.
+        path = re.sub(r"\{[^}:]+", "{", route.path).replace("{:str}", "{}")
+        for method in route.methods:
+            key = method, path
+            if key in seen:
+                raise ValueError(f"Duplicate HTTP route: {method} {route.path}")
+            seen.add(key)
+
+
 def failure(request: Request, status: int, code: str, detail: str, headers=None):
     identifier = request.state.request_id
     return JSONResponse(
@@ -48,14 +66,20 @@ class RequestBoundary:
             return
         scope.setdefault("state", {})["request_id"] = uuid4().hex
         started = False
+        status_code = 500
+        outcome = "interrupted"
+        began = monotonic()
 
         async def correlated_send(message):
-            nonlocal started
+            nonlocal started, status_code, outcome
             if message["type"] == "http.response.start":
                 started = True
+                status_code = message["status"]
                 MutableHeaders(scope=message)["X-Request-ID"] = scope["state"]["request_id"]
                 MutableHeaders(scope=message)["Cache-Control"] = "no-store"
             await send(message)
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                outcome = "completed"
 
         try:
             await self.app(scope, receive, correlated_send)
@@ -74,6 +98,21 @@ class RequestBoundary:
                 raise RuntimeError("Response interrupted") from None
             response = failure(Request(scope), 500, "internal_error", "Internal server error")
             await response(scope, receive, correlated_send)
+        finally:
+            route = scope.get("route")
+            logging.getLogger(__name__).info(
+                "http_request",
+                extra={
+                    "request_id": scope["state"]["request_id"],
+                    "diagnostic": {
+                        "method": scope["method"],
+                        "route": getattr(route, "path_format", "<unmatched>"),
+                        "status_code": status_code,
+                        "elapsed_ms": round((monotonic() - began) * 1000, 2),
+                        "outcome": outcome,
+                    },
+                },
+            )
 
 
 def install_errors(app: FastAPI) -> None:

@@ -57,6 +57,10 @@ class FlowService:
 
     async def start(self, data):
         async with self.identity.access(action="flow.start", target="flow.run") as (session, auth):
+            definition = self.flow_definitions.get(data.definition_key)
+            if definition is not None and definition.business_managed:
+                auth.require("flow:start")
+                raise ServiceError(403, "flow_business_entry_required", "请从业务入口受理此流程")
             return await self.start_in_transaction(session, auth, data)
 
     async def start_in_transaction(self, session, auth, data):

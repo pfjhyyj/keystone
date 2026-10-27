@@ -1,7 +1,62 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import OverviewView from '../views/overview/OverviewView.vue'
+import FlowCatalog from '../views/flows/components/FlowCatalog.vue'
 import { fakeApi } from './support'
+
+it('shows backlog counts and preserves unknown observations', async () => {
+  fakeApi((path) =>
+    path === '/health'
+      ? { status: 'ok', service: 'keystone-api', version: '0.1.0' }
+      : path === '/ready'
+        ? { status: 'ready', checks: { database: 'ok', schema: 'ok', storage: 'ok' } }
+        : {
+            status: 'offline',
+            last_heartbeat_at: null,
+            backlog: {
+              flow: {
+                status: 'ok',
+                pending: 4,
+                oldest_pending_at: '2026-10-19T16:00:00Z',
+                oldest_pending_age_seconds: 120,
+              },
+              files: {
+                status: 'unknown',
+                pending: null,
+                oldest_pending_at: null,
+                oldest_pending_age_seconds: null,
+              },
+            },
+          },
+  )
+  const wrapper = mount(OverviewView)
+  await flushPromises()
+  expect(wrapper.text()).toContain('4 项')
+  expect(wrapper.text()).toContain('120 秒')
+  expect(wrapper.text()).toContain('无法确认')
+})
+
+it('directs business managed flows back to their business page', async () => {
+  const wrapper = mount(FlowCatalog, {
+    props: {
+      loading: false,
+      definitions: [
+        {
+          key: 'business.flow',
+          name: '业务流程',
+          description: '',
+          revision: '1',
+          model_roles: [],
+          input_schema: {},
+          business_managed: true,
+        },
+      ],
+    },
+  })
+  await flushPromises()
+  expect(wrapper.text()).toContain('请从业务页面发起')
+  expect(wrapper.text()).not.toContain('发起流程')
+})
 
 afterEach(() => vi.useRealTimers())
 

@@ -45,7 +45,10 @@ class UserService:
         async with self.context.access("user:create", action=action):
             pass
         hashed = await self.passwords.hash(data.password.get_secret_value())
-        async with self.context.access("user:create", write=True, action=action) as (session, auth):
+        async with self.context.access("user:create", identity_write=True, action=action) as (
+            session,
+            auth,
+        ):
             user = User(
                 username=data.username,
                 display_name=data.display_name,
@@ -68,7 +71,11 @@ class UserService:
     async def update_user(self, identifier, data):
         action = "identity.user.update"
         async with self.context.access(
-            "user:update", write=True, action=action, target="identity.user", target_id=identifier
+            "user:update",
+            identity_write=True,
+            action=action,
+            target="identity.user",
+            target_id=identifier,
         ) as (session, auth):
             user = await self.context.existing(session, User, identifier)
             await manageable(session, auth, user)
@@ -88,7 +95,11 @@ class UserService:
     async def set_active(self, identifier, active):
         action = "identity.user.enable" if active else "identity.user.disable"
         async with self.context.access(
-            "user:update", write=True, action=action, target="identity.user", target_id=identifier
+            "user:update",
+            identity_write=True,
+            action=action,
+            target="identity.user",
+            target_id=identifier,
         ) as (session, auth):
             user = await self.context.existing(session, User, identifier)
             await manageable(session, auth, user)
@@ -117,7 +128,7 @@ class UserService:
         hashed = await self.passwords.hash(data.password.get_secret_value())
         async with self.context.access(
             "user:reset_password",
-            write=True,
+            identity_write=True,
             action=action,
             target="identity.user",
             target_id=identifier,
@@ -133,7 +144,7 @@ class UserService:
         action = "identity.credentials.revoke"
         async with self.context.access(
             "user:credentials",
-            write=True,
+            identity_write=True,
             action=action,
             target="identity.user",
             target_id=identifier,

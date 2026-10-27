@@ -1,5 +1,6 @@
 import argparse
 import getpass
+import json
 import logging
 
 from alembic import command
@@ -143,11 +144,16 @@ def main() -> None:
             "recover-model-calls",
             "retire-worker",
             "reactivate-worker",
+            "prune-history",
         ],
     )
     parser.add_argument("--username", help="Initial administrator login name")
     parser.add_argument("--worker-id", help="Fixed identity for retire-worker or reactivate-worker")
     parser.add_argument("--display-name", default="管理员")
+    parser.add_argument("--apply", action="store_true", help="Delete one eligible history batch")
+    parser.add_argument(
+        "--history-offset", type=int, default=0, help="Continue a maintenance history scan"
+    )
     parser.add_argument(
         "--non-interactive",
         action="store_true",
@@ -169,6 +175,12 @@ def main() -> None:
         help="Confirm all Workers are stopped for legacy Flow recovery",
     )
     args = parser.parse_args()
+    if args.apply and args.command != "prune-history":
+        parser.error("--apply only applies to prune-history")
+    if not 0 <= args.history_offset <= 1_000_000_000 or (
+        args.history_offset and args.command != "prune-history"
+    ):
+        parser.error("--history-offset must be a valid prune-history page offset")
     if args.command in {"retire-worker", "reactivate-worker"}:
         if not args.worker_id:
             parser.error("Worker lifecycle commands require --worker-id")
@@ -200,6 +212,23 @@ def main() -> None:
             return
         if not settings.database_url:
             raise RuntimeError("Database is not configured")
+        if args.command == "prune-history":
+
+            async def prune():
+                runtime = build_runtime(settings)
+                runtime.history_offset = args.history_offset
+                try:
+                    checks = await runtime.database.readiness(runtime.heads)
+                    if any(value != "ok" for value in checks.values()):
+                        raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
+                    return await runtime.history_retention().execute(apply=args.apply)
+                finally:
+                    if runtime.flow_engine:
+                        await runtime.flow_engine.close()
+                    await runtime.database.close()
+
+            print(json.dumps(run_async(prune()), ensure_ascii=False))
+            return
         if args.command == "init":
             initialize(
                 settings,

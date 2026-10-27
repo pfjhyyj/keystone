@@ -150,6 +150,27 @@ onScopeDispose(() => {
         >
       </div>
     </el-card>
+    <el-card v-if="worker?.backlog" shadow="never" class="overview-detail">
+      <template #header><h2>待处理任务</h2></template>
+      <el-descriptions :column="1" border>
+        <el-descriptions-item
+          v-for="(item, name) in worker.backlog"
+          :key="name"
+          :label="taskLabels[String(name)] ?? String(name)"
+        >
+          <span v-if="item.status === 'unknown'">无法确认</span>
+          <span v-else
+            >{{ item.pending }} 项；最早待办：{{
+              item.oldest_pending_at
+                ? new Date(item.oldest_pending_at).toLocaleString('zh-CN')
+                : '无'
+            }}<template v-if="item.oldest_pending_age_seconds !== null"
+              >（距今 {{ item.oldest_pending_age_seconds }} 秒）</template
+            ></span
+          >
+        </el-descriptions-item>
+      </el-descriptions>
+    </el-card>
     <el-card shadow="never" class="overview-detail"
       ><template #header><h2>运行配置</h2></template
       ><el-descriptions :column="1" border

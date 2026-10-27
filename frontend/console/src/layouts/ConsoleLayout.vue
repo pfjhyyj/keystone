@@ -54,16 +54,22 @@ const icons = {
 const visible = computed(() =>
   navigation.filter((item) => !item.permissions.length || item.permissions.some(can)),
 )
-const menus = computed(() =>
-  groups
-    .map((group) => ({
-      ...group,
-      items: group.paths
-        .map((path) => visible.value.find((item) => item.path === path))
-        .filter((item): item is (typeof navigation)[number] => !!item),
-    }))
-    .filter((group) => group.items.length),
-)
+const menus = computed(() => {
+  const business = visible.value.filter(
+    (item) => !groups.some((group) => group.paths.includes(item.path)),
+  )
+  return [
+    ...groups
+      .map((group) => ({
+        ...group,
+        items: group.paths
+          .map((path) => visible.value.find((item) => item.path === path))
+          .filter((item): item is (typeof navigation)[number] => !!item),
+      }))
+      .filter((group) => group.items.length),
+    ...(business.length ? [{ title: '业务', items: business }] : []),
+  ]
+})
 const sidebar = ref<HTMLElement | null>(null)
 let menuOrigin: HTMLElement | null = null
 watch(mobileOpen, async (open) => {
@@ -91,14 +97,25 @@ function navigationKeys(event: KeyboardEvent) {
 const title = computed(
   () =>
     navigation.find((item) => item.path === route.path)?.label ??
+    (typeof route.meta.title === 'string' ? route.meta.title : undefined) ??
     (route.path === '/account' ? '个人中心' : '页面不存在'),
 )
 const group = computed(
-  () => groups.find((item) => item.paths.includes(route.path))?.title ?? '账户设置',
+  () =>
+    groups.find((item) => item.paths.includes(route.path))?.title ??
+    (navigation.some((item) => item.path === route.path) || route.meta.title ? '业务' : '账户设置'),
 )
 const allowed = computed(() => {
   const item = navigation.find((item) => item.path === route.path)
-  return !item || !item.permissions.length || item.permissions.some(can)
+  const permitted = route.matched.every(
+    (record) =>
+      !Array.isArray(record.meta.permissions) ||
+      !record.meta.permissions.length ||
+      record.meta.permissions.some(
+        (permission) => typeof permission === 'string' && can(permission),
+      ),
+  )
+  return permitted && (!item || !item.permissions.length || item.permissions.some(can))
 })
 watch(
   () => route.fullPath,
@@ -120,7 +137,7 @@ watch(
       !identity.value.user.password_change_required &&
       route.path === '/login'
     )
-      void router.replace(loginDestination(route.query.next))
+      void router.replace(loginDestination(route.query.next, router))
   },
 )
 async function command(value: string) {
@@ -199,7 +216,7 @@ onBeforeUnmount(() => {
             :aria-label="item.label"
             :aria-current="route.path === item.path ? 'page' : undefined"
             :title="collapsed ? item.label : undefined"
-            ><el-icon><component :is="icons[item.path as keyof typeof icons]" /></el-icon
+            ><el-icon><component :is="icons[item.path as keyof typeof icons] ?? Grid" /></el-icon
             ><span class="nav-label">{{ item.label }}</span
             ><span v-if="route.path === item.path" class="nav-active-dot"
           /></RouterLink>

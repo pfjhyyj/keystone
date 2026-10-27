@@ -2,6 +2,18 @@
 
 FlowDefinition/FlowPackage、模型角色和受控 Context 的完整契约见[Flow 领域](domains/flow.md)。本文保留实际接入与工具示例；人工决定由业务 Service 完成，前后自动处理使用独立 Flow。
 
+## 业务执行接入
+
+可信 `FlowDefinition` 可声明 `business_managed=True`，要求从业务 Service 的事务内受理；通用 `/flow-runs` 发起接口拒绝绕过业务入口。此标记进入目录和执行声明，不能从请求覆盖；既有 `start_in_transaction` 保留身份、幂等、文件与模型检查，不自行提交业务事务。
+
+需要在每次新操作前复查业务状态时，在 composition 显式设置 `EXECUTION_GUARD`。其异步签名为 `(session, auth, run_id, definition_key, inputs)`：在当前身份事务中检查业务自己的版本、资源和绑定，不开启新事务、不提交、不做长外部 I/O。没有业务附加约束时保持 None。
+
+平台先检查原用户/PAT、Run、取消及原契约，再调用守卫；业务事务内通过执行身份核验产物时也执行相同检查。守卫只附加检查，不返回替代身份或扩大权限。401/403/404 转成 execution_not_authorized，暂时依赖故障等其他错误原样暂缓，不能把 503 误判为永久撤权。守卫与运行句柄均不进入快照或任务参数。
+
+需要为业务 Workflow 注入 Service 工厂时，在 composition 的 `WORKFLOW_BINDINGS` 元组中加入普通函数 `bind(runtime)`。Worker 取得固定身份并准入后，在导入/注册业务执行模块之前调用；API 只校验函数声明，不执行绑定或导入 Workflow。绑定函数内部再导入执行模块，用传入的 Runtime 和 `ExecutionIdentity(runtime, run_id)` 构造原身份 Service；不要在模块导入阶段创建连接、运行句柄或第二套 Runtime。当前进程仍使用同制品、同一 DBOS 引擎。
+
+这两个入口替代手工修改平台授权和 Worker 主入口的重复装配；业务特有的展示裁剪或决定规则仍放在业务 Service。真实调用示例和拒绝/故障测试位于 `backend/tests/integration/test_business_flow_hooks.py`。
+
 本文代码示例使用现有 Context 和显式等待接口。[渠道协议与宿主接口](domains/model-access.md#84-service-与-adapter-接口)在 Model Access 内分工，业务流程仍只调用公开 Service/Context，无需新增渠道分支；数据库不配置协议组合。视频和独立模型接入库尚未提供。
 
 可复用示例位于 `backend/src/keystone/examples/document_review/`。它使用现有

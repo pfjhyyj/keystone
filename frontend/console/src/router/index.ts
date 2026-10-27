@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory, type RouterHistory } from 'vue-router'
+import { createRouter, createWebHistory, type Router, type RouterHistory } from 'vue-router'
 import { h } from 'vue'
 import { ensureSession, identity, refreshSession } from '../stores/session'
 
@@ -22,10 +22,19 @@ export const navigation = [
   { path: '/model-usage', label: '用量与费用', permissions: ['model_invocation:read'] },
   { path: '/flows', label: 'Flow 流程', permissions: ['flow:start', 'flow:read'] },
 ]
-export function loginDestination(value: unknown) {
-  return typeof value === 'string' &&
-    [...navigation.map((item) => item.path), '/account'].includes(value.split('?')[0]!)
-    ? value
+export function loginDestination(value: unknown, router: Router) {
+  if (
+    typeof value !== 'string' ||
+    !value.startsWith('/') ||
+    value.startsWith('//') ||
+    /[\\\u0000-\u0020\u007f]/.test(value)
+  )
+    return '/'
+  const target = router.resolve(value)
+  return target.path !== '/login' &&
+    target.matched.length > 0 &&
+    target.matched.every((route) => route.meta.loginDestination !== false && !route.redirect)
+    ? target.fullPath
     : '/'
 }
 export function makeRouter(history: RouterHistory = createWebHistory(import.meta.env.BASE_URL)) {
@@ -42,13 +51,18 @@ export function makeRouter(history: RouterHistory = createWebHistory(import.meta
       { path: '/models', component: () => import('../views/models/ModelsView.vue') },
       { path: '/model-usage', component: () => import('../views/usage/UsageView.vue') },
       { path: '/flows', component: () => import('../views/flows/FlowsView.vue') },
-      { path: '/login', component: () => import('../views/login/LoginView.vue') },
+      {
+        path: '/login',
+        component: () => import('../views/login/LoginView.vue'),
+        meta: { loginDestination: false },
+      },
       {
         path: '/account',
         component: () => import('../views/account/AccountView.vue'),
       },
       {
         path: '/:pathMatch(.*)*',
+        meta: { loginDestination: false },
         component: {
           render: () =>
             h('section', [
@@ -69,7 +83,7 @@ export function makeRouter(history: RouterHistory = createWebHistory(import.meta
         : { path: '/login', query: { next: to.fullPath }, replace: true }
     if (identity.value.user.password_change_required)
       return to.path === '/account' ? true : { path: '/account', replace: true }
-    if (to.path === '/login') return loginDestination(to.query.next)
+    if (to.path === '/login') return loginDestination(to.query.next, router)
     return true
   })
   return router

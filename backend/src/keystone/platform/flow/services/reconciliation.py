@@ -15,6 +15,18 @@ from keystone.platform.flow.services.outputs import retain_outputs
 log = logging.getLogger(__name__)
 
 
+async def backlog(database):
+    async with database.transaction() as session:
+        pending, oldest = (
+            await session.execute(
+                select(func.count(), func.min(FlowRun.created_at)).where(
+                    FlowRun.status == "pending"
+                )
+            )
+        ).one()
+        return pending, oldest
+
+
 def matches_observation(runtime, run, state):
     definition = runtime.flow_definitions.get(run.definition_key)
     snapshot = read_snapshot(run.definition_snapshot)

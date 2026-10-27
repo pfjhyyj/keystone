@@ -111,7 +111,7 @@ def main():
                         stored = await FileService(identity, StorageRegistry(settings)).upload(
                             Upload(name="referenced.txt", expected_size=7), b"fixture"
                         )
-                        async with identity.access(write=True) as (session, auth):
+                        async with identity.access() as (session, auth):
                             await FileReferences(session, auth, "e2e").replace(
                                 "record:1", "input", [stored["id"]]
                             )

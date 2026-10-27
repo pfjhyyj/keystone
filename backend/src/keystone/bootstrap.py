@@ -3,9 +3,9 @@ from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 
-from keystone import __version__
+from keystone import __version__, composition
 from keystone.composition import (
     build_catalog,
     build_flow_definitions,
@@ -15,7 +15,7 @@ from keystone.composition import (
 )
 from keystone.core.config import Settings
 from keystone.core.database import Database
-from keystone.core.http import install_errors
+from keystone.core.http import install_errors, validate_http_routes
 from keystone.core.migrations import expected_heads
 from keystone.core.worker_health import worker_status
 from keystone.core.worker_identity import WorkerIdentity
@@ -31,6 +31,7 @@ from keystone.platform.flow.schemas.definitions import FlowDefinition
 from keystone.platform.flow.services.runs import FlowService
 from keystone.platform.identity.adapters.security import Passwords
 from keystone.platform.identity.controllers import router as identity_router
+from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.identity.services.login_limits import LoginLimiter
 from keystone.platform.model_access.adapters.clients import ModelClients
 from keystone.platform.model_access.controllers import router as models_router
@@ -51,6 +52,33 @@ class Runtime:
     flow_engine: object | None = None
     worker_identity: WorkerIdentity | None = None
     worker_lease: object | None = None
+    execution_guard: Callable | None = None
+    history_offset: int = 0
+
+    def history_retention(self):
+        return composition.build_history_retention(self)
+
+    def platform_status(self, identity):
+        from functools import partial
+
+        from keystone.platform.files.services.cleanup import backlog as files
+        from keystone.platform.flow.services.reconciliation import backlog as flow
+        from keystone.platform.model_access.services.costs import backlog as costs
+        from keystone.use_cases import PlatformStatus
+
+        return PlatformStatus(
+            identity,
+            partial(
+                worker_status,
+                self.database,
+                settings=self.settings,
+                application_version=self.execution_version(),
+            ),
+            {
+                name: partial(probe, self.database)
+                for name, probe in (("files", files), ("flow", flow), ("model_costs", costs))
+            },
+        )
 
     def role_deletion(self, identity):
         return RoleDeletion(identity, FileGrantService(identity.context))
@@ -84,6 +112,10 @@ class Runtime:
 
 
 def build_runtime(settings: Settings) -> Runtime:
+    if (
+        composition.EXECUTION_GUARD is not None and not callable(composition.EXECUTION_GUARD)
+    ) or any(not callable(bind) for bind in composition.WORKFLOW_BINDINGS):
+        raise ValueError("Business execution hooks must be explicit callables")
     catalog = build_catalog()
     definitions = build_flow_definitions(catalog)
     execution_version()
@@ -99,6 +131,7 @@ def build_runtime(settings: Settings) -> Runtime:
         definitions,
         execution_version,
         flow_packages=flow_package_owners(),
+        execution_guard=composition.EXECUTION_GUARD,
     )
     if settings.database_url:
         from keystone.platform.flow.adapters.dbos import Engine
@@ -112,6 +145,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app):
+        validate_http_routes(app)
         runtime = build_runtime(settings)
         app.state.runtime = runtime
         app.state.passwords = Passwords()
@@ -140,10 +174,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return result
 
     @app.get("/api/v1/worker/status", tags=["health"])
-    async def worker_state():
-        return await worker_status(
-            app.state.runtime.database, settings=settings, application_version=execution_version()
-        )
+    async def worker_state(request: Request):
+        return await app.state.runtime.platform_status(access_context(request)).execute()
 
     app.include_router(identity_router)
     app.include_router(audit_router)

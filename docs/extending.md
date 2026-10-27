@@ -2,6 +2,8 @@
 
 本文维护脚手架、权限/审计、迁移及 Task/Flow 的当前接入方式。执行设施见[任务执行](execution-design.md)，Flow 契约见[领域说明](domains/flow.md)。
 
+第一次接入可先按[最小业务接入](business-quickstart.md)完成生成、装配、迁移、页面和真实测试，再按本文查阅细则。
+
 业务面向同一企业，以模块接入现有工程，复用平台身份和公共能力，随 API/Worker 同制品发布。新增业务不要求独立服务、远程 Worker 协议或独立部署；扩展边界与真实业务验证目标以[整体架构](architecture.md)为准。
 
 Keystone 不在运行时扫描或热加载业务。一个业务由**显式声明**和**显式导入**组成：目录中的代码只有被 `composition.py`、`bootstrap.py` 和 `model_registry.py` 引用后才生效。启动时校验命名空间、权限、审计动作、路由和 Flow 契约，声明错误直接阻止启动。
@@ -32,7 +34,7 @@ businesses/<namespace>/
 ├── catalog.py                 # 权限与审计动作
 ├── models/<entity>.py         # 一个持久化实体一个文件
 ├── schemas/<resource>.py      # 输入契约与显式响应投影
-├── services/<resource>.py     # 用例、对象权限、事务与审计
+├── services/<resource>.py     # 本人对象范围、事务与审计摘要
 └── controllers/<resource>.py  # APIRouter 与请求绑定
 ```
 
@@ -48,6 +50,10 @@ businesses/<namespace>/
 
 脚手架只写文件，不改装配代码；生成后会打印需要手工完成的接入点。临时空迁移目录仅用于独立评审或测试；实际接入或评审追加顺序时，应复制完整 `versions/` 历史后再指定 `--migrations`，不能把空目录生成的编号直接合入现有链。
 
+生成的是“本人所有”的最小资源示例：独立的 `owner_id` 由服务端固定为当前用户，列表和编辑均按它过滤，管理员也不能直接操作他人的对象。`created_by` 只记录创建事实，不承担对象归属。企业共享、角色范围或可转交资源应在业务 Service 中明确实现自己的策略，并相应修改范围测试；功能权限不能替代对象检查。
+
+创建要求 `title`，`content` 默认为空；PATCH 只更新显式提交的字段，省略字段保持原值，显式 `null` 和空标题返回 422，空正文表示清空正文。空对象 PATCH 仍验证功能权限和对象归属，但不修改数据或增加成功审计。
+
 ## 1. 接入权限目录
 
 `catalog.py` 声明本业务的权限和审计动作：
@@ -60,7 +66,11 @@ CATALOG = Catalog(
         "notes.note:read": "查看笔记",
         "notes.note:write": "保存笔记",
     },
-    audit_actions={"notes.note.save": {"before", "after"}},
+    audit_actions={
+        "notes.note.save": {
+            "before", "after", "title", "content_length", "content_sha256",
+        },
+    },
 )
 ```
 
@@ -77,6 +87,7 @@ BUSINESS_CATALOGS = (("notes", NOTES),)
 - 权限键为 `<业务>.<资源>:<动作>`，审计键为 `<业务>.<资源>.<动作>`，最长 100 字符。
 - 业务命名空间不能与平台前缀冲突，不能重复，不能覆盖平台权限。
 - 审计字段必须是集合，只声明允许保存的字段；启动时校验，审计写入时再次校验。
+- 白名单也检查嵌套字段。脚手架只记录标题、正文字数和 UTF-8 内容的 SHA-256，不将完整正文复制到审计；长正文的合法保存不能因审计超过 8 KiB 而失败。修改业务字段时同时维护摘要、白名单与测试。
 - 新增权限只在下次发布后生效；管理员自动获得新权限，普通角色和已有个人令牌不会自动扩大。
 - 修改 `catalog.py` 后重新发布 API 和 Worker，不支持热加载。
 
@@ -125,7 +136,7 @@ from keystone.businesses.notes.controllers import router as notes_router
 app.include_router(notes_router)
 ```
 
-路由统一挂在 `/api/v1` 下，路径带业务资源名（例如 `/api/v1/notes`）。请求校验失败由统一边界返回 422；安全错误使用 `ServiceError`，不要透传上游或数据库异常。
+脚手架路由为 `/api/v1/<namespace>/<resource>`，例如业务 `notes` 的 `notes` 资源使用 `/api/v1/notes/notes`。不同业务可以使用相同资源名。API 启动时检查已装配的路由（含嵌套 include 和不进入 OpenAPI 的接口）；重复的方法与路径阻止启动，仅修改路径参数名或显式写出默认的 `:str` 不能避免冲突。不同方法或不同业务前缀可以共存。请求校验失败由统一边界返回 422；安全错误使用 `ServiceError`，不要透传上游或数据库异常。
 
 ## 4. 实现 Service
 
@@ -135,15 +146,17 @@ Service 组合 `AccessContext`：
 async def create(self, data: NoteCreate):
     async with self.context.access(
         "notes.note:write",
-        write=True,
         action="notes.note.save",
         target="notes.note",
     ) as (session, auth):
-        row = Note(**data.model_dump(), created_by=auth.user.id, updated_by=auth.user.id)
+        row = Note(
+            **data.model_dump(), owner_id=auth.user.id,
+            created_by=auth.user.id, updated_by=auth.user.id,
+        )
         session.add(row)
         await session.flush()
         await self.context.log(
-            session, auth, "notes.note.save", "notes.note", row.id, {"after": data.model_dump()}
+            session, auth, "notes.note.save", "notes.note", row.id, {"after": audit_snapshot(row)}
         )
         return view(row)
 ```
@@ -151,8 +164,9 @@ async def create(self, data: NoteCreate):
 约定：
 
 - 权限、业务写入和成功审计在同一事务提交；失败或拒绝审计在回滚后独立尝试。
-- 写入使用 `write=True` 取得身份排他锁；对象范围由业务明确判断，不能只依赖功能权限。
-- 成功审计的 `action` 必须已在 `catalog.py` 声明，字段必须在允许集合内，总大小不超过 8 KiB。
+- 普通业务读写使用默认的共享身份锁，同样处于数据库事务中；更新对象按需取得本业务的行锁。只有修改身份、角色、授权或凭据时设置 `identity_write=True`，取得身份排他锁。身份锁等待规则见[身份领域](domains/identity.md)。
+- 对象范围由业务明确判断。脚手架列表过滤 `owner_id`，编辑在同一 SQL 中按 ID 和 `owner_id` 过滤并锁行，不可见对象统一返回 404；客户端不能指定或修改归属。不统一添加管理员绕过。
+- 成功审计的 `action` 必须已在 `catalog.py` 声明，字段必须在允许集合内，总大小不超过 8 KiB；上例的 `audit_snapshot` 使用生成 Service 内的受控摘要函数。
 - 外部 I/O（文件、模型）不要放在长事务中；按现有 files/model_access 的短事务边界编排。
 - 列表接口使用 `keystone.core.http.Page`，不要重复声明分页参数。
 - 不新增通用 Repository、BaseService 或动态 CRUD；直接使用 SQLAlchemy 和明确的服务方法。
@@ -169,19 +183,33 @@ async def create(self, data: NoteCreate):
 
 可以参考 `backend/tests/integration/test_business_integration.py` 的装配方式。Flow 的测试夹具位于 `backend/tests/support/flow_fixture/`，不要把测试夹具放进生产 `businesses/`。
 
+`backend/tests/integration/test_scaffold_business.py` 直接调用脚手架，在临时目录生成业务和追加迁移，显式装配权限、模型与路由，在随机库运行初始化并检查 ORM/迁移一致，再通过真实 API 检查创建、部分更新、本人范围、PAT 交集、撤权和审计失败回滚。`test_identity_locks.py` 用真实 PostgreSQL 检查锁等待、取消清理和身份变更重试。不要把这些用例改成只检查模板字符串或 mock 数据库。
+
+从仓库根目录运行相关检查（先按[测试说明](../backend/tests/README.md)准备专用测试库）：
+
+```bash
+backend/.venv/bin/python -m pytest backend/tests/unit/test_new_business.py backend/tests/unit/test_http_routes.py backend/tests/integration/test_scaffold_business.py backend/tests/integration/test_identity_locks.py --require-postgres
+```
+
+Windows 将解释器路径替换为 `backend/.venv/Scripts/python.exe`。统一后端验证使用 `backend/.venv/bin/python scripts/check.py --scope backend`。
+
 ## 6. 接入 Flow / Agent（可选）
 
 业务不要求使用 Flow。普通请求可以直接调用自己的 Service；只有需要持久执行、长任务、Agent 或多步骤编排时才增加 Flow。
 
 最小步骤：
 
-1. 在业务包中增加 `contracts.py`，声明 `FlowDefinition`（key/revision、输入输出模型、入口、所需权限、文件路径和模型角色），并导出 `FlowPackage`。
-2. 在业务包中增加 `workflow.py`，用 `@DBOS.workflow(name=definition.entrypoint)` 注册稳定入口；步骤使用 `@DBOS.step`，Agent 使用 `DBOSDurability`。
-3. `composition.FLOW_PACKAGES` 加入该包；包的 execution_modules 显式列出 workflow，API 不导入执行代码。
+1. 在业务包的 `schemas/` 中声明 `FlowDefinition`（key/revision、输入输出模型、入口、所需权限、文件路径和模型角色）与 `FlowPackage`，保持轻量导入；模块根目录只放 `__init__.py` 与 `catalog.py`。
+2. 在 `workflows/` 中用 `@DBOS.workflow(name=definition.entrypoint)` 注册稳定入口；步骤使用平台的 `safe_step` 错误边界，Agent 使用 `DBOSDurability`。
+3. `composition.FLOW_PACKAGES` 加入该包；包的 execution_modules 显式列出 workflows 内的执行模块，API 不导入执行代码。
 4. 权限必须已声明；文件路径在启动时按 Schema 编译；模型角色须声明 model:invoke 权限，发起时在业务 input 外提交 model_bindings。
 5. 在测试中通过 `ExecutionIdentity`、`reconcile_one` 和 Worker 子进程验证执行与恢复。
 
 Flow 只保存运行记录、权限和结果协调；业务结论、实体和采用动作仍归业务自己保存。详细边界见[Flow 开发](flow-development.md)和[Flow 领域](domains/flow.md)。
+
+需要同步创建业务记录的 Flow 在可信定义上设置 `business_managed=True`。通用发起 API 会拒绝直接受理，业务 Service 在自己的身份事务中调用 `start_in_transaction`；它继续执行原有用户/PAT、文件、模型及幂等检查，不能由 HTTP 请求选择是否绕过业务入口。控制台目录提示从业务页面发起。
+
+业务执行守卫和 Worker 服务绑定使用 composition 的显式 `EXECUTION_GUARD` / `WORKFLOW_BINDINGS`，契约与调用时机见[Flow 开发](flow-development.md#业务执行接入)。不必替换平台的 FlowService、ExecutionIdentity 或 Worker 主入口。
 
 ## 7. 前端（可选）
 

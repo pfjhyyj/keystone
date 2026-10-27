@@ -49,6 +49,7 @@ class FlowArtifactService:
                 run,
                 self.identity.flow_definitions,
                 execution_version=self.identity.execution_version(),
+                guard=self.identity.guard,
             )
         auth.require("file:content_read")
         return auth

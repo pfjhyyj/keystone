@@ -1,5 +1,10 @@
 """Explicit cross-domain use cases, assembled by bootstrap."""
 
+import asyncio
+import logging
+
+from keystone.core.errors import ServiceError
+from keystone.core.time import utcnow
 from keystone.platform.flow.schemas.diagnostics import (
     Diagnostics,
     FlowFileDiagnostic,
@@ -9,6 +14,69 @@ from keystone.platform.flow.schemas.diagnostics import (
 from keystone.platform.model_access.schemas.diagnostics import ImageSource
 
 
+class PlatformStatus:
+    def __init__(self, identity, workers, backlogs):
+        self.identity, self.workers, self.backlogs = identity, workers, backlogs
+
+    async def execute(self):
+        if self.identity.credential is None:
+            raise ServiceError(401, "authentication_required", "请先登录")
+        async with self.identity.access():
+            pass
+
+        async def observe(probe):
+            try:
+                async with asyncio.timeout(3):
+                    pending, oldest = await probe()
+                return {
+                    "status": "ok",
+                    "pending": pending,
+                    "oldest_pending_at": oldest.isoformat() if oldest else None,
+                    "oldest_pending_age_seconds": max(0, int((utcnow() - oldest).total_seconds()))
+                    if oldest
+                    else None,
+                }
+            except Exception:
+                return {
+                    "status": "unknown",
+                    "pending": None,
+                    "oldest_pending_at": None,
+                    "oldest_pending_age_seconds": None,
+                }
+
+        result, *values = await asyncio.gather(
+            self.workers(), *(observe(probe) for probe in self.backlogs.values())
+        )
+        result["backlog"] = dict(zip(self.backlogs, values, strict=True))
+        async with self.identity.access():
+            pass
+        return result
+
+
+class HistoryRetention:
+    def __init__(self, credentials, audit, engine):
+        self.credentials, self.audit, self.engine = credentials, audit, engine
+
+    async def execute(self, *, apply=False):
+        result = {"applied": apply}
+        try:
+            async with asyncio.timeout(10):
+                result.update(await self.credentials(apply=apply))
+            async with asyncio.timeout(10):
+                result["audit"] = await self.audit(apply=apply)
+            async with asyncio.timeout(30):
+                result["maintenance"] = await self.engine(apply=apply)
+            result["status"] = "ok"
+            return result
+        finally:
+            logging.getLogger(__name__).info(
+                "history_retention",
+                extra={
+                    "diagnostic": {**result, "status": result.get("status", "partial_failure")},
+                },
+            )
+
+
 class RoleDeletion:
     def __init__(self, identity, files):
         self.identity, self.files = identity, files
@@ -16,7 +84,7 @@ class RoleDeletion:
     async def execute(self, identifier):
         async with self.identity.context.access(
             "role:delete",
-            write=True,
+            identity_write=True,
             action="identity.role.delete",
             target="identity.role",
             target_id=identifier,

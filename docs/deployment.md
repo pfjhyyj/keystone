@@ -50,6 +50,8 @@ DBOS 公共运行时由 Worker 统一启动，文件清理、Flow 协调和自�
 
 `/api/v1/health` 检查 API 存活，`/api/v1/ready` 检查数据库、业务版本及存储；Worker 使用独立日志或[健康探针](development.md#worker-健康检查排障)。
 
+`/api/v1/worker/status` 的实例与积压明细要求有效登录身份。凭据、审计及维护任务的自动历史清理默认关闭；按[历史清理](history-retention.md)预览保留范围并完成必要归档后，再配置同版本 API/Worker 的保留策略并重新发布。
+
 ### 2.1 调用失败排查
 
 API 与 Worker 将 JSON 日志输出到标准错误，部署时由进程管理器或容器平台保留并轮转。模型失败事件为 `model_call_failed`，主动中断为 `model_call_interrupted`；按调用记录的 UUID 查询 API 和 Worker 日志，HTTP 响应头 `X-Request-ID` 对应日志顶层 `request_id`。未完成发送登记时没有持久调用记录，仍可按请求 ID 查询。
