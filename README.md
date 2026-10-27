@@ -50,7 +50,7 @@ cd backend
 uv run --locked keystone-worker
 ```
 
-默认一个 Worker，文件清理、Flow 协调和自动查费自动运行。双 Worker、热添加、恢复和退役见下节。
+默认一个 Worker，文件清理、Flow 协调和自动查费自动运行。扩容、退役与故障恢复按需查阅[部署说明](docs/deployment.md#4-多-worker-部署与发布)。
 
 ### 3. 另开终端启动控制台
 
@@ -62,52 +62,11 @@ pnpm dev
 
 访问 <http://127.0.0.1:5173/console/>，以 `admin` 登录。“管理总览”汇总平台异常和当前权限可见的近 30 天用量，“平台状态”查看 Worker 与依赖的完整状态。API 默认地址为 `http://127.0.0.1:8000`。
 
-## Worker 操作示例
+## 接入业务
 
-以下每个终端都先进入 `backend/`，使用同一宿主、同一版本、同一份配置和协调卷。示例从两个 Worker 热加到三个，再退回两个；已有环境沿用原固定身份。
+从[最小业务接入](docs/business-quickstart.md)开始：生成模块，显式装配权限、模型和路由，完成迁移，再接入控制台页面和测试。普通请求由业务 Service 负责对象授权、事务与审计，复用身份、文件和字典等公共能力。
 
-**1. 首次升级。** 旧版本先停写、处理在途业务，停止全部 API/Worker 并等待退出，联合备份后切换新版本；保留原配置和协调卷。新环境直接使用上面的 Quickstart。
-
-```sh
-uv sync --locked
-uv run --locked keystone init
-uv run --locked keystone-worker --inspect
-```
-
-旧活动执行或检查不完整时，先按[升级核对](docs/deployment.md#4-多-worker-部署与发布)处理后再启动。
-
-**2. 启动 API 和双 Worker。** 三个终端分别运行；Quickstart 已启动的 API/默认 Worker 可直接复用。
-
-```sh
-# 终端 1：API
-uv run --locked keystone-api
-# 终端 2：Worker A
-KEYSTONE_WORKER_ID=keystone-worker uv run --locked keystone-worker
-# 终端 3：Worker B
-KEYSTONE_WORKER_ID=keystone-worker-02 uv run --locked keystone-worker
-```
-
-**3. 热添加第三个。** 保持 API、A、B 运行，在新终端启动 C：
-
-```sh
-KEYSTONE_WORKER_ID=keystone-worker-03 uv run --locked keystone-worker
-```
-
-自动登记，无需改身份清单、执行 init 或重启已有进程；共享预算不变，最多 4 个未退役身份。
-
-**4. C 故障后按原身份恢复。** 确认旧进程退出，用相同版本、配置和协调卷重新运行上一条命令。API/A/B 继续运行；查费续查，模型请求不自动重发，无需 init。
-
-**5. 缩容退役 C。** 停用 C 的自动重启，在 C 的终端按 Ctrl-C 并等待进程退出，再执行：
-
-```sh
-uv run --locked keystone retire-worker --worker-id keystone-worker-03
-```
-
-仍在运行或有待恢复执行/模型调用时拒绝退役，先按第 4 步恢复收尾。普通停止仍保留登记，成功退役后才减少预期数量；API/A/B 无需重启。
-
-观察状态：`uv run --locked keystone-worker --inspect`。本例的 `workers.ready_workers` / `workers.expected_workers` 为：双 Worker `2/2`，热加后 `3/3`，C 离线后 `2/3`，恢复后 `3/3`，退役后 `2/2`；如已有其他登记，数量相应增加。状态更新需等待心跳和维护检查。
-
-已退役身份需先执行 `uv run --locked keystone reactivate-worker --worker-id keystone-worker-03` 才能再次启动；细节见[恢复与退役](docs/deployment.md#44-固定槽位调整与故障恢复)。
+需要持久后台处理时，再按[Flow 开发](docs/flow-development.md)装配流程；模块、权限与迁移的完整约定见[模块扩展](docs/extending.md)。
 
 ## 模型配置（手动）
 

@@ -1,4 +1,4 @@
-"""Current DB grants + ephemeral Casbin enforcer."""
+"""Current role grants, bounded by the original credential's permission scope."""
 
 import asyncio
 from dataclasses import dataclass
@@ -8,7 +8,6 @@ from sqlalchemy import select, text
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.identity.adapters.rbac import Enforcer, enforcer_for_roles
 from keystone.platform.identity.adapters.security import digest
 from keystone.platform.identity.models import (
     LoginSession,
@@ -45,15 +44,12 @@ class Authorization:
     credential: LoginSession | PersonalAccessToken | None
     kind: str
     administrator: bool
-    enforcer: Enforcer
     permissions: set[str]
     declared_permissions: frozenset[str]
     role_ids: frozenset[UUID]
 
     def require(self, permission):
-        if permission not in self.permissions or not self.enforcer.enforce(
-            str(self.user.id), permission
-        ):
+        if permission not in self.permissions:
             raise ServiceError(403, "permission_denied", "没有执行此操作的权限")
 
     def grantable(self, permissions):
@@ -88,7 +84,7 @@ async def load_authorization(session, user_id: UUID, *, pat_id: UUID | None = No
     ):
         raise ServiceError(401, "authentication_required", "凭据已失效")
     roles, administrator = await role_grants(session, user_id)
-    enforcer, grants = enforcer_for_roles(user_id, roles)
+    grants = set().union(*roles.values())
     if pat is not None:
         grants &= set(pat.permissions)
     if user.password_change_required:
@@ -98,7 +94,6 @@ async def load_authorization(session, user_id: UUID, *, pat_id: UUID | None = No
         pat,
         "pat" if pat else "trusted",
         administrator,
-        enforcer,
         grants,
         frozenset(permission_catalog(session)),
         frozenset(roles),

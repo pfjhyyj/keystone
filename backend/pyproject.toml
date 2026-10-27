@@ -16,7 +16,6 @@ dependencies = [
     "pillow==13.0.0",
     "portalocker>=3.2,<4",
     "psycopg[binary]==3.3.6",
-    "pycasbin>=2.6,<3",
     "pydantic==2.13.5",
     "pydantic-ai-harness==0.36.0",
     "pydantic-ai-slim[dbos]==2.51.0",

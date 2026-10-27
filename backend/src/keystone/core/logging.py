@@ -59,7 +59,6 @@ def configure_logging(level: str) -> None:
     logging.basicConfig(level=level, handlers=[handler], force=True)
     # Readiness constructs a migration context every time; keep its INFO noise out of logs.
     logging.getLogger("alembic.runtime.migration").setLevel(logging.WARNING)
-    logging.getLogger("casbin").setLevel(logging.WARNING)
     # SDK DEBUG logs can contain messages and headers; never inherit application DEBUG.
     for name in ("openai", "httpx2", "httpcore2"):
         logging.getLogger(name).setLevel(logging.WARNING)

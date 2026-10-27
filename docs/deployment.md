@@ -1,6 +1,6 @@
 # 服务打包与发布
 
-日常开发使用本机 API、Worker 和 Vite，启动命令见 README 的 [Quickstart](../README.md#quickstart)，升级、双 Worker、热添加和退役的最简示例见[Worker 操作示例](../README.md#worker-操作示例)。`deploy/compose.yaml` 仅用于 PostgreSQL 等第三方依赖，不启动应用、执行迁移或配置模型。
+日常开发使用本机 API、Worker 和 Vite，默认单 Worker 的启动命令见 README 的 [Quickstart](../README.md#quickstart)。本页维护构建、发布及恢复操作，多 Worker 的启动、热添加、退役与故障恢复集中在[第 4 节](#4-多-worker-部署与发布)。`deploy/compose.yaml` 仅用于 PostgreSQL 等第三方依赖，不启动应用、执行迁移或配置模型。
 
 部署面向单企业，优先使用统一后端制品和一个 Worker；业务模块复用同一套部署，集成在控制台的业务页面随现有前端交付。是否增加实例由实际负载决定；本页多 Worker 能力按需使用，跨宿主、自动接管和版本混跑不作为当前部署目标。扩展取舍与真实业务验证目标见[整体架构](architecture.md)。
 
@@ -112,6 +112,14 @@ KEYSTONE_WORKER_ID=keystone-worker-02 uv run --locked keystone-worker
 新进程先取得部署共享锁和本身份的 OS/PostgreSQL 排他锁，再串行校验宿主、版本、公共执行配置、实际协调卷与未退役名额。通过后登记并沿用自身旧实例恢复、启动前预算注册、DBOS 启动和计划安装顺序。重复身份、已退役身份的普通启动、不兼容配置及超出四个名额均拒绝；拒绝不能污染登记、心跳或队列/计划。并发争用最后一个名额只允许一个新身份成功。
 
 API 从未退役登记及最新心跳发现新成员，随后可用 --inspect 或控制台核对就绪数量；无需修改配置或重启 API、原 Worker，也不执行初始化、迁移或历史 Flow 专项收尾。新成员不提高共享预算、不复制维护计划，现有并发、去重和恢复机制保持原样。
+
+例如已有两个 Worker 时，在新终端热添加第三个；API 和已有 Worker 保持运行：
+
+```bash
+KEYSTONE_WORKER_ID=keystone-worker-03 uv run --locked keystone-worker
+```
+
+默认两个身份就绪时 ready_workers/expected_workers 为 2/2，热加后为 3/3；第三个离线时为 2/3，按原身份恢复后为 3/3，停止并成功退役后回到 2/2。已有其他登记时数量相应增加，状态更新需等待心跳和维护检查。恢复及退役步骤见[第 4.4 节](#44-固定槽位调整与故障恢复)。
 
 容器使用不同固定服务身份、相同只读执行配置和真实共享卷，不能直接 scale 同身份服务。主机校验继续使用进程读取的 hostname；同一宿主的容器须统一该 hostname，统一名称不能替代实际共享本地卷。进程管理器配置原身份重启；终止宽限期须大于 worker_shutdown_seconds 并给事实收尾/文件 I/O 留出时间。代码版本、公共预算或存储配置变化仍采用停机发布，不能由新进程覆盖在用声明。
 

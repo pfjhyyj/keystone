@@ -6,7 +6,7 @@
 
 Keystone 面向单企业，采用模块化单体。各业务模块共用一套用户、登录和权限管理，一次登录即可使用获得授权的模块。业务模块、角色或部门不被自动建模为租户；当前不建设多企业共享服务或 Tenant/Membership 隔离体系。
 
-已确定：当前专注单企业；首版不做 Department 和 SSO，使用本地认证，权限判断采用 Casbin。企业内部组织结构或统一登录在实际业务需要时另行评估，不预建模型或适配框架。平台定位和真实业务验证目标见[整体架构](../architecture.md)。
+已确定：当前专注单企业；首版不做 Department 和 SSO，使用本地认证，功能权限按当前角色授权集合精确判断。企业内部组织结构或统一登录在实际业务需要时另行评估，不预建模型或适配框架。平台定位和真实业务验证目标见[整体架构](../architecture.md)。
 
 用户管理、认证和授权可以放在一个身份模块中，共用数据库。不需要分别建设服务、通用身份框架或应用账号体系。
 
@@ -102,7 +102,7 @@ Permission 是代码目录，不持久化，不增加行级审计字段。目录
 
 内置管理员角色拥有全部已声明权限，新增权限自动纳入，不通过普通角色编辑修改。不能停用最后一个可用管理员或移除其管理员角色；不能直接删除仍被使用的角色。管理员使用个人令牌时仍受令牌权限上限约束。
 
-Casbin 负责判断这些授权关系，不负责登录、会话或用户状态。功能权限与具体业务对象的访问规则分别检查。
+有效功能权限取当前角色权限的并集，并与当前权限目录及原 PAT 范围取交集；强制改密时功能权限为空。权限键按完整字符串精确匹配，不支持通配符。功能权限与具体业务对象的访问规则分别检查。
 
 ### 2.6 登录会话 LoginSession
 
@@ -179,7 +179,7 @@ PAT.permissions 保存签发时明确选定的权限 key 集合，不使用会�
 
 权限由代码声明，例如 `user:read`，管理员将已有权限分配给角色，再把角色分配给用户。
 
-Keystone 的用户角色、角色权限关系是唯一授权数据来源，Casbin 使用这些数据进行判断，不另建一套可独立编辑的策略存储。首版 API 在请求授权时、Worker 在每次新的受保护操作前从数据库加载当前用户、角色与原 PAT 状态/范围，不跨请求或跨步骤复用授权结果；同一次短操作内可以复用已加载上下文，不在外部调用期间保持长事务。内置管理员身份与 FileGrant 也使用当前关系。以此满足多进程撤权语义，不引入策略广播、权限版本字段或缓存基础设施。当前授权只在本次短操作内有效。
+Keystone 的用户角色、角色权限关系是唯一授权数据来源，Authorization.require() 直接检查有效权限集合，不另建策略存储或第二套权限引擎。首版 API 在请求授权时、Worker 在每次新的受保护操作前从数据库加载当前用户、角色与原 PAT 状态/范围，不跨请求或跨步骤复用授权结果；同一次短操作内可以复用已加载上下文，不在外部调用期间保持长事务。内置管理员身份与 FileGrant 也使用当前关系。以此满足多进程撤权语义，不引入策略广播、权限版本字段或缓存基础设施。当前授权只在本次短操作内有效。
 
 已确定：保留内置管理员角色，拥有全部已声明权限，模块新增权限自动纳入；保护最后一个可用管理员。普通角色可配置权限，但授予和修改不能超出操作者的权限范围。仍被使用的角色不能直接删除。
 
@@ -246,7 +246,7 @@ LoginSession 不被 FlowRun 引用，过期或撤销后按自己的保留策略�
 | 浏览器访问 | 服务端会话，通过 Cookie 携带随机凭据 |
 | JWT 与 Refresh Token | 不引入，省去刷新与轮换流程 |
 | 个人 API 凭据 | 保留，仍代表所属用户 |
-| 权限计算 | 使用 Casbin，数据由 Keystone 自己管理 |
+| 权限计算 | 当前角色权限并集与目录、原 PAT 范围交集，按权限键精确匹配 |
 
 首版会话只有固定到期时间和退出撤销，不增加空闲超时、滑动续期或设备管理。基础审计字段和重要操作的审计日志保留，请求上下文属于实现配套，不在这里扩展成新的核心领域。
 
@@ -254,7 +254,7 @@ LoginSession 不被 FlowRun 引用，过期或撤销后按自己的保留策略�
 
 ## 7. 最小实现约定
 
-代码位于 backend/src/keystone/platform/identity/，六张身份表由 identity 领域初始迁移创建，AuditLog 由 audit 领域初始迁移创建。复用 Argon2 校验、随机凭据摘要、当前授权加载、管理范围和显式审计模式；会话和 PAT 按本文重新实现，不引入 JWT。权限库锁定 PyCasbin 2.8.0，使用其内存 Enforcer 和 RBAC 规则，参考[官方 Python 实现](https://github.com/pycasbin/casbin)；每次短操作从 Keystone 关系表装载，不使用数据库 Adapter、casbin_rule 或全局授权缓存。
+代码位于 backend/src/keystone/platform/identity/，六张身份表由 identity 领域初始迁移创建，AuditLog 由 audit 领域初始迁移创建。复用 Argon2 校验、随机凭据摘要、当前授权加载、管理范围和显式审计模式；会话和 PAT 按本文重新实现，不引入 JWT。每次短操作从 Keystone 关系表装载当前授权，使用有效权限集合直接判断，不引入独立策略库或全局授权缓存。
 
 | 项目 | 当前规则 |
 |---|---|
@@ -309,7 +309,7 @@ Cookie 使用 HttpOnly、SameSite=Lax、Path=/，生产环境使用 Secure 和 _
 
 ### 代码组织
 
-实现分为 controllers/、services/、models/、schemas/ 四层目录，六个持久化实体各自一个文件。AuthService/UserService/RoleService/TokenService 组合 services/access.py 的 AccessContext；其他领域仅复用上下文，不依赖账户管理服务。Passwords 哈希服务仅传给认证、用户管理及初始化。HTTP 身份提取位于 controllers/dependencies.py；Credential 是 schemas/credentials.py 的轻量值对象；当前授权与角色读取位于 services/authorization.py，登录冷却策略位于 services/login_limits.py。加密/摘要及 Casbin 实现分别收在 adapters/security.py、adapters/rbac.py，不承担业务事务或管理范围判断。根目录 catalog.py 只声明 identity 权限与审计字段。角色响应由 schemas/roles.py 显式投影。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
+实现分为 controllers/、services/、models/、schemas/ 四层目录，六个持久化实体各自一个文件。AuthService/UserService/RoleService/TokenService 组合 services/access.py 的 AccessContext；其他领域仅复用上下文，不依赖账户管理服务。Passwords 哈希服务仅传给认证、用户管理及初始化。HTTP 身份提取位于 controllers/dependencies.py；Credential 是 schemas/credentials.py 的轻量值对象；当前授权与角色读取位于 services/authorization.py，登录冷却策略位于 services/login_limits.py。加密与凭据摘要收在 adapters/security.py，不承担业务事务或管理范围判断。根目录 catalog.py 只声明 identity 权限与审计字段。角色响应由 schemas/roles.py 显式投影。 统一规范见[整体架构](../architecture.md#54-模块分层与代码规范)。
 
 AccessContext.access 统一处理事务、共享/排他身份锁、权限、会话限制、失败审计和 IntegrityError → conflict。ExecutionIdentity 只覆盖 authorize(session)，按 Run 检查当前身份和执行资格；不另写事务上下文，也不接收后忽略调用参数。
 

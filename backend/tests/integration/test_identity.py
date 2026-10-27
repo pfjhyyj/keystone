@@ -223,7 +223,11 @@ def test_batched_role_grants_preserve_account_and_token_rules(client):
 
         target = await session.get(User, UUID(user["id"]))
         assert await load_authorization_for_target(session, target) == (expected, False)
-        assert (await load_authorization(session, target.id)).permissions == set()
+        forced = await load_authorization(session, target.id)
+        assert forced.permissions == set()
+        with pytest.raises(ServiceError) as denied:
+            forced.require("dictionary:read")
+        assert denied.value.code == "permission_denied"
         target.password_change_required = False
         pat = PersonalAccessToken(
             user_id=target.id,
@@ -241,6 +245,29 @@ def test_batched_role_grants_preserve_account_and_token_rules(client):
         auth.require("dictionary:read")
         with pytest.raises(ServiceError):
             auth.require("audit:read")
+        for current, allowed in (
+            (await load_authorization(session, target.id), expected),
+            (auth, {"dictionary:read"}),
+            (
+                await load_authorization(session, UUID(admin["id"])),
+                set(PLATFORM_CATALOG.permissions),
+            ),
+            (await load_authorization(session, UUID(unassigned["id"])), set()),
+        ):
+            for permission in (*PLATFORM_CATALOG.permissions, "dictionary:*", "removed:permission"):
+                if permission in allowed:
+                    current.require(permission)
+                else:
+                    with pytest.raises(ServiceError) as denied:
+                        current.require(permission)
+                    assert denied.value.status == 403 and denied.value.code == "permission_denied"
+        pat.user_id = UUID(admin["id"])
+        await session.flush()
+        restricted_admin = await load_authorization(session, pat.user_id, pat_id=pat.id)
+        assert restricted_admin.administrator
+        restricted_admin.require("dictionary:read")
+        with pytest.raises(ServiceError):
+            restricted_admin.require("user:create")
         target.is_active = False
         await session.flush()
         with pytest.raises(ServiceError):

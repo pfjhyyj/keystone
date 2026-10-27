@@ -70,7 +70,7 @@ erDiagram
 
 ## 4. 权限与审计
 
-沿用 identity 与 Casbin，声明 `dictionary:read` 和 `dictionary:manage`。read 保护独立字典目录及允许调用方指定字典的通用查询接口；manage 用于创建、修改与启停。角色按需要授予，管理界面通常同时需要两项；首版不开放匿名字典接口，不做逐字典授权表。
+沿用 identity 的有效权限检查，声明 `dictionary:read` 和 `dictionary:manage`。read 保护独立字典目录及允许调用方指定字典的通用查询接口；manage 用于创建、修改与启停。角色按需要授予，管理界面通常同时需要两项；首版不开放匿名字典接口，不做逐字典授权表。
 
 | 场景 | 授权规则 |
 |---|---|
