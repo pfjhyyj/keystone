@@ -187,9 +187,9 @@ it('preserves an off-page channel and never sends model key in PATCH', async () 
   await flushPromises()
   await button(wrapper, '编辑模型').trigger('click')
   await flushPromises()
-  expect(wrapper.get('[role=dialog] input').attributes('disabled')).toBeDefined()
+  expect(wrapper.get('.page-editor input[pattern]').attributes('disabled')).toBeDefined()
   expect(selectControl(wrapper, '模型渠道').text()).toContain(channelId)
-  await wrapper.get('[role=dialog] form').trigger('submit')
+  await wrapper.get('.page-editor form').trigger('submit')
   await flushPromises()
   expect(writes).toEqual([
     {
@@ -237,10 +237,10 @@ it('loads channel models, selects an upstream ID and suggests a model key', asyn
   await flushPromises()
   expect(discoveryCalls).toBe(2)
   await chooseSelect(wrapper, 'vendor/chat-v1', '上游模型')
-  expect((wrapper.get('[role=dialog] input').element as HTMLInputElement).value).toBe(
+  expect((wrapper.get('.page-editor input[pattern]').element as HTMLInputElement).value).toBe(
     'vendor-chat-v1',
   )
-  await wrapper.get('[role=dialog] form').trigger('submit')
+  await wrapper.get('.page-editor form').trigger('submit')
   await flushPromises()
   expect(writes).toEqual([
     {
@@ -268,10 +268,10 @@ it.each(['', '   '])('resets a cleared model display name to its fixed key (%j)'
   const wrapper = mount(ModelManager)
   await flushPromises()
   await button(wrapper, '编辑模型').trigger('click')
-  const name = wrapper.get('[role=dialog] input[placeholder="留空使用模型 key"]')
+  const name = wrapper.get('.page-editor input[placeholder="留空使用模型 key"]')
   expect((name.element as HTMLInputElement).value).toBe('旧显示名称')
   await name.setValue(value)
-  await wrapper.get('[role=dialog] form').trigger('submit')
+  await wrapper.get('.page-editor form').trigger('submit')
   await flushPromises()
   expect(writes).toHaveLength(1)
   expect(writes[0]!.path).toBe(`/model-entries/${id}`)
@@ -472,7 +472,13 @@ it.each(['渠道', '模型'])('renames %s from the list using only the display n
   })
   const wrapper = mount(ModelManager)
   await flushPromises()
-  await button(wrapper, `修改${kind}名称`).trigger('click')
+  await wrapper
+    .get(`#configuration-${kind === '渠道' ? 'channels' : 'models'} .row-more-trigger`)
+    .trigger('click')
+  await flushPromises()
+  await button(new DOMWrapper(document.body) as unknown as VueWrapper, `修改${kind}名称`).trigger(
+    'click',
+  )
   await wrapper.get('[role=dialog] input').setValue('新的显示名称')
   await wrapper.get('[role=dialog] form').trigger('submit')
   await flushPromises()
@@ -509,7 +515,13 @@ it.each(['渠道', '模型'])(
     })
     const wrapper = mount(ModelManager)
     await flushPromises()
-    await button(wrapper, `删除${kind}`).trigger('click')
+    await wrapper
+      .get(`#configuration-${kind === '渠道' ? 'channels' : 'models'} .row-more-trigger`)
+      .trigger('click')
+    await flushPromises()
+    await button(new DOMWrapper(document.body) as unknown as VueWrapper, `删除${kind}`).trigger(
+      'click',
+    )
     expect(deletes).toEqual([])
     await wrapper.get('[role=dialog] form').trigger('submit')
     await flushPromises()
@@ -776,7 +788,7 @@ it('distinguishes catalog loading and failure, retries and opens the selected Fl
   expect(wrapper.text()).toContain('流程目录暂不可用')
   await button(wrapper, '刷新流程目录').trigger('click')
   await flushPromises()
-  expect(wrapper.getComponent(RouterLinkStub).props('to')).toBe('/')
+  expect(wrapper.getComponent(RouterLinkStub).props('to')).toBe('/platform')
   await wrapper.get('input[placeholder="搜索名称、标识或说明"]').setValue(' 批量处理 ')
   expect(wrapper.text()).toContain('显示 1 / 2 个流程')
   await button(wrapper, '发起流程').trigger('click')

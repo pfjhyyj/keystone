@@ -6,6 +6,7 @@ import { downloadFile, uploadFile, type UploadProgress } from '../../api/files'
 import { fileApi, fileStatus, uuidPattern, type StoredFile } from '../../api/files'
 import { usePagedList } from '../../composables/usePagedList'
 import { useAction } from '../../composables/useAction'
+import RowMore from '../../components/RowMore.vue'
 import AppDialog from '../../components/AppDialog.vue'
 import ListPager from '../../components/ListPager.vue'
 import FileGrantsDialog from './components/FileGrantsDialog.vue'
@@ -19,6 +20,13 @@ const {
   search,
 } = usePagedList('file:inspect', fileApi.list)
 const { busy, error, notice, run } = useAction()
+const uploadOpen = ref(false)
+function fileSize(bytes: number | null) {
+  if (bytes === null) return '未报告'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1048576).toFixed(1)} MB`
+}
 const chosen = ref<File | null>(null),
   maxBytes = ref(0),
   requestKey = ref('')
@@ -142,15 +150,24 @@ onMounted(() => void loadOptions())
         <h1>文件库</h1>
         <p>统一保存文件，供后续业务引用。内容读取与管理授权分别控制。</p>
       </div>
-      <el-button
-        v-if="can('file:inspect')"
-        :disabled="busy || loading"
-        @click="reload"
-        native-type="button"
-        type="default"
-      >
-        刷新文件
-      </el-button>
+      <div class="row-actions">
+        <el-button
+          v-if="can('file:create')"
+          type="primary"
+          :disabled="busy"
+          @click="uploadOpen = !uploadOpen"
+          >{{ uploadOpen ? '收起上传' : '上传文件' }}</el-button
+        >
+        <el-button
+          v-if="can('file:inspect')"
+          :disabled="busy || loading"
+          @click="reload"
+          native-type="button"
+          type="default"
+        >
+          刷新文件
+        </el-button>
+      </div>
     </div>
     <el-alert
       v-if="(error && !selected) || listError"
@@ -163,7 +180,11 @@ onMounted(() => void loadOptions())
     <el-alert v-if="notice" role="status" type="success" show-icon :closable="false">{{
       notice
     }}</el-alert>
-    <template v-if="can('file:create')">
+    <section
+      v-show="uploadOpen || !can('file:inspect')"
+      v-if="can('file:create')"
+      aria-label="上传文件"
+    >
       <el-alert v-if="optionsError" role="alert" type="error" show-icon :closable="false"
         >上传配置加载失败：{{ optionsError }}</el-alert
       >
@@ -216,11 +237,11 @@ onMounted(() => void loadOptions())
           >{{ optionsError ? '重试上传配置' : '刷新上传配置' }}</el-button
         >
       </form>
-    </template>
+    </section>
     <p v-if="!can('file:inspect')">当前账户没有查看文件库的权限。</p>
     <template v-else>
       <p v-if="loading" role="status">正在加载文件…</p>
-      <div class="table-scroll">
+      <div v-if="!listError" class="table-scroll">
         <el-table
           :fit="false"
           native-scrollbar
@@ -235,7 +256,7 @@ onMounted(() => void loadOptions())
           >
           <el-table-column label="大小" min-width="100"
             ><template #default="{ row: row }">{{
-              row.size_bytes === null ? '—' : `${row.size_bytes} B`
+              fileSize(row.size_bytes)
             }}</template></el-table-column
           >
           <el-table-column label="状态" min-width="120"
@@ -267,31 +288,33 @@ onMounted(() => void loadOptions())
                   >
                     编辑文件
                   </el-button>
-                  <el-button
-                    :disabled="busy"
-                    @click="sharing = row"
-                    native-type="button"
-                    type="primary"
-                    link
-                    >文件授权</el-button
-                  ><el-button
-                    :disabled="busy"
-                    @click="references = row"
-                    native-type="button"
-                    type="primary"
-                    link
-                    >查看引用</el-button
-                  >
-                  <el-button
-                    v-if="!['deleted', 'deleting'].includes(row.status)"
-                    :disabled="busy"
-                    @click="edit(row, 'delete')"
-                    native-type="button"
-                    type="danger"
-                    link
-                  >
-                    删除文件
-                  </el-button></template
+                  <RowMore :label="`${row.name}的更多操作`"
+                    ><el-button
+                      :disabled="busy"
+                      @click="sharing = row"
+                      native-type="button"
+                      type="primary"
+                      link
+                      >文件授权</el-button
+                    ><el-button
+                      :disabled="busy"
+                      @click="references = row"
+                      native-type="button"
+                      type="primary"
+                      link
+                      >查看引用</el-button
+                    >
+                    <el-button
+                      v-if="!['deleted', 'deleting'].includes(row.status)"
+                      :disabled="busy"
+                      @click="edit(row, 'delete')"
+                      native-type="button"
+                      type="danger"
+                      link
+                    >
+                      删除文件
+                    </el-button></RowMore
+                  ></template
                 >
               </div></template
             ></el-table-column
@@ -328,6 +351,7 @@ onMounted(() => void loadOptions())
     </details>
     <AppDialog
       v-if="selected"
+      :protect-changes="mode === 'edit'"
       :title="mode === 'edit' ? '编辑文件' : '删除文件'"
       :busy="busy"
       @close="
@@ -355,9 +379,12 @@ onMounted(() => void loadOptions())
           确认删除“{{ selected.name }}”？存在引用时无法删除；受理后由 Worker
           清理内容，清理完成后无法恢复。
         </p>
-        <el-button :disabled="busy" native-type="submit" type="primary">{{
-          mode === 'edit' ? '保存文件' : '确认删除'
-        }}</el-button>
+        <el-button
+          :disabled="busy"
+          native-type="submit"
+          :type="mode === 'delete' ? 'danger' : 'primary'"
+          >{{ mode === 'edit' ? '保存文件' : '确认删除' }}</el-button
+        >
       </form>
     </AppDialog>
     <FileGrantsDialog

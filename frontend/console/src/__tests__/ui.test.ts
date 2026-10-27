@@ -1,13 +1,88 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { createMemoryHistory } from 'vue-router'
-import { expect, it } from 'vitest'
-import { ElOption } from 'element-plus'
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
+import { expect, it, vi } from 'vitest'
+import { ElMessageBox, ElOption } from 'element-plus'
+import { defineComponent, h, ref } from 'vue'
+import { useUnsavedChanges } from '../composables/useUnsavedChanges'
 import AppDialog from '../components/AppDialog.vue'
 import AppSelect from '../components/AppSelect.vue'
 import AccountView from '../views/account/AccountView.vue'
 import { identity } from '../stores/session'
 import { makeRouter } from '../router'
 import { authorize, chooseSelect, deferred, fakeApi } from './support'
+
+it('protects unsaved work on navigation and allows leaving after an explicit discard', async () => {
+  const dirty = ref(true)
+  const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel')
+  const editor = defineComponent({
+    setup() {
+      useUnsavedChanges(dirty)
+      return () => h('p', '编辑内容')
+    },
+  })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/edit', component: editor },
+      { path: '/done', component: { render: () => h('p', '完成') } },
+    ],
+  })
+  await router.push('/edit')
+  mount(RouterView, { global: { plugins: [router] } })
+  await flushPromises()
+  const unload = new Event('beforeunload', { cancelable: true })
+  window.dispatchEvent(unload)
+  expect(unload.defaultPrevented).toBe(true)
+  await router.push('/done')
+  expect(router.currentRoute.value.path).toBe('/edit')
+  confirm.mockResolvedValue('confirm' as never)
+  await router.push('/done')
+  expect(router.currentRoute.value.path).toBe('/done')
+  confirm.mockRestore()
+})
+
+it('does not revoke a personal token until the user confirms', async () => {
+  authorize([])
+  const confirm = vi
+    .spyOn(ElMessageBox, 'confirm')
+    .mockRejectedValueOnce('cancel')
+    .mockResolvedValueOnce('confirm' as never)
+  const deletes: string[] = []
+  fakeApi((path, init) => {
+    if (path === '/auth/me') return identity.value
+    if (init.method === 'DELETE') {
+      deletes.push(path)
+      return {}
+    }
+    return [
+      {
+        id: 'token-one',
+        name: '本地脚本',
+        permissions: [],
+        expires_at: '2030-01-01T00:00:00Z',
+        revoked_at: null,
+      },
+    ]
+  })
+  const router = makeRouter(createMemoryHistory('/console/'))
+  await router.push('/account?tab=tokens')
+  const wrapper = mount(AccountView, { global: { plugins: [router] } })
+  await flushPromises()
+  await wrapper
+    .findAll('button')
+    .find((node) => node.text() === '撤销')!
+    .trigger('click')
+  await flushPromises()
+  expect(deletes).toEqual([])
+  expect(confirm).toHaveBeenCalledOnce()
+  await wrapper
+    .findAll('button')
+    .find((node) => node.text() === '撤销')!
+    .trigger('click')
+  await flushPromises()
+  expect(deletes).toEqual(['/auth/tokens/token-one'])
+  confirm.mockRestore()
+})
 
 it('validates a required Element selection through the native form', async () => {
   const wrapper = mount(
@@ -57,8 +132,13 @@ it('sends only selected PAT permissions and clears the revealed secret when leav
   await router.push('/account?tab=tokens')
   const wrapper = mount(AccountView, { global: { plugins: [router] } })
   await flushPromises()
+  expect(wrapper.find('.token-form').exists()).toBe(false)
+  await wrapper
+    .findAll('button')
+    .find((node) => node.text() === '新建令牌')!
+    .trigger('click')
   await wrapper.get('input[placeholder="例如：本地脚本"]').setValue('local')
-  await wrapper.findAll('input[type=checkbox]')[0]!.setValue(true)
+  await wrapper.get('.permission-table input[type=checkbox]').setValue(true)
   await wrapper.get('.token-form').trigger('submit')
   await flushPromises()
   expect(bodies[0]).toMatchObject({ name: 'local', permissions: ['user:read'] })

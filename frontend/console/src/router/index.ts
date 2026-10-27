@@ -3,7 +3,8 @@ import { h } from 'vue'
 import { ensureSession, identity, refreshSession } from '../stores/session'
 
 export const navigation = [
-  { path: '/', label: '平台状态', permissions: [] },
+  { path: '/', label: '管理总览', permissions: [] },
+  { path: '/platform', label: '平台状态', permissions: [] },
   { path: '/users', label: '用户管理', permissions: ['user:read'] },
   { path: '/roles', label: '角色管理', permissions: ['role:read'] },
   { path: '/audit', label: '操作审计', permissions: ['audit:read'] },
@@ -31,7 +32,8 @@ export function makeRouter(history: RouterHistory = createWebHistory(import.meta
   const router = createRouter({
     history,
     routes: [
-      { path: '/', component: () => import('../views/overview/OverviewView.vue') },
+      { path: '/', component: () => import('../views/overview/DashboardView.vue') },
+      { path: '/platform', component: () => import('../views/overview/OverviewView.vue') },
       { path: '/users', component: () => import('../views/users/UsersView.vue') },
       { path: '/roles', component: () => import('../views/roles/RolesView.vue') },
       { path: '/audit', component: () => import('../views/audit/AuditView.vue') },
@@ -48,7 +50,12 @@ export function makeRouter(history: RouterHistory = createWebHistory(import.meta
       {
         path: '/:pathMatch(.*)*',
         component: {
-          render: () => h('section', [h('h1', '页面不存在'), h('p', '请从导航选择页面。')]),
+          render: () =>
+            h('section', [
+              h('h1', '页面不存在'),
+              h('p', '请从导航选择页面。'),
+              h('a', { href: import.meta.env.BASE_URL }, '返回管理总览'),
+            ]),
         },
       },
     ],

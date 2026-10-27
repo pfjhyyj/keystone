@@ -95,7 +95,7 @@ describe('file grants and references', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('上传配置加载失败')
     expect(wrapper.text()).not.toContain('上限 0 MB')
-    expect(button(wrapper, '上传文件').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button[type=submit]').attributes('disabled')).toBeDefined()
     const chosen = new File(['hello'], 'report.txt', { type: 'text/plain' })
     Object.defineProperty(chosen, 'arrayBuffer', { value: async () => new ArrayBuffer(5) })
     Object.defineProperty(wrapper.get('input[type=file]').element, 'files', { value: [chosen] })

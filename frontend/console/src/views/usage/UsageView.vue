@@ -75,6 +75,8 @@ const calls = ref<Invocation[]>([]),
   callsError = ref(''),
   callsLoading = ref(false)
 const preset = ref('custom')
+const advancedOpen = ref(false),
+  filtersExpanded = ref(false)
 const rollingPresets = ['today', '7', '30', 'month']
 const fields: { dimension: Dimension; key: (typeof filterKeys)[number]; label: string }[] = [
   { dimension: 'upstream_model', key: 'provider_model', label: '上游模型' },
@@ -204,7 +206,10 @@ watch([callsKey, allowed], loadCalls, { immediate: true })
 const rangeFor = statisticsRange
 function setPreset(value: string) {
   preset.value = value
-  if (value === 'custom') return
+  if (value === 'custom') {
+    advancedOpen.value = true
+    return
+  }
   const range = rangeFor(value)
   draft.since = localInput(range.since)
   draft.until = localInput(range.until)
@@ -239,6 +244,7 @@ async function apply() {
     }
   }
   const next = Object.fromEntries(filterKeys.map((key) => [key, draft[key].trim() || null]))
+  filtersExpanded.value = false
   await navigate({
     ...next,
     since:
@@ -317,6 +323,47 @@ const missingLabels = computed(() =>
     .map((key) => dimensions[key as Dimension])
     .join('、'),
 )
+const filterNames: Record<string, string> = {
+  channel_id: '渠道',
+  model_entry_id: '模型',
+  user_id: '用户',
+  source: '来源',
+  operation: '操作',
+  status: '结果',
+  cost_status: '查费',
+  cost_source: '费用来源',
+  cost_known: '金额',
+  cost_unit: '单位',
+  provider_model: '上游模型',
+  flow_run_id: '运行',
+  node_key: '步骤',
+  model_role: '模型角色',
+  agent_key: 'Agent',
+  error_code: '错误码',
+  agent_call_id: 'Agent 调用',
+  missing: '未关联',
+}
+const activeFilters = computed(() =>
+  Object.entries(current.value)
+    .filter(([key]) => !['since', 'until'].includes(key))
+    .map(([key, value]) => ({
+      key,
+      value,
+      label: filterNames[key] ?? key,
+      display:
+        sourceLabels[value as keyof typeof sourceLabels] ??
+        operationLabels[value as keyof typeof operationLabels] ??
+        callStates[value as keyof typeof callStates] ??
+        costCheckStates[value as keyof typeof costCheckStates] ??
+        (key === 'cost_known'
+          ? value === 'false'
+            ? '费用未知'
+            : '已有金额'
+          : value.length > 24
+            ? `${value.slice(0, 8)}…`
+            : value),
+    })),
+)
 onScopeDispose(() => {
   alive = false
   statsGeneration++
@@ -328,15 +375,29 @@ onScopeDispose(() => {
     <div class="heading">
       <div>
         <h1>用量与费用</h1>
-        <p>从总体消费定位到渠道、模型和具体调用。未知费用单独统计，账户余额请在模型接入中查看。</p>
+        <p>查看消费、调用结果与费用核对，未知费用单独统计。</p>
       </div>
     </div>
     <template v-if="allowed">
-      <p>
-        {{ can('model_invocation:read_all') ? '可见全部用户及系统调用' : '仅显示本人调用' }}。默认近
-        30 天，最长 366 天；按小时统计最长 31 天。
+      <p class="usage-scope">
+        {{ can('model_invocation:read_all') ? '可见全部用户及系统调用' : '仅显示本人调用' }} ·
+        默认近 30 天，最长 366 天。
       </p>
-      <form class="usage-filters" aria-label="用量费用筛选" @submit.prevent="apply">
+      <el-button
+        class="usage-filter-toggle"
+        :aria-expanded="filtersExpanded"
+        aria-controls="usage-filter-form"
+        @click="filtersExpanded = !filtersExpanded"
+        >{{ filtersExpanded ? '收起筛选' : '调整筛选'
+        }}<span v-if="activeFilters.length"> · {{ activeFilters.length }} 项限定</span></el-button
+      >
+      <form
+        id="usage-filter-form"
+        class="usage-filters"
+        :class="{ 'is-expanded': filtersExpanded }"
+        aria-label="用量费用筛选"
+        @submit.prevent="apply"
+      >
         <div class="filter-grid">
           <label
             >时间范围<AppSelect
@@ -349,20 +410,6 @@ onScopeDispose(() => {
                 value="30"
                 label="近 30 天" /><el-option value="month" label="本月" /></AppSelect
           ></label>
-          <label
-            >开始时间（上海）<el-input
-              v-model="draft.since"
-              type="datetime-local"
-              step="1"
-              @input="preset = 'custom'"
-          /></label>
-          <label
-            >结束时间（上海）<el-input
-              v-model="draft.until"
-              type="datetime-local"
-              step="1"
-              @input="preset = 'custom'"
-          /></label>
           <label
             >渠道 / 站点<StatisticsPicker
               v-model="draft.channel_id"
@@ -377,33 +424,51 @@ onScopeDispose(() => {
               label="模型筛选"
               :filters="current"
           /></label>
-          <label v-if="can('model_invocation:read_all')"
-            >用户 / 系统<StatisticsPicker
-              v-model="draft.user_id"
-              dimension="user"
-              label="用户筛选"
-              :filters="current"
-          /></label>
-          <label
-            >调用来源<AppSelect v-model="draft.source" aria-label="调用来源" clearable
-              ><el-option
-                v-for="(label, key) in sourceLabels"
-                :key="key"
-                :value="key"
-                :label="label" /></AppSelect
-          ></label>
-          <label
-            >操作类型<AppSelect v-model="draft.operation" aria-label="操作类型" clearable
-              ><el-option
-                v-for="(label, key) in operationLabels"
-                :key="key"
-                :value="key"
-                :label="label" /></AppSelect
-          ></label>
         </div>
-        <details>
-          <summary>更多筛选（流程、结果与查费）</summary>
+        <details
+          :open="advancedOpen"
+          @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
+        >
+          <summary>更多筛选与自定义时间</summary>
           <div class="filter-grid">
+            <label
+              >开始时间（上海）<el-input
+                v-model="draft.since"
+                type="datetime-local"
+                step="1"
+                @input="preset = 'custom'"
+            /></label>
+            <label
+              >结束时间（上海）<el-input
+                v-model="draft.until"
+                type="datetime-local"
+                step="1"
+                @input="preset = 'custom'"
+            /></label>
+            <label v-if="can('model_invocation:read_all')"
+              >用户 / 系统<StatisticsPicker
+                v-model="draft.user_id"
+                dimension="user"
+                label="用户筛选"
+                :filters="current"
+            /></label>
+            <label
+              >调用来源<AppSelect v-model="draft.source" aria-label="调用来源" clearable
+                ><el-option
+                  v-for="(label, key) in sourceLabels"
+                  :key="key"
+                  :value="key"
+                  :label="label" /></AppSelect
+            ></label>
+            <label
+              >操作类型<AppSelect v-model="draft.operation" aria-label="操作类型" clearable
+                ><el-option
+                  v-for="(label, key) in operationLabels"
+                  :key="key"
+                  :value="key"
+                  :label="label" /></AppSelect
+            ></label>
+
             <label v-for="field in fields" :key="field.key"
               >{{ field.label
               }}<StatisticsPicker
@@ -450,6 +515,18 @@ onScopeDispose(() => {
             /></label>
             <label>Agent 调用 ID<el-input v-model="draft.agent_call_id" maxlength="36" /></label>
           </div>
+          <div class="row-actions bucket-controls">
+            <label
+              >时间粒度<AppSelect
+                :model-value="bucket"
+                aria-label="时间粒度"
+                @update:model-value="navigate({ bucket: $event, group_page: null })"
+                ><el-option value="hour" label="小时" /><el-option
+                  value="day"
+                  label="天" /><el-option value="month" label="月" /></AppSelect
+            ></label>
+            <span>统一按上海时间（UTC+8）；按小时统计最长 31 天。</span>
+          </div>
         </details>
         <p v-if="missingLabels">
           当前还限定：未关联{{ missingLabels }}。<el-button
@@ -470,6 +547,28 @@ onScopeDispose(() => {
           ><span>筛选、分页与钻取条件保存在当前链接中。</span>
         </div>
       </form>
+      <div class="applied-filters" aria-label="已应用筛选">
+        <span
+          >当前范围：{{ current.since ? localInput(current.since).replace('T', ' ') : '—' }} 至
+          {{ current.until ? localInput(current.until).replace('T', ' ') : '—' }} · 上海时间</span
+        ><el-tag
+          v-for="filter in activeFilters"
+          :key="filter.key"
+          :title="filter.value"
+          closable
+          effect="plain"
+          @close="
+            navigate({
+              [filter.key]: null,
+              page: null,
+              group_page: null,
+              invocation: null,
+              run: null,
+            })
+          "
+          >{{ filter.label }}：{{ filter.display }}</el-tag
+        >
+      </div>
       <el-alert v-if="validation" role="alert" type="error" :closable="false">{{
         validation
       }}</el-alert>
@@ -479,18 +578,6 @@ onScopeDispose(() => {
       <el-alert v-if="callsError" role="alert" type="error" :closable="false"
         >调用明细暂不可用：{{ callsError }}</el-alert
       >
-      <div class="row-actions bucket-controls">
-        <label
-          >时间粒度<AppSelect
-            :model-value="bucket"
-            aria-label="时间粒度"
-            @update:model-value="navigate({ bucket: $event, group_page: null })"
-            ><el-option value="hour" label="小时" /><el-option value="day" label="天" /><el-option
-              value="month"
-              label="月" /></AppSelect
-        ></label>
-        <span>统一按上海时间（UTC+8）统计</span>
-      </div>
       <p v-if="statsLoading" role="status">正在计算用量与费用…</p>
       <el-tabs v-model="tab">
         <el-tab-pane label="总览" name="overview"
@@ -535,6 +622,7 @@ onScopeDispose(() => {
         /></el-tab-pane>
         <el-tab-pane label="调用明细" name="details"
           ><UsageCalls
+            v-if="!callsError"
             :rows="calls"
             :page="page"
             :loading="callsLoading"
@@ -563,15 +651,32 @@ onScopeDispose(() => {
   </section>
 </template>
 <style scoped>
+.usage-filter-toggle {
+  display: none;
+}
+.usage-scope {
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+@media (max-width: 600px) {
+  .usage-filter-toggle {
+    display: inline-flex;
+    margin: 12px 0;
+  }
+  .usage-filters:not(.is-expanded) {
+    display: none;
+  }
+  .usage-scope {
+    font-size: 12px;
+  }
+}
 .usage-filters {
-  padding: 18px;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 12px;
+  padding: 18px 0;
+  border-bottom: 1px solid #e4e8ed;
 }
 .filter-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 14px;
   margin-bottom: 16px;
 }
@@ -582,7 +687,7 @@ label {
 }
 summary {
   cursor: pointer;
-  padding: 8px 0 14px;
+  padding: 0 0 8px;
 }
 .bucket-controls {
   margin: 18px 0;

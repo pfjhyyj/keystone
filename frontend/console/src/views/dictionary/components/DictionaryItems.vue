@@ -132,6 +132,7 @@ async function save() {
       @change="page = $event"
     />
     <AppDialog
+      protect-changes
       v-if="open"
       :title="editing ? '编辑选项' : '添加选项'"
       :busy="busy"

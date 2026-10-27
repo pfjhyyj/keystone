@@ -86,66 +86,76 @@ function changePage(value: number) {
       notice
     }}</el-alert>
     <p v-if="loading" role="status">正在加载字典…</p>
-    <div class="table-scroll">
-      <el-table
-        :fit="false"
-        :data="rows"
-        row-key="id"
-        stripe
-        class="data-table"
-        highlight-current-row
-        :current-row-key="selected?.id"
-      >
-        <el-table-column label="字典" min-width="180"
-          ><template #default="{ row: row }"
-            >{{ row.name }}<small>{{ row.description }}</small>
-          </template></el-table-column
-        >
-        <el-table-column label="标识" min-width="180"
-          ><template #default="{ row: row }">{{ row.key }}</template></el-table-column
-        >
-        <el-table-column label="状态" min-width="120"
-          ><template #default="{ row: row }"
-            ><StatusTag :status="row.is_active ? 'active' : 'disabled'">{{
-              row.is_active ? '启用' : '停用'
-            }}</StatusTag></template
-          ></el-table-column
-        >
-        <el-table-column label="操作" min-width="220"
-          ><template #default="{ row: row }"
-            ><div class="row-actions">
-              <el-button
-                :disabled="busy"
-                @click="selected = row"
-                native-type="button"
-                type="primary"
-                link
-                >查看选项</el-button
-              ><el-button
-                v-if="can('dictionary:manage')"
-                :disabled="busy"
-                @click="edit(row)"
-                native-type="button"
-                type="primary"
-                link
-              >
-                编辑字典
-              </el-button>
-            </div></template
-          ></el-table-column
-        >
-        <template #empty><el-empty :image-size="64" description="暂无字典" /></template
-      ></el-table>
+    <div :class="{ 'dictionary-layout': selected }">
+      <div>
+        <div v-if="!listError" class="table-scroll">
+          <el-table
+            :fit="false"
+            :data="rows"
+            row-key="id"
+            stripe
+            class="data-table"
+            highlight-current-row
+            :current-row-key="selected?.id"
+          >
+            <el-table-column label="字典" min-width="160"
+              ><template #default="{ row: row }"
+                >{{ row.name }}<small>{{ row.description }}</small>
+              </template></el-table-column
+            >
+            <el-table-column label="标识" min-width="130"
+              ><template #default="{ row: row }">{{ row.key }}</template></el-table-column
+            >
+            <el-table-column label="状态" min-width="120"
+              ><template #default="{ row: row }"
+                ><StatusTag :status="row.is_active ? 'active' : 'disabled'">{{
+                  row.is_active ? '启用' : '停用'
+                }}</StatusTag></template
+              ></el-table-column
+            >
+            <el-table-column label="操作" min-width="160"
+              ><template #default="{ row: row }"
+                ><div class="row-actions">
+                  <el-button
+                    :disabled="busy"
+                    @click="selected = row"
+                    native-type="button"
+                    type="primary"
+                    link
+                    >查看选项</el-button
+                  ><el-button
+                    v-if="can('dictionary:manage')"
+                    :disabled="busy"
+                    @click="edit(row)"
+                    native-type="button"
+                    type="primary"
+                    link
+                  >
+                    编辑字典
+                  </el-button>
+                </div></template
+              ></el-table-column
+            >
+            <template #empty><el-empty :image-size="64" description="暂无字典" /></template
+          ></el-table>
+        </div>
+        <ListPager
+          :page="page"
+          :count="rows.length"
+          :loading="busy || loading"
+          @change="changePage"
+        />
+      </div>
+      <DictionaryItems
+        v-if="selected"
+        :key="selected.id"
+        :dictionary="selected"
+        @close="selected = null"
+      />
     </div>
-    <ListPager :page="page" :count="rows.length" :loading="busy || loading" @change="changePage" />
-    <DictionaryItems
-      v-if="selected"
-      :key="selected.id"
-      :dictionary="selected"
-      @close="selected = null"
-    />
     <AppDialog
       v-if="open"
+      protect-changes
       :title="editing ? '编辑字典' : '新建字典'"
       :busy="busy"
       @close="

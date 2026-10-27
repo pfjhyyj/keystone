@@ -38,8 +38,9 @@ async function toggle(role: Role) {
 }
 </script>
 <template>
-  <AppDialog :title="`分配角色 · ${user.display_name}`" :busy="busy" @close="emit('close')">
+  <AppDialog drawer :title="`分配角色 · ${user.display_name}`" :busy="busy" @close="emit('close')">
     <p>分配或解除后立即保存，用户的可用功能会随角色权限更新。</p>
+    <p>管理员角色不会自动获得所有文件的内容读取权限。</p>
     <div class="assignment-toolbar">
       <el-button
         :disabled="busy || loading || !can('role:read')"

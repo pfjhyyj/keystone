@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onMounted, ref, watch } from 'vue'
 import type { TableInstance } from 'element-plus'
-import { RouterLink } from 'vue-router'
+import { RouterLink, routeLocationKey, routerKey } from 'vue-router'
 import { can } from '../../stores/session'
 import { request } from '../../api/client'
 import {
@@ -17,6 +17,7 @@ import {
 import { usePagedList } from '../../composables/usePagedList'
 import { useAction } from '../../composables/useAction'
 import AppDialog from '../../components/AppDialog.vue'
+import RowMore from '../../components/RowMore.vue'
 import ListPager from '../../components/ListPager.vue'
 import ChannelPicker from './components/ChannelPicker.vue'
 import UpstreamModelPicker from './components/UpstreamModelPicker.vue'
@@ -27,7 +28,22 @@ const channels = usePagedList('model:manage', modelApi.channels),
 const { busy, error, notice, run } = useAction()
 const options = ref<ModelOptions | null>(null),
   optionsError = ref('')
-const configurationTab = ref(can('model:manage') ? 'channels' : 'test')
+const route = inject(routeLocationKey, undefined),
+  router = inject(routerKey, undefined)
+const localTab = ref(can('model:manage') ? 'channels' : 'test')
+const configurationTab = computed({
+  get: () =>
+    [
+      ...(can('model:manage') ? ['channels', 'models'] : []),
+      ...(can('model:invoke') ? ['test'] : []),
+    ].includes(String(route?.query.tab))
+      ? String(route?.query.tab)
+      : localTab.value,
+  set: (value: string) => {
+    localTab.value = value
+    if (router) void router.replace({ query: { ...route?.query, tab: value } })
+  },
+})
 const channelTable = ref<TableInstance>(),
   modelTable = ref<TableInstance>()
 watch(configurationTab, async (tab) => {
@@ -57,6 +73,31 @@ const key = ref(''),
   channelId = ref(''),
   upstream = ref('')
 const operations = ref<ModelOperation[]>(['text.generate'])
+const baseline = ref('')
+const fingerprint = computed(() =>
+  JSON.stringify([
+    name.value,
+    provider.value,
+    apiBase.value,
+    credential.value,
+    billing.value,
+    clearBilling.value,
+    account.value,
+    active.value,
+    key.value,
+    modelName.value,
+    channelId.value,
+    upstream.value,
+    operations.value,
+  ]),
+)
+watch(
+  form,
+  () => {
+    baseline.value = fingerprint.value
+  },
+  { flush: 'sync' },
+)
 const selectedAction = ref<{
   kind: 'channel' | 'entry'
   id: string
@@ -203,7 +244,7 @@ onMounted(() => {
 </script>
 <template>
   <section aria-label="模型接入" class="models-page">
-    <div class="heading">
+    <div v-show="form !== 'entry'" class="heading">
       <div>
         <h1>模型接入</h1>
         <p>配置渠道、管理模型并测试调用。</p>
@@ -229,7 +270,7 @@ onMounted(() => {
         >重试加载服务商</el-button
       ></el-alert
     >
-    <el-tabs v-model="configurationTab" class="model-config-tabs">
+    <el-tabs v-show="form !== 'entry'" v-model="configurationTab" class="model-config-tabs">
       <el-tab-pane v-if="can('model:manage')" label="渠道配置" name="channels">
         <section id="configuration-channels" aria-label="渠道账户">
           <div class="heading">
@@ -307,25 +348,27 @@ onMounted(() => {
                       type="primary"
                       link
                       >编辑渠道</el-button
-                    ><el-button
-                      :disabled="busy"
-                      native-type="button"
-                      type="primary"
-                      link
-                      @click="configureAction('channel', row, 'rename')"
-                      >修改渠道名称</el-button
                     ><RouterLink
                       v-if="can('model_invocation:read')"
                       :to="{ path: '/model-usage', query: { channel_id: row.id } }"
                       >查看用量</RouterLink
                     >
-                    <el-button
-                      :disabled="busy"
-                      native-type="button"
-                      type="danger"
-                      link
-                      @click="configureAction('channel', row, 'delete')"
-                      >删除渠道</el-button
+                    <RowMore :label="`${row.name || row.key || '配置'}的更多操作`"
+                      ><el-button
+                        :disabled="busy"
+                        native-type="button"
+                        type="primary"
+                        link
+                        @click="configureAction('channel', row, 'rename')"
+                        >修改渠道名称</el-button
+                      ><el-button
+                        :disabled="busy"
+                        native-type="button"
+                        type="danger"
+                        link
+                        @click="configureAction('channel', row, 'delete')"
+                        >删除渠道</el-button
+                      ></RowMore
                     >
                   </div></template
                 ></el-table-column
@@ -436,25 +479,27 @@ onMounted(() => {
                       link
                       >编辑模型</el-button
                     >
-                    <el-button
-                      :disabled="busy"
-                      native-type="button"
-                      type="primary"
-                      link
-                      @click="configureAction('entry', row, 'rename')"
-                      >修改模型名称</el-button
-                    ><RouterLink
+                    <RouterLink
                       v-if="can('model_invocation:read')"
                       :to="{ path: '/model-usage', query: { model_entry_id: row.id } }"
                       >查看用量</RouterLink
                     >
-                    <el-button
-                      :disabled="busy"
-                      native-type="button"
-                      type="danger"
-                      link
-                      @click="configureAction('entry', row, 'delete')"
-                      >删除模型</el-button
+                    <RowMore :label="`${row.name || row.key || '配置'}的更多操作`"
+                      ><el-button
+                        :disabled="busy"
+                        native-type="button"
+                        type="primary"
+                        link
+                        @click="configureAction('entry', row, 'rename')"
+                        >修改模型名称</el-button
+                      ><el-button
+                        :disabled="busy"
+                        native-type="button"
+                        type="danger"
+                        link
+                        @click="configureAction('entry', row, 'delete')"
+                        >删除模型</el-button
+                      ></RowMore
                     >
                   </div>
                 </template></el-table-column
@@ -476,6 +521,10 @@ onMounted(() => {
     </el-tabs>
     <AppDialog
       v-if="form"
+      :page="form === 'entry'"
+      :drawer="form === 'channel'"
+      protect-changes
+      :dirty="fingerprint !== baseline"
       :title="
         form === 'channel'
           ? editingChannel
@@ -496,110 +545,150 @@ onMounted(() => {
       <el-alert v-if="error" role="alert" type="error" show-icon :closable="false">{{
         error
       }}</el-alert>
-      <form class="dialog-form" @submit.prevent="save">
-        <template v-if="form === 'channel'"
-          ><label>渠道名称<el-input v-model="name" required maxlength="128" /></label>
-          <div class="form-field">
-            <span class="form-label">服务商</span
-            ><AppSelect v-model="provider" aria-label="服务商" :disabled="!!editingChannel"
-              ><el-option
-                v-if="editingChannel && !options?.providers?.includes(provider)"
-                :value="provider"
-                :label="providers[provider as keyof typeof providers] ?? provider" /><el-option
-                v-for="value in options?.providers ?? ['openrouter']"
-                :key="value"
-                :value="value"
-                :label="providers[value as keyof typeof providers] ?? value"
-            /></AppSelect>
-          </div>
-          <label>服务地址<el-input v-model="apiBase" type="url" required maxlength="512" /></label>
-          <label
-            >推理 API Key<el-input
-              v-model="credential"
-              type="password"
-              autocomplete="new-password"
-              :required="!editingChannel?.has_api_key"
-              maxlength="4096"
-              :placeholder="editingChannel?.has_api_key ? '已设置，留空保留' : '请输入 API Key'"
-          /></label>
-          <p v-if="provider === 'openrouter'">
-            OpenRouter 地址固定为 https://openrouter.ai/api/v1。推理使用普通 API
-            Key；可选的账户余额查询使用同一账户的 Management Key。
-          </p>
-          <p v-else-if="provider === 'newapi'">
-            填写标准 NewAPI 的 HTTPS API 地址，默认 https://newapiai.com/v1，可包含路径前缀。 普通
-            Key 用于模型列表、调用费用核对和额度查询。上游允许时同时查询账户剩余额度，与当前 Key
-            的额度分开展示；Token 不限额仍受账户余额限制。更换站点或 Key
-            时请新建渠道，保留历史查费凭据。
-          </p>
-          <p v-else-if="provider === 'yunwu'">
-            Yunwu 类使用 Key 查询参数和分页日志，包含 Yunwu、Openlux 等兼容站点。 默认
-            https://yunwu.ai/v1，Openlux 填 https://api.openlux.ai/v1；也可填写兼容站点的 API 地址。
-            此类暂未接入账户余额查询，更换站点或 Key 时请新建渠道，保留历史查费凭据。
-          </p>
-          <label v-if="!['newapi', 'openlux', 'yunwu'].includes(provider)"
-            >账务 API Key<el-input
-              v-model="billing"
-              type="password"
-              autocomplete="new-password"
-              maxlength="4096"
-              :disabled="clearBilling"
-              :placeholder="
-                editingChannel?.has_billing_api_key ? '已设置，留空保留' : '可选 Management Key'
+      <div :class="{ 'model-editor-layout': form === 'entry' }">
+        <form id="model-config-form" class="dialog-form" @submit.prevent="save">
+          <template v-if="form === 'channel'"
+            ><label>渠道名称<el-input v-model="name" required maxlength="128" /></label>
+            <div class="form-field">
+              <span class="form-label">服务商</span
+              ><AppSelect v-model="provider" aria-label="服务商" :disabled="!!editingChannel"
+                ><el-option
+                  v-if="editingChannel && !options?.providers?.includes(provider)"
+                  :value="provider"
+                  :label="providers[provider as keyof typeof providers] ?? provider" /><el-option
+                  v-for="value in options?.providers ?? ['openrouter']"
+                  :key="value"
+                  :value="value"
+                  :label="providers[value as keyof typeof providers] ?? value"
+              /></AppSelect>
+            </div>
+            <label
+              >服务地址<el-input v-model="apiBase" type="url" required maxlength="512"
+            /></label>
+            <label
+              >推理 API Key<el-input
+                v-model="credential"
+                type="password"
+                autocomplete="new-password"
+                :required="!editingChannel?.has_api_key"
+                maxlength="4096"
+                :placeholder="editingChannel?.has_api_key ? '已设置，留空保留' : '请输入 API Key'"
+            /></label>
+            <p v-if="provider === 'openrouter'">
+              OpenRouter 地址固定为 https://openrouter.ai/api/v1。推理使用普通 API
+              Key；可选的账户余额查询使用同一账户的 Management Key。
+            </p>
+            <p v-else-if="provider === 'newapi'">
+              填写标准 NewAPI 的 HTTPS API 地址，默认 https://newapiai.com/v1，可包含路径前缀。 普通
+              Key 用于模型列表、调用费用核对和额度查询。上游允许时同时查询账户剩余额度，与当前 Key
+              的额度分开展示；Token 不限额仍受账户余额限制。更换站点或 Key
+              时请新建渠道，保留历史查费凭据。
+            </p>
+            <p v-else-if="provider === 'yunwu'">
+              Yunwu 类使用 Key 查询参数和分页日志，包含 Yunwu、Openlux 等兼容站点。 默认
+              https://yunwu.ai/v1，Openlux 填 https://api.openlux.ai/v1；也可填写兼容站点的 API
+              地址。 此类暂未接入账户余额查询，更换站点或 Key 时请新建渠道，保留历史查费凭据。
+            </p>
+            <label v-if="!['newapi', 'openlux', 'yunwu'].includes(provider)"
+              >账务 API Key<el-input
+                v-model="billing"
+                type="password"
+                autocomplete="new-password"
+                maxlength="4096"
+                :disabled="clearBilling"
+                :placeholder="
+                  editingChannel?.has_billing_api_key ? '已设置，留空保留' : '可选 Management Key'
+                "
+            /></label>
+            <el-checkbox
+              v-if="
+                editingChannel?.has_billing_api_key &&
+                !['newapi', 'openlux', 'yunwu'].includes(provider)
               "
-          /></label>
-          <el-checkbox
-            v-if="
-              editingChannel?.has_billing_api_key &&
-              !['newapi', 'openlux', 'yunwu'].includes(provider)
-            "
-            v-model="clearBilling"
-            >清除已保存的账务 Key</el-checkbox
-          >
-          <label
-            >账户标识（非秘密）<el-input
-              v-model="account"
-              maxlength="128"
-              :disabled="!!editingChannel?.upstream_account_ref"
-          /></label>
-          <p>密钥保存后不回显；编辑时留空保留原值。已确定的账户标识不能更换，换账户须新建渠道。</p>
-        </template>
-        <template v-else
-          ><label
-            >模型 key<el-input
-              v-model="key"
-              :disabled="!!editingEntry"
-              required
-              pattern="[a-z][a-z0-9_-]{0,63}" /></label
-          ><label
-            >模型显示名称<el-input
-              v-model="modelName"
-              maxlength="128"
-              placeholder="留空使用模型 key" /></label
-          ><ChannelPicker v-model="channelId" :disabled="busy" />
-          <UpstreamModelPicker v-model="upstream" :channel-id="channelId" :disabled="busy" />
-          <fieldset>
-            <legend>模型操作能力</legend>
-            <el-checkbox-group v-model="operations" aria-label="模型操作能力">
-              <el-checkbox v-for="(label, op) in operationLabels" :key="op" :value="op">{{
-                label
-              }}</el-checkbox>
-            </el-checkbox-group>
-            <p>按上游模型实际能力配置。可用目录还会核验渠道协议支持范围。</p>
-          </fieldset>
-        </template>
-        <el-checkbox class="check-option" v-model="active">启用配置</el-checkbox>
-        <p>
-          显示名称可修改，服务商和模型 key
-          创建后固定；未被引用的配置可删除，有调用记录或流程引用时只能停用。
-        </p>
-        <el-button :disabled="busy" native-type="submit" type="primary">{{
-          form === 'channel' ? '保存渠道' : '保存模型'
-        }}</el-button>
-      </form>
+              v-model="clearBilling"
+              >清除已保存的账务 Key</el-checkbox
+            >
+            <label
+              >账户标识（非秘密）<el-input
+                v-model="account"
+                maxlength="128"
+                :disabled="!!editingChannel?.upstream_account_ref"
+            /></label>
+            <p>
+              密钥保存后不回显；编辑时留空保留原值。已确定的账户标识不能更换，换账户须新建渠道。
+            </p>
+          </template>
+          <template v-else
+            ><fieldset class="form-section">
+              <legend>模型来源</legend>
+              <ChannelPicker v-model="channelId" :disabled="busy" />
+              <UpstreamModelPicker
+                class="full-field"
+                v-model="upstream"
+                :channel-id="channelId"
+                :disabled="busy"
+              />
+            </fieldset>
+            <fieldset class="form-section">
+              <legend>基本信息</legend>
+              <label
+                >模型 key<el-input
+                  v-model="key"
+                  :disabled="!!editingEntry"
+                  required
+                  pattern="[a-z][a-z0-9_-]{0,63}" /></label
+              ><label
+                >模型显示名称<el-input
+                  v-model="modelName"
+                  maxlength="128"
+                  placeholder="留空使用模型 key"
+              /></label>
+            </fieldset>
+            <fieldset class="form-section">
+              <legend>模型操作能力</legend>
+              <el-checkbox-group v-model="operations" aria-label="模型操作能力">
+                <el-checkbox v-for="(label, op) in operationLabels" :key="op" :value="op">{{
+                  label
+                }}</el-checkbox>
+              </el-checkbox-group>
+              <p>按上游模型实际能力配置。可用目录还会核验渠道协议支持范围。</p>
+            </fieldset>
+          </template>
+          <el-checkbox class="check-option" v-model="active">启用配置</el-checkbox>
+          <p>
+            显示名称可修改，服务商和模型 key
+            创建后固定；未被引用的配置可删除，有调用记录或流程引用时只能停用。
+          </p>
+          <div v-if="form === 'channel'" class="form-actions">
+            <el-button :disabled="busy" native-type="submit" type="primary">保存渠道</el-button>
+          </div>
+        </form>
+        <aside v-if="form === 'entry'" class="model-preview" aria-label="模型配置预览">
+          <h2>配置预览</h2>
+          <h3>{{ modelName || key || '尚未命名的模型' }}</h3>
+          <p>
+            所属渠道：{{
+              channels.rows.value.find((item) => item.id === channelId)?.name || '请选择渠道'
+            }}
+          </p>
+          <p>上游模型：{{ upstream || '请选择上游模型' }}</p>
+          <p>操作能力：{{ operations.map((op) => operationLabels[op]).join('、') || '未选择' }}</p>
+          <p>模型 key：{{ key || '尚未填写' }}</p>
+          <StatusTag :status="active ? 'active' : 'disabled'">{{
+            active ? '保存后启用' : '保存后停用'
+          }}</StatusTag>
+        </aside>
+      </div>
+      <template #footer="{ close }"
+        ><el-button :disabled="busy" @click="close">取消</el-button
+        ><el-button form="model-config-form" :disabled="busy" native-type="submit" type="primary">{{
+          editingEntry ? '保存模型' : '创建模型'
+        }}</el-button></template
+      >
     </AppDialog>
     <AppDialog
       v-if="selectedAction"
+      :protect-changes="selectedAction.mode === 'rename'"
       :title="selectedAction.mode === 'rename' ? '修改名称' : '删除配置'"
       :busy="busy"
       @close="
@@ -651,8 +740,8 @@ onMounted(() => {
   height: 44px;
 }
 .configuration-actions {
-  display: grid;
-  grid-template-columns: max-content max-content;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: start;
   gap: 8px 14px;
@@ -669,8 +758,8 @@ onMounted(() => {
 }
 .configuration-table :deep(td.el-table__cell) {
   vertical-align: top;
-  padding-top: 16px;
-  padding-bottom: 16px;
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 .configuration-table :deep(.cell > small) {
   white-space: nowrap;

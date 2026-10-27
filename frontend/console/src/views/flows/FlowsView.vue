@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onScopeDispose, ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { computed, inject, onMounted, onScopeDispose, ref } from 'vue'
+import { RouterLink, routeLocationKey, routerKey } from 'vue-router'
 import { can } from '../../stores/session'
 import { flowApi, flowStates, ongoing, type FlowDefinition, type FlowRun } from '../../api/flows'
 import { usePagedList } from '../../composables/usePagedList'
@@ -22,6 +22,21 @@ const { rows, page, loading, error, refresh, reload, search } = usePagedList(
   'flow:read',
   (offset) => flowApi.runs(offset, applied.value),
 )
+const route = inject(routeLocationKey, undefined),
+  router = inject(routerKey, undefined),
+  localTab = ref(can('flow:read') ? 'runs' : 'catalog')
+const activeTab = computed({
+  get: () =>
+    [...(can('flow:read') ? ['runs'] : []), ...(can('flow:start') ? ['catalog'] : [])].includes(
+      String(route?.query.tab),
+    )
+      ? String(route?.query.tab)
+      : localTab.value,
+  set: (value: string) => {
+    localTab.value = value
+    if (router) void router.replace({ query: { ...route?.query, tab: value } })
+  },
+})
 let alive = true,
   timer: ReturnType<typeof setInterval> | undefined
 async function catalog() {
@@ -81,7 +96,13 @@ onScopeDispose(() => {
     <el-alert v-if="notice" role="status" type="success" show-icon :closable="false">{{
       notice
     }}</el-alert>
-    <section v-if="can('flow:start')" aria-label="流程目录">
+    <el-tabs v-model="activeTab"
+      ><el-tab-pane v-if="can('flow:read')" label="运行记录" name="runs" /><el-tab-pane
+        v-if="can('flow:start')"
+        label="流程目录"
+        name="catalog"
+    /></el-tabs>
+    <section v-show="activeTab === 'catalog'" v-if="can('flow:start')" aria-label="流程目录">
       <div class="heading">
         <h2>流程目录</h2>
         <div class="row-actions">
@@ -101,14 +122,14 @@ onScopeDispose(() => {
       <p v-else-if="catalogLoading" role="status">正在加载流程目录…</p>
       <p v-else>
         任务由 Worker 执行，长时间等待时可到
-        <RouterLink to="/">平台状态</RouterLink>查看 Worker 就绪状态和最近心跳。
+        <RouterLink to="/platform">平台状态</RouterLink>查看 Worker 就绪状态和最近心跳。
       </p>
       <FlowCatalog :definitions="definitions" :loading="catalogLoading" @start="start" />
       <p v-if="!catalogLoading && !catalogError && !definitions.length">
         没有符合当前权限的流程定义。
       </p>
     </section>
-    <section v-if="can('flow:read')" aria-label="运行记录">
+    <section v-show="activeTab === 'runs'" v-if="can('flow:read')" aria-label="运行记录">
       <h2>运行记录</h2>
       <p>
         {{ can('flow:manage') ? '可见全部运行' : '仅显示本人运行' }}。未完成的可见运行每 3
@@ -136,7 +157,7 @@ onScopeDispose(() => {
         >{{ error }}；自动刷新时可能保留上次确认的数据。</el-alert
       >
       <p v-if="loading" role="status">正在加载运行…</p>
-      <div class="table-scroll">
+      <div v-if="!error || rows.length" class="table-scroll">
         <el-table
           :fit="false"
           native-scrollbar
@@ -149,7 +170,7 @@ onScopeDispose(() => {
           <el-table-column label="流程" min-width="180"
             ><template #default="{ row: row }"
               >{{ definitions.find((d) => d.key === row.definition_key)?.name ?? row.definition_key
-              }}<small>{{ row.id }}</small></template
+              }}<small :title="row.id">{{ row.id.slice(0, 8) }}…</small></template
             ></el-table-column
           >
           <el-table-column label="受理时间" min-width="180"

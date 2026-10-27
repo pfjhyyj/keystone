@@ -285,6 +285,6 @@ onScopeDispose(() => {
 .selection-hint {
   margin-left: 12px;
   color: var(--el-text-color-secondary);
-  font-size: 11px;
+  font-size: 12px;
 }
 </style>

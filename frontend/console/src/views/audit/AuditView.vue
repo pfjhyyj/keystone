@@ -89,23 +89,6 @@ function reset() {
           placeholder="例如 file.delete.request"
       /></label>
       <div class="form-field">
-        <span class="form-label">操作者类型</span
-        ><AppSelect v-model="filters.actor_type" aria-label="操作者类型"
-          ><el-option value="" :label="'全部'" /><el-option
-            v-for="(label, key) in actors"
-            :key="key"
-            :value="key"
-            :label="label"
-        /></AppSelect>
-      </div>
-      <label>操作者 ID<el-input v-model="filters.actor_id" maxlength="36" /></label>
-      <label
-        >目标类型<el-input
-          v-model="filters.target_type"
-          maxlength="100"
-          placeholder="例如 file" /></label
-      ><label>目标 ID<el-input v-model="filters.target_id" maxlength="128" /></label>
-      <div class="form-field">
         <span class="form-label">操作结果</span
         ><AppSelect v-model="filters.outcome" aria-label="操作结果"
           ><el-option value="" :label="'全部'" /><el-option
@@ -115,8 +98,30 @@ function reset() {
             :label="label"
         /></AppSelect>
       </div>
-      <label>开始时间<el-input v-model="filters.since" type="datetime-local" /></label
-      ><label>结束时间<el-input v-model="filters.until" type="datetime-local" /></label>
+      <details class="filter-details">
+        <summary>操作者、目标与自定义时间</summary>
+        <div class="advanced-fields">
+          <div class="form-field">
+            <span class="form-label">操作者类型</span
+            ><AppSelect v-model="filters.actor_type" aria-label="操作者类型"
+              ><el-option value="" :label="'全部'" /><el-option
+                v-for="(label, key) in actors"
+                :key="key"
+                :value="key"
+                :label="label"
+            /></AppSelect>
+          </div>
+          <label>操作者 ID<el-input v-model="filters.actor_id" maxlength="36" /></label>
+          <label
+            >目标类型<el-input
+              v-model="filters.target_type"
+              maxlength="100"
+              placeholder="例如 file" /></label
+          ><label>目标 ID<el-input v-model="filters.target_id" maxlength="128" /></label>
+          <label>开始时间<el-input v-model="filters.since" type="datetime-local" /></label
+          ><label>结束时间<el-input v-model="filters.until" type="datetime-local" /></label>
+        </div>
+      </details>
       <el-button :disabled="loading" native-type="submit" type="default">查询审计</el-button
       ><el-button :disabled="loading" @click="reset" native-type="button" type="default"
         >重置</el-button
@@ -132,7 +137,7 @@ function reset() {
       validation || error
     }}</el-alert>
     <p v-if="loading" role="status">正在加载审计…</p>
-    <div v-else class="table-scroll">
+    <div v-else-if="!error" class="table-scroll">
       <el-table
         :fit="false"
         native-scrollbar
@@ -179,8 +184,16 @@ function reset() {
       ></el-table>
     </div>
     <ListPager :page="page" :count="rows.length" :loading="loading" @change="page = $event" />
-    <AppDialog v-if="selected" title="审计详情" @close="selected = null"
+    <AppDialog drawer v-if="selected" title="审计详情" @close="selected = null"
       ><dl>
+        <dt>操作者</dt>
+        <dd>{{ actors[selected.actor_type] }} · {{ selected.actor_id ?? '系统' }}</dd>
+        <dt>时间 / 结果</dt>
+        <dd>
+          {{ new Date(selected.occurred_at).toLocaleString() }} · {{ outcomes[selected.outcome] }}
+        </dd>
+        <dt>目标</dt>
+        <dd>{{ selected.target_type ?? '未提供' }} · {{ selected.target_id ?? '未提供' }}</dd>
         <dt>记录 ID</dt>
         <dd>{{ selected.id }}</dd>
         <dt>关联 ID</dt>

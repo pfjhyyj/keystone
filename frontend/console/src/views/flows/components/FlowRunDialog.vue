@@ -20,7 +20,22 @@ const detailError = ref(''),
   loading = ref(false),
   confirming = ref(false)
 const { busy, error, notice, run } = useAction()
-const diagnosticRefresh = ref(0)
+const resultFacts = computed(() =>
+  Object.entries(row.value?.result ?? {})
+    .filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))
+    .slice(0, 8),
+)
+const resultLabel: Record<string, string> = {
+  summary: '摘要',
+  message: '说明',
+  status: '结果状态',
+  file_id: '结果文件',
+  count: '数量',
+  title: '标题',
+  output: '输出',
+}
+const diagnosticRefresh = ref(0),
+  detailTab = ref('execution')
 function unavailable(message: string) {
   generation++
   row.value = null
@@ -154,94 +169,133 @@ onScopeDispose(() => {
         取消流程
       </el-button>
     </div>
+    <form v-if="confirming" class="confirmation" @submit.prevent="cancel">
+      <p>确认请求取消此流程？取消是异步请求，已发生的调用、费用和文件写入不会撤回。</p>
+      <div class="row-actions">
+        <el-button :disabled="busy || loading" native-type="submit" type="danger"
+          >确认取消流程</el-button
+        ><el-button
+          :disabled="busy"
+          @click="confirming = false"
+          native-type="button"
+          type="default"
+        >
+          继续等待
+        </el-button>
+      </div>
+    </form>
     <p v-if="loading" role="status">正在确认运行状态…</p>
     <template v-if="row"
-      ><dl>
-        <dt>流程 / 运行 ID</dt>
-        <dd>{{ row.definition_key }}<br />{{ row.id }}</dd>
-        <dt>契约版本</dt>
-        <dd>{{ row.definition_revision ?? '历史契约' }}</dd>
-        <template v-if="Object.keys(row.model_bindings ?? {}).length">
-          <dt>模型角色绑定</dt>
-          <dd v-for="(model, role) in row.model_bindings" :key="role">{{ role }}：{{ model }}</dd>
-        </template>
-        <dt>状态</dt>
-        <dd>
-          <StatusTag :status="row.status">
-            {{ row.cancel_requested_at && ongoing(row) ? '取消处理中' : flowStates[row.status] }}
-          </StatusTag>
-        </dd>
-        <dt>发起人</dt>
-        <dd>{{ row.actor_id }}</dd>
-        <dt>受理 / 完成时间</dt>
-        <dd>
-          {{ new Date(row.created_at).toLocaleString() }} /
-          {{ row.finished_at ? new Date(row.finished_at).toLocaleString() : '未完成' }}
-        </dd>
-        <dt>最近执行状态确认</dt>
-        <dd>
-          {{ row.observed_at ? new Date(row.observed_at).toLocaleString() : '尚无执行端确认' }}
-        </dd>
-      </dl>
+      ><div class="detail-summary">
+        <div class="detail-title">
+          <h2>{{ row.definition_key }}</h2>
+          <StatusTag :status="row.status">{{
+            row.cancel_requested_at && ongoing(row) ? '取消处理中' : flowStates[row.status]
+          }}</StatusTag>
+        </div>
+        <p :title="row.id">
+          运行 {{ row.id.slice(0, 8) }}… · 受理于 {{ new Date(row.created_at).toLocaleString() }}
+        </p>
+        <p>
+          最近执行确认：{{
+            row.observed_at ? new Date(row.observed_at).toLocaleString() : '尚无执行端确认'
+          }}
+        </p>
+      </div>
+      <details class="technical-details">
+        <summary>运行信息与技术标识</summary>
+        <dl>
+          <dt>流程 / 运行 ID</dt>
+          <dd>{{ row.definition_key }}<br />{{ row.id }}</dd>
+          <dt>契约版本</dt>
+          <dd>{{ row.definition_revision ?? '历史契约' }}</dd>
+          <template v-if="Object.keys(row.model_bindings ?? {}).length">
+            <dt>模型角色绑定</dt>
+            <dd v-for="(model, role) in row.model_bindings" :key="role">{{ role }}：{{ model }}</dd>
+          </template>
+          <dt>状态</dt>
+          <dd>
+            <StatusTag :status="row.status">
+              {{ row.cancel_requested_at && ongoing(row) ? '取消处理中' : flowStates[row.status] }}
+            </StatusTag>
+          </dd>
+          <dt>发起人</dt>
+          <dd>{{ row.actor_id }}</dd>
+          <dt>受理 / 完成时间</dt>
+          <dd>
+            {{ new Date(row.created_at).toLocaleString() }} /
+            {{ row.finished_at ? new Date(row.finished_at).toLocaleString() : '未完成' }}
+          </dd>
+          <dt>最近执行状态确认</dt>
+          <dd>
+            {{ row.observed_at ? new Date(row.observed_at).toLocaleString() : '尚无执行端确认' }}
+          </dd>
+        </dl>
+      </details>
       <el-alert v-if="row.error_code" role="alert" type="error" show-icon :closable="false">
         执行错误：{{ row.error_code }}。重新执行须使用新的运行请求。
       </el-alert>
-      <details>
-        <summary>运行输入</summary>
-        <pre class="audit-details">{{ JSON.stringify(row.input, null, 2) }}</pre>
-      </details>
-      <h3>结果</h3>
-      <pre v-if="row.result" class="audit-details">{{ JSON.stringify(row.result, null, 2) }}</pre>
-      <p v-else>尚无结果</p>
-      <h3>步骤记录</h3>
-      <el-alert v-if="stepError" role="alert" type="error" show-icon :closable="false"
-        >{{ stepError }}；不代表运行失败。</el-alert
-      >
-      <template v-else-if="steps"
-        ><p v-if="!steps.available">尚未形成步骤历史。</p>
-        <p v-if="steps.truncated">仅展示部分步骤历史。</p>
-        <el-timeline class="flow-timeline">
-          <el-timeline-item
-            v-for="step in steps.items"
-            :key="`${step.workflow_id}:${step.step_id}`"
-            :timestamp="
-              step.completed_at_epoch_ms
-                ? new Date(step.completed_at_epoch_ms).toLocaleString()
-                : '尚无完成时间'
-            "
-            type="primary"
-            hollow
+      <el-tabs v-model="detailTab"
+        ><el-tab-pane label="执行与结果" name="execution" /><el-tab-pane
+          label="预算与关联"
+          name="diagnostics" /><el-tab-pane label="调用费用" name="costs"
+      /></el-tabs>
+      <section v-show="detailTab === 'execution'">
+        <details>
+          <summary>运行输入</summary>
+          <pre class="audit-details">{{ JSON.stringify(row.input, null, 2) }}</pre>
+        </details>
+        <h3>结果</h3>
+        <dl v-if="resultFacts.length" class="result-facts">
+          <template v-for="[key, value] in resultFacts" :key="key"
+            ><dt>{{ resultLabel[key] ?? key }}</dt>
+            <dd>{{ value }}</dd></template
           >
-            {{ step.name }}
-          </el-timeline-item>
-        </el-timeline></template
-      >
-      <FlowRunDiagnostics
-        :id="id"
-        :refresh="diagnosticRefresh"
-        :steps="steps"
-        @unavailable="unavailable"
-      />
-      <h3>模型调用费用 · 最近 30 天</h3>
-      <el-alert v-if="costError" role="alert" type="error" show-icon :closable="false">{{
-        costError
-      }}</el-alert>
-      <CostSummary v-if="costs" :value="costs" />
-      <form v-if="confirming" class="confirmation" @submit.prevent="cancel">
-        <p>确认请求取消此流程？取消是异步请求，已发生的调用、费用和文件写入不会撤回。</p>
-        <div class="row-actions">
-          <el-button :disabled="busy || loading" native-type="submit" type="danger"
-            >确认取消流程</el-button
-          ><el-button
-            :disabled="busy"
-            @click="confirming = false"
-            native-type="button"
-            type="default"
-          >
-            继续等待
-          </el-button>
-        </div>
-      </form>
+        </dl>
+        <p v-else>{{ row.result ? '结果包含结构化内容，请展开原始字段查看。' : '尚无结果' }}</p>
+        <details v-if="row.result">
+          <summary>结果原始字段</summary>
+          <pre class="audit-details">{{ JSON.stringify(row.result, null, 2) }}</pre>
+        </details>
+        <h3>步骤记录</h3>
+        <el-alert v-if="stepError" role="alert" type="error" show-icon :closable="false"
+          >{{ stepError }}；不代表运行失败。</el-alert
+        >
+        <template v-else-if="steps"
+          ><p v-if="!steps.available">尚未形成步骤历史。</p>
+          <p v-if="steps.truncated">仅展示部分步骤历史。</p>
+          <el-timeline class="flow-timeline">
+            <el-timeline-item
+              v-for="step in steps.items"
+              :key="`${step.workflow_id}:${step.step_id}`"
+              :timestamp="
+                step.completed_at_epoch_ms
+                  ? new Date(step.completed_at_epoch_ms).toLocaleString()
+                  : '尚无完成时间'
+              "
+              type="primary"
+              hollow
+            >
+              {{ step.name }}
+            </el-timeline-item>
+          </el-timeline></template
+        >
+      </section>
+      <section v-show="detailTab === 'diagnostics'">
+        <FlowRunDiagnostics
+          :id="id"
+          :refresh="diagnosticRefresh"
+          :steps="steps"
+          @unavailable="unavailable"
+        />
+      </section>
+      <section v-show="detailTab === 'costs'">
+        <h3>模型调用费用 · 最近 30 天</h3>
+        <el-alert v-if="costError" role="alert" type="error" show-icon :closable="false">{{
+          costError
+        }}</el-alert>
+        <CostSummary v-if="costs" :value="costs" />
+      </section>
     </template>
   </AppDialog>
 </template>

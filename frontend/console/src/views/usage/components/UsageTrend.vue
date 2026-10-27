@@ -30,8 +30,25 @@ function label(point: UsagePoint) {
   return cost ? `${money(cost.amount)} ${cost.unit}` : '该单位无已知费用'
 }
 const maximum = computed(() => Math.max(...props.points.map(value), 1e-12))
+const scaleMaximum = computed(() => Math.max(...props.points.map(value), 0))
+const magnitude = (value: number) =>
+  !value
+    ? '0'
+    : value < 0.0001
+      ? value.toExponential(1)
+      : new Intl.NumberFormat('zh-CN', { maximumSignificantDigits: 3 }).format(value)
 const first = computed(() => new Date(props.since).getTime())
 const last = computed(() => new Date(props.until).getTime())
+const timeTicks = computed(() =>
+  [0.25, 0.5, 0.75].map((fraction) =>
+    new Date(first.value + (last.value - first.value) * fraction).toLocaleString('zh-CN', {
+      timeZone: props.timezone,
+      month: '2-digit',
+      day: '2-digit',
+      ...(last.value - first.value < 2 * 86400000 ? { hour: '2-digit' as const } : {}),
+    }),
+  ),
+)
 const axis = (stamp: string) =>
   new Date(stamp).toLocaleString('zh-CN', {
     timeZone: props.timezone,
@@ -75,39 +92,59 @@ const width = (point: UsagePoint) =>
     </div>
     <p>按上海时间汇总。点击柱形查看对应时段明细；费用仅包含已知金额。</p>
     <template v-if="points.length"
-      ><svg
-        viewBox="0 0 900 190"
-        preserveAspectRatio="none"
-        role="group"
-        aria-label="可点击的时间趋势"
-      >
-        <line x1="25" y1="170" x2="875" y2="170" stroke="currentColor" opacity=".2" />
-        <g
-          v-for="point in points"
-          :key="point.start"
-          role="button"
-          tabindex="0"
-          :aria-label="`${point.label} ${label(point)}，查看明细`"
-          class="trend-bar"
-          @click="emit('drill', point.filters)"
-          @keydown.enter.prevent="emit('drill', point.filters)"
-          @keydown.space.prevent="emit('drill', point.filters)"
+      ><div class="chart-shell">
+        <div class="trend-scale" aria-hidden="true">
+          <span>{{ magnitude(scaleMaximum) }}</span
+          ><span>{{ magnitude(scaleMaximum / 2) }}</span
+          ><span>0</span>
+        </div>
+        <svg
+          viewBox="0 0 900 190"
+          preserveAspectRatio="none"
+          role="group"
+          aria-label="可点击的时间趋势"
         >
-          <title>
-            {{ point.label }}：{{ label(point) }}；{{ point.unknown_cost_calls }} 次费用未知
-          </title>
-          <rect
-            :x="x(point)"
-            :y="170 - Math.max(3, (value(point) / maximum) * 140)"
-            :width="width(point)"
-            :height="Math.max(3, (value(point) / maximum) * 140)"
-            rx="2"
-            fill="currentColor"
+          <line x1="25" y1="170" x2="875" y2="170" stroke="currentColor" opacity=".2" />
+          <line
+            v-for="y in [30, 100]"
+            :key="y"
+            x1="25"
+            :y1="y"
+            x2="875"
+            :y2="y"
+            stroke="currentColor"
+            opacity=".1"
           />
-        </g>
-      </svg>
+          <g
+            v-for="point in points"
+            :key="point.start"
+            role="button"
+            tabindex="0"
+            :aria-label="`${point.label} ${label(point)}，查看明细`"
+            class="trend-bar"
+            @click="emit('drill', point.filters)"
+            @keydown.enter.prevent="emit('drill', point.filters)"
+            @keydown.space.prevent="emit('drill', point.filters)"
+          >
+            <title>
+              {{ point.label }}：{{ label(point) }}；{{ point.unknown_cost_calls }} 次费用未知
+            </title>
+            <rect
+              :x="x(point)"
+              :y="170 - Math.max(3, (value(point) / maximum) * 140)"
+              :width="width(point)"
+              :height="Math.max(3, (value(point) / maximum) * 140)"
+              rx="2"
+              fill="currentColor"
+            />
+          </g>
+        </svg>
+      </div>
       <div class="trend-axis">
         <span>{{ axis(since) }}</span
+        ><span v-for="(tick, index) in timeTicks" :key="index" class="intermediate-tick">{{
+          tick
+        }}</span
         ><span>{{ axis(until) }}</span>
       </div>
     </template>
@@ -143,12 +180,39 @@ svg {
   width: 230px;
   max-width: 100%;
 }
+.chart-shell {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 6px;
+}
+.trend-scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-align: right;
+  padding: 22px 0 20px;
+  color: #617084;
+  font-size: 12px;
+}
 .trend-axis {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   color: var(--el-text-color-secondary);
   font-size: 12px;
+  padding-left: 44px;
+}
+.trend-axis > span {
+  min-width: 0;
+  max-width: 27%;
+}
+.intermediate-tick {
+  align-self: center;
+}
+@media (max-width: 600px) {
+  .intermediate-tick {
+    display: none;
+  }
 }
 .trend-axis span:last-child {
   text-align: right;

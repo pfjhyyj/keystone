@@ -12,6 +12,7 @@ import {
 } from '../../../api/models'
 import { uploadFile, downloadFile } from '../../../api/files'
 import ModelPicker from '../../../components/models/ModelPicker.vue'
+import { useUnsavedChanges } from '../../../composables/useUnsavedChanges'
 const emit = defineEmits<{ completed: [] }>()
 const operation = ref<ModelOperation>('text.generate')
 const operations: ModelOperation[] = [
@@ -27,6 +28,7 @@ const key = ref(''),
   error = ref(''),
   calling = ref(false)
 const selected = ref<CatalogModel | null>(null)
+useUnsavedChanges(computed(() => !!prompt.value.trim() || calling.value))
 const attachments = ref<UploadUserFile[]>([])
 const images = ref<{ file_id: string }[]>([])
 const uploads = new Map<File, { requestKey: string; id?: string }>()

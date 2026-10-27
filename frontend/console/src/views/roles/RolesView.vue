@@ -186,6 +186,7 @@ onMounted(loadCatalog)
       @change="page = $event"
     />
     <AppDialog
+      protect-changes
       v-if="editing"
       :title="readOnly ? '查看角色权限' : target ? '配置角色权限' : '新建角色'"
       :busy="busy"

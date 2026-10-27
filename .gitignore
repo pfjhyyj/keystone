@@ -19,3 +19,6 @@ keystone.toml
 .DS_Store
 Thumbs.db
 .tmp
+
+# Local design workflow output
+.impeccable/

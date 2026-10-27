@@ -12,6 +12,10 @@
 
 ## 前端目录约定
 
+控制台以管理总览（`/console/`）为入口，完整服务与 Worker 状态位于 `/console/platform`。模型接入和 Flow 的活动页签保存在查询参数 `tab` 中；用量页保留已应用的筛选、分页和钻取条件，表单草稿不写入浏览器存储。新建或编辑模型使用独立编辑区，普通短表单使用对话框，诊断详情使用抽屉。共享视觉约定见 [DESIGN.md](../DESIGN.md)。
+
+表格在工作区内使用原生横向滚动，操作列在窄屏保留可访问性，不改变后端固定 50 条的分页语义。低频和危险行操作集中到 `RowMore`，危险操作另行确认。`AppDialog` 的 `protectChanges` 可保护原生输入，使用组件选择器的复杂表单还应传入 `dirty`；`useUnsavedChanges` 保护路由离开和页面关闭，身份或权限变更时仍允许清理旧界面。
+
 控制台源码按页面归属组织：
 
 工程根目录保留 Dockerfile 和 Vite、TypeScript 等工具配置；镜像运行配置放在 `frontend/console/docker/`，当前包含 `nginx.conf`，本机开发使用 Vite，无需启动 Nginx。

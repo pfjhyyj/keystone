@@ -10,9 +10,15 @@ import {
   sessionVersion,
 } from '../../stores/session'
 import { useAction } from '../../composables/useAction'
+import { ElMessageBox } from 'element-plus'
+import PermissionPicker from '../roles/components/PermissionPicker.vue'
 const route = useRoute(),
   router = useRouter()
 const { busy, error, run } = useAction()
+const creating = ref(false)
+const tokenCatalog = computed(() =>
+  (identity.value?.permissions ?? []).map((key) => ({ key, name: key, description: '' })),
+)
 const currentPassword = ref(''),
   newPassword = ref(''),
   confirmation = ref('')
@@ -30,6 +36,7 @@ const active = computed(() =>
       : 'profile',
 )
 function clearForms() {
+  creating.value = false
   tokens.value = []
   revealed.value = ''
   selected.value = []
@@ -69,6 +76,17 @@ async function createToken() {
   })
 }
 async function revokeToken(id: string) {
+  const token = tokens.value.find((item) => item.id === id)
+  if (!token || busy.value) return
+  try {
+    await ElMessageBox.confirm(
+      `撤销“${token.name}”后，使用该令牌的脚本将无法继续访问。`,
+      '撤销个人令牌？',
+      { confirmButtonText: '确认撤销令牌', cancelButtonText: '保留令牌', type: 'warning' },
+    )
+  } catch {
+    return
+  }
   await run(async () => {
     await request(`/auth/tokens/${id}`, 'DELETE')
     revealed.value = ''
@@ -166,9 +184,14 @@ onBeforeUnmount(clearForms)
       </el-tab-pane>
       <el-tab-pane label="个人令牌" name="tokens" :disabled="forced">
         <div class="account-section">
-          <h2>个人 API 令牌</h2>
+          <div class="heading">
+            <h2>个人 API 令牌</h2>
+            <el-button type="primary" :disabled="busy" @click="creating = !creating">{{
+              creating ? '收起签发表单' : '新建令牌'
+            }}</el-button>
+          </div>
           <p>仅代表你本人，权限始终受当前账户权限和所选范围限制。</p>
-          <form class="token-form" @submit.prevent="createToken">
+          <form v-if="creating" class="token-form" @submit.prevent="createToken">
             <div class="token-fields">
               <label
                 >用途名称<el-input
@@ -187,14 +210,7 @@ onBeforeUnmount(clearForms)
             </div>
             <fieldset>
               <legend>允许的权限</legend>
-              <el-checkbox-group v-model="selected" class="permission-grid">
-                <el-checkbox
-                  v-for="permission in identity.permissions"
-                  :key="permission"
-                  :value="permission"
-                  >{{ permission }}</el-checkbox
-                >
-              </el-checkbox-group>
+              <PermissionPicker v-model="selected" :catalog="tokenCatalog" :disabled="busy" />
               <p v-if="!identity.permissions.length">当前账户没有功能权限，可签发空权限令牌。</p>
             </fieldset>
             <el-button type="primary" native-type="submit" :loading="busy">签发令牌</el-button>

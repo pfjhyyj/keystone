@@ -60,7 +60,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-访问 <http://127.0.0.1:5173/console/>，以 `admin` 登录，在“平台状态”查看 Worker。API 默认地址为 `http://127.0.0.1:8000`。
+访问 <http://127.0.0.1:5173/console/>，以 `admin` 登录。“管理总览”汇总平台异常和当前权限可见的近 30 天用量，“平台状态”查看 Worker 与依赖的完整状态。API 默认地址为 `http://127.0.0.1:8000`。
 
 ## Worker 操作示例
 

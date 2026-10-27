@@ -131,8 +131,10 @@ watch(
     can('model_invocation:read'),
     can('file:inspect'),
   ],
-  () => {
-    selected.value = ''
+  (value, previous) => {
+    // Polling changes only refresh; authority changes must still clear private details.
+    if (!previous || value.slice(1).some((item, index) => item !== previous[index + 1]))
+      selected.value = ''
     if (!can('flow:read')) {
       budget.value = null
       models.value = null

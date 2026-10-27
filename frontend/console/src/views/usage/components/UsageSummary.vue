@@ -63,14 +63,14 @@ defineEmits<{ drill: [filters: Record<string, string>] }>()
 .usage-cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  gap: 0;
+  border-top: 1px solid #e4e8ed;
+  border-bottom: 1px solid #e4e8ed;
   margin: 20px 0;
 }
 .usage-card {
-  padding: 18px;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 12px;
+  padding: 18px 20px 18px 0;
+  min-width: 0;
 }
 h2 {
   font-size: 14px;
@@ -80,7 +80,7 @@ h2 {
 }
 strong {
   color: var(--el-text-color-primary);
-  font-size: 23px;
+  font-size: 22px;
   font-variant-numeric: tabular-nums;
   max-width: 100%;
 }
@@ -91,7 +91,7 @@ strong {
   text-overflow: ellipsis;
 }
 p {
-  margin: 10px 0;
+  margin: 6px 0;
 }
 .coverage-actions {
   display: flex;

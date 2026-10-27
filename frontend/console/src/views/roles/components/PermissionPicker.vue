@@ -198,7 +198,7 @@ function reset() {
   align-items: center;
   gap: 10px;
   margin: 16px 0 12px;
-  color: #738095;
+  color: #617084;
   font-size: 12px;
 }
 .permission-table-scroll {
@@ -214,7 +214,7 @@ function reset() {
 }
 .permission-table th {
   background: #f6f8fa;
-  color: #738095;
+  color: #617084;
   font-weight: 500;
   white-space: nowrap;
 }
@@ -243,7 +243,7 @@ function reset() {
   border: 1px solid #e5eaf0;
   border-radius: 4px;
   padding: 2px 7px;
-  color: #738095;
+  color: #617084;
   background: #f6f8fa;
   font-size: 12px;
 }

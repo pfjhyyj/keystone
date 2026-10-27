@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import FlowRunDiagnostics from '../views/flows/components/FlowRunDiagnostics.vue'
+import InvocationDialog from '../views/models/components/InvocationDialog.vue'
 import { authorize, deferred, fakeApi } from './support'
 const runId = '11111111-1111-4111-8111-111111111111',
   invocationId = '22222222-2222-4222-8222-222222222222',
@@ -46,6 +47,25 @@ const invocation = (id: string) => ({
   error_code: null,
 })
 const budget = { recorded: true, limits, counters }
+it('keeps an opened invocation through polling and clears it when authority changes', async () => {
+  authorize(['flow:read', 'model_invocation:read', 'file:inspect'])
+  fakeApi(defaults)
+  const wrapper = mount(FlowRunDiagnostics, {
+    props,
+    global: {
+      stubs: { InvocationDialog: { props: ['id'], template: '<div data-invocation>{{id}}</div>' } },
+    },
+  })
+  await flushPromises()
+  await wrapper.get('.flow-invocation-link').trigger('click')
+  expect(wrapper.findComponent(InvocationDialog).props('id')).toBe(invocationId)
+  await wrapper.setProps({ refresh: 2 })
+  await flushPromises()
+  expect(wrapper.findComponent(InvocationDialog).props('id')).toBe(invocationId)
+  authorize(['flow:read', 'file:inspect'])
+  await flushPromises()
+  expect(wrapper.findComponent(InvocationDialog).exists()).toBe(false)
+})
 const button = (wrapper: VueWrapper, text: string) =>
   wrapper.findAll('button').find((item) => item.text() === text)!
 const section = (path: string) => new URLSearchParams(path.split('?')[1]).get('section')

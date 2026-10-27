@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   ArrowDown,
@@ -12,6 +12,7 @@ import {
   Key,
   Management,
   Menu,
+  Monitor,
   Setting,
   User,
 } from '@element-plus/icons-vue'
@@ -34,12 +35,13 @@ const collapsed = ref(false),
   logoutError = ref('')
 const groups = [
   { title: '工作台', paths: ['/'] },
-  { title: '访问控制', paths: ['/users', '/roles', '/audit'] },
-  { title: '平台资源', paths: ['/files', '/dictionary'] },
-  { title: 'AI 与流程', paths: ['/models', '/model-usage', '/flows'] },
+  { title: '运行与消费', paths: ['/platform', '/model-usage', '/models', '/flows'] },
+  { title: '资源', paths: ['/files', '/dictionary'] },
+  { title: '访问与审计', paths: ['/users', '/roles', '/audit'] },
 ]
 const icons = {
   '/': Grid,
+  '/platform': Monitor,
   '/users': User,
   '/roles': Key,
   '/audit': Document,
@@ -56,10 +58,36 @@ const menus = computed(() =>
   groups
     .map((group) => ({
       ...group,
-      items: visible.value.filter((item) => group.paths.includes(item.path)),
+      items: group.paths
+        .map((path) => visible.value.find((item) => item.path === path))
+        .filter((item): item is (typeof navigation)[number] => !!item),
     }))
     .filter((group) => group.items.length),
 )
+const sidebar = ref<HTMLElement | null>(null)
+let menuOrigin: HTMLElement | null = null
+watch(mobileOpen, async (open) => {
+  if (open)
+    menuOrigin = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  await nextTick()
+  if (open) sidebar.value?.querySelector<HTMLElement>('a,button')?.focus()
+  else menuOrigin?.focus()
+})
+function navigationKeys(event: KeyboardEvent) {
+  if (!mobileOpen.value || event.key !== 'Tab') return
+  const controls = sidebar.value?.querySelectorAll<HTMLElement>('a[href],button:not([disabled])')
+  if (!controls?.length) return
+  const first = controls[0]!,
+    last = controls[controls.length - 1]!
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  }
+  if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
 const title = computed(
   () =>
     navigation.find((item) => item.path === route.path)?.label ??
@@ -147,7 +175,15 @@ onBeforeUnmount(() => {
       aria-label="收起导航"
       @click="mobileOpen = false"
     />
-    <aside v-if="!identity.user.password_change_required" class="sidebar">
+    <aside
+      v-if="!identity.user.password_change_required"
+      ref="sidebar"
+      class="sidebar"
+      @keydown="navigationKeys"
+      :aria-modal="mobileOpen ? 'true' : undefined"
+      :role="mobileOpen ? 'dialog' : undefined"
+      aria-label="控制台导航"
+    >
       <RouterLink class="brand" to="/" aria-label="Keystone 首页"
         ><span class="brand-mark">K</span
         ><span class="brand-name">keystone<small>控制台</small></span></RouterLink
@@ -173,7 +209,7 @@ onBeforeUnmount(() => {
         <el-icon><Setting /></el-icon><span class="nav-label">Keystone Platform</span>
       </div>
     </aside>
-    <div class="main-shell">
+    <div class="main-shell" :inert="mobileOpen">
       <header class="app-header">
         <div class="header-leading">
           <el-button
@@ -189,6 +225,7 @@ onBeforeUnmount(() => {
             text
             class="mobile-menu-toggle"
             aria-label="展开导航"
+            :aria-expanded="mobileOpen"
             @click="mobileOpen = !mobileOpen"
             ><el-icon><Menu /></el-icon
           ></el-button>
@@ -225,7 +262,10 @@ onBeforeUnmount(() => {
         }}</el-alert>
         <section v-if="!allowed" class="access-denied">
           <el-empty description="请选择可访问的模块，或联系管理员。"
-            ><h1>没有此页面的访问权限</h1></el-empty
+            ><h1>没有此页面的访问权限</h1>
+            <RouterLink class="state-return" :to="visible[0]?.path ?? '/account'"
+              >返回可访问页面</RouterLink
+            ></el-empty
           >
         </section>
         <RouterView v-else v-slot="{ Component }"

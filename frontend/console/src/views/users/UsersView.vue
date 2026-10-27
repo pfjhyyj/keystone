@@ -5,6 +5,7 @@ import { can, identity, refreshSession } from '../../stores/session'
 import { request } from '../../api/client'
 import { usePagedList } from '../../composables/usePagedList'
 import { useAction } from '../../composables/useAction'
+import RowMore from '../../components/RowMore.vue'
 import AppDialog from '../../components/AppDialog.vue'
 import ListPager from '../../components/ListPager.vue'
 import UserRolesDialog from './components/UserRolesDialog.vue'
@@ -119,7 +120,7 @@ function submit() {
       notice
     }}</el-alert>
     <p v-if="loading" role="status">正在加载用户…</p>
-    <div v-else class="table-scroll">
+    <div v-else-if="!listError" class="table-scroll">
       <el-table
         :fit="false"
         native-scrollbar
@@ -148,7 +149,7 @@ function submit() {
             >{{ user.role_ids.length }} 个角色</template
           ></el-table-column
         >
-        <el-table-column label="操作" min-width="360"
+        <el-table-column label="操作" min-width="230"
           ><template #default="{ row: user }"
             ><div class="row-actions">
               <el-button
@@ -159,42 +160,45 @@ function submit() {
                 link
                 >修改</el-button
               >
-              <el-button
-                v-if="can('user:update')"
-                @click="open('active', user)"
-                native-type="button"
-                type="primary"
-                link
-                >{{ user.is_active ? '停用' : '启用' }}</el-button
+
+              <RowMore
+                v-if="can('user:update') || can('user:reset_password') || can('user:credentials')"
+                :label="`${user.display_name}的更多操作`"
+                ><el-button
+                  v-if="can('user:update')"
+                  @click="open('active', user)"
+                  native-type="button"
+                  type="primary"
+                  link
+                  >{{ user.is_active ? '停用' : '启用' }}</el-button
+                >
+                <el-button
+                  v-if="can('role:assign')"
+                  :disabled="!can('role:read')"
+                  @click="roleTarget = user"
+                  native-type="button"
+                  type="primary"
+                  link
+                >
+                  分配角色 </el-button
+                ><el-button
+                  v-if="can('user:reset_password')"
+                  @click="open('password', user)"
+                  native-type="button"
+                  type="primary"
+                  link
+                >
+                  重置密码 </el-button
+                ><el-button
+                  v-if="can('user:credentials')"
+                  @click="open('revoke', user)"
+                  native-type="button"
+                  type="danger"
+                  link
+                >
+                  撤销凭据
+                </el-button></RowMore
               >
-              <el-button
-                v-if="can('role:assign')"
-                :disabled="!can('role:read')"
-                @click="roleTarget = user"
-                native-type="button"
-                type="primary"
-                link
-              >
-                分配角色
-              </el-button>
-              <el-button
-                v-if="can('user:reset_password')"
-                @click="open('password', user)"
-                native-type="button"
-                type="primary"
-                link
-              >
-                重置密码
-              </el-button>
-              <el-button
-                v-if="can('user:credentials')"
-                @click="open('revoke', user)"
-                native-type="button"
-                type="danger"
-                link
-              >
-                撤销凭据
-              </el-button>
             </div></template
           ></el-table-column
         >
@@ -202,12 +206,18 @@ function submit() {
       ></el-table>
     </div>
     <ListPager
+      v-if="!listError"
       :page="page"
       :count="rows.length"
       :loading="loading || busy"
       @change="page = $event"
     />
-    <AppDialog v-if="mode" :title="titles[mode]" :busy="busy" @close="close"
+    <AppDialog
+      v-if="mode"
+      :title="titles[mode]"
+      :protect-changes="['create', 'edit', 'password'].includes(mode)"
+      :busy="busy"
+      @close="close"
       ><form class="dialog-form" @submit.prevent="submit">
         <p v-if="target">{{ target.display_name }} · {{ target.username }}</p>
         <label v-if="mode === 'create'"
@@ -254,9 +264,30 @@ function submit() {
         <el-alert v-if="error" role="alert" type="error" show-icon :closable="false">{{
           error
         }}</el-alert>
-        <el-button :disabled="busy" native-type="submit" type="primary">{{
-          busy ? '正在保存…' : '确认保存'
-        }}</el-button>
+        <div class="form-actions">
+          <el-button
+            :disabled="busy"
+            native-type="submit"
+            :type="
+              mode === 'revoke' || (mode === 'active' && target?.is_active) ? 'danger' : 'primary'
+            "
+            >{{
+              busy
+                ? '正在保存…'
+                : mode === 'revoke'
+                  ? '确认撤销全部凭据'
+                  : mode === 'active'
+                    ? target?.is_active
+                      ? '确认停用账户'
+                      : '启用账户'
+                    : mode === 'password'
+                      ? '重置密码'
+                      : mode === 'create'
+                        ? '创建用户'
+                        : '保存展示名'
+            }}</el-button
+          >
+        </div>
       </form></AppDialog
     >
     <UserRolesDialog
