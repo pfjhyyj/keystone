@@ -31,9 +31,17 @@ runs:
       if: inputs.browser == 'true'
       with:
         path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-chromium-${{ hashFiles('frontend/console/pnpm-lock.yaml') }}
+        key: ${{ runner.os }}-chromium-headless-${{ hashFiles('frontend/console/pnpm-lock.yaml') }}
     - name: Install Chromium
       if: inputs.browser == 'true'
       shell: bash
       working-directory: frontend/console
-      run: pnpm exec playwright install --with-deps chromium
+      run: |
+        # The hosted runner's Azure APT mirror can throttle font/library downloads.
+        # Keep Ubuntu's signed packages, using its official HTTPS archive directly.
+        for sources in /etc/apt/apt-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources; do
+          if [ -f "$sources" ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$sources"
+          fi
+        done
+        pnpm exec playwright install --with-deps --only-shell chromium

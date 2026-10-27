@@ -90,7 +90,7 @@ KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone_test:isolated-test-onl
 
 按组件验证使用 `scripts/check.py --scope frontend|backend|browser`。前端范围仅执行格式、单元测试、类型和构建，不依赖 PostgreSQL 或 uv；后端范围执行 Python 格式、单元／集成测试和打包；浏览器范围单独启动隔离 API、Worker 和 Chromium，仍必须连接专用测试库。`--unit` 仅接受 full／backend 范围，`--deploy` 仅接受完整范围。浏览器排查可直接运行 `backend/.venv/bin/python frontend/console/e2e/run.py admin.spec.ts`，不重复后端全量测试。CI 浏览器测试只在失败时截图，成功路径的布局和协议以断言验证。
 
-GitHub Actions 对 `main` 推送和 PR 运行一次路径选择：Console 改动运行前端及浏览器任务，后端／测试设施改动运行后端及浏览器任务，文档改动跳过执行测试，CI 配置、共享脚本和未知路径保守运行全部任务。比较使用完整 Git 差异，删除与重命名仍覆盖原路径；无法确定差异时运行全部任务。手动触发始终全量，可另选部署恢复验证。三个检查任务独立并行，`check` 汇总实际被选择的任务；选中任务失败或取消不会被误判为通过。依赖与 Chromium 按锁文件缓存；每个检查结果单独记录耗时，后端另输出最慢的 20 项。
+GitHub Actions 对 `main` 推送和 PR 运行一次路径选择：Console 改动运行前端及浏览器任务，后端／测试设施改动运行后端及浏览器任务，文档改动跳过执行测试，CI 配置、共享脚本和未知路径保守运行全部任务。比较使用完整 Git 差异，删除与重命名仍覆盖原路径；无法确定差异时运行全部任务。手动触发始终全量，可另选部署恢复验证。三个检查任务独立并行，`check` 汇总实际被选择的任务；选中任务失败或取消不会被误判为通过。依赖与 Chromium headless shell 按锁文件缓存，不下载未使用的桌面浏览器；Ubuntu 系统依赖使用官方 HTTPS 软件源。每个检查结果单独记录耗时，后端另输出最慢的 20 项。
 
 ## Worker 健康检查（排障）
 
