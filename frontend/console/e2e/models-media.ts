@@ -56,10 +56,6 @@ export async function testDirectMedia(page: Page) {
   const download = page.waitForEvent('download')
   await probe.getByRole('button', { name: '下载图片', exact: true }).click()
   expect((await download).suggestedFilename()).toBe(`model.${generated.invocation_id}.0.png`)
-  await page.screenshot({
-    path: '../../.artifacts/console-model-probe-generation.png',
-    fullPage: true,
-  })
 
   const png = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGNkYPjPwMDAxAAGAAsfAQMU4wsAAAAAAElFTkSuQmCC',
@@ -82,16 +78,11 @@ export async function testDirectMedia(page: Page) {
     if (mode === '图片理解') await expect(probe.locator('pre')).toContainText('模拟渠道响应')
     else await expect(probe.getByLabel('生成图片')).toBeVisible()
     await expect(probe.getByRole('button', { name: '发送真实请求', exact: true })).toBeEnabled()
-    await page.screenshot({
-      path: `../../.artifacts/console-model-probe-${mode === '图片编辑' ? 'edit' : 'vision'}.png`,
-      fullPage: true,
-    })
   }
   await page.setViewportSize({ width: 390, height: 844 })
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
     .toBe(true)
-  await page.screenshot({ path: '../../.artifacts/console-model-probe-mobile.png', fullPage: true })
   const record = await (
     await page.request.get(`/api/v1/model-invocations/${generated.invocation_id}`)
   ).json()

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
-import { watchWindowErrors } from './controls'
+import { openUpload, watchWindowErrors } from './controls'
 
 async function login(page: Page) {
   await page.goto('files')
@@ -9,6 +9,7 @@ async function login(page: Page) {
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByRole('heading', { name: '文件库', exact: true })).toBeVisible()
+  await openUpload(page)
 }
 test('bounded hash worker, native download and cancel retry use the real file protocol', async ({
   page,

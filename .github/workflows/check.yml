@@ -2,6 +2,7 @@ name: Check
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
     inputs:
@@ -18,9 +19,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  changes:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 5
+    outputs:
+      backend: ${{ steps.scope.outputs.backend }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      browser: ${{ steps.scope.outputs.browser }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select checks from the complete diff
+        id: scope
+        run: python scripts/ci_scope.py
+
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-console
+      - name: Format, unit tests, types and build
+        run: python scripts/check.py --scope frontend
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-frontend
+          retention-days: 14
+          include-hidden-files: true
+          path: |
+            .artifacts/checks/**/result.json
+
+  backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     env:
       KEYSTONE_TEST_DATABASE_URL: postgresql+psycopg://keystone_test:isolated-test-only@127.0.0.1:55433/keystone_test
     steps:
@@ -38,41 +78,127 @@ jobs:
           version: '0.10.2'
           python-version: '3.12.14'
           enable-cache: true
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24.21.0'
-          package-manager-cache: false
       - name: Install backend dependencies
         run: uv sync --locked --project backend
-      - name: Install frontend dependencies and browser
-        working-directory: frontend/console
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
-          pnpm exec playwright install --with-deps chromium
-      - name: Full validation
-        env:
-          VERIFY_DEPLOYMENT: ${{ inputs.deployment }}
-        run: |
-          if [ "$VERIFY_DEPLOYMENT" = "true" ]; then
-            backend/.venv/bin/python scripts/check.py --deploy
-          else
-            backend/.venv/bin/python scripts/check.py
-          fi
-      - name: Save validation results
+      - name: Lint, unit/integration tests and package
+        run: backend/.venv/bin/python scripts/check.py --scope backend
+      - uses: actions/upload-artifact@v7
         if: always()
-        uses: actions/upload-artifact@v7
         with:
-          name: validation-results
+          name: validation-backend
           retention-days: 14
           include-hidden-files: true
           path: |
             .artifacts/checks/**/result.json
             .artifacts/checks/**/pytest.xml
-            .artifacts/console-e2e/
-            .artifacts/deploy-verify/**/result.json
-            .artifacts/deploy-verify/**/build.log
-            .artifacts/deploy-verify/**/compose.log
       - name: Stop test database
         if: always()
         run: docker compose -f tests/postgres/compose.yaml down --volumes
+
+  browser:
+    needs: changes
+    if: needs.changes.outputs.browser == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      KEYSTONE_TEST_DATABASE_URL: postgresql+psycopg://keystone_test:isolated-test-only@127.0.0.1:55433/keystone_test
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # uv 0.10.2 predates this Python release; install it independently of uv's catalog.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12.14'
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.10.2'
+          python-version: '3.12.14'
+          enable-cache: true
+      - name: Install backend dependencies
+        run: uv sync --locked --project backend
+      - uses: ./.github/actions/setup-console
+        with:
+          browser: 'true'
+      - name: Start dedicated test database
+        run: docker compose -f tests/postgres/compose.yaml up -d --wait
+      - name: Real API, Worker and browser regression
+        run: backend/.venv/bin/python scripts/check.py --scope browser
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-browser
+          retention-days: 14
+          include-hidden-files: true
+          path: |
+            .artifacts/checks/**/result.json
+            .artifacts/console-e2e/
+      - name: Stop test database
+        if: always()
+        run: docker compose -f tests/postgres/compose.yaml down --volumes
+
+  deployment:
+    needs: [backend, frontend, browser]
+    if: github.event_name == 'workflow_dispatch' && inputs.deployment
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # uv 0.10.2 predates this Python release; install it independently of uv's catalog.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12.14'
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.10.2'
+          python-version: '3.12.14'
+          enable-cache: true
+      - name: Install backend dependencies
+        run: uv sync --locked --project backend
+      - uses: ./.github/actions/setup-console
+        with:
+          browser: 'true'
+      - name: Deployment and recovery only
+        run: backend/.venv/bin/python tests/deploy/verify.py
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: validation-deployment
+          retention-days: 14
+          include-hidden-files: true
+          path: |
+            .artifacts/deploy-verify/**/result.json
+            .artifacts/deploy-verify/**/build.log
+            .artifacts/deploy-verify/**/compose.log
+
+  # Keep the existing required check name; selected jobs must actually pass.
+  check:
+    needs: [changes, backend, frontend, browser, deployment]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Verify selected checks
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          DEPLOYMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment }}
+        run: |
+          python - <<'PY'
+          import json, os
+          jobs = json.loads(os.environ['RESULTS'])
+          if jobs['changes']['result'] != 'success':
+              raise SystemExit('Change detection failed')
+          failures = []
+          for scope in ('backend', 'frontend', 'browser'):
+              selected = jobs['changes']['outputs'][scope] == 'true'
+              accepted = {'success'} if selected else {'success', 'skipped'}
+              if jobs[scope]['result'] not in accepted:
+                  failures.append(f'{scope}: {jobs[scope]["result"]}')
+          if os.environ['DEPLOYMENT'] == 'true' and jobs['deployment']['result'] != 'success':
+              failures.append('Deployment verification failed')
+          if failures:
+              raise SystemExit('\n'.join(failures))
+          print('All selected checks passed')
+          PY

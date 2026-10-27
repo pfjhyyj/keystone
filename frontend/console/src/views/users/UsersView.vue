@@ -160,7 +160,15 @@ function submit() {
                 link
                 >修改</el-button
               >
-
+              <el-button
+                v-if="can('role:assign')"
+                :disabled="!can('role:read')"
+                @click="roleTarget = user"
+                native-type="button"
+                type="primary"
+                link
+                >分配角色</el-button
+              >
               <RowMore
                 v-if="can('user:update') || can('user:reset_password') || can('user:credentials')"
                 :label="`${user.display_name}的更多操作`"
@@ -173,15 +181,6 @@ function submit() {
                   >{{ user.is_active ? '停用' : '启用' }}</el-button
                 >
                 <el-button
-                  v-if="can('role:assign')"
-                  :disabled="!can('role:read')"
-                  @click="roleTarget = user"
-                  native-type="button"
-                  type="primary"
-                  link
-                >
-                  分配角色 </el-button
-                ><el-button
                   v-if="can('user:reset_password')"
                   @click="open('password', user)"
                   native-type="button"

@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { choose, check, watchWindowErrors } from './controls'
+import { choose, check, more, openUpload, watchWindowErrors } from './controls'
 
 test('file grants, reference protection and dictionaries against the real API', async ({
   page,
@@ -28,6 +28,7 @@ test('file grants, reference protection and dictionaries against the real API', 
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await expect(page.getByRole('heading', { name: '文件库', exact: true })).toBeVisible()
+  await openUpload(page)
   await expect(page.getByRole('alert')).toContainText('上传配置加载失败')
   await page.getByRole('button', { name: '重试上传配置', exact: true }).click()
   await expect(
@@ -78,7 +79,7 @@ test('file grants, reference protection and dictionaries against the real API', 
   const fileRow = page.getByRole('row').filter({ hasText: 'sharing.txt' })
   await expect(fileRow).toBeVisible()
   await expect(page.getByText('标识与时间', { exact: true })).toHaveCount(0)
-  await fileRow.getByRole('button', { name: '文件授权', exact: true }).click()
+  await more(page, fileRow, '文件授权')
   let dialog = page.getByRole('dialog')
   await choose(dialog, '授权主体', '角色')
   await choose(dialog, '授权对象', '文件测试角色（file_viewer）')
@@ -113,11 +114,11 @@ test('file grants, reference protection and dictionaries against the real API', 
   const visibleFile = viewer.getByRole('row').filter({ hasText: 'sharing.txt' })
   await visibleFile.getByRole('button', { name: '下载', exact: true }).click()
   await expect(viewer.getByRole('alert')).toContainText('文件不存在或不可访问')
-  await visibleFile.getByRole('button', { name: '文件授权', exact: true }).click()
+  await more(viewer, visibleFile, '文件授权')
   await expect(viewer.getByRole('dialog').getByRole('alert')).toContainText('文件不存在或不可访问')
   await viewer.getByRole('button', { name: '关闭对话框' }).click()
 
-  await fileRow.getByRole('button', { name: '文件授权', exact: true }).click()
+  await more(page, fileRow, '文件授权')
   dialog = page.getByRole('dialog')
   await dialog.getByLabel('搜索授权用户', { exact: true }).fill('file_viewer')
   await dialog.getByRole('button', { name: '查找用户' }).click()
@@ -141,7 +142,7 @@ test('file grants, reference protection and dictionaries against the real API', 
       .filter({ hasText: '管理与授权' }),
   ).toBeVisible()
   await dialog.getByRole('button', { name: '关闭对话框' }).click()
-  await visibleFile.getByRole('button', { name: '文件授权', exact: true }).click()
+  await more(viewer, visibleFile, '文件授权')
   const viewerDialog = viewer.getByRole('dialog')
   await expect(viewerDialog.getByLabel('授权对象 ID', { exact: true })).toBeVisible()
   await viewerDialog
@@ -155,7 +156,7 @@ test('file grants, reference protection and dictionaries against the real API', 
   await expect(viewerDialog.locator('.grant-list li')).toHaveCount(0)
   await viewerDialog.getByRole('button', { name: '关闭对话框' }).click()
 
-  await fileRow.getByRole('button', { name: '文件授权', exact: true }).click()
+  await more(page, fileRow, '文件授权')
   dialog = page.getByRole('dialog')
   await choose(dialog, '授权主体', '所有登录用户')
   await expect(dialog.getByRole('option', { name: '管理与授权', exact: true })).toHaveCount(0)
@@ -163,17 +164,7 @@ test('file grants, reference protection and dictionaries against the real API', 
   await expect(dialog.locator('.grant-list li').filter({ hasText: '所有登录用户' })).toHaveCount(1)
   await dialog.getByRole('button', { name: '添加授权', exact: true }).click()
   await expect(dialog.locator('.grant-list li').filter({ hasText: '所有登录用户' })).toHaveCount(1)
-  await page.screenshot({
-    path: '../../.artifacts/console-file-grants.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.screenshot({
-    path: '../../.artifacts/console-file-grants-mobile.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   )
@@ -192,11 +183,11 @@ test('file grants, reference protection and dictionaries against the real API', 
   await expect(visibleFile).toHaveCount(0)
 
   const referenced = page.getByRole('row').filter({ hasText: 'referenced.txt' })
-  await referenced.getByRole('button', { name: '查看引用', exact: true }).click()
+  await more(page, referenced, '查看引用')
   await expect(page.getByRole('dialog')).toContainText('e2e:record:1')
   await expect(page.getByRole('dialog')).toContainText('input')
   await page.getByRole('button', { name: '关闭对话框' }).click()
-  await referenced.getByRole('button', { name: '删除文件', exact: true }).click()
+  await more(page, referenced, '删除文件')
   await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click()
   await expect(page.getByRole('dialog').getByRole('alert')).toContainText(
     '文件仍被业务引用，不能删除',
@@ -247,17 +238,7 @@ test('file grants, reference protection and dictionaries against the real API', 
   await page.getByRole('dialog').getByRole('button', { name: '保存字典', exact: true }).click()
   await expect(priority).toContainText('已停用')
   await expect(items.getByRole('row').filter({ hasText: '较后' })).toContainText('可选')
-  await page.screenshot({
-    path: '../../.artifacts/console-dictionaries.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.screenshot({
-    path: '../../.artifacts/console-dictionaries-mobile.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   )

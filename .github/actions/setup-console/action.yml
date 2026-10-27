@@ -1,0 +1,39 @@
+name: Setup console
+description: Install the locked console toolchain and optionally Chromium
+inputs:
+  browser:
+    description: Install Chromium and its system dependencies
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: '24.21.0'
+        package-manager-cache: false
+    - name: Enable Corepack and locate pnpm store
+      id: pnpm
+      shell: bash
+      working-directory: frontend/console
+      run: |
+        corepack enable
+        echo "store=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+    - uses: actions/cache@v5
+      with:
+        path: ${{ steps.pnpm.outputs.store }}
+        key: ${{ runner.os }}-pnpm-${{ hashFiles('frontend/console/pnpm-lock.yaml') }}
+        restore-keys: ${{ runner.os }}-pnpm-
+    - name: Install console dependencies
+      shell: bash
+      working-directory: frontend/console
+      run: pnpm install --frozen-lockfile
+    - uses: actions/cache@v5
+      if: inputs.browser == 'true'
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-chromium-${{ hashFiles('frontend/console/pnpm-lock.yaml') }}
+    - name: Install Chromium
+      if: inputs.browser == 'true'
+      shell: bash
+      working-directory: frontend/console
+      run: pnpm exec playwright install --with-deps chromium

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { choose, watchWindowErrors } from './controls'
+import { choose, more, watchWindowErrors } from './controls'
 import { testDirectMedia } from './models-media'
 
 test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through the console UI', async ({
@@ -59,11 +59,6 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
         .getByRole('button', { name: '关闭对话框', exact: true })
         .boundingBox()
       expect(close!.y).toBeGreaterThanOrEqual(0)
-      await page.screenshot({
-        path: '../../.artifacts/console-channel-balance.png',
-        fullPage: true,
-        animations: 'disabled',
-      })
       await balance.getByRole('button', { name: '刷新余额', exact: true }).click()
       await expect(balance).toBeVisible()
       await expect(balance).toContainText('查询成功')
@@ -73,7 +68,7 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
     }
     await page.getByRole('tab', { name: '模型配置', exact: true }).click()
     await page.getByRole('button', { name: '新建模型', exact: true }).click()
-    dialog = page.getByRole('dialog')
+    dialog = page.getByRole('region', { name: '新建模型', exact: true })
     await dialog.getByLabel('模型 key', { exact: true }).fill(`${provider}_chat`)
     await choose(dialog, '模型渠道', `${provider} 模拟`)
     if (provider === 'openrouter') {
@@ -83,7 +78,7 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
       await dialog.getByRole('combobox', { name: '上游模型', exact: true }).fill('mock-chat')
       await dialog.getByRole('option', { name: 'mock-chat', exact: true }).click()
     }
-    await dialog.getByRole('button', { name: '保存模型', exact: true }).click()
+    await dialog.getByRole('button', { name: '创建模型', exact: true }).click()
     await expect(dialog).toBeHidden()
     await page.getByRole('tab', { name: '调用测试', exact: true }).click()
     const probe = page.getByRole('region', { name: '真实调用', exact: true })
@@ -94,6 +89,7 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
     await probe.getByRole('button', { name: '发送真实请求', exact: true }).click()
     await expect(probe.locator('pre')).toContainText('模拟渠道响应')
     await expect(page.getByRole('region', { name: '调用记录与费用', exact: true })).toHaveCount(0)
+    await probe.getByLabel('测试消息', { exact: true }).fill('')
   }
   await page.getByRole('tab', { name: '渠道配置', exact: true }).click()
   for (const provider of ['openrouter', 'newapi_prefix', 'newapi_other']) {
@@ -102,27 +98,12 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
     await expect(row.getByRole('button', { name: '编辑渠道', exact: true })).toBeVisible()
     await expect(row.getByRole('button', { name: '额度详情', exact: true })).toBeVisible()
   }
-  await page.screenshot({
-    path: '../../.artifacts/console-model-channels.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.screenshot({
-    path: '../../.artifacts/console-model-channels-mobile.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   )
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.getByRole('tab', { name: '模型配置', exact: true }).click()
-  await page.screenshot({
-    path: '../../.artifacts/console-model-entries.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.getByRole('link', { name: '用量与费用', exact: true }).click()
   await expect(page.getByRole('heading', { name: '用量与费用', exact: true })).toBeVisible()
   await expect(page.getByRole('combobox', { name: '统计时区', exact: true })).toHaveCount(0)
@@ -137,11 +118,6 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
         .boundingBox())!.width,
     ).toBeGreaterThan(180)
   }
-  await page.screenshot({
-    path: '../../.artifacts/console-model-usage-overview.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page
     .getByRole('group', { name: '可点击的时间趋势', exact: true })
     .getByRole('button')
@@ -188,22 +164,13 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await expect(history.locator('tbody tr')).toHaveCount(3)
   await history.locator('tbody tr').last().getByRole('button', { name: '查看调用' }).click()
   let dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('Token')
+  await dialog.getByText('Flow 关联与技术标识', { exact: true }).click()
   await expect(dialog).toContainText('mock-')
-  await expect(dialog).toContainText('total_tokens')
   await dialog.getByRole('button', { name: '补查费用' }).click()
-  await expect(dialog).toContainText('来源 query')
+  await expect(dialog).toContainText('账务查询')
   await dialog.getByRole('button', { name: '关闭对话框' }).click()
-  await page.screenshot({
-    path: '../../.artifacts/console-model-usage.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.screenshot({
-    path: '../../.artifacts/console-model-usage-mobile.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   )
@@ -230,34 +197,20 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
     .poll(() => longLabel.evaluate((node) => node.scrollWidth > node.clientWidth))
     .toBe(true)
   expect(await longLabel.evaluate((node) => getComputedStyle(node).textOverflow)).toBe('ellipsis')
-  await page.screenshot({
-    path: '../../.artifacts/console-usage-truncation.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
     .toBe(true)
-  await page.screenshot({
-    path: '../../.artifacts/console-usage-truncation-mobile.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.unroute('**/api/v1/model-invocations/statistics?*')
   await page.setViewportSize({ width: 1440, height: 1000 })
 
   await page.getByRole('link', { name: 'Flow 流程', exact: true }).click()
+  await page.getByRole('tab', { name: '流程目录', exact: true }).click()
   const catalog = page.getByRole('region', { name: '流程目录', exact: true })
   await expect(catalog.getByRole('row').filter({ hasText: 'document.review' })).toBeVisible()
   await page.getByLabel('搜索流程', { exact: true }).fill('不存在的流程')
   await expect(catalog).toContainText('没有匹配的流程')
   await page.getByLabel('搜索流程', { exact: true }).fill('document.review')
-  await page.screenshot({
-    path: '../../.artifacts/console-flow-catalog.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.getByRole('button', { name: '发起流程', exact: true }).click()
   dialog = page.getByRole('dialog')
   const files = await (await page.request.get('/api/v1/files?limit=50')).json()
@@ -267,10 +220,13 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await dialog.getByRole('button', { name: '提交流程', exact: true }).click()
   dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: '运行详情', exact: true })).toBeVisible()
-  await expect(dialog.locator('dd').filter({ hasText: /^已完成$/ })).toBeVisible({ timeout: 35000 })
+  await expect(dialog.locator('.detail-summary .el-tag')).toHaveText('已完成', { timeout: 35000 })
   await expect(dialog).toContainText('模拟审查已完成')
+  await dialog.getByRole('tab', { name: '调用费用', exact: true }).click()
   await expect(dialog).toContainText('0.0024 credits')
+  await dialog.getByRole('tab', { name: '执行与结果', exact: true }).click()
   await expect(dialog.locator('.el-timeline-item').first()).toBeVisible()
+  await dialog.getByRole('tab', { name: '预算与关联', exact: true }).click()
   const budgetPanel = dialog.getByRole('region', { name: '运行预算', exact: true })
   await expect(budgetPanel).toContainText('模型请求 · 已预留')
   await expect(budgetPanel).toContainText('未结清文本请求：0')
@@ -282,40 +238,33 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
     'artifact.report',
   )
 
-  await page.screenshot({
-    path: '../../.artifacts/console-flow-detail.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.screenshot({
-    path: '../../.artifacts/console-flow-detail-mobile.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   )
   expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
   await page.setViewportSize({ width: 1440, height: 1000 })
   await dialog.getByRole('button', { name: '关闭对话框' }).click()
+  await page.getByRole('tab', { name: '运行记录', exact: true }).click()
   const runRows = page.getByRole('region', { name: '运行记录' }).locator('tbody tr')
   await expect(runRows).toHaveCount(1)
-  const original = await runRows.first().locator('small').textContent()
+  const original = await runRows.first().locator('small').getAttribute('title')
+  await page.getByRole('tab', { name: '流程目录', exact: true }).click()
   await page.getByRole('button', { name: '发起流程', exact: true }).click()
   await page.getByRole('dialog').getByRole('button', { name: '提交流程', exact: true }).click()
   await expect(
     page.getByRole('dialog').getByRole('heading', { name: '运行详情', exact: true }),
   ).toBeVisible()
   await page.getByRole('dialog').getByRole('button', { name: '关闭对话框' }).click()
+  await page.getByRole('tab', { name: '运行记录', exact: true }).click()
   await expect(runRows).toHaveCount(1)
-  expect(await runRows.first().locator('small').textContent()).toBe(original)
+  expect(await runRows.first().locator('small').getAttribute('title')).toBe(original)
   await choose(page, '运行状态', '失败')
   await page.getByRole('button', { name: '查询流程', exact: true }).click()
   await expect(page.getByRole('region', { name: '运行记录' })).toContainText('暂无符合条件的运行')
   await page.getByRole('button', { name: '重置筛选', exact: true }).click()
   await expect(runRows).toHaveCount(1)
-  await expect(runRows.first()).toContainText(original!)
+  await expect(runRows.first().locator('small')).toHaveAttribute('title', original!)
   await page.getByRole('link', { name: '用量与费用', exact: true }).click()
   await choose(page, '分析维度', 'Flow 运行')
   await page
@@ -326,6 +275,7 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
     page.getByRole('region', { name: '调用明细', exact: true }).locator('tbody tr'),
   ).toHaveCount(2)
   await page.getByRole('button', { name: '查看流程运行', exact: true }).first().click()
+  await page.getByRole('dialog').getByRole('tab', { name: '执行与结果', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('模拟审查已完成')
   await page.getByRole('dialog').getByRole('button', { name: '关闭对话框' }).click()
   await renameAndDeleteUnusedConfiguration(page)
@@ -374,21 +324,21 @@ async function renameAndDeleteUnusedConfiguration(page: Page) {
   await expect(channelRow).toContainText('暂不支持查询')
   await expect(channelRow.getByRole('button', { name: '刷新余额', exact: true })).toBeDisabled()
   expect((await channelRow.boundingBox())!.height).toBeLessThan(170)
-  await channelRow.getByRole('button', { name: '修改渠道名称', exact: true }).click()
+  await more(page, channelRow, '修改渠道名称')
   dialog = page.getByRole('dialog')
   await dialog.getByLabel('显示名称', { exact: true }).fill('可删除渠道')
   await dialog.getByRole('button', { name: '保存名称', exact: true }).click()
   await expect(dialog).toBeHidden()
   await page.getByRole('tab', { name: '模型配置', exact: true }).click()
   await page.getByRole('button', { name: '新建模型', exact: true }).click()
-  dialog = page.getByRole('dialog')
+  dialog = page.getByRole('region', { name: '新建模型', exact: true })
   await dialog.getByLabel('模型 key', { exact: true }).fill('unused_cleanup')
   await choose(dialog, '模型渠道', '可删除渠道')
   await choose(dialog, '上游模型', 'mock-chat')
-  await dialog.getByRole('button', { name: '保存模型', exact: true }).click()
+  await dialog.getByRole('button', { name: '创建模型', exact: true }).click()
   await expect(dialog).toBeHidden()
   const modelRow = page.getByRole('row').filter({ hasText: 'unused_cleanup' })
-  await modelRow.getByRole('button', { name: '修改模型名称', exact: true }).click()
+  await more(page, modelRow, '修改模型名称')
   dialog = page.getByRole('dialog')
   await dialog.getByLabel('显示名称', { exact: true }).fill('临时模型')
   await dialog.getByRole('button', { name: '保存名称', exact: true }).click()
@@ -396,13 +346,13 @@ async function renameAndDeleteUnusedConfiguration(page: Page) {
   await expect(modelRow).toContainText('临时模型')
   await expect(modelRow).toContainText('unused_cleanup')
   await modelRow.getByRole('button', { name: '编辑模型', exact: true }).click()
-  dialog = page.getByRole('dialog')
+  dialog = page.getByRole('region', { name: '编辑模型', exact: true })
   await dialog.getByLabel('模型显示名称', { exact: true }).fill('')
   await dialog.getByRole('button', { name: '保存模型', exact: true }).click()
   await expect(dialog).toBeHidden()
   await expect(modelRow).not.toContainText('临时模型')
   await expect(modelRow).toContainText('unused_cleanup')
-  await modelRow.getByRole('button', { name: '删除模型', exact: true }).click()
+  await more(page, modelRow, '删除模型')
   await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeHidden()
   await expect(modelRow).toHaveCount(0)
@@ -411,7 +361,7 @@ async function renameAndDeleteUnusedConfiguration(page: Page) {
     .getByRole('region', { name: '渠道账户', exact: true })
     .getByRole('row')
     .filter({ hasText: '可删除渠道' })
-  await renamedChannel.getByRole('button', { name: '删除渠道', exact: true }).click()
+  await more(page, renamedChannel, '删除渠道')
   await page.getByRole('dialog').getByRole('button', { name: '确认删除', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeHidden()
   await expect(renamedChannel).toHaveCount(0)

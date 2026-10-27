@@ -117,6 +117,21 @@ it('prevents closing a pending dialog and enables closing after completion', asy
   expect(wrapper.emitted('close')).toHaveLength(1)
 })
 
+it('uses explicit dirty state so filter inputs do not masquerade as unsaved form changes', async () => {
+  const wrapper = mount(AppDialog, {
+    props: { title: '权限', protectChanges: true, dirty: false },
+    slots: { default: '<input aria-label="筛选权限" />' },
+  })
+  await flushPromises()
+  await wrapper.get('input').setValue('read')
+  await wrapper.get('button[aria-label="关闭对话框"]').trigger('click')
+  expect(wrapper.emitted('close')).toHaveLength(1)
+  await wrapper.setProps({ dirty: true })
+  await wrapper.get('button[aria-label="关闭对话框"]').trigger('click')
+  expect(wrapper.emitted('close')).toHaveLength(1)
+  expect(wrapper.get('.discard-confirmation').text()).toContain('尚有未保存的修改')
+})
+
 it('sends only selected PAT permissions and clears the revealed secret when leaving its tab', async () => {
   authorize(['user:read', 'audit:read'])
   const bodies: Record<string, unknown>[] = []

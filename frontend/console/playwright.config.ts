@@ -8,6 +8,8 @@ export default defineConfig({
   timeout: 60000,
   outputDir: '../../.artifacts/console-e2e',
   use: {
+    actionTimeout: 10000,
+    navigationTimeout: 15000,
     baseURL: 'http://127.0.0.1:5175/console/',
     viewport: { width: 1440, height: 1000 },
     screenshot: 'only-on-failure',

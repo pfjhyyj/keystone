@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from '@playwright/test'
-import { check, choose, watchWindowErrors } from './controls'
+import { check, choose, more, watchWindowErrors } from './controls'
 
 async function expectSingleDialogScroll(dialog: Locator) {
   await expect
@@ -35,11 +35,6 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   })
   await page.goto('users')
   await expect(page).toHaveURL(/login/)
-  await page.screenshot({
-    path: '../../.artifacts/console-login.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.getByLabel('登录名', { exact: true }).fill('admin')
   await page.getByLabel('密码', { exact: true }).fill('test-password-123')
   await page.getByRole('button', { name: '登录', exact: true }).click()
@@ -57,25 +52,25 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await dialog.getByLabel('展示名', { exact: true }).fill('Alice')
   await dialog.getByLabel('初始密码', { exact: true }).fill('test-password-123')
   await dialog.getByLabel('确认密码', { exact: true }).fill('test-password-123')
-  await dialog.getByRole('button', { name: '确认保存' }).click()
+  await dialog.getByRole('button', { name: '创建用户' }).click()
   await expect(dialog).toBeHidden()
   await expect(page.getByRole('row').filter({ hasText: 'alice' })).toBeVisible()
 
   const created = page.getByRole('row').filter({ hasText: 'alice' })
   await created.getByRole('button', { name: '修改', exact: true }).click()
   await page.getByRole('dialog').getByLabel('展示名', { exact: true }).fill('Alice 编辑')
-  await page.getByRole('dialog').getByRole('button', { name: '确认保存' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '保存展示名', exact: true }).click()
   await expect(created).toContainText('Alice 编辑')
-  await created.getByRole('button', { name: '停用', exact: true }).click()
-  await page.getByRole('dialog').getByRole('button', { name: '确认保存' }).click()
-  await expect(created.getByRole('button', { name: '启用', exact: true })).toBeVisible()
-  await created.getByRole('button', { name: '启用', exact: true }).click()
-  await page.getByRole('dialog').getByRole('button', { name: '确认保存' }).click()
-  await expect(created.getByRole('button', { name: '停用', exact: true })).toBeVisible()
-  await created.getByRole('button', { name: '重置密码', exact: true }).click()
+  await more(page, created, '停用')
+  await page.getByRole('dialog').getByRole('button', { name: '确认停用账户', exact: true }).click()
+  await expect(created).toContainText('停用')
+  await more(page, created, '启用')
+  await page.getByRole('dialog').getByRole('button', { name: '启用账户', exact: true }).click()
+  await expect(created).toContainText('启用')
+  await more(page, created, '重置密码')
   await page.getByRole('dialog').getByLabel('初始密码', { exact: true }).fill('test-password-123')
   await page.getByRole('dialog').getByLabel('确认密码', { exact: true }).fill('test-password-123')
-  await page.getByRole('dialog').getByRole('button', { name: '确认保存' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: '重置密码', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeHidden()
 
   await page.getByRole('link', { name: '角色管理', exact: true }).click()
@@ -94,11 +89,6 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await expectSingleDialogScroll(dialog)
   await page.setViewportSize({ width: 390, height: 844 })
   await expectSingleDialogScroll(dialog)
-  await page.screenshot({
-    path: '../../.artifacts/console-role-full-mobile.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.setViewportSize({ width: 1440, height: 1000 })
   await dialog.getByLabel('角色标识', { exact: true }).fill('reader')
   await dialog.getByLabel('角色名称', { exact: true }).fill('用户只读')
@@ -111,11 +101,6 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await dialog.getByRole('button', { name: '清除筛选', exact: true }).click()
   await expect(dialog.getByRole('checkbox', { name: /user:read/ })).toBeChecked()
   await expect(dialog.getByRole('checkbox', { name: /file:inspect/ })).not.toBeChecked()
-  await page.screenshot({
-    path: '../../.artifacts/console-role-permission-picker.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await dialog.getByRole('button', { name: '保存角色' }).click()
   await expect(dialog).toBeHidden()
   await expect(page.getByRole('row').filter({ hasText: 'reader' })).toBeVisible()
@@ -130,21 +115,11 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
     dialog.getByRole('table', { name: '权限列表', exact: true }).locator('tbody tr'),
   ).toHaveCount(1)
   await expect(dialog.getByRole('checkbox', { name: /user:read/ })).toBeChecked()
-  await page.screenshot({
-    path: '../../.artifacts/console-role-permissions.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(dialog.getByRole('combobox', { name: '角色权限模块', exact: true })).toBeVisible()
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
     .toBe(true)
-  await page.screenshot({
-    path: '../../.artifacts/console-role-permissions-mobile.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.setViewportSize({ width: 1440, height: 1000 })
   await dialog.getByRole('button', { name: '关闭对话框', exact: true }).click()
 
@@ -161,11 +136,6 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
     dialog.getByRole('listitem').filter({ hasText: '用户只读' }).getByRole('button'),
   ).toHaveText('解除角色')
   await dialog.getByRole('button', { name: '关闭对话框' }).click()
-  await page.screenshot({
-    path: '../../.artifacts/console-users.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
 
   const context = await browser.newContext()
   const reader = await context.newPage()
@@ -201,8 +171,11 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
 
   await page.getByRole('link', { name: '用户管理', exact: true }).click()
   alice = page.getByRole('row').filter({ hasText: 'alice' })
-  await alice.getByRole('button', { name: '撤销凭据' }).click()
-  await page.getByRole('dialog').getByRole('button', { name: '确认保存' }).click()
+  await more(page, alice, '撤销凭据')
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: '确认撤销全部凭据', exact: true })
+    .click()
   await expect(page.getByRole('dialog')).toBeHidden()
   await reader.goto('http://127.0.0.1:5175/console/users')
   await expect(reader.getByRole('heading', { name: '登录控制台' })).toBeVisible()
@@ -216,18 +189,8 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await page.getByRole('button', { name: '查看详情' }).click()
   await expect(page.getByRole('dialog')).toContainText('tokens_revoked')
   await page.getByRole('dialog').getByRole('button', { name: '关闭对话框' }).click()
-  await page.screenshot({
-    path: '../../.artifacts/console-batch-one.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('heading', { name: '操作审计', exact: true })).toBeVisible()
-  await page.screenshot({
-    path: '../../.artifacts/console-batch-one-mobile.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   )
@@ -236,16 +199,12 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await page.getByRole('link', { name: '用户管理', exact: true }).click()
   await expect(page.locator('.console-shell')).not.toHaveClass(/mobile-open/)
   await expect(page.getByRole('heading', { name: '用户管理', exact: true })).toBeVisible()
-  await page.screenshot({
-    path: '../../.artifacts/console-users-mobile.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.setViewportSize({ width: 1440, height: 1000 })
   await page.getByRole('button', { name: '账户菜单' }).click()
   await page.getByRole('menuitem', { name: '个人令牌', exact: true }).click()
+  await page.getByRole('button', { name: '新建令牌', exact: true }).click()
   await page.getByLabel('用途名称', { exact: true }).fill('UI 回归验证')
-  await check(page.getByRole('checkbox', { name: 'user:read', exact: true }))
+  await check(page.getByRole('checkbox', { name: 'user:read user:read', exact: true }))
   await page.getByRole('button', { name: '签发令牌', exact: true }).click()
   await expect(page.getByLabel('新令牌明文', { exact: true })).not.toHaveValue('')
   await page.getByRole('tab', { name: '账户信息', exact: true }).click()
@@ -253,19 +212,10 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await page.getByRole('tab', { name: '个人令牌', exact: true }).click()
   const token = page.getByRole('row').filter({ hasText: 'UI 回归验证' })
   await token.getByRole('button', { name: '撤销', exact: true }).click()
+  await page.getByRole('button', { name: '确认撤销令牌', exact: true }).click()
   await expect(token).toContainText('已撤销')
-  await page.screenshot({
-    path: '../../.artifacts/console-account.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.getByRole('link', { name: '平台状态', exact: true }).click()
   await expect(page.getByText('数据库版本', { exact: true })).toBeVisible()
-  await page.screenshot({
-    path: '../../.artifacts/console-overview.png',
-    fullPage: true,
-    animations: 'disabled',
-  })
   await page.getByRole('button', { name: '账户菜单' }).click()
   await page.getByRole('menuitem', { name: '退出登录', exact: true }).click()
   await expect(page.getByRole('heading', { name: '登录控制台' })).toBeVisible()

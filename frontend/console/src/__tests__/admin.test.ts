@@ -8,6 +8,18 @@ import { identity } from '../stores/session'
 import { authorize, deferred, fakeApi, role, user } from './support'
 
 describe('user administration', () => {
+  it('keeps role assignment accessible without unrelated user mutation permissions', async () => {
+    authorize(['user:read', 'role:read', 'role:assign'])
+    fakeApi((path) => (path.startsWith('/users') ? [user] : []))
+    const wrapper = mount(UsersView)
+    await flushPromises()
+    const assign = wrapper.findAll('button').find((node) => node.text() === '分配角色')!
+    expect(assign.attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('.row-more-trigger').exists()).toBe(false)
+    await assign.trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent(UserRolesDialog).props('user').id).toBe(user.id)
+  })
   it('hides mutation controls from readers and never requests role data', async () => {
     authorize(['user:read'])
     const paths: string[] = []

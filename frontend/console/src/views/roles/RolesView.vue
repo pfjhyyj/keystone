@@ -19,6 +19,11 @@ const target = ref<Role | null>(null)
 const deleting = ref<Role | null>(null)
 const readOnly = ref(false)
 const form = reactive({ key: '', name: '', description: '', permissions: [] as string[] })
+const initialForm = ref('')
+const fingerprint = computed(() =>
+  JSON.stringify({ ...form, permissions: [...form.permissions].sort() }),
+)
+const formDirty = computed(() => !readOnly.value && fingerprint.value !== initialForm.value)
 const manageable = (role: Role) => role.key !== 'admin' && role.permissions.every(can)
 const canSave = computed(
   () =>
@@ -52,6 +57,7 @@ function open(role: Role | null = null, view = false) {
     description: role?.description ?? '',
     permissions: [...(role?.permissions ?? [])],
   })
+  initialForm.value = fingerprint.value
   editing.value = true
 }
 async function save() {
@@ -187,6 +193,7 @@ onMounted(loadCatalog)
     />
     <AppDialog
       protect-changes
+      :dirty="formDirty"
       v-if="editing"
       :title="readOnly ? '查看角色权限' : target ? '配置角色权限' : '新建角色'"
       :busy="busy"

@@ -25,3 +25,18 @@ export async function check(control: Locator, checked = true) {
   if ((await control.isChecked()) !== checked) await control.locator('..').click()
   await expect(control).toBeChecked({ checked })
 }
+
+export async function more(page: Page, row: Locator, label: string) {
+  await row.getByRole('button', { name: /的更多操作$/ }).click()
+  await page
+    .locator('.row-more-actions:visible')
+    .getByRole('button', { name: label, exact: true })
+    .click()
+}
+
+export async function openUpload(page: Page) {
+  await page.getByRole('button', { name: '上传文件', exact: true }).click()
+  const panel = page.getByRole('region', { name: '上传文件', exact: true })
+  await expect(panel).toBeVisible()
+  return panel
+}

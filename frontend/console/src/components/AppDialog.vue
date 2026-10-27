@@ -18,7 +18,7 @@ const props = withDefaults(
 const emit = defineEmits<{ close: [] }>()
 const changed = ref(false),
   confirming = ref(false)
-const dirty = computed(() => changed.value || props.dirty)
+const dirty = computed(() => props.dirty ?? changed.value)
 useUnsavedChanges(computed(() => !!props.protectChanges && !!dirty.value))
 function close() {
   if (props.busy) return

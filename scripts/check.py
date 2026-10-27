@@ -37,6 +37,12 @@ def test_workers():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--scope",
+        choices=("full", "backend", "frontend", "browser"),
+        default="full",
+        help="Run an explicit component; full remains the default",
+    )
     parser.add_argument("--unit", action="store_true", help="Explicitly omit DB and browser checks")
     parser.add_argument(
         "--deploy", action="store_true", help="Also build and verify isolated containers"
@@ -44,9 +50,16 @@ def main():
     args = parser.parse_args()
     if args.unit and args.deploy:
         parser.error("--deploy requires full validation; omit --unit")
-    workers = test_workers()
+    if args.deploy and args.scope != "full":
+        parser.error("--deploy requires --scope full")
+    if args.unit and args.scope not in {"full", "backend"}:
+        parser.error("--unit only applies to full or backend checks")
+    backend = args.scope in {"full", "backend"}
+    frontend = args.scope in {"full", "frontend"}
+    browser = args.scope in {"full", "browser"} and not args.unit
+    workers = test_workers() if backend else 1
     probe = None
-    if not args.unit:
+    if (backend and not args.unit) or browser:
         probe = probe_test_database(workers)
         if not probe.available:
             parser.error(
@@ -54,8 +67,10 @@ def main():
                 "or use --unit for an explicitly partial check."
             )
     node, uv = shutil.which("node"), shutil.which("uv")
-    if not node or not uv:
-        parser.error("Install Node.js and uv, then sync backend and frontend dependencies first")
+    if (frontend or browser) and not node:
+        parser.error("Install Node.js and sync frontend dependencies first")
+    if backend and not uv:
+        parser.error("Install uv and sync backend dependencies first")
     if args.deploy:
         if not shutil.which("docker"):
             parser.error("--deploy requires Docker with Compose")
@@ -80,7 +95,9 @@ def main():
         UV_CACHE_DIR=str(uv_cache),
     )
     results = {
-        "mode": "unit" if args.unit else "full",
+        "mode": ("unit" if args.unit else "full") if args.scope == "full" else args.scope,
+        "scope": args.scope,
+        "unit_only": args.unit,
         "status": "failed",
         "test_workers": workers,
         "postgres_connection_capacity": probe.connection_capacity if probe else None,
@@ -103,58 +120,70 @@ def main():
 
     print(f"Check artifacts: {directory}", flush=True)
     try:
-        run(
-            "backend lint",
-            [
+        if frontend:
+            run(
+                "frontend format",
+                [node, "node_modules/prettier/bin/prettier.cjs", "--check", "."],
+                CONSOLE,
+            )
+            run("frontend tests", [node, "node_modules/vitest/vitest.mjs", "run"], CONSOLE)
+            run(
+                "frontend types", [node, "node_modules/vue-tsc/bin/vue-tsc.js", "--noEmit"], CONSOLE
+            )
+            run("frontend build", [node, "node_modules/vite/bin/vite.js", "build"], CONSOLE)
+        if backend:
+            run(
+                "backend lint",
+                [
+                    sys.executable,
+                    "-m",
+                    "ruff",
+                    "check",
+                    "--config",
+                    "backend/pyproject.toml",
+                    "backend",
+                    "scripts",
+                    "tests",
+                ],
+            )
+            run(
+                "backend format",
+                [
+                    sys.executable,
+                    "-m",
+                    "ruff",
+                    "format",
+                    "--config",
+                    "backend/pyproject.toml",
+                    "--check",
+                    "backend",
+                    "scripts",
+                    "tests",
+                ],
+            )
+            tests = [
                 sys.executable,
                 "-m",
-                "ruff",
-                "check",
-                "--config",
-                "backend/pyproject.toml",
-                "backend",
-                "scripts",
-                "tests",
-            ],
-        )
-        run(
-            "backend format",
-            [
-                sys.executable,
-                "-m",
-                "ruff",
-                "format",
-                "--config",
-                "backend/pyproject.toml",
-                "--check",
-                "backend",
-                "scripts",
-                "tests",
-            ],
-        )
-        tests = [sys.executable, "-m", "pytest", "-q", "--junitxml", str(directory / "pytest.xml")]
-        tests += ["-m", "not postgres"] if args.unit else ["--require-postgres"]
-        if workers > 1:
-            tests += ["-n", str(workers), "--dist", "load"]
-            if not args.unit:
-                # Keep long Worker/recovery cases available to free executors instead
-                # of reserving a large consecutive batch on one pytest worker.
-                tests += ["--maxschedchunk=1"]
-        run("backend tests", tests, ROOT / "backend")
-        run(
-            "frontend format",
-            [node, "node_modules/prettier/bin/prettier.cjs", "--check", "."],
-            CONSOLE,
-        )
-        run("frontend tests", [node, "node_modules/vitest/vitest.mjs", "run"], CONSOLE)
-        run("frontend types", [node, "node_modules/vue-tsc/bin/vue-tsc.js", "--noEmit"], CONSOLE)
-        run("frontend build", [node, "node_modules/vite/bin/vite.js", "build"], CONSOLE)
-        run(
-            "backend package",
-            [uv, "build", "--out-dir", str(directory / "packages")],
-            ROOT / "backend",
-        )
-        if not args.unit:
+                "pytest",
+                "-q",
+                "--junitxml",
+                str(directory / "pytest.xml"),
+                "--durations=20",
+            ]
+            tests += ["-m", "not postgres"] if args.unit else ["--require-postgres"]
+            if workers > 1:
+                tests += ["-n", str(workers), "--dist", "load"]
+                if not args.unit:
+                    # Keep long Worker/recovery cases available to free executors instead
+                    # of reserving a large consecutive batch on one pytest worker.
+                    tests += ["--maxschedchunk=1"]
+            run("backend tests", tests, ROOT / "backend")
+            run(
+                "backend package",
+                [uv, "build", "--out-dir", str(directory / "packages")],
+                ROOT / "backend",
+            )
+        if browser:
             run("console browser", [sys.executable, str(CONSOLE / "e2e/run.py")])
         if args.deploy:
             run("deployment and recovery", [sys.executable, "tests/deploy/verify.py"])

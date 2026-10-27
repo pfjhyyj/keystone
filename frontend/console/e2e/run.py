@@ -1,5 +1,6 @@
 """Run the console browser suite with an isolated PostgreSQL database and local API."""
 
+import argparse
 import json
 import os
 import shutil
@@ -43,6 +44,9 @@ def _log_tail(path, limit=2000):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("playwright_args", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
     console = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(console.parents[1] / "backend/tests"))
     from support.postgres import probe_test_database
@@ -199,7 +203,12 @@ def main():
                                 "Test Worker readiness timeout:\n" + _log_tail(worker_path)
                             )
                         result = subprocess.run(
-                            [node, "node_modules/@playwright/test/cli.js", "test"],
+                            [
+                                node,
+                                "node_modules/@playwright/test/cli.js",
+                                "test",
+                                *args.playwright_args,
+                            ],
                             cwd=console,
                             env=env,
                             check=False,
