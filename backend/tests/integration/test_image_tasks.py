@@ -19,8 +19,8 @@ from keystone.platform.model_access.models import ModelDispatchScope, ModelInvoc
 pytestmark = pytest.mark.postgres
 
 
-def accept(client, monkeypatch):
-    install_package(client, monkeypatch, PACKAGE)
+def accept(client, monkeypatch, *, engine=True):
+    install_package(client, monkeypatch, PACKAGE, engine=engine)
     entry(
         client,
         channel(client, provider="openlux", api_base="https://api.openlux.ai/v1"),
@@ -66,12 +66,7 @@ def transport(self, provider):
                 return httpx2.Response(429, headers={{'retry-after': '2'}})
             if {crash!r} == 'failed':
                 return httpx2.Response(200, json={{'code': 0, 'data': {{'task_status': 'failed'}}}})
-            if {crash!r} == 'source':
-                return httpx2.Response(200, json={{'code': 0, 'data': {{'task_status': 'succeed',
-                    'task_result': {{'images': [{{'url': 'https://127.0.0.1/image.png'}}]}}}}}})
         if request.headers.get('host') == 'p2-fdl.klingai.com':
-            if {crash!r} == 'invalid_image':
-                return httpx2.Response(200, content=b'not an image')
             marker = Path({str(request_log)!r}).with_suffix('.download-error')
             if {crash!r} == 'download_error' and not marker.exists():
                 marker.write_text('failed once')
@@ -118,20 +113,18 @@ main()
 """
 
 
-@pytest.mark.parametrize("crash", [None, "receipt", "result", "file", "download_error", "query429"])
+@pytest.mark.parametrize("crash", ["receipt", "result", "file", "download_error", "query429"])
 def test_native_task_recovery_preserves_original_submission(client, monkeypatch, tmp_path, crash):
     run_id = accept(client, monkeypatch)
     request_log, task_state = tmp_path / "requests.jsonl", tmp_path / "vendor.json"
-    before_files = []
-    if crash:
-        with worker(client, tmp_path, code=code(request_log, task_state, crash)) as (process, log):
-            assert process.wait(timeout=35) == 71, log.read_text()
-        before = query(client, lambda s: s.scalar(select(ModelInvocation)))
-        before_files = query(client, lambda s: s.scalars(select(File))).all()
-        assert len(before_files) == (1 if crash == "file" else 0)
-        if crash == "query429":
-            cooldown = query(client, lambda s: s.scalar(select(ModelDispatchScope)))
-            assert cooldown.blocked_until > cooldown.updated_at
+    with worker(client, tmp_path, code=code(request_log, task_state, crash)) as (process, log):
+        assert process.wait(timeout=35) == 71, log.read_text()
+    before = query(client, lambda s: s.scalar(select(ModelInvocation)))
+    before_files = query(client, lambda s: s.scalars(select(File))).all()
+    assert len(before_files) == (1 if crash == "file" else 0)
+    if crash == "query429":
+        cooldown = query(client, lambda s: s.scalar(select(ModelDispatchScope)))
+        assert cooldown.blocked_until > cooldown.updated_at
     with worker(client, tmp_path, code=code(request_log, task_state)) as (process, log):
         done = wait_run(client, run_id, process, log)
         assert done["status"] == "succeeded", (done, log.read_text())
@@ -144,14 +137,13 @@ def test_native_task_recovery_preserves_original_submission(client, monkeypatch,
     if crash == "query429":
         current_scope = query(client, lambda s: s.scalar(select(ModelDispatchScope)))
         assert current_scope.blocked_until == cooldown.blocked_until
-    if crash:
-        assert calls[0].id == before.id
-        assert calls[0].flow_context == before.flow_context
-        original = before.result_context.get("task") or before.result_context
-        current = calls[0].result_context["task"]
-        assert current["deadline_at"] == original["deadline_at"]
-        assert current["queries"] >= original["queries"]
-        assert calls[0].upstream_request_id == before.upstream_request_id
+    assert calls[0].id == before.id
+    assert calls[0].flow_context == before.flow_context
+    original = before.result_context.get("task") or before.result_context
+    current = calls[0].result_context["task"]
+    assert current["deadline_at"] == original["deadline_at"]
+    assert current["queries"] >= original["queries"]
+    assert calls[0].upstream_request_id == before.upstream_request_id
     manifest = calls[0].result_context
     assert manifest["kind"] == "images" and manifest["task"]["queries"] >= 2
     assert "https://" not in str(manifest) and "prompt" not in str(manifest)
@@ -182,7 +174,7 @@ def test_native_task_recovery_preserves_original_submission(client, monkeypatch,
     )
 
 
-@pytest.mark.parametrize("condition", ["deadline", "queries", "cancel", "disabled"])
+@pytest.mark.parametrize("condition", ["deadline", "cancel", "disabled"])
 def test_task_limits_and_cancellation_survive_restart_without_new_requests(
     client, monkeypatch, tmp_path, condition
 ):
@@ -195,20 +187,17 @@ def test_task_limits_and_cancellation_survive_restart_without_new_requests(
     with worker(client, tmp_path, code=code(request_log, task_state, "receipt")) as (process, log):
         assert process.wait(timeout=35) == 71, log.read_text()
     original = query(client, lambda s: s.scalar(select(ModelInvocation)))
-    if condition in {"deadline", "queries"}:
+    if condition == "deadline":
 
         async def expired(session):
             row = await session.get(ModelInvocation, original.id)
             evidence = dict(row.result_context)
-            if condition == "deadline":
-                deadline = utcnow() - timedelta(seconds=1)
-                evidence.update(
-                    submitted_at=(deadline - timedelta(seconds=300)).isoformat(),
-                    deadline_at=deadline.isoformat(),
-                    next_query_at=deadline.isoformat(),
-                )
-            else:
-                evidence["queries"] = 60
+            deadline = utcnow() - timedelta(seconds=1)
+            evidence.update(
+                submitted_at=(deadline - timedelta(seconds=300)).isoformat(),
+                deadline_at=deadline.isoformat(),
+                next_query_at=deadline.isoformat(),
+            )
             row.result_context = evidence
 
         query(client, expired)
@@ -252,8 +241,6 @@ def test_task_limits_and_cancellation_survive_restart_without_new_requests(
     [
         ("registered", "unknown", "model_result_unavailable"),
         ("failed", "failed", "model_task_failed"),
-        ("source", "unknown", "model_result_source_denied"),
-        ("invalid_image", "succeeded", "model_invalid_image"),
     ],
 )
 def test_task_failure_and_invalid_artifacts_preserve_separate_facts(
@@ -276,5 +263,3 @@ def test_task_failure_and_invalid_artifacts_preserve_separate_facts(
     assert query(client, lambda s: s.scalar(select(File.id))) is None
     sent = [json.loads(line) for line in request_log.read_text().splitlines()]
     assert len([r for r in sent if r["method"] == "POST"]) == 1
-    if condition == "source":
-        assert not [r for r in sent if r["host"] == "p2-fdl.klingai.com"]

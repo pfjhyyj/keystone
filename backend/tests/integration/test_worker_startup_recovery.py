@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import insert, select, text
 from sqlalchemy.exc import DBAPIError
+from support.flow_engine import flow_engine as flow_engine
 from test_files_dictionary import client as client
 from test_flow import configuration as configuration
 from test_flow import worker as worker_process
@@ -27,7 +28,7 @@ from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.services.recovery import recover_interrupted_calls
 from keystone.worker.lifecycle import change_worker
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.postgres, pytest.mark.usefixtures("flow_engine")]
 
 
 def capture_identity(monkeypatch):

@@ -8,6 +8,7 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import select
+from support.flow_engine import flow_engine as flow_engine
 from support.flow_packages import install_package
 from support.multi_role_flow import PACKAGE, definition
 from test_files_dictionary import upload
@@ -23,7 +24,7 @@ from keystone.platform.flow.schemas.values import small_json
 from keystone.platform.flow.tasks.workflows import reconcile_one
 from keystone.platform.model_access.models import ModelInvocation
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.postgres, pytest.mark.usefixtures("flow_engine")]
 
 
 def payload(file_id, key="multi"):

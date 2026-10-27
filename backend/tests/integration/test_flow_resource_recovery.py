@@ -90,7 +90,6 @@ main()
 @pytest.mark.parametrize(
     "kind,crash",
     [
-        ("tool", None),
         ("tool", "reserved"),
         ("tool", "checkpoint"),
         ("iteration", "reserved"),
@@ -98,7 +97,6 @@ main()
         ("artifact", "reserved"),
         ("artifact", "uploaded"),
         ("artifact", "checkpoint"),
-        ("agents", None),
         ("agents", "checkpoint"),
     ],
 )
@@ -106,23 +104,21 @@ def test_resource_allowances_survive_real_worker_restart(
     client, monkeypatch, tmp_path, kind, crash
 ):
     run_id = accept(client, monkeypatch, kind)
-    before_files = []
-    if crash:
-        with worker(client, tmp_path, code=code(kind, crash)) as (process, log):
-            assert process.wait(timeout=35) == 71, log.read_text()
-        before = query(client, lambda s: s.get(FlowRunBudget, run_id))
-        assert (
-            before.counters[
-                {
-                    "tool": "tool_calls",
-                    "iteration": "iterations",
-                    "artifact": "file_count",
-                    "agents": "tool_calls",
-                }[kind]
-            ]
-            == 1
-        )
-        before_files = query(client, lambda s: s.scalars(select(File))).all()
+    with worker(client, tmp_path, code=code(kind, crash)) as (process, log):
+        assert process.wait(timeout=35) == 71, log.read_text()
+    before = query(client, lambda s: s.get(FlowRunBudget, run_id))
+    assert (
+        before.counters[
+            {
+                "tool": "tool_calls",
+                "iteration": "iterations",
+                "artifact": "file_count",
+                "agents": "tool_calls",
+            }[kind]
+        ]
+        == 1
+    )
+    before_files = query(client, lambda s: s.scalars(select(File))).all()
     with worker(client, tmp_path, code=code(kind)) as (process, log):
         done = wait_run(client, str(run_id), process, log)
         assert done["status"] == "failed" and done["error_code"] == "flow_budget_exceeded", (

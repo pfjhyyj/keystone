@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
+from support.flow_engine import flow_engine as flow_engine
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
 from test_flow import configuration as configuration
@@ -29,7 +30,7 @@ from keystone.platform.audit.services import writer as audit
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.worker import lifecycle
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.postgres, pytest.mark.usefixtures("flow_engine")]
 
 
 def seed(client, worker_id=SECOND):

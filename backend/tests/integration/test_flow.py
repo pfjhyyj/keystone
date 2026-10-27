@@ -8,8 +8,8 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
-from dbos import DBOS
 from sqlalchemy import select, text, update
+from support.flow_engine import flow_engine as flow_engine
 from support.processes import stop_process
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
@@ -21,7 +21,6 @@ from keystone.core.errors import ServiceError
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.files.models import FileReference
-from keystone.platform.flow.adapters.dbos import Engine
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.tasks.workflows import reconcile_one
 from keystone.platform.model_access.models import ModelInvocation
@@ -43,9 +42,6 @@ def configuration(client, monkeypatch):
     monkeypatch.setattr(composition, "FLOW_PACKAGES", (PACKAGE,))
     composition.execution_version.cache_clear()
     runtime.flow_definitions = {definition.key: definition}
-    settings = runtime.settings
-    DBOS.migrate(settings.database_url.get_secret_value())
-    runtime.flow_engine = Engine(settings)
     entry(client, channel(client))
 
 
@@ -156,7 +152,7 @@ def wait_run(client, identifier, process, log, timeout=35):
     pytest.fail(log.read_text(encoding="utf8") + "\nRun did not reach terminal state")
 
 
-def test_real_worker_harness_model_and_report(client, tmp_path):
+def test_real_worker_harness_model_and_report(client, tmp_path, flow_engine):
     file_id = upload(client, b"A small document for review.").json()["id"]
     response = start(client, file_id)
     assert response.status_code == 202, response.text
@@ -191,7 +187,7 @@ def test_real_worker_harness_model_and_report(client, tmp_path):
     assert client.delete(f"/api/v1/files/{file_id}").status_code == 409
 
 
-def test_example_acceptance_and_budget_in_real_worker(client, tmp_path):
+def test_example_acceptance_and_budget_in_real_worker(client, tmp_path, flow_engine):
     file_id = upload(client, b"Review this source.").json()["id"]
     scenario_file = tmp_path / "scenario"
     scenario_file.write_text("budget", encoding="utf8")
@@ -300,7 +296,7 @@ def test_start_and_input_reference_audits_share_request_id(client, credential_ki
     assert {row.correlation_id for row in after} == {response.headers["X-Request-ID"]}
 
 
-def test_start_idempotency_cancel_before_delivery(client, tmp_path):
+def test_start_idempotency_cancel_before_delivery(client, tmp_path, flow_engine):
     file_id = upload(client).json()["id"]
     first = start(client, file_id).json()
     assert start(client, file_id).json()["id"] == first["id"]
@@ -321,7 +317,7 @@ def test_start_idempotency_cancel_before_delivery(client, tmp_path):
 
 
 @pytest.mark.parametrize("point", ["registered", "response", "artifact"])
-def test_worker_crash_recovery_never_repeats_paid_request(client, tmp_path, point):
+def test_worker_crash_recovery_never_repeats_paid_request(client, tmp_path, point, flow_engine):
     file_id = upload(client).json()["id"]
     if point == "artifact":
         # The declared permissions must cover recovery as well as first execution.
@@ -396,7 +392,7 @@ host._upload = crash
         assert len(client.get("/api/v1/files").json()) == 2
 
 
-def test_pat_revocation_blocks_execution_but_new_session_can_cancel(client, tmp_path):
+def test_pat_revocation_blocks_execution_but_new_session_can_cancel(client, tmp_path, flow_engine):
     file_id = upload(client).json()["id"]
     p = token(client, list(client.get("/api/v1/auth/me").json()["permissions"]))
     body = {
@@ -644,7 +640,7 @@ def test_replayed_cancel_does_not_cancel_a_mismatched_engine_execution(client, m
     assert done["status"] == "pending" and done["cancel_requested_at"] is not None
 
 
-def test_unregistered_output_file_rejected_and_old_version_not_dispatched(client):
+def test_unregistered_output_file_rejected_and_old_version_not_dispatched(client, flow_engine):
     file_id = upload(client).json()["id"]
     unregistered = upload(client, b"other", key="other").json()["id"]
     row = start(client, file_id).json()
@@ -761,17 +757,21 @@ def test_start_audit_failure_rolls_back_run_and_references(client, monkeypatch):
     assert query(client, lambda s: s.scalars(select(FileReference))).all() == []
 
 
-def test_cancel_during_model_send_preserves_inflight_receipt(client, tmp_path):
+def test_cancel_during_model_send_preserves_inflight_receipt(client, tmp_path, flow_engine):
     file_id = upload(client).json()["id"]
     row = start(client, file_id).json()
-    code = """
+    waiting, release = tmp_path / "sending", tmp_path / "release-response"
+    code = f"""
 import asyncio
 import httpx2
+from pathlib import Path
 from keystone.platform.model_access.adapters.http import HttpClient
 from support import model_stub as mock
 def transport(self, provider):
     async def respond(request):
-        await asyncio.sleep(4)
+        Path({str(waiting)!r}).touch()
+        while not Path({str(release)!r}).exists():
+            await asyncio.sleep(0.05)
         return await mock.transport(provider).handle_async_request(request)
     return httpx2.MockTransport(respond)
 HttpClient.transport = transport
@@ -780,13 +780,13 @@ main()
 """
     with worker(client, tmp_path, code=code) as (process, log):
         deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            calls = client.get(f"/api/v1/model-invocations?flow_run_id={row['id']}").json()
-            if calls:
-                break
+        while not waiting.exists():
+            assert process.poll() is None and time.monotonic() < deadline, log.read_text()
             time.sleep(0.1)
+        calls = client.get(f"/api/v1/model-invocations?flow_run_id={row['id']}").json()
         assert calls and calls[0]["status"] == "running"
         assert client.post(f"/api/v1/flow-runs/{row['id']}/cancel").status_code == 200
+        release.touch()
         assert wait_run(client, row["id"], process, log)["status"] == "cancelled"
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -966,7 +966,7 @@ def test_upload_completion_retains_file_after_flow_cancel(client, monkeypatch):
     assert client.delete(f"/api/v1/files/{file['id']}").status_code == 409
 
 
-def test_worker_single_instance_and_orderly_stop(client, tmp_path):
+def test_worker_single_instance_and_orderly_stop(client, tmp_path, flow_engine):
     stop_file = tmp_path / "stop-worker"
     code = f"""
 import asyncio
@@ -1001,7 +1001,7 @@ run(main())
         assert client.get("/api/v1/worker/status").json()["status"] == "offline"
 
 
-def test_worker_shutdown_cancels_own_workflow_but_not_other_tasks(client, tmp_path):
+def test_worker_shutdown_cancels_own_workflow_but_not_other_tasks(client, tmp_path, flow_engine):
     code = """
 import asyncio
 from dbos import DBOS, SetWorkflowID
@@ -1061,7 +1061,7 @@ run(main())
         assert "common_runtime_verified" in log.read_text(encoding="utf8")
 
 
-def test_missing_dbos_schema_stops_worker(client, tmp_path):
+def test_missing_dbos_schema_stops_worker(client, tmp_path, flow_engine):
     query(client, lambda session: session.execute(text("DROP SCHEMA dbos CASCADE")))
     with worker(client, tmp_path) as (process, log):
         assert process.wait(timeout=25) != 0, log.read_text(encoding="utf8")

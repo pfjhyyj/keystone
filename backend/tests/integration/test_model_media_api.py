@@ -179,6 +179,38 @@ def test_invalid_input_and_unsupported_operation_never_register(client):
     assert calls(client) == []
 
 
+@pytest.mark.parametrize("case", ["mislabeled", "truncated"])
+def test_invalid_vision_file_bytes_are_rejected_before_registration(client, monkeypatch, case):
+    configure(client, operations=["image.understand"])
+    content = image_bytes()
+    response = upload(
+        client,
+        content[:20] if case == "truncated" else content,
+        content_type="text/plain" if case == "mislabeled" else "image/png",
+        name="input.png",
+    )
+    assert response.status_code == 201, response.text
+    file_id = response.json()["id"]
+
+    def forbidden(request):
+        pytest.fail("Invalid file bytes reached the upstream")
+
+    monkeypatch.setattr(
+        client.app.state.runtime.models.http, "transport", lambda _: httpx2.MockTransport(forbidden)
+    )
+    result = client.post(
+        "/api/v1/models/vision",
+        json={
+            "model_key": "media",
+            "images": [{"file_id": file_id}],
+            "messages": [{"role": "user", "content": "Describe"}],
+        },
+    )
+    assert result.status_code == 422 and result.json()["code"] == "model_invalid_image"
+    assert calls(client) == []
+    assert query(client, lambda session: session.scalar(select(FlowRun.id))) is None
+
+
 def test_read_without_upload_permission_and_create_without_inspect(client):
     configure(client)
     reference = source(client)

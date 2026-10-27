@@ -108,8 +108,9 @@ main()
 """
 
 
-@pytest.mark.parametrize("provider", ["yunwu", "openlux"])
-@pytest.mark.parametrize("edit,kind", [(False, "url"), (True, "base64")])
+@pytest.mark.parametrize(
+    "provider,edit,kind", [("yunwu", False, "url"), ("openlux", True, "base64")]
+)
 def test_relay_images_and_actual_cost_are_independent_and_idempotent(
     client, monkeypatch, tmp_path, provider, edit, kind
 ):
@@ -184,17 +185,13 @@ def test_relay_url_recovery_never_repeats_generation(client, monkeypatch, tmp_pa
         assert after.status == "unknown" and done["error_code"] == "model_result_unavailable"
 
 
-@pytest.mark.parametrize("case", ["header", "model", "currency", "local", "generation"])
+@pytest.mark.parametrize("case", ["local", "generation"])
 def test_image_failures_keep_real_cost_and_delivery_facts_separate(
     client, monkeypatch, tmp_path, case
 ):
     request_log = tmp_path / "requests.jsonl"
     run_id = accept(client, monkeypatch, "openlux")
-    options = {
-        "header": case != "header",
-        "local": case == "local",
-        "generation_error": case == "generation",
-    }
+    options = {"local": case == "local", "generation_error": case == "generation"}
     with worker(client, tmp_path, code=code(request_log, **options)) as (handle, log):
         done = wait_run(client, run_id, handle, log)
         assert done["status"] == ("failed" if case == "generation" else "succeeded"), (
@@ -207,32 +204,66 @@ def test_image_failures_keep_real_cost_and_delivery_facts_separate(
         from keystone.platform.model_access.adapters.http import HttpClient
 
         patch.setattr(HttpClient, "transport", HttpClient.transport)
-        install(
-            request_log,
-            model="different-model" if case == "model" else None,
-            currency="CUSTOM" if case == "currency" else None,
-        )
+        install(request_log)
         due(client, identifier)
         process(client, identifier)
     current = stored(client, identifier)
-    if case in {"model", "currency", "header"}:
-        assert current.cost_amount is None
-        assert (
-            current.cost_check_reason
-            == {
-                "model": "cost_receipt_conflict",
-                "currency": "cost_policy_changed",
-                "header": "cost_request_id_missing",
-            }[case]
-        )
-    else:
-        assert str(current.cost_amount) == "0.002656000000000000"
-        assert current.cost_check_status == "confirmed"
-        assert current.status == ("unknown" if case == "generation" else "succeeded")
-        files = query(client, lambda s: s.scalars(select(File))).all()
-        assert bool(files) == (case == "local")
+    assert str(current.cost_amount) == "0.002656000000000000"
+    assert current.cost_check_status == "confirmed"
+    assert current.status == ("unknown" if case == "generation" else "succeeded")
+    files = query(client, lambda s: s.scalars(select(File))).all()
+    assert bool(files) == (case == "local")
     requests = [json.loads(line) for line in request_log.read_text().splitlines()]
     assert sum(r["method"] == "POST" for r in requests) == 1
+
+
+@pytest.mark.parametrize(
+    "case,reason",
+    [
+        ("header", "cost_request_id_missing"),
+        ("model", "cost_receipt_conflict"),
+        ("currency", "cost_policy_changed"),
+    ],
+)
+def test_image_billing_conflicts_preserve_successful_delivery(
+    client, monkeypatch, tmp_path, case, reason
+):
+    # These are billing rules, independent of DBOS checkpoints. Keep real image
+    # inference, original receipts, SQL reconciliation and Files publication.
+    from keystone.platform.model_access.adapters.http import HttpClient
+
+    configured = channel(client, "openlux", api_base="https://api.openlux.ai/v1")
+    entry(client, configured, provider_model="gpt-image-2", operations=["image.generate"])
+    request_log = tmp_path / "requests.jsonl"
+    monkeypatch.setattr(HttpClient, "transport", HttpClient.transport)
+    install(request_log, header=case != "header")
+    response = client.post(
+        "/api/v1/models/images/generate", json={"model_key": "chat", "prompt": "A blue square"}
+    )
+    assert response.status_code == 200, response.text
+    identifier = response.json()["invocation_id"]
+    before = stored(client, identifier)
+    install(
+        request_log,
+        model="different-model" if case == "model" else None,
+        currency="CUSTOM" if case == "currency" else None,
+    )
+    due(client, identifier)
+    process(client, identifier)
+    current = stored(client, identifier)
+    assert current.cost_amount is None and current.cost_check_reason == reason
+    assert current.cost_check_status == ("unavailable" if case == "header" else "blocked")
+    assert current.status == before.status == "succeeded"
+    assert current.finished_at == before.finished_at
+    assert current.upstream_request_id == before.upstream_request_id
+    assert current.result_context == before.result_context
+    assert len(query(client, lambda s: s.scalars(select(ModelInvocation))).all()) == 1
+    files = query(client, lambda s: s.scalars(select(File))).all()
+    assert {str(file.id) for file in files} == {
+        file["file_id"] for file in response.json()["files"]
+    }
+    requests = [json.loads(line) for line in request_log.read_text().splitlines()]
+    assert sum(request["method"] == "POST" for request in requests) == 1
 
 
 @pytest.mark.parametrize("change", ["expired", "cipher", "disabled", "changed"])

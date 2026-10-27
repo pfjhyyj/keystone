@@ -7,6 +7,7 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import select
+from support.flow_engine import flow_engine as flow_engine
 from support.processes import stop_process
 from test_auto_costs import billing as billing
 from test_auto_costs import call, configure, due, process, receipt, stored, view
@@ -22,7 +23,7 @@ from keystone.platform.model_access.adapters.coordination import QueryCoordinati
 from keystone.platform.model_access.models import Channel
 from keystone.platform.model_access.tasks import workflows as model_costs
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.postgres, pytest.mark.usefixtures("flow_engine")]
 FIRST, SECOND = "keystone-worker", "keystone-worker-02"
 
 

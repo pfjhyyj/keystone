@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import update
+from support.flow_engine import flow_engine as flow_engine
 from test_files_dictionary import client as client
 from test_flow import configuration as configuration
 from test_identity import query
@@ -20,7 +21,7 @@ from keystone.entrypoints.cli import recover_model_calls
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.services.recovery import recover_interrupted_calls
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.postgres, pytest.mark.usefixtures("flow_engine")]
 
 
 def test_legacy_recovery_requires_all_processes_stopped_and_preserves_api_calls(client):

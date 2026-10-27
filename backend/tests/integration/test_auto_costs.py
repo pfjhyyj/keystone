@@ -394,13 +394,11 @@ def test_zero_and_legacy_yunwu_unit_are_explicit(client, billing):
     assert row["cost_unit"] == "yunwu_credits" and row["cost_amount"] == "0.000000000000000000"
 
 
-@pytest.mark.parametrize("restart", [False, True])
-def test_real_dbos_scheduler_queries_costs(client, billing, tmp_path, restart):
+def test_real_dbos_scheduler_queries_costs(client, billing, tmp_path):
     configure(client)
     identifier = call(client)
     due(client, identifier)
-    if restart:
-        billing["records"] = [receipt(f"other-{index}") for index in range(40)] + billing["records"]
+    billing["records"] = [receipt(f"other-{index}") for index in range(40)] + billing["records"]
     runtime = client.app.state.runtime
     DBOS.migrate(runtime.settings.database_url.get_secret_value())
     runtime.flow_engine = Engine(runtime.settings)
@@ -429,15 +427,14 @@ HttpClient.transport = lambda self, provider: (
 from keystone.entrypoints.worker import main
 main()
 """
-    if restart:
 
-        def checkpoint_saved():
-            owner = query(client, lambda session: session.scalar(select(Channel)))
-            return owner.cost_checkpoint and owner.cost_checkpoint["page"] == 3
+    def checkpoint_saved():
+        owner = query(client, lambda session: session.scalar(select(Channel)))
+        return owner.cost_checkpoint and owner.cost_checkpoint["page"] == 3
 
-        with worker(client, tmp_path, code=code) as (process, log):
-            wait_for(client, process, log, checkpoint_saved)
-        assert view(client, identifier)["cost_amount"] is None
+    with worker(client, tmp_path, code=code) as (process, log):
+        wait_for(client, process, log, checkpoint_saved)
+    assert view(client, identifier)["cost_amount"] is None
     with worker(client, tmp_path, code=code) as (process, log):
         # The cost transaction commits before DBOS records workflow completion.
         wait_for(

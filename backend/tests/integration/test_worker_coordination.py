@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import select, text, update
 from sqlalchemy.exc import DBAPIError
+from support.flow_engine import flow_engine as flow_engine
 from test_files_dictionary import client as client
 from test_flow import configuration as configuration
 from test_flow import worker
@@ -26,7 +27,7 @@ from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.schemas import Invoke
 from keystone.platform.model_access.services.runtime import ModelRuntime
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.postgres, pytest.mark.usefixtures("flow_engine")]
 
 
 def test_large_global_inference_budget_does_not_exhaust_registration_connections(

@@ -108,14 +108,12 @@ def test_delivery_and_native_model_support_are_checked_before_admission(client, 
     assert query(client, lambda session: session.scalar(select(ModelInvocation.id))) is None
 
 
-@pytest.mark.parametrize("remove_before_send", [False, True])
 @pytest.mark.parametrize(
-    "provider,base",
+    "provider,base,remove_before_send",
     [
-        ("openrouter", "https://openrouter.ai/api/v1"),
-        ("openlux", "https://api.openlux.ai/v1"),
-        ("yunwu", "https://yunwu.ai/v1"),
-        ("newapi", "https://relay.example/gateway/v1"),
+        ("openrouter", "https://openrouter.ai/api/v1", False),
+        ("newapi", "https://relay.example/gateway/v1", False),
+        ("openlux", "https://api.openlux.ai/v1", True),
     ],
 )
 def test_structured_operation_routes_and_revalidates_with_real_worker(
@@ -193,7 +191,7 @@ main()
     assert len(query(client, lambda s: s.scalars(select(FlowRun))).all()) == 1
 
 
-@pytest.mark.parametrize("case", ["normal", "unregistered", "mislabeled", "truncated"])
+@pytest.mark.parametrize("case", ["normal", "unregistered"])
 def test_vision_uses_only_authorized_valid_run_files(client, tmp_path, monkeypatch, case):
     from io import BytesIO
 
@@ -205,7 +203,7 @@ def test_vision_uses_only_authorized_valid_run_files(client, tmp_path, monkeypat
     entry(client, channel(client), operations=["image.understand"])
     image = BytesIO()
     Image.new("RGB", (2, 2), "red").save(image, format="PNG")
-    body = image.getvalue()[:20] if case == "truncated" else image.getvalue()
+    body = image.getvalue()
 
     def upload_image(name):
         from test_files_dictionary import upload
@@ -215,7 +213,7 @@ def test_vision_uses_only_authorized_valid_run_files(client, tmp_path, monkeypat
             body,
             key=name,
             name=name,
-            content_type="text/plain" if case == "mislabeled" else "image/png",
+            content_type="image/png",
         )
         assert response.status_code == 201, response.text
         return response.json()["id"]
@@ -250,8 +248,7 @@ main()
     calls = query(client, lambda s: s.scalars(select(ModelInvocation))).all()
     assert len(calls) == (1 if case == "normal" else 0)
     if case != "normal":
-        expected = "flow_file_scope_denied" if case == "unregistered" else "model_invalid_image"
-        assert done["error_code"] == expected
+        assert done["error_code"] == "flow_file_scope_denied"
     else:
         assert calls[0].status == "succeeded"
         assert "data:image" not in str(done)

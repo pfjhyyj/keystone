@@ -6,6 +6,7 @@ from uuid import UUID
 
 import pytest
 from sqlalchemy import func, select
+from support.flow_engine import flow_engine as flow_engine
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
 from test_flow import configuration as configuration
@@ -19,7 +20,7 @@ from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.tasks import workflows as flow_jobs
 from keystone.platform.model_access.tasks import workflows as model_jobs
 
-pytestmark = pytest.mark.postgres
+pytestmark = [pytest.mark.postgres, pytest.mark.usefixtures("flow_engine")]
 
 
 def wait_for(client, process, log, condition, timeout=30):

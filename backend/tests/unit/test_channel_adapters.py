@@ -20,6 +20,11 @@ from keystone.platform.model_access.adapters.inference.client import InferenceCl
 from keystone.platform.model_access.adapters.inference.transport import Observation
 from keystone.platform.model_access.schemas.errors import AdapterError
 from keystone.platform.model_access.schemas.invocations import Selection, TextRequest
+from keystone.platform.model_access.schemas.structured import (
+    JsonOutput,
+    StructuredRequest,
+    parse_structured,
+)
 from keystone.platform.model_access.services.entries import catalog_entry
 
 
@@ -185,6 +190,89 @@ async def test_shared_chat_wire_keeps_channel_receipts_and_actual_cost_semantics
         }
     else:
         assert final.request_id == "billing-id" and final.fee is None
+
+
+@pytest.mark.parametrize("provider", ["openrouter", "openlux", "yunwu", "newapi"])
+async def test_structured_wire_registers_once_and_keeps_each_channel_contract(
+    monkeypatch, provider
+):
+    base = (
+        "https://relay.example/gateway/v1" if provider == "newapi" else CHANNELS[provider].api_base
+    )
+    selected = Selection(
+        model_entry_id=uuid4(),
+        channel_id=uuid4(),
+        provider=provider,
+        api_base=base,
+        provider_model="structured-model",
+        operation="text.structured",
+    )
+    schema = {
+        "type": "object",
+        "properties": {"answer": {"type": "integer"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
+    data = StructuredRequest(
+        messages=[{"role": "user", "content": "Answer"}],
+        output=JsonOutput(name="Answer", json_schema=schema),
+    )
+    registrations, requests, receipts = [], [], []
+
+    async def register():
+        registrations.append(True)
+        return "private-structured-key"
+
+    async def receipt():
+        receipts.append(True)
+
+    def respond(request):
+        assert registrations == [True]
+        assert request.method == "POST" and str(request.url) == base + "/chat/completions"
+        assert request.headers["authorization"] == "Bearer private-structured-key"
+        body = json.loads(request.content)
+        assert body["model"] == "structured-model" and body["max_tokens"] == 1024
+        assert body["messages"] == [{"role": "user", "content": "Answer"}]
+        assert body["response_format"] == {
+            "type": "json_schema",
+            "json_schema": {"name": "Answer", "strict": True, "schema": schema},
+        }
+        assert body.get("provider", {}).get("require_parameters", False) is (
+            provider == "openrouter"
+        )
+        requests.append(body)
+        return httpx2.Response(
+            200,
+            headers={"x-api-request-id": "original-billing-receipt"},
+            json={
+                "id": "structured-response",
+                "model": "structured-model",
+                "created": 1770000000,
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": '{"answer":7}'},
+                    }
+                ],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+            },
+        )
+
+    http = HttpClient()
+    monkeypatch.setattr(http, "transport", lambda _: httpx2.MockTransport(respond))
+    observation = Observation(lambda _: None)
+    events = [
+        event
+        async for event in InferenceClient(http).events(
+            provider, selected, observation, register, receipt, uuid4(), data=data
+        )
+    ]
+    assert len(events) == len(requests) == len(receipts) == 1
+    assert parse_structured(events[0]["content"], data.output) == {"answer": 7}
+    assert observation.receipt_ids["x-api-request-id"] == "original-billing-receipt"
+    assert observation.request_budget.operation == "text.structured"
+    assert observation.usage == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
 
 
 @pytest.mark.parametrize(
