@@ -5,7 +5,7 @@ from pydantic import ConfigDict, Field, SecretStr, field_validator, model_valida
 from keystone.core.schemas import Input
 
 from .cloud_billing import CloudBillingCredentials
-from .types import Label, Provider
+from .types import Label, Provider, WorkspaceId
 
 
 def normalize_api_base(value):
@@ -35,6 +35,7 @@ class ChannelEdit(Input):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     name: Label
     api_base: str = Field(max_length=512)
+    workspace_id: WorkspaceId | None = None
     api_key: SecretStr | None = Field(default=None, min_length=1, max_length=4096, repr=False)
     billing_api_key: SecretStr | None = Field(
         default=None, min_length=1, max_length=4096, repr=False
@@ -94,6 +95,7 @@ def channel_view(row):
     }
     return {
         **values,
+        "workspace_id": getattr(row, "workspace_id", None),
         "has_api_key": bool(getattr(row, "api_key_encrypted", None)),
         "has_billing_api_key": bool(getattr(row, "billing_api_key_encrypted", None)),
     }

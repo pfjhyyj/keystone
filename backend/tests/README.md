@@ -48,3 +48,5 @@ cd backend
 `test_relay_image_contracts.py` 用真实 SDK 校验两站共用的 JSON/multipart 报文、默认值、超时、旧摘要和有界下载。`test_relay_images.py` 使用真实 PostgreSQL/DBOS Worker 验证九图编辑、加密结果恢复、unknown 不重发及原 Token 实际费用核对；全部 HTTP 为确定性协议桩，不触发付费生成。
 
 `unit/test_cloud_billing_contracts.py` 验证官方 RPC/HMAC-SHA256 签名向量、签名目标、账务响应白名单、币种、精度、错误和分页；`integration/test_cloud_billing.py` 使用真实隔离库验证账务凭据加密、审计不含秘密、余额快照、管理权限与查询期间配置变化／撤权。全部云 HTTP 均为确定性协议桩，不查询真实账户或发起付费调用。
+
+`unit/test_dashscope_discovery.py` 验证原生目录分页、业务空间域名、响应投影及错误边界；`integration/test_aliyun_discovery.py` 验证真实数据库中的业务空间保存、权限、配置变更／撤权后的结果丢弃，以及迁移升级与回退的数据保留。HTTP 使用确定性协议桩，不调用付费模型。

@@ -20,11 +20,17 @@ class Channel(Base):
             "balance_check_status IN ('never','ok','error','unavailable')",
             name="channel_balance_status",
         ),
+        CheckConstraint(
+            "workspace_id IS NULL OR (provider = 'aliyun_bailian' "
+            "AND workspace_id ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')",
+            name="channel_workspace",
+        ),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(128))
     provider: Mapped[str] = mapped_column(String(32))
     api_base: Mapped[str] = mapped_column(String(512))
+    workspace_id: Mapped[str | None] = mapped_column(String(63))
     api_key_encrypted: Mapped[str | None] = mapped_column(Text)
     billing_api_key_encrypted: Mapped[str | None] = mapped_column(Text)
     upstream_account_ref: Mapped[str | None] = mapped_column(String(128))

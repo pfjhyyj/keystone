@@ -89,6 +89,7 @@ CHANNELS = {
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
         (DashScopeChat(CHAT.operations), EMBEDDINGS),
         AliyunBailian(),
+        models_path="/api/v1/models",
     ),
     "volcengine": ChannelAdapter("https://ark.cn-beijing.volces.com/api/v3", (CHAT,), Volcengine()),
 }

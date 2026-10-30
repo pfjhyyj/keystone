@@ -39,13 +39,15 @@ class ChannelService:
         async with self.clients.coordination.balance_slots:
             async with self.identity.access("model:manage") as (session, _):
                 row = await self.identity.existing(session, Channel, identifier)
-                config = (row.provider, row.api_base, row.api_key_encrypted)
-            provider, base, encrypted = config
+                config = (row.provider, row.api_base, row.api_key_encrypted, row.workspace_id)
+            provider, base, encrypted, workspace_id = config
             secret = self.clients.credentials.decrypt(encrypted, identifier, "inference")
-            items = await self.clients.inference.list_models(provider, base, secret)
+            items = await self.clients.inference.list_models(
+                provider, base, secret, workspace_id=workspace_id
+            )
             async with self.identity.access("model:manage") as (session, _):
                 row = await self.identity.existing(session, Channel, identifier)
-                if (row.provider, row.api_base, row.api_key_encrypted) != config:
+                if (row.provider, row.api_base, row.api_key_encrypted, row.workspace_id) != config:
                     raise ServiceError(
                         409, "model_configuration_changed", "渠道配置已改变，请重新查询模型列表"
                     )
@@ -117,8 +119,14 @@ class ChannelService:
                     "clear_billing_api_key",
                 }
             )
+            if identifier and "workspace_id" not in data.model_fields_set:
+                values.pop("workspace_id", None)
             if identifier:
                 row = await locked(session, Channel, identifier)
+                if data.workspace_id is not None and row.provider != "aliyun_bailian":
+                    raise ServiceError(
+                        422, "model_workspace_invalid", "仅阿里云百炼支持业务空间 ID"
+                    )
                 if self.clients.billing.adapter(
                     row.provider, row.api_base
                 ).cost_query_mode == "logs" and (
@@ -155,6 +163,10 @@ class ChannelService:
                     row.balance_check_status = "never"
                 self.identity.touch(row, auth)
             else:
+                if data.workspace_id is not None and data.provider != "aliyun_bailian":
+                    raise ServiceError(
+                        422, "model_workspace_invalid", "仅阿里云百炼支持业务空间 ID"
+                    )
                 before = None
                 row = Channel(
                     id=uuid4(), **values, created_by=auth.user.id, updated_by=auth.user.id

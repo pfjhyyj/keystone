@@ -16,11 +16,23 @@
 
 阿里云百炼沿用 `aliyun_bailian`，固定 API Base 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`；火山方舟使用 `volcengine`，固定 API Base 为 `https://ark.cn-beijing.volces.com/api/v3`。填写对应平台、地域的推理 API Key。当前只接入这两个中国北京按量计费地址，其他地域、工作空间专属域名与 Coding Plan 地址尚未装配。
 
-两者支持同步／流式文本、严格 JSON Schema 结构化输出和图片理解；模型条目仍须按实际支持能力显式声明，不能给普通文本模型勾选图片理解或结构化输出。DashScope 统一传 `enable_thinking=false`，覆盖文本、结构化、图片理解和 Flow Agent 设置，以适配同步及严格输出；仅支持思考模式的模型不适用。火山方舟的上游模型名可填已开通的 Model ID 或自建推理接入点 ID（`ep-...`）。当前未接模型列表发现，直接手填上游模型名。
+两者支持同步／流式文本、严格 JSON Schema 结构化输出和图片理解；模型条目仍须按实际支持能力显式声明，不能给普通文本模型勾选图片理解或结构化输出。DashScope 统一传 `enable_thinking=false`，覆盖文本、结构化、图片理解和 Flow Agent 设置，以适配同步及严格输出；仅支持思考模式的模型不适用。火山方舟的上游模型名可填已开通的 Model ID 或自建推理接入点 ID（`ep-...`）。火山方舟当前仍手填上游模型名。DashScope 已接原生模型列表，配置及限制见[阿里云模型列表](#阿里云模型列表)。
 
 DashScope 同时装配标准 `/embeddings`，可用 `text-embedding-v4` 等支持指定维度及 float 输出的文本向量模型；向量维度须与业务索引配置一致。火山方舟尚未装配文本向量、图片生成、视频或异步协议。两者保存真实 token 用量和请求 ID，已接入独立云账务凭据的账户余额与月账单；单次实扣费用仍保持 unavailable，不从定价或聚合账单推算实扣。账务配置及接口见[云账户账务](#云账户账务)。
 
 协议依据：[DashScope 地址](https://help.aliyun.com/en/model-studio/base-url)、[结构化输出](https://help.aliyun.com/en/model-studio/qwen-structured-output)、[文本向量](https://help.aliyun.com/en/model-studio/embedding-interfaces-compatible-with-openai)、[火山方舟 Chat API](https://www.volcengine.com/docs/82379/1494384)。
+
+### 阿里云模型列表
+
+控制台选择百炼渠道后，通过现有 `GET /api/v1/model-channels/{id}/models` 使用推理 API Key 查询原生 `GET /api/v1/models`，无需云账务 AK/SK。默认请求 `https://dashscope.aliyuncs.com/api/v1/models`；可在编辑渠道填写百炼业务空间 ID（如 `llm-xxxxxxxx`），改为 `https://{workspace_id}.cn-beijing.maas.aliyuncs.com/api/v1/models`。当前仅支持北京区，查询域名由代码生成，业务空间 ID 只允许单个 DNS 标签；不接受任意列表地址。该配置不修改推理 API Base、账务地址或 Flow 固定选择。
+
+`workspace_id` 可空，旧渠道无需补填；仅 `aliyun_bailian` 可设置。旧客户端编辑时省略该字段会保留，显式 `null` 清除。查询期间权限、推理 Key、服务地址或业务空间变化，返回前复查并丢弃旧结果。
+
+原生列表按 `page_no`、`page_size=100` 获取，筛选北京区百炼推理目录；校验 `success`、分页位置、总数及 `output.models[].model`，仅投影去重排序后的 ID。最多 100 页／10,000 条，每页响应限 256 KiB、整次查询限 20 秒。总数变化、缺页、格式错误或中途失败均不返回部分列表。使用受控 HTTPS GET，不跟随重定向、不自动重试，也不在失败后静默换域名或其他 Key。
+
+目录返回不保证当前 Key 已开通所有模型，仍须核对业务空间授权。查询不创建模型条目、调用记录或费用，不根据目录元数据自动声明模型能力；查询失败时仍可手填模型 ID。
+
+依据：[查询模型列表](https://help.aliyun.com/zh/model-studio/list-models)、[原生 API 与共享／业务空间域名](https://help.aliyun.com/zh/model-studio/base-url)。
 
 ## 2. 领域模型
 

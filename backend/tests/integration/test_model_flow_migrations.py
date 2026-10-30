@@ -242,7 +242,7 @@ def test_flow_baseline_roundtrip_preserves_snapshots_and_explicit_budgets(
 @pytest.mark.parametrize(
     "revision",
     [
-        *(f"{number:04d}" for number in range(9, 13)),
+        *(f"{number:04d}" for number in range(10, 13)),
         "identity",
         "audit",
         "dictionary",
@@ -305,7 +305,7 @@ def test_volcengine_constraint_upgrade_preserves_data_and_refuses_unsafe_downgra
             }
 
     original = facts()
-    command.upgrade(config, "head")
+    command.upgrade(config, "0008")
     assert facts() == original
     with engine.begin() as connection:
         connection.execute(

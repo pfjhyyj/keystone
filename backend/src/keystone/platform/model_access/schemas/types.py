@@ -8,3 +8,12 @@ Provider = Literal[
     "deepseek", "openrouter", "aliyun_bailian", "newapi", "openlux", "yunwu", "volcengine"
 ]
 ModelName = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_./:-]{0,127}$")]
+WorkspaceId = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=63,
+        pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$",
+    ),
+]

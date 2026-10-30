@@ -2,7 +2,7 @@
 
 import pytest
 from alembic import command
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from test_model_flow_migrations import migration_environment as migration_environment
 from test_model_flow_migrations import model_baseline as model_baseline
 
@@ -12,11 +12,19 @@ pytestmark = pytest.mark.postgres
 def test_embedding_baseline_roundtrip_preserves_existing_records(model_baseline):
     config, engine = model_baseline
     tables = ("model_channels", "model_entries", "model_invocations", "model_dispatch_scopes")
+    columns = {
+        name: ", ".join(
+            column["name"] for column in inspect(engine).get_columns(name, schema="keystone")
+        )
+        for name in tables
+    }
 
     def facts():
         with engine.connect() as connection:
             return {
-                name: connection.execute(text(f"SELECT * FROM keystone.{name}")).mappings().all()
+                name: connection.execute(text(f"SELECT {columns[name]} FROM keystone.{name}"))
+                .mappings()
+                .all()
                 for name in tables
             }
 

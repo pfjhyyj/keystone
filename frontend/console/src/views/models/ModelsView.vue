@@ -63,6 +63,7 @@ const form = ref<'channel' | 'entry' | null>(null),
 const name = ref(''),
   provider = ref('openrouter'),
   apiBase = ref(''),
+  workspaceId = ref(''),
   credential = ref(''),
   billing = ref(''),
   billingAk = ref(''),
@@ -83,6 +84,7 @@ const fingerprint = computed(() =>
     name.value,
     provider.value,
     apiBase.value,
+    workspaceId.value,
     credential.value,
     billing.value,
     billingAk.value,
@@ -157,6 +159,7 @@ function channel(row: Channel | null) {
   name.value = row?.name ?? ''
   provider.value = row ? channelProvider(row) : 'openrouter'
   apiBase.value = row?.api_base ?? 'https://openrouter.ai/api/v1'
+  workspaceId.value = row?.workspace_id ?? ''
   credential.value = ''
   billing.value = ''
   billingAk.value = billingSk.value = billingToken.value = ''
@@ -184,6 +187,9 @@ async function save() {
       const body = {
         name: name.value,
         api_base: apiBase.value,
+        ...(provider.value === 'aliyun_bailian'
+          ? { workspace_id: workspaceId.value.trim() || null }
+          : {}),
         ...(credential.value ? { api_key: credential.value } : {}),
         ...(!cloudBilling.value && billing.value && !clearBilling.value
           ? { billing_api_key: billing.value }
@@ -241,7 +247,9 @@ watch(form, (value) => {
     clearBilling.value = false
   }
 })
-watch(provider, (value) => {
+watch(provider, (value, previous) => {
+  if (form.value === 'channel' && !editingChannel.value && previous !== value)
+    workspaceId.value = ''
   billing.value = billingAk.value = billingSk.value = billingToken.value = ''
   if (form.value === 'channel' && !editingChannel.value) {
     const bases: Record<string, string> = {
@@ -591,6 +599,21 @@ onMounted(() => {
             <label
               >服务地址<el-input v-model="apiBase" type="url" required maxlength="512"
             /></label>
+            <template v-if="provider === 'aliyun_bailian'">
+              <label
+                >百炼业务空间 ID（可选）<el-input
+                  v-model="workspaceId"
+                  aria-label="百炼业务空间 ID"
+                  maxlength="63"
+                  pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+                  placeholder="例如 llm-xxxxxxxx"
+              /></label>
+              <p>
+                查询模型列表使用已保存的推理 API
+                Key。留空使用北京区共享域名；填写后使用该业务空间的北京区专属域名查询，不改变模型调用地址。列表不代表当前
+                Key 已获模型调用权限。
+              </p>
+            </template>
             <label
               >推理 API Key<el-input
                 v-model="credential"

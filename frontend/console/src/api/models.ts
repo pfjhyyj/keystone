@@ -4,6 +4,7 @@ export interface Channel {
   name: string
   provider: string
   api_base: string
+  workspace_id?: string | null
   has_api_key: boolean
   has_billing_api_key: boolean
   upstream_account_ref: string | null

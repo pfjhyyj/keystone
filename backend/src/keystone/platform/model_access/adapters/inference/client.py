@@ -30,9 +30,16 @@ class InferenceClient:
             raise ServiceError(503, "model_provider_unavailable", "当前服务商尚未开放发送")
         return adapter
 
-    async def list_models(self, provider, base, secret):
+    async def list_models(self, provider, base, secret, *, workspace_id=None):
         with adapter_errors():
-            return await discover(self.http, self.adapter(provider, base), provider, base, secret)
+            return await discover(
+                self.http,
+                self.adapter(provider, base),
+                provider,
+                base,
+                secret,
+                workspace_id=workspace_id,
+            )
 
     def check_operation(self, provider, operation, delivery="sync", *, model=None, api_base=None):
         protocol = self.adapter(provider, api_base).protocol(operation, delivery, model=model)
