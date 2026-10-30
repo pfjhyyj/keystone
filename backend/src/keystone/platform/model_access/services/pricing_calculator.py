@@ -179,6 +179,7 @@ def estimate(
         complete = {key: value.value for key, value in facts.values.items() if value.complete}
         # Validate subset relationships, including caller-supplied preview facts.
         for total, subsets in (
+            ("input_total_tokens", ("input_uncached_tokens", "input_cache_read_tokens")),
             (
                 "input_total_tokens",
                 (

@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import PricingDialog from '../views/models/components/PricingDialog.vue'
-import { authorize, fakeApi } from './support'
+import { authorize, chooseSelect, fakeApi } from './support'
 import type { PricingView, PricingConfig } from '../api/pricing'
 
 const entry = {
@@ -148,6 +148,46 @@ it('previews a full-context tier draft with manual facts and never saves it', as
   })
   expect(wrapper.text()).toContain('0.0036 CNY')
   expect(requests.some((item) => item.method === 'PUT')).toBe(false)
+})
+
+it('builds cache-hit pricing and a consistent manual sample without requiring cache-write counts', async () => {
+  const value = JSON.parse(JSON.stringify(loaded)) as PricingView
+  const meter = value.operations[0]!.profile
+  meter.id = 'relay_chat.v2'
+  meter.quantities['usage.input_uncached_tokens'] = 'token'
+  meter.quantities['usage.input_cache_read_tokens'] = 'token'
+  meter.input_partitions.cache_read = [
+    'usage.input_uncached_tokens',
+    'usage.input_cache_read_tokens',
+  ]
+  const { wrapper, requests } = await open(value, () => ({
+    status: 'estimated',
+    amount: '0.00342',
+    currency: 'CNY',
+    reason: null,
+    detail: { items: [] },
+  }))
+  await custom(wrapper)
+  await chooseSelect(wrapper, 'cache_read', '输入计价分区')
+  await wrapper.get('input[aria-label="未命中缓存的输入（含写入）单价"]').setValue('2')
+  await wrapper.get('input[aria-label="缓存读取单价"]').setValue('0.2')
+  await wrapper.get('input[aria-label="全部输出（含推理）单价"]').setValue('8')
+  await button(wrapper, '填入示例计量').trigger('click')
+  await button(wrapper, '试算当前草稿').trigger('click')
+  await flushPromises()
+  const preview = requests.find((item) => item.path.endsWith('/preview'))!
+  expect(preview.body?.config).toMatchObject({
+    rules: [{ rule: { root: { input_partition: 'cache_read' } } }],
+  })
+  expect(preview.body?.facts).toMatchObject({
+    profile: 'relay_chat.v2',
+    values: {
+      'usage.input_total_tokens': { value: 1000 },
+      'usage.input_uncached_tokens': { value: 900 },
+      'usage.input_cache_read_tokens': { value: 100 },
+    },
+  })
+  expect(wrapper.text()).toContain('0.00342 CNY')
 })
 
 it('preserves an unsaved tariff after a revision conflict and offers reload', async () => {

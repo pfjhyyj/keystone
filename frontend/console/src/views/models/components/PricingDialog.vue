@@ -57,6 +57,7 @@ const partitionLabels: Record<string, string> = {
   none: '不按 Token 收费',
   aggregate: '全部统一计价',
   cache: '普通输入与缓存分价',
+  cache_read: '缓存命中／未命中分价',
   modality: '文本与图片分价',
   reasoning: '普通输出与推理分价',
 }
@@ -265,7 +266,7 @@ function sampleData() {
             ? 1
             : key === 'usage.input_total_tokens'
               ? 1000
-              : key === 'usage.input_regular_tokens'
+              : key === 'usage.input_regular_tokens' || key === 'usage.input_uncached_tokens'
                 ? 900
                 : key === 'usage.input_cache_read_tokens'
                   ? 100

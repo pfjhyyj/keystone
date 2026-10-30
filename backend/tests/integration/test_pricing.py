@@ -22,7 +22,7 @@ from keystone.platform.audit.services import writer as audit
 from keystone.platform.model_access.adapters.channels import CHANNELS, CHAT, EMBEDDINGS
 from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.adapters.inference.dashscope import DashScopeChat
-from keystone.platform.model_access.adapters.pricing.catalog import ALI_BASE
+from keystone.platform.model_access.adapters.pricing.catalog import ALI_BASE, ARK_BASE
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.schemas.embeddings import EmbeddingRequest
 from keystone.platform.model_access.schemas.structured import StructuredRequest
@@ -43,6 +43,93 @@ def native_cloud_protocols(model_configuration, monkeypatch):
             protocols=(DashScopeChat(CHAT.operations), EMBEDDINGS),
         ),
     )
+    monkeypatch.setitem(
+        CHANNELS,
+        "volcengine",
+        replace(
+            CHANNELS["volcengine"],
+            api_base=ARK_BASE,
+            protocols=(replace(CHAT, pricing_meter="volcengine_chat.v2"),),
+        ),
+    )
+
+
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize(
+    "provider,model,expected",
+    [
+        ("aliyun_bailian", "qwen-plus", "0.001136"),
+        ("volcengine", "doubao-seed-2-0-pro-260215", "0.006144"),
+    ],
+)
+def test_native_reference_prices_use_normalized_cached_receipts_without_manual_configuration(
+    client, monkeypatch, stream, provider, model, expected
+):
+    entry(
+        client,
+        channel(client, provider, api_base=CHANNELS[provider].api_base),
+        provider_model=model,
+    )
+    sent = []
+
+    def transport(self, provider):
+        async def respond(request):
+            body = json.loads(request.content)
+            sent.append(body)
+            usage = {
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "total_tokens": 1200,
+                "input_tokens_details": {"cached_tokens": 100, "audio_tokens": None},
+                "output_tokens_details": {"reasoning_tokens": None},
+            }
+            result = {
+                "id": "priced-native",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "done"},
+                    }
+                ],
+                "usage": usage,
+            }
+            if not stream:
+                return httpx2.Response(200, json=result)
+            chunks = [
+                {
+                    "id": "priced-native",
+                    "choices": [{"index": 0, "delta": {"content": "done"}, "finish_reason": None}],
+                },
+                {
+                    "id": "priced-native",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                },
+                {"id": "priced-native", "choices": [], "usage": usage},
+            ]
+            content = b"".join(b"data: " + json.dumps(chunk).encode() + b"\n\n" for chunk in chunks)
+            return httpx2.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content=content + b"data: [DONE]\n\n",
+            )
+
+        return httpx2.MockTransport(respond)
+
+    monkeypatch.setattr(HttpClient, "transport", transport)
+    response = invoke(client, stream=stream)
+    assert response.status_code == 200, response.text
+    row = client.get("/api/v1/model-invocations").json()[0]
+    assert row["status"] == "succeeded" and row["estimate_status"] == "estimated"
+    assert Decimal(row["estimate_amount"]) == Decimal(expected)
+    saved = stored(client, row["id"])
+    assert saved.estimate_snapshot["revision"] == 0
+    assert saved.estimate_facts["values"]["usage.input_uncached_tokens"]["value"] == 900
+    assert saved.estimate_snapshot["profile"].endswith(".v2") and len(sent) == 1
+    if provider == "aliyun_bailian":
+        assert sent[0]["enable_thinking"] is False
+    else:
+        assert saved.estimate_snapshot["context"]["service_tier"] == "default"
 
 
 def price(client, model, value=None, revision=None):

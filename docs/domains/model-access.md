@@ -769,7 +769,9 @@ usage 按上游提供的已知计量保存；新增图片数量或视频计费�
 
 价格默认来自随制品发布并经核对的官方参考规则；模型条目可覆盖同一渠道的采购价格。更新默认规则有来源 URL、核对时间和版本，不在调用期间抓取官网。NewAPI／Yunwu／Openlux 等中转站不得仅凭模型名继承直连厂商价格；只有明确绑定该站点的规则或管理员覆盖才生效。
 
-当前制品内置百炼北京地域 `qwen-max`（文本／结构化）及 `text-embedding-v1/v2/v3/v4`、`qwen3.7-text-embedding`、`qwen3.7-text-embedding-flash` 的核对参考价。未收录模型、方舟 endpoint 别名和中转站须配置覆盖价；不会自动取其他模型或直连厂商的价格。目录只提供已明确核对的数据，不代表完整供应商价格表。
+当前参考目录按精确模型 ID 收录百炼北京地域 `qwen-max`、Qwen 3.7 Max、Qwen 3.5／3.6／3.7 Plus 与 Flash、`qwen-plus`、`qwen-flash` 的文本／结构化价格，以及既有六个向量模型；方舟北京地域收录 Seed Evolving、Seed 2.1 Pro／Lite／Turbo、Seed 2.0 Pro／Lite／Mini／Code Preview 的已核实版本。具体版本由 `adapters/pricing/catalog.py` 显式列举，不按前缀匹配。百炼输入档位按 K=1,000 换算；方舟采用计费接口的整数边界，如 32K=32,768、128K=131,072；先以包含缓存的完整输入选档，再对本次全部数量应用该档单价；`qwen-plus` 区分实际请求中的思考开关。
+
+新增百炼规则使用[官方隐式缓存折扣](https://help.aliyun.com/zh/model-studio/context-cache)和实时推理原价，不套用限时活动折扣；显式缓存请求不继承这些规则。Qwen 3.8 等缓存单价仅在控制台公开的型号仍需配置采购价，不猜测其折扣。方舟默认参考价仅适用标准服务；请求 fast／flex／auto 档位须另配价格。未收录模型、方舟 `ep-*` 接入点别名和中转站须配置覆盖价；不会自动取其他模型或直连厂商的价格。
 
 参考 [New API 计价表达式设计](https://github.com/QuantumNous/new-api/blob/main/pkg/billingexpr/expr.md) 的用量归一化、条件定价及规则快照；本系统使用显式币种、金额和计量单位，不引入其余额扣减、用户组售价及 quota 换算。[百炼价格](https://help.aliyun.com/zh/model-studio/model-pricing)、[方舟价格](https://docs.volcengine.com/docs/ark/model-pricing?lang=zh)决定参考规则的数据，不决定计算器代码分支。
 
@@ -785,6 +787,8 @@ usage 按上游提供的已知计量保存；新增图片数量或视频计费�
 | DeepSeek 账务声明、未安装的视频／音频发送协议 | 不开放额外计价能力 | 定义价格不能绕过协议装配；秒数、供应商 credit 等仅在具体协议提供明确计量后注册，不以 HTTP 耗时／预期视频时长代替 |
 
 所有已开放渠道由上述协议覆盖；新增同协议渠道复用对应计量规范。价格以 provider、规范化 api_base、上游模型 ID、operation、delivery 的精确绑定解析，不能按模型名子串、显示名称或角色猜测。异步任务提交使用原操作价格快照，查询／取回不重新解析。
+
+文本、向量和同步图片的新发送使用 v2 计量规范；Kling 异步图片继续使用 v1，其他 v1 也保留供旧快照解释。v2 校验 OpenAI 兼容的 prompt／input、completion／output 及明细别名是否一致；可空明细表示缺失。DeepSeek 兼容的 hit／miss 可在总量关系成立时推导缺少的一项；缓存 miss 包含写入，独立写入计价时再扣除已报告写入数。新增 `cache_read` 分区以“未命中输入（含写入）＋命中输入”计价，适合只区分命中价的常见模型，不要求构造缓存写入 0；既有 `cache` 分区仍保留独立读写要求。音频计量或未安装的原生 Anthropic 口径不会当成普通文本估算。预算用量与预估事实继续独立保存，不改变既有预算口径。
 
 ### 9.3 计算输入与用量归一化
 

@@ -58,7 +58,7 @@ class ChannelAdapter:
 
 # Multiple channel types reuse the same compatible implementation, with explicit limits.
 CHAT = ChatCompletions(frozenset({"text.generate", "text.structured", "image.understand"}))
-RELAY_CHAT = replace(CHAT, pricing_meter="relay_chat.v1")
+RELAY_CHAT = replace(CHAT, pricing_meter="relay_chat.v2")
 EMBEDDINGS = Embeddings()
 RELAY_IMAGES = OpenAIImages()
 CHANNELS = {
@@ -93,7 +93,10 @@ CHANNELS = {
         models_path="/api/v1/models",
     ),
     "volcengine": ChannelAdapter(
-        "https://ark.cn-beijing.volces.com/api/v3", (CHAT,), Volcengine(), models_path="/models"
+        "https://ark.cn-beijing.volces.com/api/v3",
+        (replace(CHAT, pricing_meter="volcengine_chat.v2"),),
+        Volcengine(),
+        models_path="/models",
     ),
 }
 

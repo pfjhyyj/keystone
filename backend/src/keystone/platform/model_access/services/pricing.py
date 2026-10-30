@@ -66,7 +66,7 @@ def freeze_pricing(entry, channel, operation, delivery, profile, context):
         price = next(
             (r for r in config.rules if (r.operation, r.delivery) == (operation, delivery)), None
         )
-        price = price or reference(binding)
+        price = price or reference(binding, context=context)
         if price is None:
             return PricingSnapshot(**base, reason="price_missing")
         validate_rule(price.rule, profile)

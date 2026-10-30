@@ -100,10 +100,34 @@ for name, enums in {
 }.items():
     PROFILES[name].context_enums = enums
 
+# Existing snapshots keep their original interpretation. New sends explicitly opt in.
+for legacy in ("chat", "relay_chat", "embedding", "openrouter_images", "openai_images"):
+    profile = PROFILES[f"{legacy}.v1"].model_copy(deep=True)
+    profile.id = f"{legacy}.v2"
+    if "cache" in profile.input_partitions:
+        profile.quantities["usage.input_uncached_tokens"] = "token"
+        profile.input_partitions["cache_read"] = [
+            "usage.input_uncached_tokens",
+            "usage.input_cache_read_tokens",
+        ]
+        profile.context_fields["context.cache_mode"] = "string"
+        profile.context_enums["context.cache_mode"] = ["implicit", "explicit"]
+    PROFILES[profile.id] = profile
+PROFILES["volcengine_chat.v2"] = PROFILES["chat.v2"].model_copy(deep=True)
+PROFILES["volcengine_chat.v2"].id = "volcengine_chat.v2"
+PROFILES["volcengine_chat.v2"].context_fields["context.service_tier"] = "string"
+PROFILES["volcengine_chat.v2"].context_enums["context.service_tier"] = [
+    "default",
+    "auto",
+    "flex",
+    "fast",
+]
 
-def merge_usage(previous, incoming):
+
+def merge_usage(previous, incoming, *, profile=None):
     """Cumulative receipts replace fields, never add chunk totals or retain arbitrary JSON."""
     result = dict(previous or {})
+    modern = profile is not None and profile.id.endswith(".v2")
     for key in (
         "prompt_tokens",
         "completion_tokens",
@@ -112,10 +136,15 @@ def merge_usage(previous, incoming):
         "total_tokens",
         "prompt_cache_hit_tokens",
         "prompt_cache_miss_tokens",
+        *(
+            ("reasoning_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+            if modern
+            else ()
+        ),
     ):
         if key in incoming:
             value = incoming[key]
-            result[key] = value if type(value) is int else -1
+            result[key] = value if type(value) is int or modern and value is None else -1
     for key in (
         "prompt_tokens_details",
         "completion_tokens_details",
@@ -125,6 +154,9 @@ def merge_usage(previous, incoming):
         if key not in incoming:
             continue
         details = incoming[key]
+        if modern and details is None:
+            result.pop(key, None)
+            continue
         if not isinstance(details, dict):
             result[key] = {"cached_tokens": -1}
             continue
@@ -135,10 +167,11 @@ def merge_usage(previous, incoming):
             "reasoning_tokens",
             "text_tokens",
             "image_tokens",
+            *(("cache_creation_input_tokens", "audio_tokens") if modern else ()),
         ):
             if field in details:
                 value = details[field]
-                target[field] = value if type(value) is int else -1
+                target[field] = value if type(value) is int or modern and value is None else -1
         result[key] = target
     return result
 
@@ -152,10 +185,10 @@ def profile_for(protocol):
 
     for protocol_type, name in (
         (KlingImages, "kling_images.v1"),
-        (OpenAIImages, "openai_images.v1"),
-        (OpenRouterImages, "openrouter_images.v1"),
-        (Embeddings, "embedding.v1"),
-        (ChatCompletions, "chat.v1"),
+        (OpenAIImages, "openai_images.v2"),
+        (OpenRouterImages, "openrouter_images.v2"),
+        (Embeddings, "embedding.v2"),
+        (ChatCompletions, "chat.v2"),
     ):
         if isinstance(protocol, protocol_type):
             return PROFILES[
@@ -183,9 +216,27 @@ def request_context(request, profile):
         body["reference_images"] = references
     else:
         body = json.loads(request.content)
-        if profile.id in {"openrouter_images.v1", "openai_images.v1"}:
+        if profile.id in {
+            "openrouter_images.v1",
+            "openai_images.v1",
+            "openrouter_images.v2",
+            "openai_images.v2",
+        }:
             body["reference_images"] = len(body.get("input_references", []))
     result = {}
+    if "context.cache_mode" in profile.context_fields:
+        controls = [*body.get("messages", []), *body.get("tools", [])]
+        for message in body.get("messages", []):
+            if isinstance(message.get("content"), list):
+                controls.extend(message["content"])
+        result["cache_mode"] = (
+            "explicit"
+            if any(isinstance(part, dict) and "cache_control" in part for part in controls)
+            else "implicit"
+        )
+    if profile.id == "volcengine_chat.v2" and "service_tier" not in body:
+        # Ark documents default service as the omitted request parameter's default.
+        result["service_tier"] = "default"
     if "context.cache_ttl" in profile.context_fields:
         ttls = set()
         unknown_ttl = False
@@ -203,6 +254,8 @@ def request_context(request, profile):
             result["cache_ttl"] = next(iter(ttls))
     for field, kind in profile.context_fields.items():
         key = field.removeprefix("context.")
+        if key in {"cache_mode", "cache_ttl"}:
+            continue
         value = body.get(key)
         if key == "enable_thinking" and type(value) is bool:
             value = int(value)
@@ -212,6 +265,14 @@ def request_context(request, profile):
 
 
 def normalize_pricing_facts(profile, usage, *, complete=False, success=False, generated=None):
+    if profile.id.endswith(".v2"):
+        return _normalize_v2(
+            profile, usage, complete=complete, success=success, generated=generated
+        )
+    return _normalize_v1(profile, usage, complete=complete, success=success, generated=generated)
+
+
+def _normalize_v1(profile, usage, *, complete=False, success=False, generated=None):
     result = PricingFacts(profile=profile.id)
 
     def put(key, value, source="upstream_usage", *, final=None):
@@ -297,6 +358,116 @@ def normalize_pricing_facts(profile, usage, *, complete=False, success=False, ge
         put("generated_images", generated, "upstream_result", final=True)
     if success:
         put("events.upstream_success_count", 1, "upstream_result", final=True)
+    return result
+
+
+def _normalize_v2(profile, usage, *, complete, success, generated):
+    """OpenAI-compatible aliases agree; absence is distinct from a reported zero."""
+    data = usage if isinstance(usage, dict) else {}
+    invalid = False
+
+    def number(*values):
+        nonlocal invalid
+        present = [value for value in values if value is not None]
+        if any(type(value) is not int or not 0 <= value < 2**63 for value in present):
+            invalid = True
+            return None
+        if len(set(present)) > 1:
+            invalid = True
+        return present[0] if present else None
+
+    def details(*names):
+        nonlocal invalid
+        objects = []
+        for name in names:
+            value = data.get(name)
+            if value is None:
+                continue
+            if not isinstance(value, dict):
+                invalid = True
+                continue
+            objects.append(value)
+        fields = (
+            "cached_tokens",
+            "cache_write_tokens",
+            "cache_creation_input_tokens",
+            "reasoning_tokens",
+            "text_tokens",
+            "image_tokens",
+            "audio_tokens",
+        )
+        result = {key: number(*(value.get(key) for value in objects)) for key in fields}
+        # Audio has no installed pricing meter. Never price it as ordinary text.
+        if result.pop("audio_tokens") not in (None, 0):
+            invalid = True
+        result["cache_write_tokens"] = number(
+            result["cache_write_tokens"], result.pop("cache_creation_input_tokens")
+        )
+        return {key: value for key, value in result.items() if value is not None}
+
+    inputs = number(data.get("prompt_tokens"), data.get("input_tokens"))
+    outputs = number(data.get("completion_tokens"), data.get("output_tokens"))
+    prompt = details("prompt_tokens_details", "input_tokens_details")
+    output = details("completion_tokens_details", "output_tokens_details")
+    hit = number(prompt.get("cached_tokens"), data.get("prompt_cache_hit_tokens"))
+    miss = number(data.get("prompt_cache_miss_tokens"))
+    reasoning = number(output.get("reasoning_tokens"), data.get("reasoning_tokens"))
+    derived = set()
+    if inputs is None and hit is not None and miss is not None:
+        inputs = number(hit + miss)
+        derived.add("input_total_tokens")
+    if hit is None and inputs is not None and miss is not None:
+        hit = number(inputs - miss)
+        derived.add("input_cache_read_tokens")
+    if inputs is not None and hit is not None and miss is not None and inputs != hit + miss:
+        invalid = True
+    # Native Anthropic input excludes its flat cache counters; that wire is not installed.
+    if any(
+        number(data.get(key)) not in (None, 0)
+        for key in ("cache_read_input_tokens", "cache_creation_input_tokens")
+    ):
+        invalid = True
+    if hit is not None:
+        prompt["cached_tokens"] = hit
+    if reasoning is not None:
+        output["reasoning_tokens"] = reasoning
+    legacy_id = profile.id.removesuffix(".v2") + ".v1"
+    if legacy_id == "embedding.v1" and outputs not in (None, 0):
+        invalid = True
+    image = legacy_id == "openai_images.v1"
+    canonical = {
+        "input_tokens" if image else "prompt_tokens": inputs,
+        "output_tokens" if image else "completion_tokens": outputs,
+        "input_tokens_details" if image else "prompt_tokens_details": prompt,
+        "output_tokens_details" if image else "completion_tokens_details": output,
+        "total_tokens": number(data.get("total_tokens")),
+    }
+    result = _normalize_v1(
+        profile.model_copy(update={"id": legacy_id}),
+        canonical,
+        complete=complete,
+        success=success,
+        generated=generated,
+    )
+    result.profile = profile.id
+    if (
+        "usage.input_uncached_tokens" in profile.quantities
+        and inputs is not None
+        and hit is not None
+    ):
+        uncached = number(inputs - hit)
+        if uncached is not None:
+            result.values["usage.input_uncached_tokens"] = Measurement(
+                value=uncached,
+                unit="token",
+                source="upstream_usage" if miss is not None else "derived",
+                complete=complete,
+            )
+    for key in derived:
+        if fact := result.values.get(f"usage.{key}"):
+            fact.source = "derived"
+    if invalid:
+        result.error = "meter_conflict"
     return result
 
 

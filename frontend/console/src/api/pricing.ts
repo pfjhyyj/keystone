@@ -112,6 +112,7 @@ export const quantityLabels: Record<string, string> = {
   'usage.input_cache_write_tokens': '缓存写入',
   'usage.input_total_tokens': '全部输入',
   'usage.input_regular_tokens': '普通输入（排除缓存）',
+  'usage.input_uncached_tokens': '未命中缓存的输入（含写入）',
   'usage.input_cache_read_tokens': '缓存读取',
   'usage.output_total_tokens': '全部输出（含推理）',
   'usage.output_regular_tokens': '普通输出（排除推理）',

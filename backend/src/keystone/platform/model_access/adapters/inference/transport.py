@@ -96,7 +96,7 @@ class Observation:
             if isinstance(data, dict):
                 self.usage = usage(data)
                 self.reported_cost = data.get("cost")
-                incoming_usage = merge_usage({}, data)
+                incoming_usage = merge_usage({}, data, profile=self.pricing_profile)
                 if incoming_usage:
                     # A final receipt cannot inherit stale subcounts from an earlier chunk.
                     self.pricing_usage = incoming_usage
@@ -127,7 +127,12 @@ class Observation:
                 self.pricing_success = True
             items = payload.get("data")
             if self.pricing_profile and isinstance(items, list) and items:
-                if self.pricing_profile.id in {"openai_images.v1", "openrouter_images.v1"}:
+                if self.pricing_profile.id in {
+                    "openai_images.v1",
+                    "openrouter_images.v1",
+                    "openai_images.v2",
+                    "openrouter_images.v2",
+                }:
                     if len(items) <= 2 and all(
                         isinstance(item, dict)
                         and any(
@@ -138,7 +143,7 @@ class Observation:
                     ):
                         self.pricing_generated = len(items)
                         self.pricing_success = True
-                elif self.pricing_profile.id == "embedding.v1" and all(
+                elif self.pricing_profile.id in {"embedding.v1", "embedding.v2"} and all(
                     isinstance(item, dict)
                     and isinstance(item.get("embedding"), list)
                     and item["embedding"]

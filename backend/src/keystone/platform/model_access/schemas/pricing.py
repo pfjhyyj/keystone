@@ -95,7 +95,9 @@ class PriceItem(Input):
 class Price(Input):
     kind: Literal["price"]
     id: Identifier
-    input_partition: Literal["none", "aggregate", "cache", "modality", "modality_cache"]
+    input_partition: Literal[
+        "none", "aggregate", "cache", "cache_read", "modality", "modality_cache"
+    ]
     output_partition: Literal["none", "aggregate", "reasoning", "modality"]
     items: list[PriceItem] = Field(min_length=1, max_length=16)
     factor: str
