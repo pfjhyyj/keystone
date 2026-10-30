@@ -16,6 +16,29 @@ class HttpClient:
     async def get_json(
         self, provider, base, path, *, headers=None, params=None, limit=65536, check_status
     ):
+        return await self.request_json(
+            provider,
+            base,
+            path,
+            headers=headers,
+            params=params,
+            limit=limit,
+            check_status=check_status,
+        )
+
+    async def request_json(
+        self,
+        provider,
+        base,
+        path,
+        *,
+        method="GET",
+        body=None,
+        headers=None,
+        params=None,
+        limit=65536,
+        check_status,
+    ):
         async with (
             asyncio.timeout(10),
             httpx2.AsyncClient(
@@ -26,7 +49,7 @@ class HttpClient:
             ) as client,
         ):
             async with client.stream(
-                "GET", base + path, headers=headers, params=params
+                method, base + path, headers=headers, params=params, content=body
             ) as response:
                 check_status(response)
                 content = bytearray()

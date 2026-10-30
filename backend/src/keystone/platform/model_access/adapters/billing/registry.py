@@ -5,6 +5,7 @@ from keystone.platform.model_access.adapters.billing.contracts import BillingQue
 from keystone.platform.model_access.adapters.billing.http import balance_get
 from keystone.platform.model_access.adapters.channels import CHANNELS, channel_adapter
 from keystone.platform.model_access.adapters.errors import adapter_errors
+from keystone.platform.model_access.schemas.errors import AdapterError
 
 
 class BillingClient:
@@ -42,6 +43,16 @@ class BillingClient:
     async def balance(self, provider, base, secret):
         with adapter_errors():
             adapter = self.adapter(provider, base)
-            if token_balance := getattr(adapter, "token_balance", None):
-                return await token_balance(self.http, base, secret)
+            query = getattr(adapter, "account_balance", None) or getattr(
+                adapter, "token_balance", None
+            )
+            if query is not None:
+                return await query(self.http, base, secret)
             return await balance_get(self.http, adapter, base, secret)
+
+    async def bills(self, provider, base, secret, period, offset):
+        with adapter_errors():
+            query = getattr(self.adapter(provider, base), "bills", None)
+            if query is None:
+                raise AdapterError(409, "model_billing_unavailable", "当前渠道未接入云账户月账单")
+            return await query(self.http, base, secret, period, offset)

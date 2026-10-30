@@ -116,7 +116,7 @@ def test_inference_rejects_untrusted_targets_and_unsupported_providers():
         with pytest.raises(ServiceError) as caught:
             client.check_target("openrouter", base, path, method=method)
         assert (caught.value.status, caught.value.code) == (409, "model_target_not_allowed")
-    for provider in ("deepseek", "aliyun_bailian"):
+    for provider in ("deepseek",):
         with pytest.raises(ServiceError) as caught:
             client.check_target(provider, OPENROUTER_BASE, "/chat/completions")
         assert (caught.value.status, caught.value.code) == (503, "model_provider_unavailable")

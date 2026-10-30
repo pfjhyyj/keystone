@@ -8,7 +8,9 @@ from keystone.platform.model_access.adapters.billing.deepseek import DeepSeek
 from keystone.platform.model_access.adapters.billing.newapi import Newapi
 from keystone.platform.model_access.adapters.billing.openlux import Openlux
 from keystone.platform.model_access.adapters.billing.openrouter import OpenRouter
+from keystone.platform.model_access.adapters.billing.volcengine import Volcengine
 from keystone.platform.model_access.adapters.billing.yunwu import Yunwu
+from keystone.platform.model_access.adapters.inference.dashscope import DashScopeChat
 from keystone.platform.model_access.adapters.inference.embeddings import Embeddings
 from keystone.platform.model_access.adapters.inference.kling import KlingImages
 from keystone.platform.model_access.adapters.inference.openai_images import OpenAIImages
@@ -81,16 +83,19 @@ CHANNELS = {
     "newapi": ChannelAdapter(
         "https://newapiai.com/v1", (CHAT, EMBEDDINGS), Newapi(), models_path="/models"
     ),
-    # Billing declarations are retained; no inference protocol is installed for these yet.
+    # DeepSeek retains its billing declaration without an inference protocol.
     "deepseek": ChannelAdapter("https://api.deepseek.com", (), DeepSeek()),
     "aliyun_bailian": ChannelAdapter(
-        "https://dashscope.aliyuncs.com/compatible-mode/v1", (), AliyunBailian()
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        (DashScopeChat(CHAT.operations), EMBEDDINGS),
+        AliyunBailian(),
     ),
+    "volcengine": ChannelAdapter("https://ark.cn-beijing.volces.com/api/v3", (CHAT,), Volcengine()),
 }
 
 # Historical provider IDs remain valid in saved channels, billing evidence and Flow snapshots.
 LEGACY_NEWAPI = ("openlux", "yunwu")
-PROVIDERS = ("openrouter", "newapi", "yunwu")
+PROVIDERS = ("openrouter", "newapi", "yunwu", "aliyun_bailian", "volcengine")
 
 
 def channel_adapter(provider, base=None, *, channels=None):

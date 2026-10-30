@@ -65,9 +65,13 @@ const name = ref(''),
   apiBase = ref(''),
   credential = ref(''),
   billing = ref(''),
+  billingAk = ref(''),
+  billingSk = ref(''),
+  billingToken = ref(''),
   clearBilling = ref(false),
   account = ref(''),
   active = ref(true)
+const cloudBilling = computed(() => ['aliyun_bailian', 'volcengine'].includes(provider.value))
 const key = ref(''),
   modelName = ref(''),
   channelId = ref(''),
@@ -81,6 +85,9 @@ const fingerprint = computed(() =>
     apiBase.value,
     credential.value,
     billing.value,
+    billingAk.value,
+    billingSk.value,
+    billingToken.value,
     clearBilling.value,
     account.value,
     active.value,
@@ -152,6 +159,7 @@ function channel(row: Channel | null) {
   apiBase.value = row?.api_base ?? 'https://openrouter.ai/api/v1'
   credential.value = ''
   billing.value = ''
+  billingAk.value = billingSk.value = billingToken.value = ''
   clearBilling.value = false
   account.value = row?.upstream_account_ref ?? ''
   active.value = row?.is_active ?? true
@@ -177,7 +185,20 @@ async function save() {
         name: name.value,
         api_base: apiBase.value,
         ...(credential.value ? { api_key: credential.value } : {}),
-        ...(billing.value && !clearBilling.value ? { billing_api_key: billing.value } : {}),
+        ...(!cloudBilling.value && billing.value && !clearBilling.value
+          ? { billing_api_key: billing.value }
+          : {}),
+        ...(cloudBilling.value &&
+        !clearBilling.value &&
+        (billingAk.value || billingSk.value || billingToken.value)
+          ? {
+              billing_credentials: {
+                access_key_id: billingAk.value,
+                access_key_secret: billingSk.value,
+                ...(billingToken.value ? { security_token: billingToken.value } : {}),
+              },
+            }
+          : {}),
         clear_billing_api_key: clearBilling.value,
         upstream_account_ref: account.value || null,
         is_active: active.value,
@@ -216,15 +237,19 @@ watch(form, (value) => {
   if (value !== 'channel') {
     credential.value = ''
     billing.value = ''
+    billingAk.value = billingSk.value = billingToken.value = ''
     clearBilling.value = false
   }
 })
 watch(provider, (value) => {
+  billing.value = billingAk.value = billingSk.value = billingToken.value = ''
   if (form.value === 'channel' && !editingChannel.value) {
     const bases: Record<string, string> = {
       openrouter: 'https://openrouter.ai/api/v1',
       newapi: 'https://newapiai.com/v1',
       yunwu: 'https://yunwu.ai/v1',
+      aliyun_bailian: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      volcengine: 'https://ark.cn-beijing.volces.com/api/v3',
     }
     apiBase.value = options.value?.default_api_bases?.[value] ?? bases[value] ?? ''
   }
@@ -333,6 +358,7 @@ onMounted(() => {
                   ><ChannelBalance
                     :channel="row"
                     :available="!!options?.balance_providers?.includes(channelProvider(row))"
+                    :bills-available="!!options?.bill_providers?.includes(row.provider)"
                     :busy="busy"
                     :error="error"
                     @inspect="error = ''"
@@ -589,7 +615,7 @@ onMounted(() => {
               https://yunwu.ai/v1，Openlux 填 https://api.openlux.ai/v1；也可填写兼容站点的 API
               地址。 此类暂未接入账户余额查询，更换站点或 Key 时请新建渠道，保留历史查费凭据。
             </p>
-            <label v-if="!['newapi', 'openlux', 'yunwu'].includes(provider)"
+            <label v-if="!cloudBilling && !['newapi', 'openlux', 'yunwu'].includes(provider)"
               >账务 API Key<el-input
                 v-model="billing"
                 type="password"
@@ -600,6 +626,50 @@ onMounted(() => {
                   editingChannel?.has_billing_api_key ? '已设置，留空保留' : '可选 Management Key'
                 "
             /></label>
+            <template v-if="cloudBilling">
+              <p>
+                余额和月账单使用独立的云账务 AccessKey，推理 API Key
+                无法查询。留空保留已有凭据；替换时同时填写 ID 和 Secret。
+              </p>
+              <label
+                >账务 AccessKey ID<el-input
+                  v-model="billingAk"
+                  aria-label="账务 AccessKey ID"
+                  type="password"
+                  autocomplete="new-password"
+                  maxlength="256"
+                  :disabled="clearBilling"
+                  :required="!clearBilling && !!(billingSk || billingToken)"
+                  :placeholder="
+                    editingChannel?.has_billing_api_key
+                      ? '已设置，留空保留'
+                      : '可选，开通账务查询时填写'
+                  "
+              /></label>
+              <label
+                >账务 AccessKey Secret<el-input
+                  v-model="billingSk"
+                  aria-label="账务 AccessKey Secret"
+                  type="password"
+                  autocomplete="new-password"
+                  maxlength="1024"
+                  :disabled="clearBilling"
+                  :required="!clearBilling && !!(billingAk || billingToken)"
+              /></label>
+              <label
+                >账务 STS Token（可选）<el-input
+                  v-model="billingToken"
+                  aria-label="账务 STS Token"
+                  type="password"
+                  autocomplete="new-password"
+                  maxlength="4096"
+                  :disabled="clearBilling"
+              /></label>
+              <p>
+                只授予余额和账单查询权限。STS
+                凭据到期后须重新填写完整凭据；账户余额包含该云账户下其他云产品。
+              </p>
+            </template>
             <el-checkbox
               v-if="
                 editingChannel?.has_billing_api_key &&

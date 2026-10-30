@@ -1,3 +1,4 @@
+from datetime import timedelta
 from uuid import uuid4
 
 from sqlalchemy import or_, select
@@ -29,6 +30,9 @@ class ChannelService:
                     if getattr(adapter.billing, "enabled", False)
                     and getattr(adapter.billing, "balance_path", None)
                 ],
+                "bill_providers": [
+                    key for key, adapter in CHANNELS.items() if hasattr(adapter.billing, "bills")
+                ],
             }
 
     async def upstream_models(self, identifier):
@@ -50,7 +54,14 @@ class ChannelService:
     async def update_keys(self, session, row, data):
         if data.api_key is None and not row.api_key_encrypted:
             raise ServiceError(422, "model_api_key_required", "请填写渠道 API Key")
-        if data.api_key is not None or data.billing_api_key is not None:
+        billing_key = data.billing_api_key
+        if data.billing_credentials is not None:
+            if row.provider not in {"aliyun_bailian", "volcengine"}:
+                raise ServiceError(
+                    422, "model_billing_credentials_invalid", "当前渠道不使用云账务凭据"
+                )
+            billing_key = data.billing_credentials.encoded()
+        if data.api_key is not None or billing_key is not None:
             existing = await session.scalar(
                 select(Channel.id)
                 .where(
@@ -61,8 +72,10 @@ class ChannelService:
                 )
                 .limit(1)
             )
-            for field, purpose in (("api_key", "inference"), ("billing_api_key", "billing")):
-                value = getattr(data, field)
+            for field, purpose, value in (
+                ("api_key", "inference", data.api_key),
+                ("billing_api_key", "billing", billing_key),
+            ):
                 if value is not None:
                     encrypted = self.clients.credentials.encrypt(
                         value, row.id, purpose, create=existing is None
@@ -97,7 +110,12 @@ class ChannelService:
             "model:manage", action=action, target="model.channel", target_id=identifier
         ) as (session, auth):
             values = data.model_dump(
-                exclude={"api_key", "billing_api_key", "clear_billing_api_key"}
+                exclude={
+                    "api_key",
+                    "billing_api_key",
+                    "billing_credentials",
+                    "clear_billing_api_key",
+                }
             )
             if identifier:
                 row = await locked(session, Channel, identifier)
@@ -156,10 +174,50 @@ class ChannelService:
                     "after": self.snapshot(row, values),
                     "api_key_changed": data.api_key is not None,
                     "billing_api_key_changed": data.billing_api_key is not None
+                    or data.billing_credentials is not None
                     or data.clear_billing_api_key,
                 },
             )
             return schemas.channel_view(row)
+
+    async def cloud_bills(self, identifier, data):
+        # Keep manual accounting queries within a bounded two-year window.
+        year, month = map(int, data.period.split("-"))
+        current = utcnow() + timedelta(hours=8)
+        age = (current.year - year) * 12 + current.month - month
+        if not 0 <= age <= 24:
+            raise ServiceError(
+                422, "model_billing_period_invalid", "账期须在当前月份及之前24个月内"
+            )
+        async with self.clients.coordination.balance_slots:
+            async with self.identity.access("model:manage") as (session, _):
+                row = await self.identity.existing(session, Channel, identifier)
+                if not hasattr(self.clients.billing.adapter(row.provider, row.api_base), "bills"):
+                    raise ServiceError(
+                        409, "model_billing_unavailable", "当前渠道未接入云账户月账单"
+                    )
+                config = balance_config(row)
+            provider, base, encrypted, _ = config
+            if not encrypted:
+                raise ServiceError(409, "model_billing_credentials_required", "请先配置云账务凭据")
+            secret = self.clients.credentials.decrypt(encrypted, identifier, "billing")
+            report = await self.clients.billing.bills(
+                provider, base, secret, data.period, data.offset
+            )
+            async with self.identity.access("model:manage") as (session, _):
+                row = await self.identity.existing(session, Channel, identifier)
+                if balance_config(row) != config:
+                    raise ServiceError(
+                        409, "model_configuration_changed", "账务配置已改变，请重新查询"
+                    )
+            return {
+                "scope": "cloud_account",
+                "period": data.period,
+                "offset": data.offset,
+                "limit": 50,
+                "fetched_at": utcnow().isoformat(),
+                **report,
+            }
 
     async def refresh_balance(self, identifier):
         action = "model.balance.refresh"
@@ -272,6 +330,7 @@ class ChannelService:
                     and error.code
                     in {
                         "model_credential_unavailable",
+                        "model_billing_credentials_required",
                         "model_provider_unavailable",
                         "model_target_not_allowed",
                     }

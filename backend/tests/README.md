@@ -46,3 +46,5 @@ cd backend
 - `test_scaffold_business.py` 在临时目录生成本人资源模块及追加迁移，显式装配目录、模型和路由，在随机库初始化并检查 ORM 一致，通过真实 HTTP 验证部分更新、对象范围、PAT 交集、撤权、审计摘要与事务回滚。`test_identity_locks.py` 验证真实共享/排他锁的有界等待、取消后清理、身份变更失败不落库及重试；不以 mock 替代数据库锁语义。
 
 `test_relay_image_contracts.py` 用真实 SDK 校验两站共用的 JSON/multipart 报文、默认值、超时、旧摘要和有界下载。`test_relay_images.py` 使用真实 PostgreSQL/DBOS Worker 验证九图编辑、加密结果恢复、unknown 不重发及原 Token 实际费用核对；全部 HTTP 为确定性协议桩，不触发付费生成。
+
+`unit/test_cloud_billing_contracts.py` 验证官方 RPC/HMAC-SHA256 签名向量、签名目标、账务响应白名单、币种、精度、错误和分页；`integration/test_cloud_billing.py` 使用真实隔离库验证账务凭据加密、审计不含秘密、余额快照、管理权限与查询期间配置变化／撤权。全部云 HTTP 均为确定性协议桩，不查询真实账户或发起付费调用。

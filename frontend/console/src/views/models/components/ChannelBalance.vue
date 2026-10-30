@@ -4,12 +4,30 @@ import { balanceStates, money, type Channel } from '../../../api/models'
 import { statisticsTime } from '../../usage/time'
 import AppDialog from '../../../components/AppDialog.vue'
 import MoneyAmount from '../../../components/MoneyAmount.vue'
-const props = defineProps<{ channel: Channel; available: boolean; busy: boolean; error: string }>()
+import CloudBills from './CloudBills.vue'
+const props = defineProps<{
+  channel: Channel
+  available: boolean
+  billsAvailable?: boolean
+  busy: boolean
+  error: string
+}>()
 const emit = defineEmits<{ refresh: []; inspect: [] }>()
 const opened = ref(false)
 const snapshot = computed(() => props.channel.balance_snapshot)
-const remaining = computed(() => snapshot.value?.items.find((item) => item.kind === 'remaining'))
-const labels: Record<string, string> = { remaining: '剩余', used: '已用', granted: '总额' }
+const remaining = computed(() =>
+  snapshot.value?.items.find((item) => item.kind === 'remaining' || item.kind === 'available'),
+)
+const labels: Record<string, string> = {
+  remaining: '剩余',
+  used: '已用',
+  granted: '总额',
+  available: '可用额度',
+  cash: '现金余额',
+  arrears: '欠费金额',
+  credit: '信控额度',
+  frozen: '冻结金额',
+}
 function inspect() {
   emit('inspect')
   opened.value = true
@@ -77,6 +95,9 @@ function inspect() {
           </div>
         </div>
       </template>
+      <p v-if="snapshot && ['aliyun_account', 'volcengine_account'].includes(snapshot.scope)">
+        这是云账户余额，含其他云产品共享资金；可用额度和现金余额可能重叠，不能相加。
+      </p>
       <h3>查询记录</h3>
       <dl class="balance-metadata">
         <dt>查询状态</dt>
@@ -101,6 +122,7 @@ function inspect() {
         @click="emit('refresh')"
         >刷新余额</el-button
       >
+      <CloudBills v-if="billsAvailable" :channel="channel" />
     </AppDialog>
   </div>
 </template>

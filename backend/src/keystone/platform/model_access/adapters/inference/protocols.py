@@ -109,6 +109,7 @@ class ChatCompletions:
                     "schema": data.output.json_schema,
                 },
             }
+        if args is not None:
             args = self.sdk_settings(selected.operation, args)
         if getattr(data, "stream", False):
             complete = False
@@ -147,7 +148,10 @@ class ChatCompletions:
         messages = [message.model_dump(mode="json") for message in data.messages]
         messages.append({"role": "user", "content": parts})
         response = await sdk.chat.completions.create(
-            model=selected.provider_model, messages=messages, max_tokens=data.max_tokens
+            **self.sdk_settings(
+                selected.operation,
+                dict(model=selected.provider_model, messages=messages, max_tokens=data.max_tokens),
+            )
         )
         if not response.choices or response.choices[0].finish_reason is None:
             raise AdapterError(502, "model_response_unknown", "模型响应缺少完成结果")

@@ -993,3 +993,40 @@ it('keeps balance details open and replaces only the refreshed channel snapshot'
   expect(new DOMWrapper(document.body).get('[role=dialog]').text()).toContain('查询成功')
   expect(writes).toBe(1)
 })
+
+it.each([
+  [
+    'aliyun_bailian',
+    '阿里云百炼（DashScope）',
+    'https://dashscope.aliyuncs.com/compatible-mode/v1',
+  ],
+  ['volcengine', '火山方舟（豆包）', 'https://ark.cn-beijing.volces.com/api/v3'],
+])('creates the %s cloud channel with its default URL', async (provider, label, base) => {
+  authorize(['model:manage'])
+  const writes: unknown[] = []
+  fakeApi((path, init) => {
+    if (path === '/model-access/options')
+      return {
+        providers: ['openrouter', 'aliyun_bailian', 'volcengine'],
+        balance_providers: [],
+        default_api_bases: { [provider]: base },
+      }
+    if (init.method === 'POST') {
+      writes.push(JSON.parse(String(init.body)))
+      return { ...channel, provider, api_base: base }
+    }
+    return []
+  })
+  const wrapper = mount(ModelManager)
+  await flushPromises()
+  await button(wrapper, '新建渠道').trigger('click')
+  await chooseSelect(wrapper, provider, '服务商')
+  expect(selectControl(wrapper, '服务商').text()).toContain(label)
+  expect((wrapper.get('input[type=url]').element as HTMLInputElement).value).toBe(base)
+  await wrapper.get('[role=dialog] input').setValue('Cloud')
+  await wrapper.get('input[type=password]').setValue('cloud-key')
+  await wrapper.get('[role=dialog] form').trigger('submit')
+  await flushPromises()
+  expect(writes).toHaveLength(1)
+  expect(writes[0]).toMatchObject({ provider, api_base: base, api_key: 'cloud-key' })
+})

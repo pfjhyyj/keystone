@@ -52,7 +52,18 @@ from keystone.platform.model_access.services.entries import catalog_entry
         ("newapi", "image.understand", "async", "vision", False),
         ("yunwu", "image.generate", "sync", "image", False),
         ("deepseek", "text.generate", "sync", "chat", False),
-        ("aliyun_bailian", "text.generate", "sync", "chat", False),
+        ("aliyun_bailian", "text.generate", "sync", "chat", True),
+        ("aliyun_bailian", "text.structured", "sync", "chat", True),
+        ("aliyun_bailian", "image.understand", "sync", "chat", True),
+        ("aliyun_bailian", "text.embed", "sync", "chat", True),
+        ("aliyun_bailian", "image.generate", "sync", "chat", False),
+        ("aliyun_bailian", "text.generate", "async", "chat", False),
+        ("volcengine", "text.generate", "sync", "chat", True),
+        ("volcengine", "text.structured", "sync", "chat", True),
+        ("volcengine", "image.understand", "sync", "chat", True),
+        ("volcengine", "text.embed", "sync", "chat", False),
+        ("volcengine", "image.generate", "sync", "chat", False),
+        ("volcengine", "text.generate", "async", "chat", False),
         ("unknown", "text.generate", "sync", "chat", False),
         ("openrouter", "video.generate", "async", "video", False),
     ],
@@ -87,7 +98,14 @@ def test_catalog_and_sender_use_the_same_channel_capabilities(
 
 @pytest.mark.parametrize(
     "provider,custom_auth",
-    [("openrouter", False), ("openlux", False), ("yunwu", False), ("yunwu", True)],
+    [
+        ("openrouter", False),
+        ("openlux", False),
+        ("yunwu", False),
+        ("yunwu", True),
+        ("aliyun_bailian", False),
+        ("volcengine", False),
+    ],
 )
 async def test_shared_chat_wire_keeps_channel_receipts_and_actual_cost_semantics(
     monkeypatch, provider, custom_auth
@@ -134,6 +152,8 @@ async def test_shared_chat_wire_keeps_channel_receipts_and_actual_cost_semantics
         assert str(request.url) == adapter.api_base + "/chat/completions"
         body = json.loads(request.content)
         assert body["model"] == "chat" and body["max_tokens"] == 1024
+        if provider == "aliyun_bailian":
+            assert body["enable_thinking"] is False
         calls.append(body)
         return httpx2.Response(
             200,
@@ -188,11 +208,15 @@ async def test_shared_chat_wire_keeps_channel_receipts_and_actual_cost_semantics
             "amount": "0.0012",
             "unit": "credits",
         }
+    elif provider in {"aliyun_bailian", "volcengine"}:
+        assert final.request_id == "response-id" and final.fee is None
     else:
         assert final.request_id == "billing-id" and final.fee is None
 
 
-@pytest.mark.parametrize("provider", ["openrouter", "openlux", "yunwu", "newapi"])
+@pytest.mark.parametrize(
+    "provider", ["openrouter", "openlux", "yunwu", "newapi", "aliyun_bailian", "volcengine"]
+)
 async def test_structured_wire_registers_once_and_keeps_each_channel_contract(
     monkeypatch, provider
 ):
@@ -231,6 +255,8 @@ async def test_structured_wire_registers_once_and_keeps_each_channel_contract(
         assert request.method == "POST" and str(request.url) == base + "/chat/completions"
         assert request.headers["authorization"] == "Bearer private-structured-key"
         body = json.loads(request.content)
+        if provider == "aliyun_bailian":
+            assert body["enable_thinking"] is False
         assert body["model"] == "structured-model" and body["max_tokens"] == 1024
         assert body["messages"] == [{"role": "user", "content": "Answer"}]
         assert body["response_format"] == {
@@ -284,6 +310,9 @@ async def test_structured_wire_registers_once_and_keeps_each_channel_contract(
         ("openlux", "text.structured", False),
         ("yunwu", "text.structured", False),
         ("newapi", "text.structured", False),
+        ("aliyun_bailian", "text.generate", False),
+        ("aliyun_bailian", "text.structured", False),
+        ("volcengine", "text.structured", False),
         (None, "text.generate", False),
     ],
 )
@@ -300,6 +329,8 @@ def test_agent_settings_come_from_channel_code_and_preserve_caller_preferences(
     )
     original = {"max_tokens": 32, "extra_body": {"provider": {"allow_fallbacks": False}}}
     result = InferenceClient(None).sdk_settings(selected, original)
+    if provider == "aliyun_bailian":
+        assert result["extra_body"]["enable_thinking"] is False
     assert result["max_tokens"] == 32
     preferences = result["extra_body"]["provider"]
     assert preferences["allow_fallbacks"] is False

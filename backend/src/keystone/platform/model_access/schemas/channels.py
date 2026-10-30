@@ -1,9 +1,10 @@
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import ConfigDict, Field, SecretStr, field_validator, model_validator
 
 from keystone.core.schemas import Input
 
+from .cloud_billing import CloudBillingCredentials
 from .types import Label, Provider
 
 
@@ -31,12 +32,14 @@ def normalize_api_base(value):
 
 
 class ChannelEdit(Input):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     name: Label
     api_base: str = Field(max_length=512)
     api_key: SecretStr | None = Field(default=None, min_length=1, max_length=4096, repr=False)
     billing_api_key: SecretStr | None = Field(
         default=None, min_length=1, max_length=4096, repr=False
     )
+    billing_credentials: CloudBillingCredentials | None = Field(default=None, repr=False)
     clear_billing_api_key: bool = False
     upstream_account_ref: Label | None = None
     is_active: bool = True
@@ -50,7 +53,11 @@ class ChannelEdit(Input):
 
     @model_validator(mode="after")
     def billing_update(self):
-        if self.clear_billing_api_key and self.billing_api_key is not None:
+        if self.billing_credentials is not None and self.billing_api_key is not None:
+            raise ValueError("Use one billing credential format")
+        if self.clear_billing_api_key and (
+            self.billing_api_key is not None or self.billing_credentials is not None
+        ):
             raise ValueError("Cannot replace and clear a billing key together")
         return self
 

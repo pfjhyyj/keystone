@@ -289,6 +289,12 @@ def install(monkeypatch=None):
         else:
             monkeypatch.setitem(CHANNELS, key, value)
 
+    from keystone.platform.model_access.adapters.billing.http import balance_get
+
+    async def mock_aliyun_balance(http, base, secret):
+        return await balance_get(http, CHANNELS["aliyun_bailian"].billing, base, secret)
+
+    set_value(CHANNELS["aliyun_bailian"].billing, "account_balance", mock_aliyun_balance)
     set_value(CHANNELS["aliyun_bailian"].billing, "balance_path", "/mock/QueryAccountBalance")
     for provider in ("deepseek", "aliyun_bailian"):
         adapter = CHANNELS[provider]

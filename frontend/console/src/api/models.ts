@@ -92,9 +92,25 @@ export interface Costs {
   unknown_cost_attempts: number
   known_costs: { channel_id: string; unit: string; amount: string; attempts: number }[]
 }
+export interface CloudBillReport {
+  scope: 'cloud_account'
+  period: string
+  offset: number
+  limit: number
+  fetched_at: string
+  has_more: boolean
+  items: {
+    product: string
+    product_code: string
+    category: string
+    unit: string
+    amounts: Record<string, string>
+  }[]
+}
 export interface ModelOptions {
   providers: string[]
   balance_providers: string[]
+  bill_providers?: string[]
   default_api_bases: Record<string, string>
 }
 export const modelApi = {
@@ -142,7 +158,8 @@ export const providers = {
   openlux: 'Yunwu',
   yunwu: 'Yunwu',
   deepseek: 'DeepSeek',
-  aliyun_bailian: '阿里云百炼',
+  aliyun_bailian: '阿里云百炼（DashScope）',
+  volcengine: '火山方舟（豆包）',
 }
 export function channelProvider(row: Pick<Channel, 'provider' | 'api_base'>) {
   return row.provider === 'openlux' ||

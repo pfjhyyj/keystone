@@ -283,7 +283,7 @@ def test_upstream_model_discovery_requires_management_and_does_not_import(
     assert client.get("/api/v1/model-invocations").json() == []
     options = client.get("/api/v1/model-access/options").json()
     assert "newapi" in options["providers"]
-    assert options["providers"] == ["openrouter", "newapi", "yunwu"]
+    assert options["providers"] == ["openrouter", "newapi", "yunwu", "aliyun_bailian", "volcengine"]
     assert options["default_api_bases"]["newapi"] == "https://newapiai.com/v1"
     assert "openrouter" in options["balance_providers"]
     assert "newapi" in options["balance_providers"]

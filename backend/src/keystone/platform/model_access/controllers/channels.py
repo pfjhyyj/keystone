@@ -1,10 +1,12 @@
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 
 from keystone.core.http import Page
 from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.model_access import schemas
+from keystone.platform.model_access.schemas.cloud_billing import CloudBillQuery
 from keystone.platform.model_access.services.channels import ChannelService
 
 router = APIRouter(prefix="/api/v1", tags=["models"])
@@ -53,3 +55,8 @@ async def balance(identifier: UUID, request: Request):
 @router.get("/model-channels/{identifier}/models")
 async def upstream_models(identifier: UUID, request: Request):
     return await _service(request).upstream_models(identifier)
+
+
+@router.get("/model-channels/{identifier}/bills")
+async def cloud_bills(identifier: UUID, data: Annotated[CloudBillQuery, Query()], request: Request):
+    return await _service(request).cloud_bills(identifier, data)

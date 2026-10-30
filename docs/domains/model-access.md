@@ -2,15 +2,25 @@
 
 本模块保存渠道、模型配置、调用/用量和供应商费用；billing 与 inference Adapter 处理协议，Service 负责授权、事务和事实，后台 Task 负责核对编排。[Flow](flow.md) 通过公开 Service 固定角色选择与累计预算，不共享领域 ORM。
 
-第 1～7 节描述调用、费用和恢复契约；[第 8 节](#8-多渠道模型接入设计)维护现有渠道代码适配层与数据库的边界。当前适配整理不增加渠道、数据库字段或视频能力；仍只记录、补查和统计渠道实际成本。
+第 1～7 节描述调用、费用和恢复契约；[第 8 节](#8-多渠道模型接入设计)维护现有渠道代码适配层与数据库的边界。渠道协议随制品发布；仍只记录、补查和统计渠道实际成本。
 
 ## 1. 范围与边界
 
 为后续业务提供统一的模型调用入口，记录每次调用的用量、上游报告的费用，并展示渠道账户的余额。采用“成熟调用 SDK＋少量渠道适配代码”，不要求独立网关。
 
-新建渠道提供 OpenRouter、NewAPI 和 Yunwu，复用 OpenAI SDK 的文本对话及流式协议。NewAPI 表示兼容接口类型，默认 `https://newapiai.com/v1`，可配置HTTPS API 地址及路径前缀；使用 Key 查询参数与分页日志的 Openlux、Yunwu 兼容分支统一选择 Yunwu，分别填写 `https://api.openlux.ai/v1`、`https://yunwu.ai/v1`。已有渠道的内部 provider 与历史快照保留，Openlux 在界面归为 Yunwu 类。OpenRouter 可保存响应费用并按请求 ID 补查，Openlux/Yunwu 使用原 Token 分页核对日志；标准 NewAPI 接入文本、模型列表、Bearer Token 日志查费、账户余额与 Token 额度；Yunwu 类接入 Key 参数分页日志查费。图片理解复用受控 Chat Completions 多模态输入，仍要求模型显式声明 image.understand；图片生成和原生媒体任务按已验证站点选择，不因聊天接口兼容推断支持。DeepSeek、阿里云百炼保留适配声明，尚未开放发送。阿里云暂按百炼/DashScope 按量付费服务设计，不把订阅额度混为账户余额。图片与异步任务能力见[模型操作与产物](#6-模型操作与产物)。
+新建渠道提供 OpenRouter、NewAPI、Yunwu、阿里云百炼（DashScope）和火山方舟（豆包），复用 OpenAI SDK 的文本对话及流式协议。NewAPI 表示兼容接口类型，默认 `https://newapiai.com/v1`，可配置HTTPS API 地址及路径前缀；使用 Key 查询参数与分页日志的 Openlux、Yunwu 兼容分支统一选择 Yunwu，分别填写 `https://api.openlux.ai/v1`、`https://yunwu.ai/v1`。已有渠道的内部 provider 与历史快照保留，Openlux 在界面归为 Yunwu 类。OpenRouter 可保存响应费用并按请求 ID 补查，Openlux/Yunwu 使用原 Token 分页核对日志；标准 NewAPI 接入文本、模型列表、Bearer Token 日志查费、账户余额与 Token 额度；Yunwu 类接入 Key 参数分页日志查费。图片理解复用受控 Chat Completions 多模态输入，仍要求模型显式声明 image.understand；图片生成和原生媒体任务按已验证站点选择，不因聊天接口兼容推断支持。DeepSeek 保留适配声明，尚未开放发送。阿里云暂按百炼/DashScope 按量付费服务设计，不把订阅额度混为账户余额。图片与异步任务能力见[模型操作与产物](#6-模型操作与产物)。
 
 渠道、模型配置、调用记录是三个主要对象；第 8 节的代码适配层继续复用它们。不做用户钱包、充值、额度扣减、计费倍率、价格表、自动渠道切换或智能路由。这里记录的是供应商侧成本，不是向 Keystone 用户收费；已有 Flow 次数/token/文件预算仍属于资源限制。
+
+### DashScope 与火山方舟
+
+阿里云百炼沿用 `aliyun_bailian`，固定 API Base 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`；火山方舟使用 `volcengine`，固定 API Base 为 `https://ark.cn-beijing.volces.com/api/v3`。填写对应平台、地域的推理 API Key。当前只接入这两个中国北京按量计费地址，其他地域、工作空间专属域名与 Coding Plan 地址尚未装配。
+
+两者支持同步／流式文本、严格 JSON Schema 结构化输出和图片理解；模型条目仍须按实际支持能力显式声明，不能给普通文本模型勾选图片理解或结构化输出。DashScope 统一传 `enable_thinking=false`，覆盖文本、结构化、图片理解和 Flow Agent 设置，以适配同步及严格输出；仅支持思考模式的模型不适用。火山方舟的上游模型名可填已开通的 Model ID 或自建推理接入点 ID（`ep-...`）。当前未接模型列表发现，直接手填上游模型名。
+
+DashScope 同时装配标准 `/embeddings`，可用 `text-embedding-v4` 等支持指定维度及 float 输出的文本向量模型；向量维度须与业务索引配置一致。火山方舟尚未装配文本向量、图片生成、视频或异步协议。两者保存真实 token 用量和请求 ID，已接入独立云账务凭据的账户余额与月账单；单次实扣费用仍保持 unavailable，不从定价或聚合账单推算实扣。账务配置及接口见[云账户账务](#云账户账务)。
+
+协议依据：[DashScope 地址](https://help.aliyun.com/en/model-studio/base-url)、[结构化输出](https://help.aliyun.com/en/model-studio/qwen-structured-output)、[文本向量](https://help.aliyun.com/en/model-studio/embedding-interfaces-compatible-with-openai)、[火山方舟 Chat API](https://www.volcengine.com/docs/82379/1494384)。
 
 ## 2. 领域模型
 
@@ -34,7 +44,7 @@ erDiagram
 | 字段 | 含义 |
 |---|---|
 | `id`、`name` | 稳定 ID、展示名 |
-| `provider` | 新建可选 `openrouter`、`newapi`、`yunwu`；`openlux` 作为已有渠道内部标识保留，`deepseek`、`aliyun_bailian` 保留声明 |
+| `provider` | 新建可选 `openrouter`、`newapi`、`yunwu`、`aliyun_bailian`（DashScope）、`volcengine`（火山方舟）；`openlux` 作为已有渠道内部标识保留，`deepseek` 保留声明 |
 | `api_base` | 经管理员配置的服务地址，包含相应地域/站点差异 |
 | `api_key_encrypted` | 推理 API Key 密文，接口不返回 |
 | `billing_api_key_encrypted` | 可空，账务 API Key 密文，接口不返回 |
@@ -170,7 +180,7 @@ OpenRouter 等官方能力依据下列文档；Yunwu/Openlux 另有实测依据�
 |---|---|---|---|
 | DeepSeek | 已核对的对话响应提供用量，未提供单次金额 | `/user/balance` 提供分币种的总余额、赠送余额和充值余额 | 保存用量；费用未知；首版不开放余额刷新（仅保留解析声明） |
 | OpenRouter | 响应 `usage.cost`；也可按 generation ID 查询 | `/api/v1/credits` 返回累计 credits 和使用量，需要 management key | 保存上游报告费用；必要时查询补全；支持余额刷新 |
-| 阿里云百炼 | 尚未确认可按推理请求 ID 查询单次实际金额的接口 | `QueryAccountBalance` 查询阿里云账户，区分可用额度和现金余额 | 保存用量；费用未知；首版不开放账户余额查询（仅保留解析声明） |
+| 阿里云百炼 | 尚未确认可按推理请求 ID 查询单次实际金额的接口 | `QueryAccountBalance` 查询阿里云账户，区分可用额度和现金余额 | 保存用量；费用未知；独立 AccessKey 签名查询账户余额，并支持按产品查看月账单 |
 | Yunwu/Openlux | 原 Token 分页拉取日志，本地精确匹配 `other.request_id` 与 `x-api-request-id`，按站点口径解析 quota | 当前适配未接入账户余额查询，Token 用量不视为账户余额 | 已接入自动核对和手动补查；详见第 3.6 节 |
 | NewAPI（标准协议） | Bearer Key 查询 `/api/log/token`，精确匹配网关请求编号，按公开 `quota_per_unit` 换算系统 USD 额度 | `/api/usage/token/` 的 `user_quota` 查询账户余额，当前 Key 额度及不限额状态单独展示；未授权返回账户额度时明确标示 | 自动核对与手动补查、模型列表、账户与 Token 额度均已接入 |
 
@@ -184,9 +194,28 @@ Openlux/Yunwu 的模型、状态和 Token 日志路径属于 New API 兼容接�
 
 OpenRouter 的 `usage.cost` 表示该账户被收取的 credits；流式用量在最后的 SSE 消息中。不要用 `upstream_inference_cost` 替换账户费用，尤其 BYOK 还涉及外部供应商收费。余额由 `total_credits - total_usage` 得到，保留 credits 口径，不能当作某个 API Key 的独享额度。依据：[用量与费用](https://openrouter.ai/docs/cookbook/administration/usage-accounting)、[余额与凭据要求](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits)。
 
-阿里云余额接口的 `AvailableAmount` 是可用额度，`AvailableCashAmount` 是现金余额，展示时分别标明；首版仅有解析声明，不发起查询。它们属于阿里云账户，可能同时供其他云产品消费，并非百炼专属余额。查询需要阿里云 OpenAPI 账务授权，不能直接使用 DashScope API Key。依据：[账户余额接口](https://help.aliyun.com/zh/user-center/developer-reference/api-bssopenapi-2017-12-14-queryaccountbalance)。
+阿里云余额接口的 `AvailableAmount` 是可用额度，`AvailableCashAmount` 是现金余额，展示时分别标明，不能相加；已接入签名查询。它们属于阿里云账户，可能同时供其他云产品消费，并非百炼专属余额。查询需要阿里云 OpenAPI 账务授权，不能直接使用 DashScope API Key。依据：[账户余额接口](https://help.aliyun.com/zh/user-center/developer-reference/api-bssopenapi-2017-12-14-queryaccountbalance)。
 
 百炼账单存在出账延迟和聚合口径，出账也不等于即时扣款。首版不抓取控制台、不把聚合账单摊分成单次“实扣”；后续确认能够精确关联请求的官方数据后再补全。依据：[账单与费用管理](https://help.aliyun.com/zh/model-studio/bill-query-and-cost-management)。
+
+### 云账户账务
+
+阿里云百炼和火山方舟在编辑渠道时可选填云账务 AccessKey ID / Secret，以及 STS Token。凭据须属于推理渠道对应的云账户，使用具备余额和账单只读权限的子账号；推理 API Key 继续单独保存。更新使用 `billing_credentials: {access_key_id, access_key_secret, security_token?}`，字段全部只写，不回显。ID 和 Secret 必须一起替换，STS 到期后更新完整凭据；留空保留，`clear_billing_api_key=true` 清除。与旧 `billing_api_key` 不能同时提交。服务将结构化凭据编码后使用原账务用途密文列加密，无新增环境变量或数据库字段；审计仅记录是否变更，不保存明文。
+
+| 渠道 | 固定账务站点／签名 | 余额 | 月账单 |
+|---|---|---|---|
+| 阿里云百炼 | `https://business.aliyuncs.com`，RPC HMAC-SHA1，版本 `2017-12-14` | `QueryAccountBalance`，保留 CNY/USD/JPY 原币种、可用额度与现金余额 | `QueryBillOverview`，按产品及账单类型展示应付、现金支付、未结清及已返回的优惠抵扣 |
+| 火山方舟 | `https://billing.volcengineapi.com`，HMAC-SHA256，签名地域 `cn-beijing`，版本 `2022-01-01` | `QueryBalanceAcct`，中国站 CNY，分别展示可用余额、现金、欠费、信控与冻结金额 | `ListBillDetail`，产品维度、按月聚合，展示原价、折后、应付、抵扣和已付／未付金额 |
+
+阿里云最小权限按官方接口为 `bss:DescribeAcccount`（余额，拼写沿用官方）及 `bss:DescribeBillList`（账单）。火山引擎授权只读访问 `QueryBalanceAcct` 和 `ListBillDetail`，具体子账号财务权限按费用中心文档配置。不配置根账号密钥，不授予购买、充值等写权限。当前只接中国站账务地址；国际站或特殊财务账号不可直接套用。
+
+余额沿用已有刷新、快照和失败保留规则；界面将可用额度作为预览，并说明云账户下各产品共享资金。账户余额、现金和信控可能存在包含关系，不能相加。鉴权失败、STS 过期、限流、上游错误及格式异常只返回受控错误，不泄露供应商原始正文；不跟随重定向、不自动重试。
+
+控制台在“余额详情”中手动查询云账户月账单，接口为 `GET /api/v1/model-channels/{id}/bills?period=YYYY-MM&offset=0`。沿用 `model:manage`，一次最多 50 条，仅允许当前月份及之前 24 个月，按北京时间确定当前月。阿里单次上游总览最多 10,000 条；两者响应均限 4 MiB。请求在事务外执行，返回前重新检查身份权限及账务配置；撤权、密钥轮换或账户／地址变更后丢弃旧结果。上游月份、币种和金额格式必须有效，保留十进制原精度，不按浮点数累计；退款和调账允许负数。
+
+月账单包含该云账户下的其他产品、其他渠道及 API Key，不自动声称某行仅属于本系统。供应商返回的应付、现金、代金券和信用结算分别展示，不跨币种求和；未知字段不回传。账单可能延迟或被结算调整，当月记录不视为最终结算；按页查询，不将聚合账单摊分到 `ModelInvocation`，不把查询接口本身的 RequestId 当作推理请求 ID。原调用的未知费用仍保留，已有 OpenRouter / NewAPI / Yunwu 精确查费链路不变。
+
+依据：[阿里云余额及授权](https://help.aliyun.com/zh/user-center/developer-reference/api-bssopenapi-2017-12-14-queryaccountbalance)、[账单总览](https://help.aliyun.com/zh/user-center/developer-reference/api-bssopenapi-2017-12-14-querybilloverview)、[RPC 签名](https://help.aliyun.com/zh/document_detail/268240.html)、[火山引擎余额](https://docs.volcengine.com/docs/billing-center/query-balance-acct-query-user-account-balance-information?lang=zh)、[账单明细](https://docs.volcengine.com/docs/billing-center/list-bill-detail-page-query-bill-details?lang=zh)、[签名](https://docs.volcengine.com/docs/api-signature-call-guide/signature-method?lang=zh)。
 
 ### 3.4 Flow 的固定模型选择
 
@@ -480,7 +509,7 @@ ModelRole.operation 描述需要执行的操作。ModelEntry.operations 描述�
 | operation | 请求 | 结果 | 当前状态 |
 |---|---|---|---|
 | text.generate | TextRequest | TextResult | 已实现 |
-| text.embed | EmbeddingRequest | EmbeddingResult | OpenRouter、NewAPI 的同步 /embeddings 协议，模型须显式声明 |
+| text.embed | EmbeddingRequest | EmbeddingResult | OpenRouter、NewAPI、DashScope 的同步 /embeddings 协议，模型须显式声明 |
 | text.structured | StructuredRequest | StructuredResult | OpenRouter、NewAPI、Openlux/Yunwu 的兼容 Chat Completions；模型须显式声明，本地严格校验结果；OpenRouter 另要求 provider.require_parameters |
 | image.understand | VisionRequest（受控 File ID） | TextResult | OpenRouter、NewAPI、Openlux/Yunwu 的兼容 Chat Completions；仅受权 PNG/JPEG/WebP，模型须显式声明该操作 |
 | image.generate | ImageGenerateRequest（sync）/ ImageTaskRequest（async） | ImageResult（File ID）/ ImageTask | OpenRouter、Yunwu/Openlux 同步及 OpenLux Kling 异步已实现 |
