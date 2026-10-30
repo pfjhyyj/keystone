@@ -16,11 +16,21 @@
 
 阿里云百炼沿用 `aliyun_bailian`，固定 API Base 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`；火山方舟使用 `volcengine`，固定 API Base 为 `https://ark.cn-beijing.volces.com/api/v3`。填写对应平台、地域的推理 API Key。当前只接入这两个中国北京按量计费地址，其他地域、工作空间专属域名与 Coding Plan 地址尚未装配。
 
-两者支持同步／流式文本、严格 JSON Schema 结构化输出和图片理解；模型条目仍须按实际支持能力显式声明，不能给普通文本模型勾选图片理解或结构化输出。DashScope 统一传 `enable_thinking=false`，覆盖文本、结构化、图片理解和 Flow Agent 设置，以适配同步及严格输出；仅支持思考模式的模型不适用。火山方舟的上游模型名可填已开通的 Model ID 或自建推理接入点 ID（`ep-...`）。火山方舟当前仍手填上游模型名。DashScope 已接原生模型列表，配置及限制见[阿里云模型列表](#阿里云模型列表)。
+两者支持同步／流式文本、严格 JSON Schema 结构化输出和图片理解；模型条目仍须按实际支持能力显式声明，不能给普通文本模型勾选图片理解或结构化输出。DashScope 统一传 `enable_thinking=false`，覆盖文本、结构化、图片理解和 Flow Agent 设置，以适配同步及严格输出；仅支持思考模式的模型不适用。火山方舟的上游模型名可填已开通的 Model ID 或自建推理接入点 ID（`ep-...`）。火山方舟已接入模型列表查询，同时保留手填自建接入点 ID。DashScope 已接原生模型列表，配置及限制见[阿里云模型列表](#阿里云模型列表)。
 
 DashScope 同时装配标准 `/embeddings`，可用 `text-embedding-v4` 等支持指定维度及 float 输出的文本向量模型；向量维度须与业务索引配置一致。火山方舟尚未装配文本向量、图片生成、视频或异步协议。两者保存真实 token 用量和请求 ID，已接入独立云账务凭据的账户余额与月账单；单次实扣费用仍保持 unavailable，不从定价或聚合账单推算实扣。账务配置及接口见[云账户账务](#云账户账务)。
 
 协议依据：[DashScope 地址](https://help.aliyun.com/en/model-studio/base-url)、[结构化输出](https://help.aliyun.com/en/model-studio/qwen-structured-output)、[文本向量](https://help.aliyun.com/en/model-studio/embedding-interfaces-compatible-with-openai)、[火山方舟 Chat API](https://www.volcengine.com/docs/82379/1494384)。
+
+### 火山方舟模型列表
+
+选择火山方舟渠道后，控制台复用 `GET /api/v1/model-channels/{id}/models`，使用该渠道已保存的推理 API Key 请求固定的 `GET https://ark.cn-beijing.volces.com/api/v3/models`。不使用账务 AK/SK，不需要业务空间 ID；当前仅接入已装配的北京区按量付费地址，不自动切换到 Coding Plan、Agent Plan 或其他地域。
+
+响应按 OpenAI 兼容的 `data[].id` 解析，去重排序后只返回模型 ID，不回传定价、能力或其他供应商原始元数据。单次响应最多 4 MiB／10,000 条，不跟随重定向或自动重试。无权限、限流及异常响应沿用受控错误；发送前和返回前检查管理权限，配置或推理 Key 变化后丢弃旧结果，不创建 ModelEntry、调用记录或费用。
+
+列表不作为当前 Key 能调用所有模型或已枚举全部自建接入点的保证。原有 `ep-...` 配置不因列表缺项被覆盖，仍可直接输入接入点 ID。模型操作能力继续由管理员显式声明，并由已安装协议检查，不按名称或上游元数据推断。
+
+参考：[火山方舟模型目录](https://www.volcengine.com/docs/82379/1330310)、[Base URL 与鉴权](https://docs.volcengine.com/docs/ark/base-url-and-authentication)。
 
 ### 阿里云模型列表
 

@@ -256,7 +256,7 @@ def install_transport(client, monkeypatch, handler):
     )
 
 
-@pytest.mark.parametrize("kind", ["newapi", "openlux", "yunwu"])
+@pytest.mark.parametrize("kind", ["newapi", "openlux", "yunwu", "volcengine"])
 def test_upstream_model_discovery_requires_management_and_does_not_import(
     client, monkeypatch, kind
 ):

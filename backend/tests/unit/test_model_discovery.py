@@ -13,7 +13,7 @@ from keystone.platform.model_access.schemas import Invoke, Selection
 from keystone.platform.model_access.schemas.channels import ChannelCreate
 
 
-@pytest.mark.parametrize("provider", ["openlux", "openrouter", "yunwu", "newapi"])
+@pytest.mark.parametrize("provider", ["openlux", "openrouter", "yunwu", "newapi", "volcengine"])
 async def test_discovery_uses_fixed_get_with_inference_key_and_projects_only_ids(provider):
     calls = []
 
@@ -62,11 +62,12 @@ async def test_discovery_uses_fixed_get_with_inference_key_and_projects_only_ids
         {"data": [{"id": "x"}] * 10001},
     ],
 )
-async def test_discovery_rejects_invalid_and_unbounded_model_lists(payload):
+@pytest.mark.parametrize("provider", ["openlux", "volcengine"])
+async def test_discovery_rejects_invalid_and_unbounded_model_lists(payload, provider):
     http = HttpClient()
     http.transport = lambda _: httpx2.MockTransport(lambda _: httpx2.Response(200, json=payload))
     with pytest.raises(ServiceError) as error:
-        await InferenceClient(http).list_models("openlux", CHANNELS["openlux"].api_base, "secret")
+        await InferenceClient(http).list_models(provider, CHANNELS[provider].api_base, "secret")
     assert error.value.code == "model_invalid_response"
 
 
@@ -80,7 +81,8 @@ async def test_discovery_rejects_invalid_and_unbounded_model_lists(payload):
         (500, "model_query_failed"),
     ],
 )
-async def test_discovery_sanitizes_failures_without_retry_or_redirect(status, code):
+@pytest.mark.parametrize("provider", ["openlux", "volcengine"])
+async def test_discovery_sanitizes_failures_without_retry_or_redirect(status, code, provider):
     calls = []
 
     def respond(request):
@@ -92,7 +94,7 @@ async def test_discovery_sanitizes_failures_without_retry_or_redirect(status, co
     http = HttpClient()
     http.transport = lambda _: httpx2.MockTransport(respond)
     with pytest.raises(ServiceError) as error:
-        await InferenceClient(http).list_models("openlux", CHANNELS["openlux"].api_base, "secret")
+        await InferenceClient(http).list_models(provider, CHANNELS[provider].api_base, "secret")
     assert error.value.code == code
     assert "secret" not in error.value.detail
     assert len(calls) == 1

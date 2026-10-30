@@ -91,7 +91,9 @@ CHANNELS = {
         AliyunBailian(),
         models_path="/api/v1/models",
     ),
-    "volcengine": ChannelAdapter("https://ark.cn-beijing.volces.com/api/v3", (CHAT,), Volcengine()),
+    "volcengine": ChannelAdapter(
+        "https://ark.cn-beijing.volces.com/api/v3", (CHAT,), Volcengine(), models_path="/models"
+    ),
 }
 
 # Historical provider IDs remain valid in saved channels, billing evidence and Flow snapshots.
