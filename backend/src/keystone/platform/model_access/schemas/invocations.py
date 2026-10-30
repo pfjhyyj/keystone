@@ -98,4 +98,39 @@ def invocation_view(row):
         )
     }
     values["cost_amount"] = format(row.cost_amount, "f") if row.cost_amount is not None else None
+    for field in ("estimate_status", "estimate_currency", "estimate_reason", "estimate_checked_at"):
+        values[field] = getattr(row, field)
+    values["estimate_amount"] = (
+        format(row.estimate_amount, "f") if row.estimate_amount is not None else None
+    )
+    # Project safe calculation evidence; never expose target bases or the internal snapshot.
+    detail = row.estimate_detail if isinstance(row.estimate_detail, dict) else {}
+    values["estimate_detail"] = {
+        key: detail[key]
+        for key in ("leaf", "factor", "items", "missing", "rule_hash", "facts_hash", "time_basis")
+        if key in detail
+    }
+    if "items" in values["estimate_detail"]:
+        items = detail["items"] if isinstance(detail["items"], list) else []
+        values["estimate_detail"]["items"] = [
+            {
+                key: item[key]
+                for key in ("id", "quantity", "value", "unit", "rate", "per", "amount", "source")
+                if key in item
+            }
+            for item in items[:16]
+            if isinstance(item, dict)
+        ]
+    if isinstance(detail.get("time_basis"), dict):
+        values["estimate_detail"]["time_basis"] = {
+            key: detail["time_basis"][key]
+            for key in ("source", "timezone", "calendar")
+            if key in detail["time_basis"]
+        }
+    snapshot = row.estimate_snapshot if isinstance(row.estimate_snapshot, dict) else {}
+    source = snapshot.get("source") if isinstance(snapshot.get("source"), dict) else {}
+    values["estimate_source"] = {
+        key: source[key] for key in ("label", "version", "checked_at") if key in source
+    }
+    values["pricing_revision"] = snapshot.get("revision")
     return values

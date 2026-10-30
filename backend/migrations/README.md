@@ -18,7 +18,9 @@
 
 `0009_model_access_workspace.py` / `0009` 为渠道增加可空的百炼业务空间 ID；历史渠道保持空值，使用既有共享域名查询模型列表。回退仅移除列表查询配置，不改动推理、凭据和费用事实。
 
-路径相对 `versions/`。`0001.down_revision = None`，之后依次连接，唯一 head 为 `0009`；共七个模块基线和一份后续迁移、21 张领域表，另有版本表。
+`0010_model_access_pricing.py` / `0010` 增加条目价格配置、revision 与调用的规则快照、计量和预估结果；不改变实扣列。旧条目 inherit／revision=0，旧调用为 legacy_no_snapshot，不能按当前价回填。回退仅删除预估字段及约束，保留原调用、实扣与恢复证据。
+
+路径相对 `versions/`。`0001.down_revision = None`，之后依次连接，唯一 head 为 `0010`；共七个模块基线和三份后续迁移、21 张领域表，另有版本表。
 
 模型接入基线包含渠道凭据密文、操作声明（含 `text.embed`）、调用归属、费用与回执、受限结果证据、发送间隔/冷却表、NewAPI 渠道类型、可修改的模型显示名称，以及 Run 关联调用表达式索引。显示名称为空时按固定 key 展示；改名不改变 key、选择或历史调用。条目 `operations` 默认仅 `text.generate`，调用 `operation` 默认 `text.generate`、`result_context` 可空，不按模型名推断媒体能力。Flow 基线包含快照、协调字段、累计预算和稳定预留；没有预算的 Run 不自动回填。Worker 基线包含固定身份登记、心跳及其约束和索引。
 
@@ -26,7 +28,7 @@
 
 新库执行 `keystone init`，一次建立完整业务结构、DBOS 的 `dbos` schema、文件存储与初始管理员。相同迁移链上重复执行保留已有数据和密码。API/Worker 启动只检查结构，不执行 DDL。
 
-当前基线从 `0001` 重新编号。合并前的数据库不能仅凭相同 revision 认定结构兼容，须核对完整结构后按下述方式处理；本次整理不提供旧链的自动转换。仍带操作枚举白名单的同号旧库也不兼容；当前操作校验边界见[模型操作](../../docs/domains/model-access.md#61-操作与固定选择)。旧链的 `0010`～`0012` 及旧语义 revision（`identity`、`audit`、`dictionary`、`files`、`model_access`、`flow`、`core`、`model_costs`、`multi_workers`、`worker_registration`）均不能由当前链解析，须按完整结构核对。旧 embedding revision `0008` 与当前火山方舟迁移、旧链 `0009` 与当前模型列表业务空间迁移均同号但不同义，不能只凭版本号判断兼容；旧库仍按停写备份、新库初始化及数据校验流程处理。
+当前基线从 `0001` 重新编号。合并前的数据库不能仅凭相同 revision 认定结构兼容，须核对完整结构后按下述方式处理；本次整理不提供旧链的自动转换。仍带操作枚举白名单的同号旧库也不兼容；当前操作校验边界见[模型操作](../../docs/domains/model-access.md#61-操作与固定选择)。已退役旧链的 `0010`～`0012`（与当前 `0010` 价格迁移不同义） 及旧语义 revision（`identity`、`audit`、`dictionary`、`files`、`model_access`、`flow`、`core`、`model_costs`、`multi_workers`、`worker_registration`）均不能由当前链解析，须按完整结构核对。旧 embedding revision `0008` 与当前火山方舟迁移、旧链 `0009` 与当前模型列表业务空间迁移均同号但不同义，不能只凭版本号判断兼容；旧库仍按停写备份、新库初始化及数据校验流程处理。
 
 这些旧库需要在停写窗口备份并核对结构：无保留需求时可另建新库初始化；需保留数据时，先在新库初始化当前结构，再按实际结构迁移所需数据并校验，不能直接导入旧版本表或用 `stamp` 跳过差异。用户/PAT、密文及其加密密钥、文件源、调用原状态、金额、回执和 Flow 快照须保持原义；旧模型能力不按名称推断，没有预算的历史 Run 不补造预算。在途执行先由原制品收尾，DBOS 与业务数据按[备份恢复](../../docs/backup-restore.md)联合保留，不通过删除执行记录绕过恢复。
 
@@ -36,7 +38,7 @@ Alembic 连接固定 `search_path=public`，只管理 `keystone` schema。DBOS �
 
 - 文件使用 `NNNN_<module>_<change>.py` 和小写 snake_case，直接放在 `versions/`，Worker 使用 `worker` 前缀；不增加模块目录、迁移分支或版本表。
 - `revision` 与文件序号使用相同四位字符串。序号从 `0001` 连续递增，`down_revision` 指向前一个 revision，实际执行由 Alembic 原生依赖决定。已发布迁移不重写、不复用 revision，后续只追加。
-- 下一份新业务迁移示例为 `0010_notes_initial.py`，`revision = "0010"`、`down_revision = "0009"`。未发布的并行变更在合并前解决序号冲突；达到 `9999` 时先调整规范。
+- 下一份新业务迁移示例为 `0011_notes_initial.py`，`revision = "0011"`、`down_revision = "0010"`。未发布的并行变更在合并前解决序号冲突；达到 `9999` 时先调整规范。
 
 `scripts/new_business.py` 校验从 `0001` 开始的连续链，并按下一序号生成迁移；空目录从 `0001` 开始。它只读取静态字面量元数据，支持普通及带类型注解的赋值；在写业务文件前检查平铺路径、命名、重复序号/revision、序号连续性和线性依赖。子目录、重复声明、动态元数据、分支和额外依赖均拒绝，不导入或执行历史迁移。
 

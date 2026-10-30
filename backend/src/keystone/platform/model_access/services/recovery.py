@@ -5,6 +5,7 @@ from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.services.cost_policy import initialize_check
+from keystone.platform.model_access.services.pricing import apply_estimate
 
 
 async def has_worker_calls(session, worker_id):
@@ -72,6 +73,7 @@ async def recover_calls(database, *, flow, source, owner=None, legacy_only=False
                 row.status, row.error_code = "unknown", "model_interrupted"
                 row.finished_at = row.updated_at = now
                 initialize_check(row, now)
+                apply_estimate(row)
                 await audit.record(
                     session,
                     "model.invocation.recover",

@@ -14,6 +14,7 @@ export const dimensions = {
   status: '调用结果',
   cost_status: '查费状态',
   cost_source: '费用来源',
+  estimate_status: '预估状态',
   error: '错误码',
 } as const
 export type Dimension = keyof typeof dimensions
@@ -31,6 +32,7 @@ export const dimensionFilters: Record<Dimension, string> = {
   status: 'status',
   cost_status: 'cost_status',
   cost_source: 'cost_source',
+  estimate_status: 'estimate_status',
   error: 'error_code',
 }
 export const sourceLabels: Record<string, string> = {
@@ -44,6 +46,8 @@ export const feeSourceLabels: Record<string, string> = {
   unknown: '未知',
 }
 export const filterKeys = [
+  'cost_basis',
+  'estimate_status',
   'since',
   'until',
   'channel_id',
@@ -72,6 +76,7 @@ export interface UsageCost {
   avg_cost: string
 }
 export interface UsageMetrics {
+  estimate_coverage?: Record<string, number>
   calls: number
   succeeded: number
   failed: number
@@ -100,6 +105,7 @@ export interface UsagePoint extends UsageMetrics {
   filters: Record<string, string>
 }
 export interface UsageStatistics {
+  cost_basis?: 'estimated' | 'actual'
   since: string
   until: string
   timezone: string

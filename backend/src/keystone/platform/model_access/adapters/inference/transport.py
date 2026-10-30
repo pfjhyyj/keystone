@@ -6,7 +6,9 @@ from decimal import Decimal
 import httpx2
 
 from keystone.core.errors import ServiceError
+from keystone.core.time import utcnow
 from keystone.platform.model_access.adapters.inference.limits import retry_after
+from keystone.platform.model_access.adapters.inference.pricing import merge_usage, request_context
 from keystone.platform.model_access.adapters.receipts import request_id
 
 
@@ -52,10 +54,18 @@ class Observation:
         self.phase = "preparing"
         self.request_bytes = None
         self.upstream_status = None
+        self.pricing_profile = None
+        self.pricing_context = {}
+        self.pricing_usage = {}
+        self.pricing_usage_final = False
+        self.pricing_generated = None
+        self.pricing_success = False
+        self.pricing_observed_at = None
 
     def parse(self, raw):
         if raw == b"[DONE]":
             self.done = True
+            self.pricing_observed_at = utcnow()
             return
         try:
             payload = json.loads(raw, parse_float=Decimal)
@@ -64,10 +74,33 @@ class Observation:
             identifier = request_id(payload.get("id"))
             if identifier:
                 self.receipt_ids["body_id"] = identifier
+            choices = payload.get("choices")
+            terminal_reasons = {"stop", "length", "tool_calls", "function_call", "content_filter"}
+            terminal_usage = choices == [] or (
+                isinstance(choices, list)
+                and bool(choices)
+                and all(
+                    isinstance(c, dict)
+                    and isinstance(c.get("finish_reason"), str)
+                    and c["finish_reason"] in terminal_reasons
+                    for c in choices
+                )
+            )
+            if (
+                self.streaming
+                and isinstance(choices, list)
+                and any(isinstance(c, dict) and bool(c.get("delta")) for c in choices)
+            ):
+                self.pricing_usage_final = False
             data = payload.get("usage")
             if isinstance(data, dict):
                 self.usage = usage(data)
                 self.reported_cost = data.get("cost")
+                incoming_usage = merge_usage({}, data)
+                if incoming_usage:
+                    # A final receipt cannot inherit stale subcounts from an earlier chunk.
+                    self.pricing_usage = incoming_usage
+                    self.pricing_usage_final = not self.streaming or terminal_usage
             self.on_update(self)
             # OpenRouter can report an upstream error inside an HTTP 200 SSE response.
             # Preserve receipts above, but never expose its raw error text or mark success.
@@ -77,6 +110,41 @@ class Observation:
                 and any(isinstance(c, dict) and c.get("finish_reason") == "error" for c in choices)
             ):
                 raise ServiceError(502, "model_upstream_error", "上游返回错误，结果与费用可能未知")
+            if isinstance(choices, list) and any(
+                isinstance(c, dict)
+                and (
+                    isinstance(c.get("message"), dict)
+                    and c["message"].get("role") == "assistant"
+                    and (
+                        isinstance(c["message"].get("content"), str)
+                        or bool(c["message"].get("tool_calls"))
+                    )
+                    or isinstance(c.get("finish_reason"), str)
+                    and c["finish_reason"] in terminal_reasons
+                )
+                for c in choices
+            ):
+                self.pricing_success = True
+            items = payload.get("data")
+            if self.pricing_profile and isinstance(items, list) and items:
+                if self.pricing_profile.id in {"openai_images.v1", "openrouter_images.v1"}:
+                    if len(items) <= 2 and all(
+                        isinstance(item, dict)
+                        and any(
+                            isinstance(item.get(key), str) and item[key]
+                            for key in ("url", "b64_json")
+                        )
+                        for item in items
+                    ):
+                        self.pricing_generated = len(items)
+                        self.pricing_success = True
+                elif self.pricing_profile.id == "embedding.v1" and all(
+                    isinstance(item, dict)
+                    and isinstance(item.get("embedding"), list)
+                    and item["embedding"]
+                    for item in items
+                ):
+                    self.pricing_success = True
         except (ValueError, TypeError, RecursionError):
             pass
 
@@ -117,6 +185,8 @@ class ObservedResponse(httpx2.Response):
             self.observation.parse(bytes(self.observation.buffer))
         self.observation.buffer.clear()
         self.observation.phase = "response_received"
+        if not self.observation.streaming or self.observation.done:
+            self.observation.pricing_observed_at = utcnow()
 
 
 class SendTransport(httpx2.AsyncBaseTransport):
@@ -162,6 +232,10 @@ class SendTransport(httpx2.AsyncBaseTransport):
             raise ServiceError(413, "model_input_too_large", "模型请求超过本操作上限")
         self.observation.request_bytes = len(content)
         self.observation.request_budget = self.validate(request)
+        if self.observation.pricing_profile is not None:
+            self.observation.pricing_context = request_context(
+                request, self.observation.pricing_profile
+            )
         self.observation.phase = "admission"
         secret = await self.before_send()
         # Authorization and committed registration precede the only physical send.

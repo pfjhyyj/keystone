@@ -27,6 +27,29 @@ class ModelInvocation(Base):
             "AND octet_length(result_context::text) <= 16384)",
             name="invocation_result_context",
         ),
+        CheckConstraint(
+            "estimate_status IN ('pending','estimated','partial','unavailable','invalid')",
+            name="invocation_estimate_status",
+        ),
+        CheckConstraint(
+            "(estimate_status = 'estimated' AND estimate_amount IS NOT NULL "
+            "AND estimate_amount >= 0 AND estimate_amount < 1e20 "
+            "AND estimate_currency IS NOT NULL) OR "
+            "(estimate_status <> 'estimated' AND estimate_amount IS NULL)",
+            name="invocation_estimate_amount",
+        ),
+        *(
+            CheckConstraint(
+                f"{field} IS NULL OR (jsonb_typeof({field}) = 'object' "
+                f"AND octet_length({field}::text) <= {limit})",
+                name=f"invocation_{field}",
+            )
+            for field, limit in (
+                ("estimate_snapshot", 24576),
+                ("estimate_facts", 8192),
+                ("estimate_detail", 16384),
+            )
+        ),
         Index("ix_model_invocations_user_time", "user_id", "created_at", "id"),
         Index("ix_model_invocations_time", "created_at", "id"),
         Index(
@@ -68,6 +91,18 @@ class ModelInvocation(Base):
     status: Mapped[str] = mapped_column(String(16), default="running")
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     usage: Mapped[dict | None] = mapped_column(JSONB)
+    estimate_snapshot: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    estimate_facts: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    estimate_status: Mapped[str] = mapped_column(
+        String(16), default="unavailable", server_default="unavailable"
+    )
+    estimate_amount: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
+    estimate_currency: Mapped[str | None] = mapped_column(String(3))
+    estimate_reason: Mapped[str | None] = mapped_column(
+        String(64), default="legacy_no_snapshot", server_default="legacy_no_snapshot"
+    )
+    estimate_detail: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    estimate_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cost_amount: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
     cost_unit: Mapped[str | None] = mapped_column(String(32))
     cost_source: Mapped[str] = mapped_column(String(16), default="unknown")

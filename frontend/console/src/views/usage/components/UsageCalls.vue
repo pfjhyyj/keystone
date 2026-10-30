@@ -8,9 +8,18 @@ import {
   type ModelOperation,
 } from '../../../api/models'
 import ListPager from '../../../components/ListPager.vue'
+import { estimateStates } from '../../../api/pricing'
 import MoneyAmount from '../../../components/MoneyAmount.vue'
 import { statisticsTime } from '../time'
-defineProps<{ rows: Invocation[]; page: number; loading: boolean }>()
+withDefaults(
+  defineProps<{
+    rows: Invocation[]
+    page: number
+    loading: boolean
+    costBasis?: 'actual' | 'estimated'
+  }>(),
+  { costBasis: 'estimated' },
+)
 defineEmits<{
   page: [value: number]
   select: [value: string]
@@ -58,12 +67,23 @@ defineEmits<{
             }}<small class="truncate" :title="row.error_code">{{ row.error_code }}</small></template
           ></el-table-column
         >
-        <el-table-column label="费用 / 核对状态" min-width="170"
+        <el-table-column
+          :label="costBasis === 'estimated' ? '预估费用 / 状态' : '上游实扣 / 核对状态'"
+          min-width="170"
           ><template #default="{ row }"
-            ><span v-if="row.cost_amount === null">未知</span
-            ><MoneyAmount v-else :amount="row.cost_amount" :unit="row.cost_unit" /><small>{{
-              costCheckStates[row.cost_check_status] ?? row.cost_check_status
-            }}</small></template
+            ><template v-if="costBasis === 'estimated'"
+              ><span v-if="row.estimate_amount == null || !row.estimate_currency">暂无法预估</span
+              ><MoneyAmount
+                v-else
+                :amount="row.estimate_amount"
+                :unit="row.estimate_currency"
+              /><small>{{ estimateStates[row.estimate_status ?? 'unavailable'] }}</small></template
+            ><template v-else
+              ><span v-if="row.cost_amount == null || !row.cost_unit">未知</span
+              ><MoneyAmount v-else :amount="row.cost_amount" :unit="row.cost_unit" /><small>{{
+                costCheckStates[row.cost_check_status] ?? row.cost_check_status
+              }}</small></template
+            ></template
           ></el-table-column
         >
         <el-table-column label="Flow / 步骤" min-width="180"

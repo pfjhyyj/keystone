@@ -23,6 +23,8 @@ import ChannelPicker from './components/ChannelPicker.vue'
 import UpstreamModelPicker from './components/UpstreamModelPicker.vue'
 import ModelProbe from './components/ModelProbe.vue'
 import ChannelBalance from './components/ChannelBalance.vue'
+import PricingDialog from './components/PricingDialog.vue'
+const pricingEntry = ref<ModelEntry | null>(null)
 const channels = usePagedList('model:manage', modelApi.channels),
   entries = usePagedList('model:manage', modelApi.entries)
 const { busy, error, notice, run } = useAction()
@@ -495,6 +497,23 @@ onMounted(() => {
                     .join('、')
                 }}</template></el-table-column
               >
+              <el-table-column label="预估价格" min-width="115"
+                ><template #default="{ row }"
+                  ><el-button
+                    type="primary"
+                    link
+                    native-type="button"
+                    @click="pricingEntry = row"
+                    >{{
+                      row.pricing_mode === 'override'
+                        ? '自定义价格'
+                        : row.pricing_mode === 'disabled'
+                          ? '预估已关闭'
+                          : '继承参考价'
+                    }}</el-button
+                  ></template
+                ></el-table-column
+              >
               <el-table-column label="状态" min-width="90"
                 ><template #default="{ row: row }"
                   ><StatusTag :status="row.is_active ? 'active' : 'disabled'">{{
@@ -812,6 +831,12 @@ onMounted(() => {
       </form>
     </AppDialog>
   </section>
+  <PricingDialog
+    v-if="pricingEntry"
+    :entry="pricingEntry"
+    @close="pricingEntry = null"
+    @saved="entries.reload()"
+  />
 </template>
 
 <style scoped>

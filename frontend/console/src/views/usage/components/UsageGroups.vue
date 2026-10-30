@@ -18,6 +18,7 @@ import {
 import AppSelect from '../../../components/AppSelect.vue'
 import MoneyAmount from '../../../components/MoneyAmount.vue'
 import ListPager from '../../../components/ListPager.vue'
+import { estimateStates } from '../../../api/pricing'
 const props = defineProps<{
   rows: UsageGroup[]
   dimension: Dimension
@@ -27,6 +28,7 @@ const props = defineProps<{
   order: string
   unit: string
   units: string[]
+  costBasis?: 'actual' | 'estimated'
 }>()
 const emit = defineEmits<{
   dimension: [value: Dimension]
@@ -35,6 +37,15 @@ const emit = defineEmits<{
   drill: [filters: Record<string, string>]
 }>()
 const grouping = computed({ get: () => props.dimension, set: (value) => emit('dimension', value) })
+const availableDimensions = computed(() =>
+  Object.fromEntries(
+    Object.entries(dimensions).filter(([key]) =>
+      props.costBasis === 'actual'
+        ? key !== 'estimate_status'
+        : !['cost_status', 'cost_source'].includes(key),
+    ),
+  ),
+)
 const ordering = computed({
   get: () => (props.order === 'calls' ? 'calls' : props.unit),
   set: (value) =>
@@ -45,6 +56,7 @@ const ordering = computed({
 })
 function label(row: UsageGroup) {
   if (row.key === null) return row.label
+  if (props.dimension === 'estimate_status') return estimateStates[row.key] ?? row.label
   return props.dimension === 'source'
     ? (sourceLabels[row.key] ?? row.label)
     : props.dimension === 'cost_source'
@@ -64,7 +76,11 @@ function label(row: UsageGroup) {
       <h2>维度分析</h2>
       <div class="row-actions group-controls">
         <AppSelect v-model="grouping" aria-label="分析维度"
-          ><el-option v-for="(text, key) in dimensions" :key="key" :value="key" :label="text"
+          ><el-option
+            v-for="(text, key) in availableDimensions"
+            :key="key"
+            :value="key"
+            :label="text"
         /></AppSelect>
         <AppSelect v-model="ordering" aria-label="分组排序"
           ><el-option value="calls" label="调用次数从高到低" /><el-option

@@ -16,7 +16,11 @@ from keystone.platform.model_access.schemas.diagnostics import (
 from keystone.platform.model_access.schemas.images import ImageManifest
 from keystone.platform.model_access.services.cost_recovery import bind_missing_cost_context
 from keystone.platform.model_access.services.costs import CostService
-from keystone.platform.model_access.services.queries import history_filters, history_scope
+from keystone.platform.model_access.services.queries import (
+    cost_columns,
+    history_filters,
+    history_scope,
+)
 
 
 class InvocationService:
@@ -167,23 +171,25 @@ class InvocationService:
     async def summary(self, **filters):
         async with self.identity.access("model_invocation:read") as (session, auth):
             conditions = await history_filters(session, auth, **filters)
+            estimated = filters.get("cost_basis") == "estimated"
+            amount, unit, check_status = cost_columns(filters.get("cost_basis"))
             # One SQL snapshot keeps status counts and cost totals consistent during completion.
             groups = (
                 await session.execute(
                     select(
                         ModelInvocation.status,
                         ModelInvocation.channel_id,
-                        ModelInvocation.cost_unit,
-                        ModelInvocation.cost_check_status,
-                        func.sum(ModelInvocation.cost_amount),
+                        unit,
+                        check_status,
+                        func.sum(amount),
                         func.count(),
                     )
                     .where(*conditions)
                     .group_by(
                         ModelInvocation.status,
                         ModelInvocation.channel_id,
-                        ModelInvocation.cost_unit,
-                        ModelInvocation.cost_check_status,
+                        unit,
+                        check_status,
                     )
                 )
             ).all()
@@ -208,7 +214,8 @@ class InvocationService:
                 "attempts_by_status": statuses,
                 "unknown_cost_attempts": unknown,
                 "known_costs": list(known.values()),
-                "cost_checks": checks,
+                "cost_checks": {} if estimated else checks,
+                **({"cost_basis": "estimated", "estimate_statuses": checks} if estimated else {}),
             }
 
     async def refresh_cost(self, identifier):

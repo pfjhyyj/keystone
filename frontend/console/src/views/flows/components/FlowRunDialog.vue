@@ -90,7 +90,7 @@ async function refresh() {
           return
         }
         try {
-          const value = await request<Costs>(`/flow-runs/${props.id}/costs`)
+          const value = await request<Costs>(`/flow-runs/${props.id}/costs?cost_basis=estimated`)
           if (current()) {
             costs.value = value
             costError.value = ''
@@ -290,7 +290,7 @@ onScopeDispose(() => {
         />
       </section>
       <section v-show="detailTab === 'costs'">
-        <h3>模型调用费用 · 最近 30 天</h3>
+        <h3>模型调用预估费用 · 最近 30 天</h3>
         <el-alert v-if="costError" role="alert" type="error" show-icon :closable="false">{{
           costError
         }}</el-alert>

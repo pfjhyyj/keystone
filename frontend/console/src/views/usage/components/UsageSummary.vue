@@ -1,18 +1,24 @@
 <script setup lang="ts">
 import { type UsageMetrics, percent, duration } from '../../../api/modelUsage'
 import MoneyAmount from '../../../components/MoneyAmount.vue'
-defineProps<{ value: UsageMetrics }>()
+withDefaults(defineProps<{ value: UsageMetrics; costBasis?: 'actual' | 'estimated' }>(), {
+  costBasis: 'estimated',
+})
 defineEmits<{ drill: [filters: Record<string, string>] }>()
 </script>
 <template>
   <section aria-label="用量费用总览" class="usage-cards">
     <article class="usage-card">
-      <h2>已知费用</h2>
+      <h2>{{ costBasis === 'estimated' ? '预估费用' : '上游实扣' }}</h2>
       <p v-for="cost in value.costs" :key="cost.unit">
         <strong><MoneyAmount :amount="cost.amount" :unit="cost.unit" /></strong>
       </p>
       <p v-if="!value.costs.length">暂无已知费用</p>
-      <small>单位分别统计，包含已收费的失败调用。</small>
+      <small>{{
+        costBasis === 'estimated'
+          ? '币种分别统计，缺失计量不作为零费用。'
+          : '单位分别统计，包含已收费的失败调用。'
+      }}</small>
     </article>
     <article class="usage-card">
       <h2>调用次数</h2>
@@ -34,10 +40,28 @@ defineEmits<{ drill: [filters: Record<string, string>] }>()
       <div class="coverage-actions">
         <el-button link native-type="button" @click="$emit('drill', { cost_known: 'false' })"
           >费用未知：{{ value.unknown_cost_calls }} 次</el-button
-        ><el-button link native-type="button" @click="$emit('drill', { cost_status: 'pending' })"
-          >等待核对：{{ value.pending_calls }} 次</el-button
+        ><el-button
+          link
+          native-type="button"
+          @click="
+            $emit(
+              'drill',
+              costBasis === 'estimated'
+                ? { estimate_status: 'pending' }
+                : { cost_status: 'pending' },
+            )
+          "
+          >{{ costBasis === 'estimated' ? '等待计量' : '等待核对' }}：{{
+            value.pending_calls
+          }}
+          次</el-button
         >
       </div>
+      <p v-if="value.estimate_coverage">
+        计量不完整 {{ value.estimate_coverage.partial ?? 0 }} · 无法预估
+        {{ value.estimate_coverage.unavailable ?? 0 }} · 异常
+        {{ value.estimate_coverage.invalid ?? 0 }}
+      </p>
     </article>
     <article class="usage-card">
       <h2>输入 / 输出 Token</h2>

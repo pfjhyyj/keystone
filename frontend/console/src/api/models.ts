@@ -1,4 +1,5 @@
 import { request } from './client'
+import type { EstimateResult, PriceSource } from './pricing'
 export interface Channel {
   id: string
   name: string
@@ -36,6 +37,8 @@ export const operationLabels: Record<ModelOperation, string> = {
   'image.edit': '图片编辑',
 }
 export interface ModelEntry {
+  pricing_mode?: 'inherit' | 'override' | 'disabled'
+  pricing_revision?: number
   id: string
   key: string
   name?: string
@@ -58,6 +61,14 @@ export interface MediaResult {
   files?: { file_id: string }[]
 }
 export interface Invocation {
+  estimate_status?: string
+  estimate_amount?: string | null
+  estimate_currency?: string | null
+  estimate_reason?: string | null
+  estimate_detail?: EstimateResult['detail']
+  estimate_source?: Partial<PriceSource>
+  estimate_checked_at?: string | null
+  pricing_revision?: number | null
   channel_name?: string
   model_name?: string
   model_key?: string
@@ -88,6 +99,8 @@ export interface Invocation {
   flow_context: Record<string, unknown> | null
 }
 export interface Costs {
+  cost_basis?: 'estimated' | 'actual'
+  estimate_statuses?: Record<string, number>
   cost_checks?: Record<string, number>
   attempts_by_status: Record<string, number>
   unknown_cost_attempts: number

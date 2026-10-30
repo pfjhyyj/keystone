@@ -51,8 +51,12 @@ async def steps(identifier: UUID, request: Request):
 
 
 @router.get("/flow-runs/{identifier}/costs")
-async def costs(identifier: UUID, request: Request):
-    return await request.app.state.runtime.flow_costs(access_context(request)).execute(identifier)
+async def costs(
+    identifier: UUID, request: Request, cost_basis: Literal["actual", "estimated"] = "actual"
+):
+    return await request.app.state.runtime.flow_costs(access_context(request)).execute(
+        identifier, cost_basis=cost_basis
+    )
 
 
 @router.get("/flow-runs/{identifier}/diagnostics", response_model=Diagnostics)

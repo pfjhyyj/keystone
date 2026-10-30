@@ -4,8 +4,9 @@ import { testDirectMedia } from './models-media'
 
 test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through the console UI', async ({
   page,
-}) => {
+}, testInfo) => {
   test.setTimeout(180000)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
   const errors: string[] = []
   await watchWindowErrors(page, errors)
   page.on('pageerror', (error) => errors.push(error.message))
@@ -80,6 +81,40 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
     }
     await dialog.getByRole('button', { name: '创建模型', exact: true }).click()
     await expect(dialog).toBeHidden()
+    const modelRow = page.getByRole('row').filter({ hasText: `${provider}_chat` })
+    await modelRow.getByRole('button', { name: '继承参考价', exact: true }).click()
+    const pricing = page.getByRole('dialog')
+    await expect(pricing).toContainText('没有匹配此渠道和上游模型的参考价')
+    await pricing.getByText('自定义', { exact: true }).click()
+    await expect(pricing.getByRole('radio', { name: '自定义', exact: true })).toBeChecked()
+    await choose(pricing, '币种', 'USD')
+    await choose(pricing, '币种', 'CNY')
+    await pricing.getByLabel('全部输入单价', { exact: true }).fill('2')
+    await pricing.getByLabel('全部输出（含推理）单价', { exact: true }).fill('8')
+    if (provider === 'openrouter') {
+      await page.screenshot({ path: testInfo.outputPath('pricing-desktop.png'), fullPage: true })
+      await page.setViewportSize({ width: 390, height: 844 })
+      await expect
+        .poll(() =>
+          pricing.evaluate((element) => {
+            const rect = element.getBoundingClientRect()
+            return rect.left >= 0 && rect.right <= innerWidth
+          }),
+        )
+        .toBe(true)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      )
+      await page.screenshot({ path: testInfo.outputPath('pricing-mobile.png'), fullPage: true })
+      await page.setViewportSize({ width: 1440, height: 1000 })
+    }
+    await pricing.getByText('保存前试算', { exact: true }).click()
+    await pricing.getByRole('button', { name: '填入示例计量', exact: true }).click()
+    await pricing.getByRole('button', { name: '试算当前草稿', exact: true }).click()
+    await expect(pricing.getByRole('status')).toContainText('0.0036 CNY')
+    await pricing.getByRole('button', { name: '保存价格', exact: true }).click()
+    await expect(pricing).toBeHidden()
+    await expect(modelRow.getByRole('button', { name: '自定义价格', exact: true })).toBeVisible()
     await page.getByRole('tab', { name: '调用测试', exact: true }).click()
     const probe = page.getByRole('region', { name: '真实调用', exact: true })
     await probe.getByRole('button', { name: '刷新可用模型' }).click()
@@ -108,6 +143,10 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await expect(page.getByRole('heading', { name: '用量与费用', exact: true })).toBeVisible()
   await expect(page.getByRole('combobox', { name: '统计时区', exact: true })).toHaveCount(0)
   const overview = page.getByRole('region', { name: '用量费用总览', exact: true })
+  await expect(overview).toContainText('预估费用')
+  await expect(overview).toContainText('CNY')
+  // Existing billing reconciliation keeps its independently selected actual basis.
+  await page.goto('model-usage?cost_basis=actual')
   await expect(overview).toContainText('费用未知：2 次')
   await expect(overview).toContainText('0.0012')
   for (const label of ['趋势指标', '分析维度', '分组排序']) {
@@ -223,7 +262,7 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await expect(dialog.locator('.detail-summary .el-tag')).toHaveText('已完成', { timeout: 35000 })
   await expect(dialog).toContainText('模拟审查已完成')
   await dialog.getByRole('tab', { name: '调用费用', exact: true }).click()
-  await expect(dialog).toContainText('0.0024 credits')
+  await expect(dialog).toContainText('0.000176 CNY')
   await dialog.getByRole('tab', { name: '执行与结果', exact: true }).click()
   await expect(dialog.locator('.el-timeline-item').first()).toBeVisible()
   await dialog.getByRole('tab', { name: '预算与关联', exact: true }).click()

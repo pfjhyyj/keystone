@@ -9,6 +9,10 @@ from sqlalchemy import select
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.model_access.adapters.channels import channel_adapter
+from keystone.platform.model_access.adapters.inference.pricing import (
+    PROFILES,
+    normalize_pricing_facts,
+)
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.schemas.errors import QueryLater
 from keystone.platform.model_access.schemas.images import (
@@ -21,7 +25,9 @@ from keystone.platform.model_access.schemas.images import (
     ImageTaskRequest,
 )
 from keystone.platform.model_access.schemas.invocations import InvocationContext
+from keystone.platform.model_access.schemas.pricing import PricingFacts
 from keystone.platform.model_access.services.cost_policy import initialize_check
+from keystone.platform.model_access.services.pricing import apply_estimate
 from keystone.platform.model_access.services.queries import locked
 from keystone.platform.model_access.services.runtime import ModelRuntime
 
@@ -55,6 +61,7 @@ def interrupted(row, code):
         row.finished_at = row.updated_at = utcnow()
         if row.cost_deadline_at is None:
             initialize_check(row, row.finished_at)
+        apply_estimate(row)
 
 
 async def abandon_in_transaction(session, run_id):
@@ -239,7 +246,9 @@ class ImageTaskService:
                 retry_after_seconds=max(1, min(60, math.ceil((due - now).total_seconds()))),
             )
 
-    async def known_status(self, identifier, selected, context, status, *, manifest=None):
+    async def known_status(
+        self, identifier, selected, context, status, *, manifest=None, generated=None
+    ):
         async with self.identity.database.transaction() as session:
             row = await locked(session, ModelInvocation, identifier)
             self.require_original(row, selected, context)
@@ -255,6 +264,33 @@ class ImageTaskService:
             row.updated_at = utcnow()
             if row.cost_deadline_at is None:
                 initialize_check(row, row.finished_at)
+            if generated is not None:
+                facts = normalize_pricing_facts(
+                    PROFILES["kling_images.v1"],
+                    {},
+                    complete=True,
+                    success=True,
+                    generated=generated,
+                )
+                try:
+                    prior = (
+                        PricingFacts.model_validate(row.estimate_facts)
+                        if row.estimate_facts
+                        else None
+                    )
+                    previous = prior.values.get("usage.generated_images") if prior else None
+                    if (
+                        prior
+                        and prior.error
+                        or previous is not None
+                        and previous.value != generated
+                    ):
+                        facts.error = "meter_conflict"
+                except ValueError:
+                    facts.error = "meter_conflict"
+                apply_estimate(row, facts)
+            else:
+                apply_estimate(row)
 
     async def poll(self, identifier, *, selected, context):
         task, pending = await self.reserve_query(identifier, selected, context)
@@ -273,7 +309,9 @@ class ImageTaskService:
                 if state == "failed":
                     await self.known_status(identifier, selected, context, "failed")
                     raise ServiceError(502, "model_task_failed", "原图片任务已明确失败")
-                await self.known_status(identifier, selected, context, "succeeded")
+                await self.known_status(
+                    identifier, selected, context, "succeeded", generated=len(urls)
+                )
                 outputs, contents = [], []
                 for index, url in enumerate(urls):
                     await self.credentials(selected)

@@ -10,11 +10,13 @@ CATALOG = Catalog(
         "model_invocation:read_all": "扩大模型调用查询至全部用户",
     },
     audit_actions={
+        "model.pricing.update": {"before_hash", "after_hash", "revision"},
         "model.channel.delete": {"name", "provider"},
         "model.entry.delete": {"key", "name"},
         "model.cost.recheck": {"previous_status"},
         "model.cost.bind": {"source"},
         "model.channel.create": {
+            "workspace_id",
             "after",
             "api_base",
             "api_key_changed",
@@ -28,6 +30,7 @@ CATALOG = Catalog(
             "upstream_account_ref",
         },
         "model.channel.update": {
+            "workspace_id",
             "after",
             "api_base",
             "api_key_changed",

@@ -62,7 +62,12 @@ async def history_filters(
     cost_unit=None,
     error_code=None,
     missing=None,
+    cost_basis="actual",
+    estimate_status=None,
 ):
+    if cost_basis == "estimated" and (cost_status is not None or cost_source is not None):
+        raise ServiceError(422, "invalid_cost_basis", "预估口径不支持实扣状态或来源过滤")
+    amount, unit, _ = cost_columns(cost_basis)
     since, until = await history_range(session, since, until)
     filters = history_scope(auth) + [
         ModelInvocation.created_at >= since,
@@ -80,7 +85,8 @@ async def history_filters(
         (ModelInvocation.operation, operation),
         (ModelInvocation.cost_check_status, cost_status),
         (ModelInvocation.cost_source, cost_source),
-        (ModelInvocation.cost_unit, cost_unit),
+        (ModelInvocation.estimate_status, estimate_status),
+        (ModelInvocation.estimate_currency if cost_basis == "estimated" else unit, cost_unit),
         (ModelInvocation.error_code, error_code),
         (ModelInvocation.flow_context["node_key"].astext, node_key),
         (ModelInvocation.flow_context["model_role"].astext, model_role),
@@ -101,11 +107,7 @@ async def history_filters(
     if source is not None:
         filters.append(invocation_source() == source)
     if cost_known is not None:
-        filters.append(
-            ModelInvocation.cost_amount.is_not(None)
-            if cost_known
-            else ModelInvocation.cost_amount.is_(None)
-        )
+        filters.append(amount.is_not(None) if cost_known else amount.is_(None))
     for dimension in missing.split(",") if missing else []:
         columns = {
             "flow_run": ModelInvocation.flow_context["flow_run_id"].astext,
@@ -116,6 +118,18 @@ async def history_filters(
         }
         filters.append(columns[dimension].is_(None))
     return filters
+
+
+def cost_columns(basis):
+    if basis == "estimated":
+        return (
+            ModelInvocation.estimate_amount,
+            case(
+                (ModelInvocation.estimate_status == "estimated", ModelInvocation.estimate_currency)
+            ),
+            ModelInvocation.estimate_status,
+        )
+    return ModelInvocation.cost_amount, ModelInvocation.cost_unit, ModelInvocation.cost_check_status
 
 
 def invocation_source():

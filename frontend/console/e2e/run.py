@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -43,6 +44,24 @@ def _log_tail(path, limit=2000):
     return value[-limit:]
 
 
+@contextmanager
+def _temporary_directory():
+    resource = tempfile.TemporaryDirectory(prefix="keystone_console_")
+    try:
+        yield resource.name
+    finally:
+        # Windows may release inherited log handles just after taskkill has returned.
+        # Retry sharing violations only; persistent handles and other errors still fail.
+        for attempt in range(30):
+            try:
+                resource.cleanup()
+                break
+            except PermissionError as error:
+                if getattr(error, "winerror", None) not in {32, 33} or attempt == 29:
+                    raise
+                time.sleep(0.1)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("playwright_args", nargs=argparse.REMAINDER)
@@ -74,7 +93,7 @@ def main():
         process = None
         worker_process = None
         try:
-            with tempfile.TemporaryDirectory(prefix="keystone_console_") as directory:
+            with _temporary_directory() as directory:
                 root = Path(directory) / "storage"
                 initialize(root)
                 settings = Settings(

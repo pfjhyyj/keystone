@@ -12,7 +12,11 @@ from keystone.core.time_range import history_range
 from keystone.platform.identity.services.subjects import user_labels_in_transaction
 from keystone.platform.model_access.models import Channel, ModelEntry
 from keystone.platform.model_access.models import ModelInvocation as Call
-from keystone.platform.model_access.services.queries import history_filters, invocation_source
+from keystone.platform.model_access.services.queries import (
+    cost_columns,
+    history_filters,
+    invocation_source,
+)
 
 STATISTICS_TIMEZONE = "Asia/Shanghai"
 
@@ -30,6 +34,7 @@ DIMENSIONS = {
     "status": (Call.status, "status"),
     "cost_status": (Call.cost_check_status, "cost_status"),
     "cost_source": (Call.cost_source, "cost_source"),
+    "estimate_status": (Call.estimate_status, "estimate_status"),
     "error": (Call.error_code, "error_code"),
 }
 COUNTS = (
@@ -57,8 +62,8 @@ def token_value(field):
     )
 
 
-def metrics(row):
-    return {
+def metrics(row, *, estimated=False):
+    values = {
         **{field: int(row[field] or 0) for field in COUNTS},
         "unknown_cost_calls": int((row["calls"] or 0) - (row["known_calls"] or 0)),
         "input_tokens": str(row["input_tokens"]) if row["input_tokens"] is not None else None,
@@ -70,6 +75,15 @@ def metrics(row):
         if row["p95_duration_ms"] is not None
         else None,
     }
+    if estimated:
+        values["estimate_coverage"] = {
+            key: int(row[f"{key}_calls"] or 0)
+            for key in ("partial", "unavailable", "invalid", "legacy", "price_missing")
+        }
+        values["estimate_coverage"].update(
+            estimated=values["known_calls"], pending=values["pending_calls"]
+        )
+    return values
 
 
 def cost(row):
@@ -128,6 +142,7 @@ class StatisticsService:
                 raise ServiceError(422, "invalid_time_range", "按小时统计最多查询 31 天")
             filters = {**query.filters(), "since": since, "until": until}
             conditions = await history_filters(session, auth, **filters)
+            amount, unit, check_status = cost_columns(query.cost_basis)
             key = DIMENSIONS[query.group_by][0]
             duration = case(
                 (
@@ -141,10 +156,11 @@ class StatisticsService:
                     func.date_trunc(query.bucket, Call.created_at, STATISTICS_TIMEZONE).label(
                         "bucket"
                     ),
-                    Call.cost_unit.label("unit"),
+                    unit.label("unit"),
                     Call.status,
-                    Call.cost_check_status,
-                    Call.cost_amount,
+                    check_status.label("cost_check_status"),
+                    amount.label("cost_amount"),
+                    Call.estimate_reason,
                     token_value("input_tokens").label("input_tokens"),
                     token_value("output_tokens").label("output_tokens"),
                     duration.label("duration"),
@@ -166,6 +182,16 @@ class StatisticsService:
                     ),
                     func.count(f.cost_amount).label("known_calls"),
                     func.count().filter(f.cost_check_status == "pending").label("pending_calls"),
+                    *(
+                        func.count().filter(f.cost_check_status == state).label(f"{state}_calls")
+                        for state in ("partial", "unavailable", "invalid")
+                    ),
+                    func.count()
+                    .filter(f.estimate_reason == "legacy_no_snapshot")
+                    .label("legacy_calls"),
+                    func.count()
+                    .filter(f.estimate_reason == "price_missing")
+                    .label("price_missing_calls"),
                     func.sum(f.cost_amount).label("amount"),
                     func.sum(f.input_tokens).label("input_tokens"),
                     func.sum(f.output_tokens).label("output_tokens"),
@@ -244,14 +270,14 @@ class StatisticsService:
                 if row["mask"] == 3:
                     groups[row["key"]] = {
                         "key": row["key"],
-                        **metrics(row),
+                        **metrics(row, estimated=query.cost_basis == "estimated"),
                         "costs": [],
                         "filters": drill_filter(query.group_by, row["key"]),
                     }
                 if row["mask"] == 5:
                     trend[row["bucket"]] = {
                         "start": row["bucket"].isoformat(),
-                        **metrics(row),
+                        **metrics(row, estimated=query.cost_basis == "estimated"),
                         "costs": [],
                     }
                 if row["mask"] == 6 and (value := cost(row)) is not None:
@@ -290,11 +316,12 @@ class StatisticsService:
                 )
                 item["costs"].sort(key=lambda value: value["unit"])
             return {
+                "cost_basis": query.cost_basis,
                 "since": since.isoformat(),
                 "until": until.isoformat(),
                 "timezone": STATISTICS_TIMEZONE,
                 "summary": {
-                    **metrics(summary),
+                    **metrics(summary, estimated=query.cost_basis == "estimated"),
                     "costs": sorted(totals, key=lambda value: value["unit"]),
                 },
                 "trend": [trend[key] for key in sorted(trend)],

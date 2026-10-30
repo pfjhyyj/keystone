@@ -48,4 +48,9 @@ def entry_view(row):
             "updated_by",
         )
     }
-    return {**values, "name": row.name or row.key}
+    return {
+        **values,
+        "name": row.name or row.key,
+        "pricing_mode": (row.pricing or {}).get("mode", "inherit"),
+        "pricing_revision": row.pricing_revision,
+    }

@@ -97,8 +97,11 @@ class InferenceClient:
 
     @asynccontextmanager
     async def connect(self, provider, selected, observation, before_send, on_receipt, identifier):
+        from .pricing import profile_for
+
         base, _, _ = self.request_target(provider, selected)
         protocol = self.protocol(selected, provider=provider)
+        observation.pricing_profile = profile_for(protocol)
         seconds = getattr(protocol, "timeout_seconds", 60)
         maximum = (
             getattr(protocol, "max_input_bytes", 0) + 128 * 1024

@@ -121,6 +121,13 @@ class ModelEntryService:
             if values.get("operations") is None:
                 values.pop("operations", None)
             if row:
+                if (row.pricing or {}).get("mode") == "override" and any(
+                    key in values and values[key] != getattr(row, key)
+                    for key in ("channel_id", "provider_model", "operations")
+                ):
+                    raise ServiceError(
+                        409, "pricing_binding_changed", "请先恢复继承价格，再更换模型目标或操作"
+                    )
                 before = {
                     key: str(getattr(row, key)) if key == "channel_id" else getattr(row, key)
                     for key in values

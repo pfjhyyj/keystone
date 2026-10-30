@@ -19,7 +19,7 @@ def test_source_migrations_are_independent_of_working_directory(tmp_path, monkey
     settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == source
-    assert migrations.expected_heads(settings) == {"0009"}
+    assert migrations.expected_heads(settings) == {"0010"}
 
 
 def test_installed_package_uses_migrations_beside_working_directory(tmp_path, monkeypatch):
@@ -34,7 +34,7 @@ def test_installed_package_uses_migrations_beside_working_directory(tmp_path, mo
     settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == app / "migrations"
-    assert migrations.expected_heads(settings) == {"0009"}
+    assert migrations.expected_heads(settings) == {"0010"}
 
 
 def test_missing_migration_files_fail_before_database_access(tmp_path, monkeypatch):
@@ -61,6 +61,7 @@ def test_module_paths_and_global_sequence_follow_the_native_revision_chain():
         "flow",
         "worker",
     )
+    modules += ("model_access",)
     modules += ("model_access",)
     modules += ("model_access",)
     assert len(chain) == len(modules)

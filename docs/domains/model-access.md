@@ -2,7 +2,7 @@
 
 本模块保存渠道、模型配置、调用/用量和供应商费用；billing 与 inference Adapter 处理协议，Service 负责授权、事务和事实，后台 Task 负责核对编排。[Flow](flow.md) 通过公开 Service 固定角色选择与累计预算，不共享领域 ORM。
 
-第 1～7 节描述调用、费用和恢复契约；[第 8 节](#8-多渠道模型接入设计)维护现有渠道代码适配层与数据库的边界。渠道协议随制品发布；仍只记录、补查和统计渠道实际成本。
+第 1～7 节描述现行调用、费用和恢复契约；[第 8 节](#8-多渠道模型接入设计)维护渠道代码适配层与数据库的边界。[第 9 节](#9-单次费用预估计算器设计契约)维护已接入的可配置预估计算器；预估与渠道实扣分别保存、展示和统计。
 
 ## 1. 范围与边界
 
@@ -10,7 +10,7 @@
 
 新建渠道提供 OpenRouter、NewAPI、Yunwu、阿里云百炼（DashScope）和火山方舟（豆包），复用 OpenAI SDK 的文本对话及流式协议。NewAPI 表示兼容接口类型，默认 `https://newapiai.com/v1`，可配置HTTPS API 地址及路径前缀；使用 Key 查询参数与分页日志的 Openlux、Yunwu 兼容分支统一选择 Yunwu，分别填写 `https://api.openlux.ai/v1`、`https://yunwu.ai/v1`。已有渠道的内部 provider 与历史快照保留，Openlux 在界面归为 Yunwu 类。OpenRouter 可保存响应费用并按请求 ID 补查，Openlux/Yunwu 使用原 Token 分页核对日志；标准 NewAPI 接入文本、模型列表、Bearer Token 日志查费、账户余额与 Token 额度；Yunwu 类接入 Key 参数分页日志查费。图片理解复用受控 Chat Completions 多模态输入，仍要求模型显式声明 image.understand；图片生成和原生媒体任务按已验证站点选择，不因聊天接口兼容推断支持。DeepSeek 保留适配声明，尚未开放发送。阿里云暂按百炼/DashScope 按量付费服务设计，不把订阅额度混为账户余额。图片与异步任务能力见[模型操作与产物](#6-模型操作与产物)。
 
-渠道、模型配置、调用记录是三个主要对象；第 8 节的代码适配层继续复用它们。不做用户钱包、充值、额度扣减、计费倍率、价格表、自动渠道切换或智能路由。这里记录的是供应商侧成本，不是向 Keystone 用户收费；已有 Flow 次数/token/文件预算仍属于资源限制。
+渠道、模型配置、调用记录是三个主要对象；第 8 节的代码适配层继续复用它们。不做用户钱包、充值、额度扣减、对用户收费的倍率、自动渠道切换或智能路由。这里记录的是供应商侧成本，不是向 Keystone 用户收费；已有 Flow 次数/token/文件预算仍属于资源限制。当前没有预估价格配置；第 9 节设计在现有模型条目和调用记录上增加价格规则及预估事实。
 
 ### DashScope 与火山方舟
 
@@ -718,7 +718,7 @@ Keystone 宿主保留授权、事务、凭据读取、共享容量和取消收�
 
 ### 8.6 实际费用与统计
 
-渠道代码获取并解析上游费用事实，CostService 负责原范围校验、精确匹配、幂等和事务写回。继续使用 ModelInvocation 的 cost_amount、cost_unit、cost_source、cost_evidence 和 cost_check_status；来源为响应报告、按原请求查询或原范围日志核对，不新增费用表、价格表、估价或用户扣费。
+本节描述现行实扣链路；第 9 节另行定义预估，不能用预估结果覆盖本节事实。渠道代码获取并解析上游费用事实，CostService 负责原范围校验、精确匹配、幂等和事务写回。继续使用 ModelInvocation 的 cost_amount、cost_unit、cost_source、cost_evidence 和 cost_check_status；来源为响应报告、按原请求查询或原范围日志核对。实扣链路不承担价格配置、估价或用户扣费。
 
 响应和补查只补全同一条调用，不重复累加；回执归属冲突或同一查询证据的金额冲突标记 blocked。查询规范化替换原响应口径时保留 previous 证据，具体写回语义沿用第 3.6 节。金额用 Decimal 和原单位，仅允许依据渠道明确报告的扣费额度及单位因子规范化。公开单价乘用量、余额差和请求时长不证明实扣；明确报告的 0 才是 0。缺失、失败、取消保持未知及原因。原账务范围、锁、分页、重试和截止仍按第 3.6 节。
 
@@ -756,3 +756,176 @@ usage 按上游提供的已知计量保存；新增图片数量或视频计费�
 实际报文在登记前核对字段、模型和目标；结果检查模型、输入序号、数量、维度、有限数值和非零向量。响应继续使用现有 4 MiB 上限。沿用当前用户／PAT、固定角色绑定、稳定调用 ID、发送登记、预算、实际用量与费用；计入模型请求及实际输入 token，输入用量未知时阻止继续发送，不预留输出 token。模型调用账本不存文本／向量正文；Flow 输入、输出与检查点仍遵循原生持久化规则，不建立通用向量库或索引任务。
 
 已发送但缺少持久结果时保留原调用事实，拒绝自动重发；原 Step 检查点或业务已保存的完整结果可按各自授权恢复。取消和撤权阻止后续操作，真实发送与费用受限收尾。较大的向量不能直接塞进 64 KiB Flow 输出，业务按需保存受控文件或自己的派生索引，并负责对象权限、索引更新及过期结果拒绝。
+
+## 9. 单次费用预估计算器（设计契约）
+
+本节是已接入的价格、计量和计算契约，覆盖现有六种 Operation 及同步／异步交付，不新增推理协议。配置可表达价格，不授予模型能力，也不能补出上游没有提供的用量。
+
+### 9.1 口径与边界
+
+调用、模型、用户和 Flow 的新界面统一以“预估费用”作为主要成本统计；供应商报告／补查的实际费用作为独立事实保留。估价使用真实计量与配置价格，不宣称是实际应付金额，不自动抵扣账户免费额度、资源包、代金券或套餐。管理员可配置已知采购单价或折扣，并保留价格来源说明。
+
+预估只针对已登记的 ModelInvocation。模型列表查询、余额刷新、账单查询、图片下载、任务轮询和恢复读取均不创建新的计价次数。不同币种分别汇总；上游 credits 不隐式当作 USD 或 CNY。价格、预估和费用查证不参与现有 Flow 次数、token、文件预算的准入与结算。
+
+价格默认来自随制品发布并经核对的官方参考规则；模型条目可覆盖同一渠道的采购价格。更新默认规则有来源 URL、核对时间和版本，不在调用期间抓取官网。NewAPI／Yunwu／Openlux 等中转站不得仅凭模型名继承直连厂商价格；只有明确绑定该站点的规则或管理员覆盖才生效。
+
+当前制品内置百炼北京地域 `qwen-max`（文本／结构化）及 `text-embedding-v1/v2/v3/v4`、`qwen3.7-text-embedding`、`qwen3.7-text-embedding-flash` 的核对参考价。未收录模型、方舟 endpoint 别名和中转站须配置覆盖价；不会自动取其他模型或直连厂商的价格。目录只提供已明确核对的数据，不代表完整供应商价格表。
+
+参考 [New API 计价表达式设计](https://github.com/QuantumNous/new-api/blob/main/pkg/billingexpr/expr.md) 的用量归一化、条件定价及规则快照；本系统使用显式币种、金额和计量单位，不引入其余额扣减、用户组售价及 quota 换算。[百炼价格](https://help.aliyun.com/zh/model-studio/model-pricing)、[方舟价格](https://docs.volcengine.com/docs/ark/model-pricing?lang=zh)决定参考规则的数据，不决定计算器代码分支。
+
+### 9.2 现有协议覆盖与计量来源
+
+| 当前入口／操作 | 可用计价方式 | 计量及必须保持的边界 |
+|---|---|---|
+| Chat Completions：text.generate、text.structured、image.understand；同步、SSE、Flow Agent 共用 | 输入／输出 token、缓存价、完整上下文长度阶梯、已验证成功请求的固定费用 | transport.py 独立采集预算用量与估价白名单；兼容中转规范另行保存上游报告的缓存写入，普通输入扣除单独计价的缓存读／写。图片理解不能把附件张数换算成图片 token |
+| Embeddings：text.embed；OpenRouter、NewAPI、DashScope 已装配路径 | 输入 token 或明确配置的每次请求价格 | 一次 1～16 段文本仍是一次上游请求；采用响应 prompt_tokens，或仅在向量协议保证总量全为输入时从 total_tokens 派生。维度和文本条数不是 token；该协议的输出 token 为结构性零 |
+| OpenRouterImages：image.generate、image.edit，POST /images | 上游报告的 token 分项、成功生成张数、成功请求固定价；按有效分辨率等参数选档 | 受控返回项提供生成数量；归一化该协议实际返回的用量。请求参考图与生成图分开，不根据图片字节数推断 token |
+| OpenAIImages：Yunwu／Openlux，以及解析到对应站点的 NewAPI；image.generate、image.edit | GPT Image token 分项、按成功生成张数、按有效 size／quality 选档、成功请求固定价 | 估价按 Images 格式独立归一化 input_tokens/output_tokens 及文本／图片明细，不改变原预算 usage() 的含义。数量从受控响应项读取；SDK 生效后的 size、quality 等须在发送前固定 |
+| KlingImages：OpenLux 固定原生地址，image.generate，异步提交／查询 | 成功生成张数、成功原任务固定价，按已校验 resolution／模型选档 | task_result.images 是原任务生成数量，可能小于请求 n。当前协议不提供可用的计费秒数或 credit 数，不允许绑定这些计量项；轮询次数不计费，下载失败不把生成量清零 |
+| DeepSeek 账务声明、未安装的视频／音频发送协议 | 不开放额外计价能力 | 定义价格不能绕过协议装配；秒数、供应商 credit 等仅在具体协议提供明确计量后注册，不以 HTTP 耗时／预期视频时长代替 |
+
+所有已开放渠道由上述协议覆盖；新增同协议渠道复用对应计量规范。价格以 provider、规范化 api_base、上游模型 ID、operation、delivery 的精确绑定解析，不能按模型名子串、显示名称或角色猜测。异步任务提交使用原操作价格快照，查询／取回不重新解析。
+
+### 9.3 计算输入与用量归一化
+
+计算器只接受 `PricingSnapshot` 和 `PricingFacts`，不读取 ORM、HTTP、SDK 对象或环境变量。输入分为三部分：
+
+- `binding`：固定渠道／模型／操作／交付方式及计量规范版本；由发送登记读取的真实目标确定。
+- `context`：实际校验后报文中的价格相关参数，例如 size、quality、resolution、output_format、参考图数；以及带来源的时间事实。只保存白名单，不能保存 prompt、消息、文件内容／URL、密钥或完整供应商 JSON。max_tokens、请求 n、期望时长只能作为请求条件，不是实际计费用量。
+- `usage`／`events`：上游响应、任务终态或受控结果中的计量。每个事实记录数值、单位、来源及完整性；字段缺失与显式 0 分开。请求成功由协议语义确认，不能只看 HTTP 200 或本地文件保存是否成功。
+
+协议用普通函数提供 `normalize_pricing_facts`，并显式声明允许的字段、单位、枚举、可用 token 分区及字段是否可能缺失；管理员不能配置任意 JSONPath。调用现有 transport 的 usage() 时仍保留累计资源预算使用的 input_tokens 等字段，估价另行生成规范事实，避免改变原预算语义。
+
+完整输入长度保存为 `usage.input_total_tokens`，仅在完整上游输入计量已知时有效；用于选上下文档位。输入和输出各自选择一个明确分区：
+
+| 分区 | 计价数量 | 约束 |
+|---|---|---|
+| aggregate | input_total_tokens／output_total_tokens | 全部按统一单价，不再额外计价其缓存、图片或 reasoning 子集 |
+| cache | input_regular_tokens、input_cache_read_tokens、协议声明的各 TTL 缓存写入项 | 数量互斥，普通输入排除已单独计价的缓存；输入总长度仍包含缓存。缓存写入是否包含在原始总量由协议规范决定 |
+| modality 或 modality_cache | 协议明确提供的文本／图片等互斥计量；需要时包括模态与缓存交集 | 缺少交集时不能凭比例拆分，也不能把同一图片 token 同时计入缓存与图片收费项 |
+| reasoning | output_regular_tokens、reasoning_tokens | 只有明确拆价时使用；普通输出排除 reasoning，否则其已包含在总输出价内 |
+
+规则显式声明 input_partition、output_partition；不需要 token 的按张／按次规则使用 none。编译器拒绝总量和其子集同时收费、同一计量重复收费、单位不匹配或未在该协议声明的字段。所选分区内可能非零的计量必须逐项配置，免费项也显式设置 rate=0，不能把漏配项目当成免费；none 表示该叶子明确不按这一侧 token 计价。相同单价可直接用 aggregate，避免要求无关明细。数值不足或计量冲突时输出缺失／无效原因，不补零。
+
+当前 `chat.v1` 用于已装配直连文本规范；`relay_chat.v1` 与 OpenRouter 图片规范支持 `input_cache_write_tokens`，cache 分区须显式列出普通输入、缓存读取和缓存写入。上游未回写入计量时不补 0，也不推导普通输入；该次完整上下文仍可用于 aggregate 计价。当前没有缓存与图片模态交集、各 TTL 写入的独立计量，`modality_cache` 因而不开放；不能靠配置声明这些字段已存在。GPT Image 可按已报告的文本／图片分区计价，缺分项时为 partial。
+
+`events.upstream_success_count` 只在原请求／原任务的成功计量已确认时为 1，累计 SSE chunk、返回多张图或轮询不改变它。`usage.generated_images` 从已确认的上游生成结果项读取；与请求 n、成功下载数分开。新增秒／credit 计量必须来自明确的上游字段及单位定义，不能从请求参数、延迟或实际费用反算。
+
+### 9.4 规则结构与唯一计算路径
+
+`PriceRule` 为有版本的结构化条件树。普通表单、阶梯表和高级 JSON 编辑器都生成同一种结构；不提供 Python／JavaScript eval 或可访问文件、网络、当前时间的脚本。
+
+- 根字段为 `format=1`、`currency`、`root`。币种从系统支持的 ISO 币种选择，规则内不自动换汇。
+- branch 节点包含 `when`、`then`、`else`；then／else 必须齐全。when 仅允许白名单字段的类型匹配比较（eq、in、lt、lte、gt、gte）和有界 all／any。缺失条件不是 false，不能因此走 else 计算错误价格。
+- price 叶子包含稳定 `id`、input_partition、output_partition、1～16 个 items 和显式 factor。收费项为稳定 id、quantity、rate、per，金额为 `quantity × rate ÷ per`；叶子金额为所有收费项之和再乘 factor。rate 和 factor 用非负十进制字符串；per 是正整数，明确表示每 1 次、每张、每千／百万 token 等。已验证成功请求乘每次单价即可表示固定请求费用。条件已确定时，显式零单价项不依赖其未知数量，factor=0 的叶子结果也可确定为零；但规则引用的字段仍须通过协议／单位校验，不允许用零价藏入非法字段。
+- 同一次计算只选择一个叶子。多个阶梯使用嵌套条件，不把阶梯写成可重叠的无序规则集合。先按完整输入长度选档，再对本请求所有适用数量使用该档单价，不隐式采用超额累进算法。
+- 精度使用 Decimal，内部至少 80 位；收费项不提前舍入，总额统一 ROUND_HALF_EVEN 到 18 位小数，显示舍入不改保存值。金额必须有限且小于 1e20；rate 小于 1e20 且小数位不超过 18，per 在 1～1e12，factor 在 0～1e6。溢出是无效结果，不能钳成上限或零。
+- 一份规则 JSON 最多 16 KiB、64 个节点、深度 8、每叶最多 16 项；上下文和计量各最多 32 个字段。计量数值沿协议上限校验，token 为小于 2^63 的非负整数。拒绝重复 id、未知字段、未知版本及无法完成穷尽分支的规则。
+
+以下只是计算契约示例，**不是某个真实模型的官方报价**。该例按普通输入 2 元／百万 token、缓存读取 0.2 元／百万、输出 8 元／百万计算：
+
+```json
+{
+  "format": 1,
+  "currency": "CNY",
+  "root": {
+    "kind": "price",
+    "id": "standard",
+    "input_partition": "cache",
+    "output_partition": "aggregate",
+    "items": [
+      {"id": "input", "quantity": "usage.input_regular_tokens", "rate": "2", "per": 1000000},
+      {"id": "cache", "quantity": "usage.input_cache_read_tokens", "rate": "0.2", "per": 1000000},
+      {"id": "output", "quantity": "usage.output_total_tokens", "rate": "8", "per": 1000000}
+    ],
+    "factor": "1"
+  }
+}
+```
+
+只有在协议声明本次没有其他缓存写入类别时，该示例的 cache 分区才完整。完整输入 1000、其中缓存读取 100、输出 200 时，普通输入为 900，金额为 0.00342 CNY；reasoning 为输出子集时不再重复增加。
+
+阶梯示例是在上述 price 节点外包装 `{"kind":"branch","when":{"field":"usage.input_total_tokens","op":"lte","value":32000},"then":价格A,"else":价格B}`；这里价格A／B代表完整 price 对象，不是实际可提交 JSON。边界 32000 属于 A，32001 属于 B；缓存命中不改变该判断。图片价在叶子以 `usage.generated_images × rate / 1` 表示，按次价以 `events.upstream_success_count × rate / 1` 表示；size／quality 等使用 context 条件选叶子。
+
+时间价格在 time_basis 声明时区、日历（all_days 或仅周一至周五的 weekdays，不含法定节假日调整）及 observed_response／upstream_completed 来源；当地 pricing_date、pricing_hour、pricing_weekday 固定为事实。日历不适用返回 pricing_calendar_excluded，不能按免费处理。规则要求供应商完成时间时不能改用登记时间，缺少该事实则标明时间依据不足。规则也可显式选择本地接收完整响应时间作为估价依据，分项中须标注 observed，不能把响应头 Date 或本地读完时间包装成上游完成时间；任务查询时间不自动成为生成完成时间。当前协议未提交的 Batch、音频或视频模式不能通过新增价格分支开放。
+
+### 9.5 配置归属与快照
+
+ModelEntry 增加 `pricing`（inherit／override／disabled，override 包含按现有 operation、delivery 精确绑定的规则和来源说明）及单调递增 `pricing_revision`。同条目可能同时支持文本与图片，不能把一份 token 规则自动套给所有操作。默认 inherit，未命中默认目录时为未配置；disabled 为主动关闭，明确零价仍是有效 override。
+
+有效价格按“该 ModelEntry 对应操作的覆盖 → 精确绑定的内置目录”解析。每份内置规则有独立版本、来源 URL、核对时间和计量规范版本；JSON 哈希采用固定规范序列化。更换渠道、基址、上游模型或操作集合时重新校验价格绑定，旧覆盖不得默默继承到不同目标；仅改名称不改变价格。
+
+发送前的登记事务在锁定 Entry／Channel、复查身份和固定目标后，同时保存完整 `PricingSnapshot`。SDK 已校验的实际报文条件与规则绑定一致；该事务与创建 ModelInvocation 共用，不另建待计价调用、不触发外部请求。等待发送许可后才最终取快照，不能冻结等待前读取的过期价格。Flow 固定模型选择，不固定尚未发生的模型调用价格：同一 Run 中不同新调用使用各自登记时价格；同一调用恢复始终使用原快照。
+
+快照包含格式、规则全文、哈希、来源／版本、pricing_revision、计量规范版本、固定目标及必要的请求条件，大小最多 24 KiB。不只存可变配置 id／哈希。未配置、停用或无法解析也保存明确的解析结果，禁止结束时再用刚新增的价格补算。进程内可缓存已校验规则，缓存键包含版本和哈希，条目数有界；不能依赖缓存恢复历史。
+
+### 9.6 调用记录与结果契约
+
+在 ModelInvocation 上增加以下字段，不新增费用流水或价格实体表：
+
+| 字段 | 契约 |
+|---|---|
+| estimate_snapshot | 上述只写一次的价格和目标快照；历史无快照保持 null |
+| estimate_facts | 格式、计量规范版本、白名单事实及来源／完整性，最多 8 KiB；可随同一调用的可靠回执补全 |
+| estimate_status | pending、estimated、partial、unavailable、invalid |
+| estimate_amount、estimate_currency | estimated 时的非负 Decimal 总额和币种；其他状态总额为 null。有效零价可为 0 |
+| estimate_reason | 白名单原因，例如 price_missing、pricing_disabled、legacy_no_snapshot、metric_missing、condition_missing、meter_conflict、price_overflow |
+| estimate_detail | 命中叶子、每项数量／单位／rate／per／分项金额、factor、缺失项、规则哈希与事实哈希，最多 16 KiB |
+| estimate_checked_at | 最近一次对该快照与事实成功计算或记录缺失结果的时间 |
+
+estimated 表示配置口径下所有必需事实齐全，不表示官方实扣已确认。partial 表示有可计算分项但整体不足；已知分项仅放 detail，不作为总额参与汇总。pending 表示仍等待原调用事实；unavailable 表示缺规则／被停用／历史无快照；invalid 表示计量冲突、溢出或快照损坏。缺失原因有界，不能回传原始异常或供应商正文。
+
+`cost_amount`、`cost_unit`、`cost_source`、cost_context、cost_evidence 和 cost_check_status 继续只表达原有实扣事实；不扩充 cost_source 来混放估价，后台补查不能覆盖 estimate_*，估价也不能把实扣状态改成 confirmed。对同一快照和事实重复计算结果一致；补全回执只更新原行，不重复加总。读取、下载、轮询不能自行把计量累加。
+
+没有快照的历史记录保持 legacy_no_snapshot，不能按今天的价格伪造历史估价。历史试算使用明确选择的规则和来源标记，作为试算返回，不覆盖原调用。历史结果重放还须匹配计量规范与计算器格式版本；无法支持的版本标为不可计算，不用新解释器静默重算。
+
+### 9.7 计算接口、事务与恢复
+
+模块内路径相对 backend/src/keystone/platform/model_access/：
+
+| 位置／接口 | 职责 |
+|---|---|
+| schemas/pricing.py | PriceRule、PricingSnapshot、PricingFacts、EstimateResult，以及预览／保存 DTO；判别联合和有界字段，不读库 |
+| services/pricing_calculator.py | `validate_rule(rule, profile)` 与 `estimate(snapshot, facts) -> EstimateResult`，纯函数，无 I/O／ORM／当前时钟；一个解释器处理所有协议，不按 provider 或模型名硬编码单价 |
+| adapters/pricing/catalog.py | 显式装配的默认规则数据；版本、来源及固定绑定，不查询账户或抓网页 |
+| adapters/inference/ 具体协议 | 标准计量字段和实际请求条件的采集、归一化与完整性判断；不计算金额，不创建调用记录 |
+| services/pricing.py、entries.py | 沿 model:manage 授权编辑／预览价格、校验绑定与 pricing_revision、在成功事务内写审计；模型改绑前清除原覆盖价格 |
+| services/runtime.py、image_tasks.py、image_results.py、recovery.py | 原调用登记冻结价格，受限收尾时保存事实与预估；恢复原任务，只补全原调用 |
+| services/statistics.py 与公开调用视图 | 预估／实扣分开过滤、分币种汇总与未知覆盖数，沿用当前对象范围与权限 |
+
+管理接口：`GET /api/v1/model-entries/{id}/pricing` 返回当前配置、revision、解析到的默认规则及可用计量说明；`PUT` 同路径使用 expected_revision 原子比较更新，冲突返回 409；`POST /api/v1/model-entries/{id}/pricing/preview` 对完整草稿和人工输入的示例事实试算，返回同一计算器的分项、缺失原因或校验错误，不发送模型、不保存配置或调用记录。三者均要求 model:manage；预览响应标记 simulation=true，事实来源统一为 manual，不能作为真实调用事实写入账本。
+
+试算／保存只处理已知规则格式。规则本身无效或引用未装配字段时拒绝保存；规则合法但本次供应商漏回必需字段时记录 partial 等状态。运行时估价失败不能回滚已有调用／预算／产物的受限收尾，不能覆盖推理错误或重发模型；可识别的计价失败在同一收尾事务记录状态。数据库写入失败仍遵守现有未知结果保护，不能因估价引入另一次上游请求。
+
+同步与 SSE 在受控收尾中保存最终计量；SSE 的累计 usage 采用协议已验证的最终／完整口径，不对累计 chunk 求和。流中断后只有明确标为完整的计量才可生成总额；部分响应中的计量只生成 partial。failed／unknown 状态不证明费用为零，仍可保留明确的已发生用量。只有可信未发送证据及有效币种快照才能记录确定的零预估。
+
+图片响应或原异步任务确认成功时持久化生成数量及事件，不能等到 Files 下载完成后才采集；B64 解析失败、下载失败、取消及仅部分文件取回不抹去已确认的上游计量。Kling 同一 task_id 的轮询／恢复重复看到同一终态不再计次；未能确认生成终态或数量时保持缺失，不能用请求 n 填充。现有 Step 幂等、原调用 ID、撤权／取消和未知不重发保证不变。
+
+新增字段遵守迁移链追加规则：旧条目继承、revision 初值 0，旧调用明确没有估价快照；不重写既有 revision、旧 Flow 快照或实扣证据。只读 API 不触发估价配置迁移或抓价。审计仅保存变更操作／规则哈希／revision／绑定摘要，不存示例请求正文或秘密。
+
+### 9.8 展示与统计
+
+模型编辑页提供“继承参考价／自定义／关闭预估”，展示币种、价格来源、核对时间和适用操作；普通单价、阶梯表、按次／按张模板及高级 JSON 共用同一规则。保存前可试算；缺价格和字段不兼容有明确提示，不用 0 作为占位价格。
+
+调用列表和 Flow／用量页面以预估为新口径，详情展示规则版本、命中档位、分项与用量完整性；实扣在独立区域注明原单位与来源。公共调用视图只投影允许的估价分项／来源，不直接暴露内部快照里的 api_base、渠道秘密或私有结果证据。估价不扩大已有调用、渠道和文件权限。
+
+统计接口增加显式 `cost_basis=estimated|actual`：保留旧客户端默认 actual 的语义，新界面明确选择 estimated。同一聚合只使用一种口径，按币种、原用户／模型／操作／Flow 和已有时间范围分组；返回已完成估价数量及 pending／partial／unavailable／invalid 数量。estimated 使用 estimate_status 等明确过滤项，混传仅属于实扣的 cost_status／cost_source 时拒绝请求，不能静默按另一套状态过滤。缺金额不作零，未配置的调用不能从覆盖率分母消失，valid 0 必须计入已估价数量。
+
+独立云月账单不进入上述调用／Flow 汇总；云账单入口移除、余额是否保留及实扣补查任务是否停用，不作为计算器生效的副作用。本设计的价格保存、调用估价和预览都不需要云账务 AK/SK 或控制台登录。
+
+### 9.9 必须验证的行为
+
+| 场景 | 验证事实 |
+|---|---|
+| 普通文本／结构化／图片理解与向量批次 | 同一计量规范得到一致金额；向量 16 段不变成 16 次请求；图片输入未报告 token 时不猜测 |
+| 缓存及 reasoning | 示例 1000 输入／100 缓存／200 输出为 0.00342 CNY；总量与子集不重复收费；缺缓存交集不能造数 |
+| 长上下文档位 | 32000／32001 边界、全部命中缓存、零数量；阶梯判断依据完整上下文，不随普通输入减少改变 |
+| 零、缺失与异常 | 明确零价可得到 0；缺价格／字段、NaN、负数、布尔、数值字符串误当用量、计量超总量、金额溢出均有不同受控结果 |
+| 图片与异步任务 | 请求 2 张、确认生成 1 张按 1 张计；下载失败／恢复成功、重复查询原任务、多个 SSE chunk 不重复计价；未知原任务不重发 |
+| 精度与规则边界 | Decimal 合计后一次舍入，小额费用不显示为免费；深度、节点、体积、字段及重复项限制生效；恶意代码／任意 JSONPath 被拒绝 |
+| 时间／参数条件 | 使用已校验的有效 size／quality 和规定来源的时段；缺条件不落入 else；不支持的音频／视频／credit 规则不能保存 |
+| 配置竞争与历史 | 同一调用登记后调价仍用原规则；未来新调用用新价；覆盖、继承、停用、清除覆盖和 revision 冲突均正确；历史无快照不回填 |
+| 实扣与权限 | 预估和补查互不改写，币种／口径不混加，未知覆盖数正确；模型管理权限、PAT 交集及价格变更审计同事务 |
+| 故障与恢复 | 估价出错仍保存真实调用／用量／产物和原错误；进程重启、旧版本快照、撤权／取消后受限收尾及 DBOS Step 重放不触发新调用 |
+
+纯规则／归一化／精度验证使用 unit；字段迁移、真实登记事务、价格变更竞争、权限、跨进程／DBOS 恢复使用专用 PostgreSQL 的 integration。HTTP 使用确定性协议桩，不调用付费模型；未实现的协议不通过手造用量声称已具备真实计量能力。

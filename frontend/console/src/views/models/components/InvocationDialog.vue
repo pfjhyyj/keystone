@@ -7,6 +7,7 @@ import { useAction } from '../../../composables/useAction'
 import AppDialog from '../../../components/AppDialog.vue'
 import { statisticsTime } from '../../usage/time'
 import { feeSourceLabels } from '../../../api/modelUsage'
+import { estimateStates, estimateReasons, quantityLabels } from '../../../api/pricing'
 const props = defineProps<{ id: string }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 const row = ref<Invocation | null>(null)
@@ -55,6 +56,55 @@ onMounted(() => run(load))
           {{ row.channel_name ?? row.channel_id }} · {{ row.user_name ?? row.user_id ?? '系统' }}
         </p>
         <p v-if="row.error_code" class="detail-error">{{ row.error_code }}</p>
+        <div class="fee-focus">
+          <span>预估费用</span
+          ><strong>{{
+            row.estimate_amount == null
+              ? '暂无法预估'
+              : `${money(row.estimate_amount)} ${row.estimate_currency}`
+          }}</strong>
+          <StatusTag :status="row.estimate_status ?? 'unavailable'">{{
+            estimateStates[row.estimate_status ?? 'unavailable']
+          }}</StatusTag>
+        </div>
+        <p>
+          {{
+            estimateReasons[row.estimate_reason ?? ''] ??
+            row.estimate_reason ??
+            '按登记时价格与真实计量计算，不代表上游实扣。'
+          }}
+        </p>
+        <p v-if="row.estimate_source?.label">
+          {{ row.estimate_source.label }} · {{ row.estimate_source.version }} · 配置版本
+          {{ row.pricing_revision }}
+        </p>
+        <details v-if="row.estimate_detail?.items?.length">
+          <summary>
+            预估计算分项<span v-if="row.estimate_detail.leaf">
+              · {{ row.estimate_detail.leaf }}</span
+            >
+          </summary>
+          <dl v-for="item in row.estimate_detail.items" :key="item.id">
+            <dt>{{ quantityLabels[item.quantity] ?? item.quantity }}</dt>
+            <dd>
+              {{ item.value ?? '计量缺失' }} × {{ item.rate }} / {{ item.per }} =
+              {{ item.amount === null ? '无法计算' : money(item.amount) }}
+              {{ row.estimate_currency }}
+            </dd>
+          </dl>
+          <p v-if="row.estimate_detail.factor">
+            价格系数：{{ row.estimate_detail.factor }}；总额统一舍入至 18 位小数。
+          </p>
+          <p v-if="row.estimate_detail.missing?.length">
+            缺失：{{
+              row.estimate_detail.missing.map((key) => quantityLabels[key] ?? key).join('、')
+            }}
+          </p>
+          <p v-if="row.estimate_detail.time_basis">
+            时间依据：{{ row.estimate_detail.time_basis.source }} ·
+            {{ row.estimate_detail.time_basis.timezone }}
+          </p>
+        </details>
         <div class="fee-focus">
           <span>上游报告费用</span
           ><strong>{{

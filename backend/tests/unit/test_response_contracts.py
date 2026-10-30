@@ -30,7 +30,7 @@ CASES = [
     (
         entry_view,
         """id key name channel_id provider_model operations is_active created_at created_by
-                   updated_at updated_by""",
+                   updated_at updated_by pricing_mode pricing_revision""",
     ),
     (
         invocation_view,
@@ -38,7 +38,10 @@ CASES = [
                         upstream_request_id status finished_at usage cost_amount cost_unit
                         cost_source cost_note cost_check_status cost_check_reason
                         cost_check_rounds cost_check_errors cost_checked_at cost_next_check_at
-                        cost_deadline_at error_code created_at updated_at""",
+                        cost_deadline_at error_code created_at updated_at
+                        estimate_status estimate_amount estimate_currency estimate_reason
+                        estimate_detail
+                        estimate_source estimate_checked_at pricing_revision""",
     ),
     (
         run_view,
@@ -56,6 +59,10 @@ CASES = [
 
 
 class Row(SimpleNamespace):
+    pricing = None
+    estimate_snapshot = None
+    estimate_facts = None
+
     @property
     def __table__(self):
         raise AssertionError("An HTTP response must not enumerate ORM columns")
@@ -74,9 +81,20 @@ def test_projection_ignores_new_internal_fields():
         )
         if project is run_view:
             row.definition_snapshot = {"output_schema": {}, "output_file_fields": []}
+        if project is invocation_view:
+            row.estimate_snapshot = {
+                "binding": {"api_base": "https://private.invalid"},
+                "source": {"label": "configured", "version": "test", "private": "hidden"},
+                "revision": 1,
+            }
+            row.estimate_facts = {"private": "hidden"}
+            row.estimate_detail = {"items": [{"id": "input", "private": "hidden"}], "raw": "hidden"}
         result = project(row)
         assert set(result) == expected
         assert "future_secret" not in result
+        if project is invocation_view:
+            assert result["estimate_detail"] == {"items": [{"id": "input"}]}
+            assert result["estimate_source"] == {"label": "configured", "version": "test"}
 
 
 def test_cost_decimal_and_run_timezone_keep_wire_semantics():

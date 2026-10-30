@@ -58,13 +58,14 @@ class ChannelAdapter:
 
 # Multiple channel types reuse the same compatible implementation, with explicit limits.
 CHAT = ChatCompletions(frozenset({"text.generate", "text.structured", "image.understand"}))
+RELAY_CHAT = replace(CHAT, pricing_meter="relay_chat.v1")
 EMBEDDINGS = Embeddings()
 RELAY_IMAGES = OpenAIImages()
 CHANNELS = {
     "openrouter": ChannelAdapter(
         OPENROUTER_BASE,
         (
-            replace(CHAT, require_parameters=True),
+            replace(RELAY_CHAT, require_parameters=True),
             OpenRouterImages(),
             EMBEDDINGS,
         ),
@@ -73,15 +74,15 @@ CHANNELS = {
     ),
     "openlux": ChannelAdapter(
         "https://api.openlux.ai/v1",
-        (CHAT, RELAY_IMAGES, KlingImages()),
+        (RELAY_CHAT, RELAY_IMAGES, KlingImages()),
         Openlux(),
         models_path="/models",
     ),
     "yunwu": ChannelAdapter(
-        "https://yunwu.ai/v1", (CHAT, RELAY_IMAGES), Yunwu(), models_path="/models"
+        "https://yunwu.ai/v1", (RELAY_CHAT, RELAY_IMAGES), Yunwu(), models_path="/models"
     ),
     "newapi": ChannelAdapter(
-        "https://newapiai.com/v1", (CHAT, EMBEDDINGS), Newapi(), models_path="/models"
+        "https://newapiai.com/v1", (RELAY_CHAT, EMBEDDINGS), Newapi(), models_path="/models"
     ),
     # DeepSeek retains its billing declaration without an inference protocol.
     "deepseek": ChannelAdapter("https://api.deepseek.com", (), DeepSeek()),
@@ -118,7 +119,7 @@ def channel_adapter(provider, base=None, *, channels=None):
     return replace(
         adapter,
         api_base=base,
-        protocols=(CHAT,) if provider == "yunwu" else adapter.protocols,
+        protocols=(RELAY_CHAT,) if provider == "yunwu" else adapter.protocols,
         billing=adapter.billing.for_base(base)
         if isinstance(adapter.billing, (Newapi, Yunwu))
         else adapter.billing,
@@ -131,7 +132,7 @@ def channel_targets():
         yield (
             provider,
             None if provider in {"newapi", "yunwu"} else adapter.api_base,
-            (replace(adapter, protocols=(CHAT,)) if provider == "yunwu" else adapter),
+            (replace(adapter, protocols=(RELAY_CHAT,)) if provider == "yunwu" else adapter),
         )
     for provider in ("newapi", "yunwu"):
         for legacy in LEGACY_NEWAPI:

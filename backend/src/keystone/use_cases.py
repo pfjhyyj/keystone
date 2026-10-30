@@ -100,9 +100,11 @@ class FlowCosts:
     def __init__(self, flows, models):
         self.flows, self.models = flows, models
 
-    async def execute(self, identifier):
+    async def execute(self, identifier, *, cost_basis="actual"):
         await self.flows.detail(identifier)
-        result = await self.models.summary(flow_run_id=identifier)
+        result = await self.models.summary(
+            flow_run_id=identifier, **({"cost_basis": cost_basis} if cost_basis != "actual" else {})
+        )
         await self.flows.detail(identifier)
         return result
 

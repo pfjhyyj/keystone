@@ -31,6 +31,50 @@ const metrics: UsageMetrics = {
   p95_duration_ms: 1900,
   costs: [{ amount: '0', unit: 'USD', known_calls: 1, avg_cost: '0' }],
 }
+
+it('requests estimated costs by default and drills pending estimates with their own status', async () => {
+  authorize(['model_invocation:read'])
+  const paths: string[] = []
+  fakeApi((path) => {
+    paths.push(path)
+    if (path.includes('/statistics?'))
+      return result({
+        cost_basis: 'estimated',
+        summary: {
+          ...metrics,
+          estimate_coverage: { estimated: 1, pending: 1, partial: 0, unavailable: 0, invalid: 0 },
+          costs: [{ amount: '0.000088', unit: 'CNY', known_calls: 1, avg_cost: '0.000088' }],
+        },
+      })
+    if (path.includes('/options?')) return { items: [], has_more: false }
+    return [
+      {
+        ...calls()[0],
+        estimate_status: 'estimated',
+        estimate_amount: '0.000088',
+        estimate_currency: 'CNY',
+        cost_amount: '99',
+        cost_unit: 'credits',
+      },
+    ]
+  })
+  const { wrapper, router } = await page()
+  expect(wrapper.text()).toContain('预估费用')
+  expect(
+    paths
+      .filter((path) => path.includes('/statistics?'))
+      .every((path) => new URLSearchParams(path.split('?')[1]).get('cost_basis') === 'estimated'),
+  ).toBe(true)
+  await wrapper
+    .findAll('button')
+    .find((item) => item.text().includes('等待计量'))!
+    .trigger('click')
+  await flushPromises()
+  expect(router.currentRoute.value.query.estimate_status).toBe('pending')
+  expect(router.currentRoute.value.query.cost_status).toBeUndefined()
+  expect(wrapper.text()).toContain('CNY')
+  expect(wrapper.text()).not.toContain('99 credits')
+})
 function result(changes: Partial<UsageStatistics> = {}): UsageStatistics {
   return {
     since,

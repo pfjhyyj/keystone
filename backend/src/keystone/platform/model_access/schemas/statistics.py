@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from keystone.core.schemas import Input
 
@@ -24,11 +24,16 @@ Dimension = Literal[
     "status",
     "cost_status",
     "cost_source",
+    "estimate_status",
     "error",
 ]
 
 
 class InvocationFilters(Input):
+    cost_basis: Literal["estimated", "actual"] = "actual"
+    estimate_status: Literal["pending", "estimated", "partial", "unavailable", "invalid"] | None = (
+        None
+    )
     since: datetime | None = None
     until: datetime | None = None
     channel_id: UUID | None = None
@@ -51,6 +56,19 @@ class InvocationFilters(Input):
     cost_unit: str | None = Field(None, min_length=1, max_length=32)
     error_code: str | None = Field(None, min_length=1, max_length=64)
     missing: str | None = Field(None, max_length=100)
+
+    @model_validator(mode="after")
+    def distinct_cost_basis(self):
+        if self.cost_basis == "estimated" and (
+            self.cost_status is not None or self.cost_source is not None
+        ):
+            raise ValueError("Estimated costs do not accept actual billing filters")
+        if self.cost_basis == "actual" and self.estimate_status is not None:
+            raise ValueError("Choose estimated costs to filter estimate status")
+        dimension = getattr(self, "group_by", getattr(self, "dimension", None))
+        if self.cost_basis == "estimated" and dimension in {"cost_status", "cost_source"}:
+            raise ValueError("Choose estimate_status for estimated costs")
+        return self
 
     @field_validator("missing")
     @classmethod

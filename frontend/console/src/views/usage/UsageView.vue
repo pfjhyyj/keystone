@@ -23,6 +23,7 @@ import { uuidPattern } from '../../api/files'
 import { shanghaiInput, shanghaiDate, statisticsRange } from './time'
 import AppSelect from '../../components/AppSelect.vue'
 import InvocationDialog from '../models/components/InvocationDialog.vue'
+import { estimateStates } from '../../api/pricing'
 import FlowRunDialog from '../flows/components/FlowRunDialog.vue'
 import StatisticsPicker from './components/StatisticsPicker.vue'
 import UsageSummary from './components/UsageSummary.vue'
@@ -37,15 +38,25 @@ const scope = computed(
 )
 const text = (key: string) =>
   typeof route.query[key] === 'string' ? (route.query[key] as string) : ''
-const current = computed<Record<string, string>>(() =>
-  Object.fromEntries(filterKeys.filter((key) => text(key)).map((key) => [key, text(key)])),
-)
+const current = computed<Record<string, string>>(() => ({
+  ...Object.fromEntries(filterKeys.filter((key) => text(key)).map((key) => [key, text(key)])),
+  cost_basis:
+    text('cost_basis') === 'actual' ||
+    (!text('cost_basis') && (text('cost_status') || text('cost_source')))
+      ? 'actual'
+      : 'estimated',
+}))
+const costBasis = computed(() => (current.value.cost_basis === 'actual' ? 'actual' : 'estimated'))
 const tab = computed({
   get: () => (['overview', 'analysis', 'details'].includes(text('tab')) ? text('tab') : 'overview'),
   set: (value) => void navigate({ tab: value, invocation: null, run: null }),
 })
 const grouping = computed<Dimension>(() =>
-  Object.hasOwn(dimensions, text('group_by')) ? (text('group_by') as Dimension) : 'channel',
+  costBasis.value === 'estimated' && ['cost_status', 'cost_source'].includes(text('group_by'))
+    ? 'estimate_status'
+    : Object.hasOwn(dimensions, text('group_by'))
+      ? (text('group_by') as Dimension)
+      : 'channel',
 )
 const ordering = computed(() => (text('order_by') === 'cost' ? 'cost' : 'calls'))
 const sortUnit = computed(() => text('sort_unit') || 'USD')
@@ -67,6 +78,11 @@ const draft = reactive(
     string
   >,
 )
+function resetCostFilters() {
+  draft.cost_status = ''
+  draft.cost_source = ''
+  draft.estimate_status = ''
+}
 const validation = ref(''),
   statistics = ref<UsageStatistics | null>(null),
   statsError = ref(''),
@@ -264,6 +280,7 @@ async function apply() {
 }
 async function reset() {
   for (const key of filterKeys) draft[key] = ''
+  draft.cost_basis = costBasis.value
   setPreset('30')
   await apply()
 }
@@ -324,6 +341,8 @@ const missingLabels = computed(() =>
     .join('、'),
 )
 const filterNames: Record<string, string> = {
+  cost_basis: '费用口径',
+  estimate_status: '预估状态',
   channel_id: '渠道',
   model_entry_id: '模型',
   user_id: '用户',
@@ -345,12 +364,13 @@ const filterNames: Record<string, string> = {
 }
 const activeFilters = computed(() =>
   Object.entries(current.value)
-    .filter(([key]) => !['since', 'until'].includes(key))
+    .filter(([key]) => !['since', 'until', 'cost_basis'].includes(key))
     .map(([key, value]) => ({
       key,
       value,
       label: filterNames[key] ?? key,
       display:
+        (key === 'estimate_status' ? estimateStates[value] : undefined) ??
         sourceLabels[value as keyof typeof sourceLabels] ??
         operationLabels[value as keyof typeof operationLabels] ??
         callStates[value as keyof typeof callStates] ??
@@ -375,7 +395,7 @@ onScopeDispose(() => {
     <div class="heading">
       <div>
         <h1>用量与费用</h1>
-        <p>查看消费、调用结果与费用核对，未知费用单独统计。</p>
+        <p>查看预估费用与调用结果。预估不代表上游实扣，计量不完整的调用单独统计。</p>
       </div>
     </div>
     <template v-if="allowed">
@@ -486,6 +506,23 @@ onScopeDispose(() => {
                   :label="label" /></AppSelect
             ></label>
             <label
+              >费用口径<AppSelect
+                v-model="draft.cost_basis"
+                aria-label="费用口径"
+                @change="resetCostFilters"
+                ><el-option value="estimated" label="预估费用" /><el-option
+                  value="actual"
+                  label="上游实扣" /></AppSelect
+            ></label>
+            <label v-if="draft.cost_basis !== 'actual'"
+              >预估状态<AppSelect v-model="draft.estimate_status" aria-label="预估状态" clearable
+                ><el-option
+                  v-for="(label, key) in estimateStates"
+                  :key="key"
+                  :value="key"
+                  :label="label" /></AppSelect
+            ></label>
+            <label v-if="draft.cost_basis === 'actual'"
               >查费状态<AppSelect v-model="draft.cost_status" aria-label="查费状态" clearable
                 ><el-option
                   v-for="(label, key) in costCheckStates"
@@ -493,7 +530,7 @@ onScopeDispose(() => {
                   :value="key"
                   :label="label" /></AppSelect
             ></label>
-            <label
+            <label v-if="draft.cost_basis === 'actual'"
               >费用来源<AppSelect v-model="draft.cost_source" aria-label="费用来源" clearable
                 ><el-option
                   v-for="(label, key) in feeSourceLabels"
@@ -582,7 +619,10 @@ onScopeDispose(() => {
       <el-tabs v-model="tab">
         <el-tab-pane label="总览" name="overview"
           ><template v-if="statistics"
-            ><UsageSummary :value="statistics.summary" @drill="drill" /><UsageTrend
+            ><UsageSummary
+              :value="statistics.summary"
+              :cost-basis="costBasis"
+              @drill="drill" /><UsageTrend
               :points="statistics.trend"
               :since="statistics.since"
               :until="statistics.until"
@@ -591,6 +631,7 @@ onScopeDispose(() => {
               @drill="drill" /><UsageGroups
               :rows="statistics.groups"
               :dimension="grouping"
+              :cost-basis="costBasis"
               :page="groupPage"
               :total="statistics.total_groups"
               :order="ordering"
@@ -609,6 +650,7 @@ onScopeDispose(() => {
             v-if="statistics"
             :rows="statistics.groups"
             :dimension="grouping"
+            :cost-basis="costBasis"
             :page="groupPage"
             :total="statistics.total_groups"
             :order="ordering"
@@ -622,6 +664,7 @@ onScopeDispose(() => {
         /></el-tab-pane>
         <el-tab-pane label="调用明细" name="details"
           ><UsageCalls
+            :cost-basis="costBasis"
             v-if="!callsError"
             :rows="calls"
             :page="page"

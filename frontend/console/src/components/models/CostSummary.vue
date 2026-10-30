@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { callStates, money, type Costs } from '../../api/models'
+import { estimateStates } from '../../api/pricing'
 defineProps<{ value: Costs }>()
 </script>
 <template>
@@ -15,7 +16,17 @@ defineProps<{ value: Costs }>()
     </p>
     <p v-if="!value.known_costs.length">暂无已知费用，不代表零费用。</p>
     <p>
-      费用未知：{{ value.unknown_cost_attempts }} 次。按渠道与单位分别统计，已知费用不代表全部实扣。
+      {{ value.cost_basis === 'estimated' ? '暂无法预估' : '费用未知' }}：{{
+        value.unknown_cost_attempts
+      }}
+      次。按渠道与单位分别统计，{{
+        value.cost_basis === 'estimated' ? '预估不代表上游实扣。' : '已知费用不代表全部实扣。'
+      }}
+    </p>
+    <p v-if="value.estimate_statuses">
+      <span v-for="(count, state) in value.estimate_statuses" :key="state"
+        >{{ estimateStates[state] ?? state }}：{{ count }} 次　</span
+      >
     </p>
   </div>
 </template>

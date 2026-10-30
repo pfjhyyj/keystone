@@ -26,13 +26,19 @@ from keystone.platform.model_access.services.image_tasks import ImageTaskService
 pytestmark = pytest.mark.postgres
 
 
-def submit(client, monkeypatch, *, condition=None):
+def submit(client, monkeypatch, *, condition=None, price_config=None):
     run_id = accept(client, monkeypatch, engine=False)
     runtime = client.app.state.runtime
     run = query(client, lambda session: session.get(FlowRun, UUID(run_id)))
     selected = Selection.model_validate(
         run.definition_snapshot["model_bindings"]["generate"]["selection"]
     )
+    if price_config is not None:
+        response = client.put(
+            f"/api/v1/model-entries/{selected.model_entry_id}/pricing",
+            json={"expected_revision": 0, "config": price_config},
+        )
+        assert response.status_code == 200, response.text
     context = InvocationContext(flow_run_id=run.id, node_key="generate", model_role="generate")
     tasks = ImageTaskService(ModelEntryService(ExecutionIdentity(runtime, run.id), runtime.models))
     requests = []

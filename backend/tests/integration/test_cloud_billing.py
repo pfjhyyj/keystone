@@ -151,7 +151,7 @@ def test_cloud_credentials_are_encrypted_write_only_and_clearable(client, monkey
     assert not cleared["has_billing_api_key"]
     response = client.get(f"/api/v1/model-channels/{row['id']}/bills", params={"period": period()})
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "model_billing_credentials_required"
+    assert response.json()["code"] == "model_billing_credentials_required"
 
 
 @pytest.mark.parametrize("provider", ["aliyun_bailian", "volcengine"])

@@ -30,6 +30,7 @@ from keystone.platform.model_access.services.cost_context import bind_channel
 from keystone.platform.model_access.services.cost_policy import initialize_check
 from keystone.platform.model_access.services.diagnostics import log_failure
 from keystone.platform.model_access.services.dispatch import ModelDispatchService
+from keystone.platform.model_access.services.pricing import finish_observation, freeze_pricing
 from keystone.platform.model_access.services.queries import locked
 
 
@@ -398,6 +399,14 @@ class ModelRuntime:
                     if delay == 0:
                         if self.admission is not None:
                             await self.admission(session, identifier, observation.request_budget)
+                        pricing = freeze_pricing(
+                            entry,
+                            channel,
+                            selected.operation,
+                            selected.delivery,
+                            observation.pricing_profile,
+                            observation.pricing_context,
+                        )
                         created = await session.scalar(
                             insert(ModelInvocation)
                             .values(
@@ -421,6 +430,10 @@ class ModelRuntime:
                                 cost_source="unknown",
                                 cost_note="awaiting_response",
                                 cost_context=bind_channel(channel, self.clients),
+                                estimate_snapshot=pricing.model_dump(mode="json", by_alias=True),
+                                estimate_currency=pricing.rule.currency if pricing.rule else None,
+                                estimate_status="unavailable" if pricing.reason else "pending",
+                                estimate_reason=pricing.reason,
                             )
                             .on_conflict_do_nothing(index_elements=[ModelInvocation.id])
                             .returning(ModelInvocation.id)
@@ -488,6 +501,7 @@ class ModelRuntime:
                     else:
                         row.cost_note = "upstream_not_reported"
                     initialize_check(row, row.finished_at)
+                    finish_observation(row, observation)
                     await session.flush()
                 finished = True
             except Exception as error:
@@ -507,6 +521,7 @@ class ModelRuntime:
                 row.receipt_ids = dict(observation.receipt_ids) or None
                 row.usage = observation.usage
                 row.updated_at = utcnow()
+                finish_observation(row, observation, pending=True)
             finished = True
 
         try:
