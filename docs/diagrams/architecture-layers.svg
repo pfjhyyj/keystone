@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="640" viewBox="0 0 1040 640" role="img" aria-labelledby="title desc">
+  <title id="title">Keystone 逻辑分层</title>
+  <desc id="desc">从上至下为入口适配与执行编排、业务与平台 Service、数据存储层。PostgreSQL 为必需依赖，文件存储至少配置一个后端，支持本地文件系统、S3 等。</desc>
+  <style>
+    text { font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; font-size: 19px; fill: #20242c; text-anchor: middle; }
+    .frame { fill: #fff; stroke: #d7dce5; stroke-width: 1; }
+    .group { fill: #fff; stroke: #20242c; stroke-width: 1.8; stroke-dasharray: 2 5; }
+    .box { fill: #f0f3fb; stroke: #20242c; stroke-width: 1.8; }
+    .storage { fill: #dff3e6; stroke: #20242c; stroke-width: 1.8; }
+    .backend { fill: #f1faf4; stroke: #20242c; stroke-width: 1.5; }
+    .heading { font-weight: 600; }
+    .small { font-size: 17px; }
+  </style>
+  <rect class="frame" x="6" y="6" width="1028" height="628" rx="10"/>
+  <rect class="group" x="28" y="28" width="984" height="122" rx="5"/>
+  <text class="heading" x="520" y="56">入口适配与执行编排</text>
+  <rect class="box" x="48" y="76" width="296" height="54" rx="7"/>
+  <text x="196" y="110">HTTP Controller</text>
+  <rect class="box" x="372" y="76" width="296" height="54" rx="7"/>
+  <text x="520" y="110">Task / Workflow</text>
+  <rect class="box" x="696" y="76" width="296" height="54" rx="7"/>
+  <text x="844" y="110">命令处理</text>
+
+  <rect class="group" x="28" y="170" width="984" height="232" rx="5"/>
+  <text class="heading" x="520" y="198">应用服务层</text>
+  <rect class="box" x="48" y="220" width="236" height="156" rx="7"/>
+  <text class="heading" x="166" y="263">业务模块 Service</text>
+  <text class="small" x="166" y="302">业务规则与对象授权</text>
+  <text class="small" x="166" y="332">组合公共能力、保存结果</text>
+  <rect class="box" x="308" y="220" width="212" height="66" rx="7"/>
+  <text x="414" y="260">身份与权限</text>
+  <rect class="box" x="544" y="220" width="212" height="66" rx="7"/>
+  <text x="650" y="260">审计</text>
+  <rect class="box" x="780" y="220" width="212" height="66" rx="7"/>
+  <text x="886" y="260">字典</text>
+  <rect class="box" x="308" y="310" width="212" height="66" rx="7"/>
+  <text x="414" y="350">文件</text>
+  <rect class="box" x="544" y="310" width="212" height="66" rx="7"/>
+  <text x="650" y="350">模型接入</text>
+  <rect class="box" x="780" y="310" width="212" height="66" rx="7"/>
+  <text x="886" y="350">Flow</text>
+
+  <rect class="group" x="28" y="422" width="984" height="186" rx="5"/>
+  <text class="heading" x="520" y="450">数据存储层</text>
+  <rect class="storage" x="48" y="478" width="296" height="104" rx="7"/>
+  <text class="heading" x="196" y="520">PostgreSQL（必需）</text>
+  <text class="small" x="196" y="552">结构化数据、执行状态</text>
+  <rect class="storage" x="372" y="478" width="620" height="104" rx="7"/>
+  <text class="heading" x="682" y="507">文件存储（至少配置一个后端）</text>
+  <rect class="backend" x="396" y="524" width="272" height="40" rx="5"/>
+  <text class="small" x="532" y="550">本地文件系统</text>
+  <rect class="backend" x="692" y="524" width="276" height="40" rx="5"/>
+  <text class="small" x="830" y="550">S3 等存储后端</text>
+</svg>

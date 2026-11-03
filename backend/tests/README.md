@@ -52,3 +52,14 @@ cd backend
 `unit/test_dashscope_discovery.py` 验证原生目录分页、业务空间域名、响应投影及错误边界；`integration/test_aliyun_discovery.py` 验证真实数据库中的业务空间保存、权限、配置变更／撤权后的结果丢弃，以及迁移升级与回退的数据保留。HTTP 使用确定性协议桩，不调用付费模型。
 
 `unit/test_model_discovery.py` 覆盖火山方舟固定 GET 地址、推理 Key、ID 投影、列表大小及错误脱敏；`integration/test_model_access.py` 的火山方舟用例验证管理权限和只读查询不创建条目或调用记录。控制台 `volcengine-discovery.test.ts` 覆盖目录刷新和手填接入点保留；测试均使用 HTTP 协议桩，不调用付费模型。
+
+## 本地媒体专项验收
+
+安装可执行 FFmpeg、前端依赖及 Playwright 浏览器后，在专用 keystone_test 数据库上执行：
+
+```bash
+backend/.venv/bin/python scripts/accept_local_media.py
+# Windows 可选系统 Edge：backend/.venv/Scripts/python.exe scripts/accept_local_media.py --browser-channel msedge
+```
+
+脚本建立并清理随机测试库，运行独立 HTTP API，验证 16/256 MiB 流式上传下载、SHA-256、HEAD/Range、API 进程峰值内存，以及浏览器 H.264 播放和跳转。视频使用合法 free box 填充到指定大小，区分传输规模和媒体解码；FFmpeg 仅是验收工具，不是平台运行依赖。结果保存在 `.artifacts/local-media/`，不接触业务库、云端或模型。NAS 性能与客户原片另在部署环境验证。

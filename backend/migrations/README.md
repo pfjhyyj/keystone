@@ -30,7 +30,7 @@
 
 当前基线从 `0001` 重新编号。合并前的数据库不能仅凭相同 revision 认定结构兼容，须核对完整结构后按下述方式处理；本次整理不提供旧链的自动转换。仍带操作枚举白名单的同号旧库也不兼容；当前操作校验边界见[模型操作](../../docs/domains/model-access.md#61-操作与固定选择)。已退役旧链的 `0010`～`0012`（与当前 `0010` 价格迁移不同义） 及旧语义 revision（`identity`、`audit`、`dictionary`、`files`、`model_access`、`flow`、`core`、`model_costs`、`multi_workers`、`worker_registration`）均不能由当前链解析，须按完整结构核对。旧 embedding revision `0008` 与当前火山方舟迁移、旧链 `0009` 与当前模型列表业务空间迁移均同号但不同义，不能只凭版本号判断兼容；旧库仍按停写备份、新库初始化及数据校验流程处理。
 
-这些旧库需要在停写窗口备份并核对结构：无保留需求时可另建新库初始化；需保留数据时，先在新库初始化当前结构，再按实际结构迁移所需数据并校验，不能直接导入旧版本表或用 `stamp` 跳过差异。用户/PAT、密文及其加密密钥、文件源、调用原状态、金额、回执和 Flow 快照须保持原义；旧模型能力不按名称推断，没有预算的历史 Run 不补造预算。在途执行先由原制品收尾，DBOS 与业务数据按[备份恢复](../../docs/backup-restore.md)联合保留，不通过删除执行记录绕过恢复。
+这些旧库需要在停写窗口备份并核对结构：无保留需求时可另建新库初始化；需保留数据时，先在新库初始化当前结构，再按实际结构迁移所需数据并校验，不能直接导入旧版本表或用 `stamp` 跳过差异。用户/PAT、密文及其加密密钥、文件源、调用原状态、金额、回执和 Flow 快照须保持原义；旧模型能力不按名称推断，没有预算的历史 Run 不补造预算。在途执行先由原制品收尾，DBOS 与业务数据按[备份恢复](../../docs/operations/backup-restore.md)联合保留，不通过删除执行记录绕过恢复。
 
 Alembic 连接固定 `search_path=public`，只管理 `keystone` schema。DBOS 表及数据由执行引擎管理，业务迁移与回滚不修改它们。
 
@@ -42,7 +42,7 @@ Alembic 连接固定 `search_path=public`，只管理 `keystone` schema。DBOS �
 
 `scripts/new_business.py` 校验从 `0001` 开始的连续链，并按下一序号生成迁移；空目录从 `0001` 开始。它只读取静态字面量元数据，支持普通及带类型注解的赋值；在写业务文件前检查平铺路径、命名、重复序号/revision、序号连续性和线性依赖。子目录、重复声明、动态元数据、分支和额外依赖均拒绝，不导入或执行历史迁移。
 
-`--migrations` 必须指向 `versions` 目录；实际接入须包含当前完整链，空目录仅用于独立评审或测试。已有 `<namespace>_initial` 时不允许重复建表，仅补回代码可用 `--no-migration`。生成表名 `<namespace>_<entity>` 最多 63 字符，接入步骤见[业务扩展](../../docs/extending.md#2-接入实体与迁移)。
+`--migrations` 必须指向 `versions` 目录；实际接入须包含当前完整链，空目录仅用于独立评审或测试。已有 `<namespace>_initial` 时不允许重复建表，仅补回代码可用 `--no-migration`。生成表名 `<namespace>_<entity>` 最多 63 字符，接入步骤见[业务扩展](../../docs/development/business.md#接入实体与迁移)。
 
 平台与业务模型由 `keystone.model_registry.load_models()` 显式加载，bootstrap 与 `env.py` 共用该入口；业务实体共享 Base/keystone schema，模型注册不导入 API、workflow 或初始化数据。
 

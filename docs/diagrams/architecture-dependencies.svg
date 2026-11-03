@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="494" viewBox="0 0 1040 494" role="img" aria-labelledby="title desc">
+  <title id="title">Keystone 外部依赖</title>
+  <desc id="desc">当前部署需要 PostgreSQL、本地协调卷和至少一个文件存储后端。本地文件系统与 S3 可同时配置。模型和账务接口按业务需要接入。</desc>
+  <style>
+    text { font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; font-size: 19px; fill: #20242c; text-anchor: middle; }
+    .frame { fill: #fff; stroke: #d7dce5; stroke-width: 1; }
+    .group { fill: #f7f8fc; stroke: #20242c; stroke-width: 1.8; stroke-dasharray: 2 5; }
+    .app { fill: #f0f3fb; stroke: #20242c; stroke-width: 1.8; }
+    .resource { fill: #dff3e6; stroke: #20242c; stroke-width: 1.8; }
+    .heading { font-weight: 600; }
+    .small { font-size: 17px; }
+  </style>
+  <rect class="frame" x="6" y="6" width="1028" height="482" rx="10"/>
+  <rect class="app" x="48" y="28" width="944" height="82" rx="7"/>
+  <text class="heading" x="520" y="61">Keystone 后端</text>
+  <text class="small" x="520" y="90">API / Worker / CLI</text>
+
+  <rect class="group" x="28" y="142" width="604" height="324" rx="5"/>
+  <text class="heading" x="330" y="176">数据、存储与协调依赖</text>
+  <rect class="resource" x="48" y="202" width="264" height="98" rx="7"/>
+  <text x="180" y="242">PostgreSQL（必需）</text>
+  <text class="small" x="180" y="274">领域数据、DBOS 状态</text>
+  <rect class="resource" x="348" y="202" width="264" height="98" rx="7"/>
+  <text x="480" y="242">本地协调卷（必需）</text>
+  <text class="small" x="480" y="274">锁、容量记录、加密密钥</text>
+  <rect class="resource" x="48" y="326" width="264" height="112" rx="7"/>
+  <text x="180" y="372">本地文件存储</text>
+  <text class="small" x="180" y="406">filesystem</text>
+  <rect class="resource" x="348" y="326" width="264" height="112" rx="7"/>
+  <text x="480" y="372">S3 文件存储</text>
+  <text class="small" x="480" y="406">S3 兼容协议</text>
+  <text class="small" x="330" y="455">文件存储至少配置一种，可同时使用</text>
+
+  <rect class="group" x="660" y="142" width="352" height="324" rx="5"/>
+  <text class="heading" x="836" y="176">上游接口（按需）</text>
+  <rect class="resource" x="680" y="202" width="312" height="98" rx="7"/>
+  <text x="836" y="242">模型供应商 API</text>
+  <text class="small" x="836" y="274">文本、向量、图片</text>
+  <rect class="resource" x="680" y="326" width="312" height="112" rx="7"/>
+  <text x="836" y="372">账务接口</text>
+  <text class="small" x="836" y="406">费用、余额、账单查询</text>
+</svg>

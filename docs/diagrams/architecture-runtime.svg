@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="580" viewBox="0 0 1040 580" role="img" aria-labelledby="title desc">
+  <title id="title">Keystone 进程运行结构</title>
+  <desc id="desc">API、Worker、CLI 独立运行，共用制品，公共配置保持一致，进程专属参数分别设置，每个 Worker 使用不同的 worker_id。DBOS 位于 Worker 内，后台执行的接入现状见架构正文。</desc>
+  <style>
+    text { font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; font-size: 19px; fill: #20242c; text-anchor: middle; }
+    .frame { fill: #fff; stroke: #d7dce5; stroke-width: 1; }
+    .group { fill: #f7f8fc; stroke: #20242c; stroke-width: 1.8; stroke-dasharray: 2 5; }
+    .client { fill: #fee4e4; stroke: #20242c; stroke-width: 1.8; }
+    .process { fill: #f0f3fb; stroke: #20242c; stroke-width: 1.8; }
+    .resource { fill: #dff3e6; stroke: #20242c; stroke-width: 1.8; }
+    .line { stroke: #727987; stroke-width: 1.2; }
+    .heading { font-weight: 600; }
+    .small { font-size: 17px; }
+  </style>
+  <rect class="frame" x="6" y="6" width="1028" height="568" rx="10"/>
+  <rect class="client" x="48" y="28" width="296" height="70" rx="7"/>
+  <text x="196" y="58">业务用户</text>
+  <text class="small" x="196" y="83">浏览器</text>
+  <rect class="client" x="696" y="28" width="296" height="70" rx="7"/>
+  <text x="844" y="70">部署运维人员</text>
+  <line class="line" x1="196" y1="98" x2="196" y2="166"/>
+  <text class="small" x="233" y="140">HTTP</text>
+  <line class="line" x1="844" y1="98" x2="844" y2="166"/>
+  <text class="small" x="898" y="140">执行命令</text>
+
+  <rect class="group" x="28" y="166" width="984" height="386" rx="5"/>
+  <text class="heading" x="520" y="198">独立进程 · 共用制品 · 公共配置一致</text>
+  <rect class="process" x="48" y="222" width="296" height="142" rx="7"/>
+  <text class="heading" x="196" y="256">API 进程</text>
+  <text x="196" y="290">keystone-api</text>
+  <text class="small" x="196" y="328">HTTP 请求、同步业务操作</text>
+  <rect class="process" x="372" y="222" width="296" height="142" rx="7"/>
+  <text class="heading" x="520" y="256">Worker 进程</text>
+  <text x="520" y="290">DBOS 执行器</text>
+  <text class="small" x="520" y="318">任务、流程、定时维护</text>
+  <text class="small" x="520" y="346">每个 Worker 的 worker_id 唯一</text>
+  <rect class="process" x="696" y="222" width="296" height="142" rx="7"/>
+  <text class="heading" x="844" y="256">CLI 进程</text>
+  <text x="844" y="290">keystone</text>
+  <text class="small" x="844" y="328">按需执行，通常完成后退出</text>
+
+  <text class="small" x="520" y="390">后台执行：任务持久入队，或通过 Run / 领域待办衔接</text>
+  <rect class="resource" x="48" y="412" width="460" height="112" rx="7"/>
+  <text class="heading" x="278" y="444">PostgreSQL</text>
+  <text class="small" x="278" y="474">keystone：领域数据、Run、待办</text>
+  <text class="small" x="278" y="502">dbos：队列、执行状态、检查点</text>
+  <rect class="resource" x="532" y="412" width="460" height="112" rx="7"/>
+  <text class="heading" x="762" y="444">本地协调卷</text>
+  <text class="small" x="762" y="481">跨进程锁、容量记录、凭据加密密钥</text>
+</svg>

@@ -31,7 +31,7 @@ file_upload_timeout_seconds = 3600
 
 # No identity inventory is required. Start extra Workers with distinct fixed identities.
 # The default worker_id is "keystone-worker"; override KEYSTONE_WORKER_ID per extra process.
-# Concurrency and shutdown use built-in defaults. Optional tuning: docs/configuration.md.
+# Concurrency and shutdown use built-in defaults. Optional tuning: docs/operations/configuration.md.
 
 # Optional shared model send controls (all API/Workers must agree).
 # model_send_interval_ms = 0
@@ -47,4 +47,4 @@ file_upload_timeout_seconds = 3600
 [file_storages.local]
 driver = "filesystem"
 root = "../.data/files"
-# For simultaneous local + S3 sources see docs/configuration.md.
+# For simultaneous local + S3 sources see docs/operations/configuration.md.

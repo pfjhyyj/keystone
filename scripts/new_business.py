@@ -457,7 +457,7 @@ def main(argv=None) -> int:
         f"3. model_registry.py: import {values['CLASS']} from the new models package.\n"
         "4. Run keystone init and keystone check, then verify the table matches the ORM.\n"
         "5. Add tests under backend/tests/ and a business frontend if needed.\n"
-        "See docs/extending.md for the complete checklist."
+        "See docs/development/business.md for the complete checklist."
     )
     return 0
 

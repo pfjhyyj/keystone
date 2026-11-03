@@ -7,12 +7,22 @@
 | 范围 | 文档 |
 |---|---|
 | 进程、领域与依赖方向 | [整体架构](docs/architecture.md) |
-| Task、队列、计划与 Worker | [任务执行](docs/execution-design.md) |
-| FlowDefinition/Package、角色、快照、文件路径、Context、预算与恢复 | [Flow](docs/domains/flow.md)、[接入示例](docs/flow-development.md) |
+| Task、队列、计划与 Worker | [任务执行](docs/execution.md) |
+| FlowDefinition/Package、角色、快照、文件路径、Context、预算与恢复 | [Flow](docs/domains/flow.md)、[接入示例](docs/development/flow.md) |
 | 模型操作、费用与原任务恢复 | [模型接入](docs/domains/model-access.md) |
-| 新业务、权限、审计、迁移 | [模块扩展](docs/extending.md) |
+| 新业务、权限、审计、迁移 | [模块扩展](docs/development/business.md) |
 | 文件及其他领域 | [文档索引](docs/README.md) |
-| 开发、验证、发布与恢复 | [开发](docs/development.md)、[测试](backend/tests/README.md)、[部署](docs/deployment.md)、[备份恢复](docs/backup-restore.md) |
+| 开发、验证、发布与恢复 | [开发](docs/development/environment.md)、[测试](backend/tests/README.md)、[部署](docs/operations/deployment.md)、[备份恢复](docs/operations/backup-restore.md) |
+
+## 模块设计评审
+
+- 先明确核心能力、真实场景、职责、事实归属、授权和成功标准。关联主流程在同一轮成组评审，每个流程独立画图；跨模块问题联合讨论。
+- 运行交互使用时序图、状态表和不变量，简单逻辑可合并；目录、装配、分层和接入选择使用规范、清单或决策表，不虚构运行流程。
+- 先确认正常主线，失败、并发、重试、取消作为补充；只有会改变职责、授权、主要状态或不变量时才提前展开。
+- 图只表达参与者、调用顺序、事务和外部副作用；路径结果放状态表，保留策略放正文。不为每个 SQL 画图，无持久状态不造状态机。
+- 明确前置条件、允许/禁止转换、幂等与必须成立的性质，区分保证和可接受失败。逐项说明检查、锁和状态的用途、成本及更小替代；图表不等于正确性证明。
+- 结论写对应领域文档，单列目标与当前实现差异；每条规则只维护一处。AGENTS 只记录方法，不加入业务方案或讨论日志。
+- 设计讨论只维护文档，不自动扩为实现、迁移或部署；验证须如实报告范围。
 
 ## 实现约束
 
@@ -21,8 +31,8 @@
 - 先明确资源、操作、事实归属和权限；优先普通函数、Service 对象和显式依赖注入，不引入通用 CRUD/Repository/BaseService、动态扫描、在线插件或第二执行引擎。
 - composition/bootstrap 显式装配声明和依赖；平台不导入业务/examples，core 不依赖领域，跨模块只使用公开 Service/Schema，不导入其他模块 ORM/Adapter。
 - 模块根目录只保留 __init__.py 与轻量 catalog.py；一级目录按需使用 controllers、schemas、models、services、adapters、tasks、workflows，不预建空目录。每个持久实体一个文件，显式导出。
-- Controller 只绑定 HTTP/身份/传输；Service 负责授权、事务、审计和查询，不依赖 Request/Response、DBOS、Worker、FlowContext 或 SDK 协议；Schema 不查库、不加载 ORM/Service/SDK/执行器；Adapter 不拥有业务授权、领域事务，不反向依赖 Service/ORM。具体依赖和技术例外见[架构](docs/architecture.md#54-模块分层与代码规范)。
-- catalog.py 仅声明权限/审计，不加载执行器或注册 Flow。Flow 定义在轻量 schemas，业务流程在 workflows；Task/Workflow 调用 Service，不直接读写领域表。
+- Controller 只绑定 HTTP/身份/传输；Service 负责授权、事务、审计和查询，不依赖 Request/Response、DBOS、Worker、FlowContext 或 SDK 协议；Schema 不查库、不加载 ORM/Service/SDK/执行器；Adapter 不拥有业务授权、领域事务，不反向依赖 Service/ORM。具体依赖和技术例外见[分层规范](docs/development/business.md#模块分层与代码规范)。
+- catalog.py 仅声明权限/审计，不加载执行器或注册 Flow。Flow 定义在轻量 schemas，业务流程在 workflows；Task/Workflow 可组合普通函数，涉及领域权限和数据变更时调用所属 Service，不直接读写领域表，不为每个任务强制新增 Service。
 - 迁移平铺在 backend/migrations/versions，使用全局连续 NNNN_<module>_<change>.py 和同一线性链。历史 revision 不重写，Worker 相关用 worker 前缀；详细规则和当前 head 见[迁移说明](backend/migrations/README.md)。
 
 ## 行为保证
@@ -31,7 +41,7 @@
 - 业务变更与成功审计同事务，失败/拒绝回滚后记录。跨域原子操作由上层协调同一身份事务，被调 Service 不另开事务、不自行提交；外部 I/O 不持长业务事务。
 - Flow 每次新操作复查原用户/PAT、Run、契约和固定目标，撤权/取消阻止新副作用；已发生的调用、费用、文件和真实终态按事实受限收尾。
 - DBOS 保留原生确定性与 Step 边界；检查点不能保证第三方 exactly-once。模型发送前原子登记，未知结果不换 Run/调用 ID 重发。业务幂等使用稳定标识和唯一约束。
-- 待办先持久提交，再由可恢复扫描投递；不能以提交后的临时协程保证不丢失。Task 不强制创建 FlowRun，Step/Agent 也不自动注册 Task。
+- 原生持久投递不要求每个任务增加领域待办；实际需要领域事务与后续投递一致时，再明确持久衔接方式，不能以提交后临时协程保证两个提交原子。Task 不强制创建 FlowRun，Step/Agent 也不自动注册 Task。
 - 并发、批次、等待、重试和输出有界。反复取消仍须等待原生 I/O、进程及文件清理，再释放句柄/许可；失锁后不得换连接继续提交。
 - 代码、目录、声明和资源都影响执行版本。新制品不能冒充旧检查点兼容，保留原制品和身份收尾，不删除 DBOS/未知调用绕过恢复或容量规则。
 - 输入、结果、审计、错误和检查点使用显式白名单，不存凭据、运行句柄、供应商原始正文或未控制异常；费用与预算分别表达。

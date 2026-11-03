@@ -1,31 +1,32 @@
 # Keystone 文档
 
-Keystone 面向单企业内部多个业务模块，采用模块化单体：业务直接模块化接入，API、Worker、CLI 共用后端工程和发布制品，控制台使用 Vue 与 Element Plus。Flow、模型、文件及持久后台 Task 使用同一身份和授权边界。
+先读整体架构，再按开发、运维或模块设计查阅。领域文档单列设计与当前实现差异。
 
-当前优先简单开发和部署。业务独立发布、独立 Worker、多企业租户隔离和分布式部署均不作为接入前提；扩展边界及尚待实际业务验证的目标统一见[整体架构](architecture.md)。
+## 设计
 
-| 用途 | 文档 |
+| 文档 | 内容 |
 |---|---|
-| 启动与常用命令 | [仓库说明](../README.md) |
-| 模块边界、进程与事实归属 | [整体架构](architecture.md) |
-| Task、队列、计划和 Worker | [任务执行](execution-design.md) |
-| Flow 契约、角色、恢复、预算与诊断 | [Flow 领域](domains/flow.md) |
-| Flow/Agent 的实际接入示例 | [Flow 开发](flow-development.md) |
-| 新业务、权限、审计与迁移 | [模块扩展](extending.md) |
-| 第一个业务从生成到页面与测试 | [最小业务接入](business-quickstart.md) |
-| 凭据、审计及维护任务历史保留 | [历史清理](history-retention.md) |
-| 配置、发布与恢复 | [配置](configuration.md)、[部署](deployment.md)、[备份恢复](backup-restore.md) |
-| 开发、测试和迁移规范 | [开发](development.md)、[测试](../backend/tests/README.md)、[迁移](../backend/migrations/README.md) |
+| [整体架构](architecture.md) | 模块、进程、依赖和核心约束 |
+| [任务执行](execution.md) | Task、队列、定时计划与 Worker |
+| [身份](domains/identity.md) · [审计](domains/audit.md) · [字典](domains/dictionary.md) | 授权、操作记录与业务选项 |
+| [文件](domains/files.md) · [模型接入](domains/model-access.md) · [Flow](domains/flow.md) | 文件生命周期、模型调用与持久流程 |
 
-## 按领域阅读
+## 开发
 
-| 领域 | 职责 |
+| 文档 | 内容 |
 |---|---|
-| [身份](domains/identity.md) | 用户、角色、会话、PAT 和功能权限 |
-| [审计](domains/audit.md) | 变更和拒绝留痕，成功审计与业务变更同事务 |
-| [文件](domains/files.md) | 存储、传输、对象授权、业务引用与清理 |
-| [字典](domains/dictionary.md) | 选项维护、业务校验及历史名称 |
-| [模型接入](domains/model-access.md) | 现有渠道、操作、恢复与费用；[第 8 节](domains/model-access.md#8-多渠道模型接入设计)说明代码适配层，[第 9 节](domains/model-access.md#9-单次费用预估计算器设计契约)维护可配置预估计算器、价格快照与独立统计口径 |
-| [Flow](domains/flow.md) | 独立受理、原身份执行、取消、恢复和结果 |
+| [开发环境与检查](development/environment.md) | 日常开发、前端组织和统一检查入口 |
+| [业务接入](development/business.md) | 完整最小示例、模块分层、权限、迁移与装配 |
+| [Flow 开发](development/flow.md) | 工作流、Agent 与工具示例 |
+| [控制台视觉规范](../DESIGN.md) | 前端样式与交互；PRODUCT.md 为设计工具的本地产品上下文 |
+| [后端测试](../backend/tests/README.md) · [数据库迁移](../backend/migrations/README.md) | 各自规则的维护入口 |
 
-架构文档维护边界，领域文档维护当前契约及明确标注的目标设计，开发文档维护已实现的接入示例，操作手册维护当前可用命令。每个主题只在一处维护完整规则；不保存独立实施计划、阶段记录、逐轮测试日志或未实现业务的详细方案。目标接口不作为现有功能或配置使用。人工决定和业务流程由业务模块实现，平台不提供通用人工等待节点。
+## 运维
+
+[配置](operations/configuration.md) · [部署、排障与维护](operations/deployment.md) · [备份恢复](operations/backup-restore.md)
+
+## 实现参考
+
+[文件存储与接口](reference/files.md) · [模型协议与恢复](reference/model-access.md) · [费用预估格式](reference/model-pricing.md)
+
+启动命令见[仓库说明](../README.md)。设计、开发和操作规则各在所属文档维护，其他位置只链接。

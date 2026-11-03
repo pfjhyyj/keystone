@@ -4,9 +4,9 @@
 
 | 配置文件 | 使用方 | 默认是否需要 |
 |---|---|---|
-| [backend/keystone.toml.example](../backend/keystone.toml.example) → `backend/keystone.toml` | 本机 API、Worker、CLI | 需要，与开发数据库默认值一致 |
-| [frontend/console/.env.example](../frontend/console/.env.example) → `frontend/console/.env` | Vite 的 `KEYSTONE_API_PROXY` | 可选，默认代理本机 8000 端口 |
-| [deploy/.env.example](../deploy/.env.example) → `deploy/.env` | PostgreSQL 密码、宿主端口等覆盖 | 可选，默认启动不需要复制 |
+| [backend/keystone.toml.example](../../backend/keystone.toml.example) → `backend/keystone.toml` | 本机 API、Worker、CLI | 需要，与开发数据库默认值一致 |
+| [frontend/console/.env.example](../../frontend/console/.env.example) → `frontend/console/.env` | Vite 的 `KEYSTONE_API_PROXY` | 可选，默认代理本机 8000 端口 |
+| [deploy/.env.example](../../deploy/.env.example) → `deploy/.env` | PostgreSQL 密码、宿主端口等覆盖 | 可选，默认启动不需要复制 |
 
 ## 1. 读取方式
 
@@ -29,7 +29,7 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --wait
 
 日常启动沿用示例配置即可；增加 Worker 只在新进程指定独立的 KEYSTONE_WORKER_ID，自动登记，API 和已有 Worker 无需重启。并发和退出等待都有内置默认值，下表相应字段仅用于按需调优，不必逐项抄入 TOML。查费默认共享并发为 2，保留独立限流，部署者无需单独设置；新增任务也不意味着必须新增一项部署配置。Flow 始终启用，不提供关闭开关。
 
-旧静态清单环境需先按[切换说明](deployment.md#47-当前版本基线与切换)完成一次停机重建或数据迁移；运行时成员只来自数据库登记，`worker_ids` / `KEYSTONE_WORKER_IDS` 已移除，配置中保留该字段会被校验拒绝。`flow_enabled` / `KEYSTONE_FLOW_ENABLED` 也已移除，Flow 始终启用；旧配置或环境变量中保留该字段会因未知字段被拒绝，升级前须删除。
+旧静态清单环境需先按[切换说明](deployment.md#3-更新与恢复)完成一次停机重建或数据迁移；运行时成员只来自数据库登记，`worker_ids` / `KEYSTONE_WORKER_IDS` 已移除，配置中保留该字段会被校验拒绝。`flow_enabled` / `KEYSTONE_FLOW_ENABLED` 也已移除，Flow 始终启用；旧配置或环境变量中保留该字段会因未知字段被拒绝，升级前须删除。
 
 TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大写：
 
@@ -41,7 +41,7 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 | `browser_origins` | `KEYSTONE_BROWSER_ORIGINS` | 精确的浏览器来源数组；生产要求 HTTPS |
 | `log_level` | `KEYSTONE_LOG_LEVEL` | `INFO` |
 | `session_hours` / `pat_max_days` | `KEYSTONE_SESSION_HOURS` / `KEYSTONE_PAT_MAX_DAYS` | 8 小时 / 90 天 |
-| 历史保留与自动清理 | `KEYSTONE_HISTORY_CLEANUP_ENABLED` 等 | 自动删除默认关闭；期限、批量边界与手动预览见[历史清理](history-retention.md) |
+| 历史保留与自动清理 | `KEYSTONE_HISTORY_CLEANUP_ENABLED` 等 | 自动删除默认关闭；期限、批量边界与手动预览见[历史清理](deployment.md#历史保留与清理) |
 | `[file_storages.<源名>]` | `KEYSTONE_FILE_STORAGES__<源名>__<字段>` | 逐项配置内容源，见第 4 节 |
 | `file_coordination_root` | `KEYSTONE_FILE_COORDINATION_ROOT` | 本地共享协调目录，示例为 `../.data/files` |
 | `file_default_storage` | `KEYSTONE_FILE_DEFAULT_STORAGE` | `local`，必须指向已配置源 |
@@ -74,15 +74,15 @@ API/Worker 必须保持相同协调目录、槽位数、临时预算、磁盘保
 
 ## 3. 配置变更
 
-模型配置仍在控制台手动完成，步骤见 [README](../README.md#模型配置手动)。API Key 加密保存到数据库，编辑时留空保留原值，保存后 API 与 Worker 直接使用，无需重启。加密密钥首次保存时自动写入已有共享协调目录；`keystone init` 不创建模型配置或模型加密密钥。
+模型配置仍在控制台手动完成，步骤见 [README](../../README.md#模型配置手动)。API Key 加密保存到数据库，编辑时留空保留原值，保存后 API 与 Worker 直接使用，无需重启。加密密钥首次保存时自动写入已有共享协调目录；`keystone init` 不创建模型配置或模型加密密钥。
 
 渠道使用代码声明的固定推理地址，控制台只列出当前支持的服务商。按原 Token 自动查费的渠道使用原推理 Key，不需额外账务 Key 或环境变量；更换 Token/站点须新建渠道，旧渠道保留历史查费凭据。费用扫描每 5 秒运行。默认仍为单 Worker；多实例仅限同宿主、同版本和固定身份，步骤见[部署说明](deployment.md#4-多-worker-部署与发布)。升级先执行 init 应用全部基线迁移。
 
-Yunwu/Openlux 同步图片的 600 秒调用窗口、九图限制及有界结果下载由代码协议声明，未新增通用 JSON 配置或环境变量。Flow 的总期限由流程定义明确设置，见[同步图片](domains/model-access.md#67-yunwuopenlux-同步图片)。
+Yunwu/Openlux 同步图片的调用、参考图和下载限制由协议代码声明，Flow 总期限由定义设置，见[同步图片](../reference/model-access.md#yunwuopenlux-同步图片)。
 
-[代码与数据库边界](domains/model-access.md#82-代码与数据库的边界)已整理：provider 选择 CHANNELS 中已安装的渠道类型，数据库维护连接信息、模型映射及启停，协议组合和查费方式由代码决定。DashScope 与火山方舟的地址、模型名和能力范围见[渠道说明](domains/model-access.md#dashscope-与火山方舟)，云账务凭据在渠道中单独填写，见[余额与月账单](domains/model-access.md#云账户账务)，无需新增部署参数或环境变量；新协议随 Keystone 制品发布，不能靠修改数据库启用。视频尚未支持，model_inference_concurrency 不表示远端视频任务数上限。
+数据库保存连接、模型映射和启停，协议及查费方式由代码决定，见[分层边界](../reference/model-access.md#代码与接口边界)。渠道地址、模型和凭据见[渠道说明](../reference/model-access.md#渠道与模型列表)及[云账户账务](../reference/model-access.md#云账户账务)。视频尚未支持，model_inference_concurrency 只约束物理发送，不代表远端任务数量。
 
-队列预算、共享模型预算及文件/协调配置进入公共声明校验；固定身份和成员数量不进入共享摘要。新身份经锁保护和兼容性校验后加入，不要求完整本地清单。修改共享执行参数仍先停止旧进程再统一发布，不能由新成员覆盖共享队列/计划。历史故障身份与公共配置冲突时需按部署流程核对，不能清理锁、删除登记或随机换身份绕过。模型发送和查费容量已共享。发送间隔与 429 持久冷却按真实站点/Token 共享，范围与语义见[Flow 运行约束](domains/flow.md#6-累计预算与资源)；固定并发、间隔和冷却并不提供完整供应商 RPM/TPM 或精确 Token 配额。
+队列预算、共享模型预算及文件/协调配置进入公共声明校验；固定身份和成员数量不进入共享摘要。新身份经锁保护和兼容性校验后加入，不要求完整本地清单。修改共享执行参数仍先停止旧进程再统一发布，不能由新成员覆盖共享队列/计划。历史故障身份与公共配置冲突时需按部署流程核对，不能清理锁、删除登记或随机换身份绕过。模型发送和查费容量已共享。发送间隔与 429 持久冷却按真实站点/Token 共享，范围与语义见[Flow 运行约束](../domains/flow.md#6-累计预算与资源)；固定并发、间隔和冷却并不提供完整供应商 RPM/TPM 或精确 Token 配额。
 
 发送间隔默认 0，不额外降低原吞吐。重复 Channel 使用同一 Token 不能绕过节奏，换 Worker 或重启不会清空数据库中的 blocked_until；不要删除范围行来解除冷却。冷却只延迟首次物理发送，不重发已登记生成。原生图片任务 GET 同样遵守节奏；CDN 下载不使用渠道凭据，不计入该 Token 的发送间隔。发送等待超出当前有界窗口返回 model_dispatch_delayed，尚未登记新调用；取消和撤权会终止等待并释放许可。
 
@@ -138,4 +138,4 @@ driver = "filesystem"
 root = "../.data/files"
 ```
 
-已有文件数据时保留原目录、源名称和卷标识。补齐后重新执行 `uv run --locked keystone init`，已有迁移、数据和管理员不会重置。需要恢复默认开发配置时，对照[配置示例](../backend/keystone.toml.example)逐项调整，保留现有数据对应的连接与存储信息。
+已有文件数据时保留原目录、源名称和卷标识。补齐后重新执行 `uv run --locked keystone init`，已有迁移、数据和管理员不会重置。需要恢复默认开发配置时，对照[配置示例](../../backend/keystone.toml.example)逐项调整，保留现有数据对应的连接与存储信息。
