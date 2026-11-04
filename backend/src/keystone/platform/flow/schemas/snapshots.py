@@ -6,7 +6,6 @@ from pydantic import Field, ValidationError, model_validator
 
 from keystone.core.errors import ServiceError
 from keystone.core.schemas import Input
-from keystone.platform.flow.schemas.budgets import FlowLimits
 from keystone.platform.flow.schemas.files import compile_file_paths
 from keystone.platform.flow.schemas.values import small_json
 from keystone.platform.model_access.schemas.invocations import ResolvedModelBinding
@@ -19,7 +18,7 @@ class RoleSnapshot(Input):
 
 
 class Snapshot(Input):
-    format_version: Literal[2]
+    format_version: Literal[3]
     package_key: str = Field(min_length=1)
     host_api_version: int = Field(strict=True, ge=1, le=1)
     revision: str = Field(min_length=1, max_length=64)
@@ -32,7 +31,6 @@ class Snapshot(Input):
     output_file_fields: list[str]
     model_roles: dict[str, RoleSnapshot]
     model_bindings: dict[str, ResolvedModelBinding]
-    limits: FlowLimits
 
     @model_validator(mode="after")
     def coherent(self):
@@ -72,7 +70,6 @@ def public_snapshot(value):
             "output_file_fields",
             "model_roles",
             "timeout_seconds",
-            "limits",
         )
     }
 
@@ -84,7 +81,6 @@ def matches_definition(snapshot, definition):
             snapshot["entrypoint"] == definition.entrypoint,
             snapshot["required_permissions"] == list(definition.required_permissions),
             snapshot["timeout_seconds"] == definition.timeout_seconds,
-            snapshot["limits"] == definition.limits.model_dump(mode="json"),
             snapshot["input_schema"] == definition.input_schema(),
             snapshot["output_schema"] == definition.output_schema(),
             snapshot["file_fields"] == list(definition.file_fields),

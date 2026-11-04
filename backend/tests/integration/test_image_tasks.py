@@ -13,7 +13,6 @@ from test_model_access import channel, entry
 from test_model_access import model_configuration as model_configuration
 
 from keystone.platform.files.models import File, FileReference
-from keystone.platform.flow.models import FlowRunBudget
 from keystone.platform.model_access.models import ModelDispatchScope, ModelInvocation
 
 pytestmark = pytest.mark.postgres
@@ -131,9 +130,6 @@ def test_native_task_recovery_preserves_original_submission(client, monkeypatch,
     calls = query(client, lambda s: s.scalars(select(ModelInvocation))).all()
     assert len(calls) == 1 and calls[0].status == "succeeded"
     assert_correlated(client, run_id, calls)
-    budget = query(client, lambda s: s.get(FlowRunBudget, calls[0].flow_context["flow_run_id"]))
-    assert budget.counters["model_requests"] == 1
-    assert budget.counters["output_tokens"] == budget.counters["unreported_text_requests"] == 0
     if crash == "query429":
         current_scope = query(client, lambda s: s.scalar(select(ModelDispatchScope)))
         assert current_scope.blocked_until == cooldown.blocked_until

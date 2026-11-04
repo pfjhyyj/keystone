@@ -11,26 +11,12 @@ from keystone.platform.files.services.references import require_usage
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.schemas.snapshots import read_snapshot
 from keystone.platform.flow.services.artifacts import FlowArtifactService, artifact_location
-from keystone.platform.flow.services.budgets import FlowBudgetService
 
 
 class FlowResourceService:
     def __init__(self, identity, storage):
         self.identity, self.storage = identity, storage
         self.files = FileService(identity, storage)
-        self.budget = FlowBudgetService(identity)
-
-    async def scoped_files(self):
-        from keystone.platform.files.schemas.transfers import TransferScope
-
-        limits = await self.budget.limits()
-        return FileService(
-            self.identity,
-            self.storage,
-            transfer_scope=TransferScope(
-                owner=f"flow:{self.identity.run_id}", max_temporary_bytes=limits.temporary_bytes
-            ),
-        )
 
     async def inputs(self):
         async with self.identity.access() as (session, _):
@@ -85,7 +71,6 @@ class FlowResourceService:
             checksum_sha256=hashlib.sha256(content).hexdigest(),
         )
         self.files.prepare_upload(data.expected_size, storage_key)
-        await self.budget.reserve_artifact(key, data)
         result = await self.files.upload_referenced(
             data,
             content,
@@ -102,9 +87,6 @@ class FlowResourceService:
     async def upload_file(self, key, path, *, name, content_type, transfer, storage_key=None):
         owner, slot = artifact_location(self.identity.run_id, key)
 
-        async def admission(data):
-            await self.budget.reserve_artifact(key, data)
-
         result = await transfer.upload_file(
             path,
             storage_key=storage_key,
@@ -113,6 +95,5 @@ class FlowResourceService:
             request_key=f"{owner}:{key}",
             owner=owner,
             slot=slot,
-            admission=admission,
         )
         return str(result["id"])

@@ -130,7 +130,6 @@ async def test_image_wire_preserves_registration_receipt_and_nine_reference_file
     result = events[0]["content"]
     assert isinstance(result, ImageBatch if kind == "base64" else ImageSources)
     assert len(calls) == 1 and observation.receipt_ids["x-api-request-id"] == "bill-original"
-    assert observation.request_budget.operation == selection.operation
 
 
 def test_exact_sizes_and_image_request_digest_are_stable():

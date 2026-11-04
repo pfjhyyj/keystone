@@ -150,7 +150,6 @@ async def test_cloud_wire_keeps_usage_registration_and_bounded_requests(provider
                 assert await sender.embedding(sdk, selected, data) == [[1.0, 0.0]]
     assert len(sent) == len(registrations) == len(receipts) == 1
     assert observation.usage["input_tokens"] == 3
-    assert observation.request_budget.operation == operation
 
 
 @pytest.mark.parametrize("provider", ["aliyun_bailian", "volcengine"])

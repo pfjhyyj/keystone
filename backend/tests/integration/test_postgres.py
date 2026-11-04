@@ -86,8 +86,6 @@ async def test_empty_database_migration_and_transaction_rollback(empty_database_
                 "worker_heartbeats",
                 "worker_registrations",
                 "model_dispatch_scopes",
-                "flow_run_budgets",
-                "flow_budget_claims",
             }
         with pytest.raises(RuntimeError, match="rollback-test"):
             async with runtime.database.transaction() as session:
@@ -119,7 +117,7 @@ def test_initial_schema_is_complete_reversible_and_preserves_dbos(empty_database
         ("0003", {"dictionaries", "dictionary_items"}),
         ("0004", {"files", "file_references"}),
         ("0005", {"model_channels", "model_entries", "model_invocations", "model_dispatch_scopes"}),
-        ("0006", {"flow_runs", "flow_run_budgets", "flow_budget_claims"}),
+        ("0006", {"flow_runs"}),
         ("0007", {"worker_registrations", "worker_heartbeats"}),
     ]
     tables = set().union(*(tables for _, tables in domains))

@@ -150,16 +150,13 @@ def test_model_baseline_enforces_operation_and_evidence_bounds(
         connection.execute(text(f"UPDATE keystone.{table} SET {column}=:value"), {"value": value})
 
 
-def test_flow_baseline_roundtrip_preserves_current_snapshot_and_budget(migration_environment):
+def test_flow_baseline_roundtrip_preserves_current_snapshot(migration_environment):
     from support.flow_fixture.contracts import definition
     from support.flow_packages import snapshot_for
-
-    from keystone.platform.flow.schemas.budgets import BudgetCounters
 
     config, engine = migration_environment
     command.upgrade(config, "0006")
     snapshot = snapshot_for(definition)
-    counters = BudgetCounters().model_dump()
     with engine.begin() as connection:
         connection.execute(
             text("""INSERT INTO keystone.users
@@ -176,19 +173,7 @@ def test_flow_baseline_roundtrip_preserves_current_snapshot_and_budget(migration
             'current-request','current-digest','{}','failed',now())"""),
             {"key": definition.key, "snapshot": json.dumps(snapshot)},
         )
-        connection.execute(
-            text("""INSERT INTO keystone.flow_run_budgets (run_id,limits,counters)
-            VALUES ('00000000-0000-4000-8000-000000000002',
-                    CAST(:limits AS jsonb),CAST(:counters AS jsonb))"""),
-            {"limits": json.dumps(snapshot["limits"]), "counters": json.dumps(counters)},
-        )
-        connection.execute(
-            text("""INSERT INTO keystone.flow_budget_claims (run_id,kind,key,amounts,request_digest)
-            VALUES ('00000000-0000-4000-8000-000000000002','model',:key,
-                    CAST(:amounts AS jsonb),:digest)"""),
-            {"key": "a" * 64, "digest": "b" * 64, "amounts": json.dumps(counters)},
-        )
-        tables = ("users", "flow_runs", "flow_run_budgets", "flow_budget_claims")
+        tables = ("flow_runs",)
         before = {
             table: connection.execute(text(f"SELECT * FROM keystone.{table}")).mappings().all()
             for table in tables

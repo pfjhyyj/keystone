@@ -90,19 +90,6 @@ def test_position_and_projection_are_bounded_and_historical_omissions_remain_emp
         assert source_invocation(slot) is None
 
 
-def test_budget_diagnostics_preserve_full_integer_precision():
-    from keystone.platform.flow.schemas.budgets import BudgetCounters, FlowLimits
-    from keystone.platform.flow.schemas.diagnostics import BudgetDiagnostic
-
-    values = BudgetDiagnostic.from_values(
-        FlowLimits(input_tokens=2**63 - 1), BudgetCounters(input_tokens=2**127 - 1)
-    ).model_dump(mode="json")
-    assert values["limits"]["input_tokens"] == str(2**63 - 1)
-    assert values["counters"]["input_tokens"] == str(2**127 - 1)
-    assert all(isinstance(value, str) for value in values["limits"].values())
-    assert all(isinstance(value, str) for value in values["counters"].values())
-
-
 async def test_source_confirmation_is_bounded_before_any_query():
     from unittest.mock import AsyncMock
 

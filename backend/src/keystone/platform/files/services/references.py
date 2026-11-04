@@ -332,7 +332,7 @@ async def require_usage(session, owner, identifier):
 
 
 async def describe_inputs_in_transaction(session, identifiers):
-    """Caller holds its identity transaction. Read immutable sizes before Budget→File locks.
+    """Caller holds its identity transaction. Read immutable file sizes before retaining references.
 
     The caller must retain/revalidate references in the same transaction afterwards.
     No storage access, write or independent commit; no File ORM crosses the boundary.

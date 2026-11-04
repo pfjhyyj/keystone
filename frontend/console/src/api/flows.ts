@@ -26,7 +26,7 @@ export interface Steps {
   available: boolean
   truncated: boolean
 }
-export type DiagnosticSection = 'budget' | 'models' | 'files'
+export type DiagnosticSection = 'models' | 'files'
 export interface DiagnosticPage<T> {
   items: T[]
   truncated: boolean
@@ -44,23 +44,8 @@ export interface InvocationDiagnostic {
   step_id: number | null
   error_code: string | null
 }
-export interface BudgetCounters {
-  model_requests: string
-  tool_calls: string
-  iterations: string
-  file_count: string
-  file_bytes: string
-  input_tokens: string
-  output_tokens: string
-  unreported_text_requests: string
-}
-export interface FlowLimits extends Omit<BudgetCounters, 'unreported_text_requests'> {
-  concurrent_operations: string
-  temporary_bytes: string
-}
 export interface Diagnostics {
   run_id: string
-  budget: { limits: FlowLimits; counters: BudgetCounters } | null
   models: (DiagnosticPage<InvocationDiagnostic> & { available: boolean }) | null
   files: DiagnosticPage<{ file_id: string; slot: string; invocation_id: string | null }> | null
 }

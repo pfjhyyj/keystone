@@ -28,10 +28,8 @@ SAFE_ERRORS = frozenset(
         "model_configuration_changed",
         "flow_cancelled",
         "flow_identity_unavailable",
-        "flow_operation_interrupted",
         "permission_denied",
         "authentication_required",
-        "flow_budget_exceeded",
     }
 )
 

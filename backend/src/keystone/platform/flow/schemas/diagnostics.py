@@ -1,53 +1,15 @@
 """Explicit Run diagnostic response; provider evidence and checkpoints stay private."""
 
 import re
-from typing import Annotated, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import Field
 
 from keystone.core.schemas import Input
-from keystone.platform.flow.schemas.budgets import BudgetCounters, FlowLimits
 from keystone.platform.model_access.schemas.diagnostics import InvocationDiagnostics
 
-DiagnosticSection = Literal["all", "budget", "models", "files"]
-DecimalCount = Annotated[str, Field(pattern=r"^(0|[1-9][0-9]{0,38})$")]
-
-
-class BudgetAmounts(Input):
-    model_requests: DecimalCount
-    tool_calls: DecimalCount
-    iterations: DecimalCount
-    file_count: DecimalCount
-    file_bytes: DecimalCount
-    input_tokens: DecimalCount
-    output_tokens: DecimalCount
-
-
-class BudgetLimitValues(BudgetAmounts):
-    concurrent_operations: DecimalCount
-    temporary_bytes: DecimalCount
-
-
-class BudgetCounterValues(BudgetAmounts):
-    unreported_text_requests: DecimalCount
-
-
-class BudgetDiagnostic(Input):
-    limits: BudgetLimitValues
-    counters: BudgetCounterValues
-
-    @classmethod
-    def from_values(cls, limits: FlowLimits, counters: BudgetCounters):
-        # Decimal strings preserve every valid integer in browser JSON clients.
-        return cls(
-            limits=BudgetLimitValues(
-                **{key: str(value) for key, value in limits.model_dump().items()}
-            ),
-            counters=BudgetCounterValues(
-                **{key: str(value) for key, value in counters.model_dump().items()}
-            ),
-        )
+DiagnosticSection = Literal["all", "models", "files"]
 
 
 class FlowFileDiagnostic(Input):
@@ -74,6 +36,5 @@ def source_invocation(slot):
 
 class Diagnostics(Input):
     run_id: UUID
-    budget: BudgetDiagnostic | None = None
     models: InvocationDiagnostics | None = None
     files: FlowFileDiagnostics | None = None

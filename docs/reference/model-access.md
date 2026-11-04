@@ -228,7 +228,7 @@ keystone recover-model-calls --confirm-api-stopped
 | inference/client、transport、errors；billing/registry | SDK 生命周期、发送观察、宿主错误转换 |
 | adapters/http、credentials、coordination | 受控下载、秘密、共享技术协调 |
 | services/entries、channels、queries | 配置、SQL 授权、角色批量绑定 |
-| services/runtime、image_results、image_tasks、costs | 发送登记、预算、证据、原结果恢复和费用核对 |
+| services/runtime、image_results、image_tasks、costs | 发送登记、用量、证据、原结果恢复和费用核对 |
 | composition.py | 显式注入依赖，协议与宿主同制品发布 |
 
 协议仅依赖轻量 DTO 和传入 SDK/传输，不导入 ORM、Service、用户权限、DBOS/FlowContext。AdapterError/QueryLater 在宿主边界转换；秘密本次注入，不进快照。没有统一大基类、在线插件或数据库请求模板。

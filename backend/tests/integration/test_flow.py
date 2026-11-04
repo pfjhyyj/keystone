@@ -205,61 +205,6 @@ def test_real_worker_harness_model_and_report(client, tmp_path, flow_engine):
     assert client.delete(f"/api/v1/_test/materials/{file_id}").status_code == 409
 
 
-def test_example_acceptance_and_budget_in_real_worker(client, tmp_path, flow_engine):
-    file_id = upload(client, b"Review this source.").json()["id"]
-    scenario_file = tmp_path / "scenario"
-    scenario_file.write_text("budget", encoding="utf8")
-    # Only model response contents change. SDK, DBOS and accounting stay real.
-    code = (
-        f"from pathlib import Path\nscenario_file = Path({str(scenario_file)!r})\n"
-        + """
-from pydantic_ai.messages import ToolCallPart
-from keystone.platform.flow.workflows.agent_model import FlowModel
-submissions = {}
-original_request = FlowModel.request
-
-async def edited_request(self, *args, **kwargs):
-    response = await original_request(self, *args, **kwargs)
-    function = next(part for part in response.parts if isinstance(part, ToolCallPart))
-    if function.tool_name == 'submit_review':
-        run_id = self.deps['run_id']
-        submissions[run_id] = submissions.get(run_id, 0) + 1
-        if scenario_file.read_text(encoding='utf8') == 'budget':
-            function.tool_name, function.args = 'inspect_document', {}
-        elif submissions[run_id] == 1:
-            values = function.args_as_dict()
-            function.args = {**values, 'characters': values['characters'] + 1}
-    return response
-
-FlowModel.request = edited_request
-from keystone.entrypoints.worker import main
-main()
-"""
-    )
-    with worker(client, tmp_path, code=code) as (process, log):
-        # The failed run publishes nothing, then an independent run repairs its output.
-        # Share startup while keeping the exact per-run receipt and file assertions.
-        for scenario, status, error, count in (
-            ("budget", "failed", "flow_budget_exceeded", 4),
-            ("repair", "succeeded", None, 3),
-        ):
-            scenario_file.write_text(scenario, encoding="utf8")
-            run = start(client, file_id, key=scenario).json()
-            done = wait_run(client, run["id"], process, log)
-            assert (done["status"], done["error_code"]) == (status, error), done
-            calls = client.get(f"/api/v1/model-invocations?flow_run_id={run['id']}").json()
-            assert len(calls) == count and all(call["status"] == "succeeded" for call in calls)
-            assert len({call["id"] for call in calls}) == count
-            assert len({call["flow_context"]["agent_call_id"] for call in calls}) == 1
-            assert file_count(client) == (2 if status == "succeeded" else 1)
-            if status == "succeeded":
-                assert done["result"]["source_file_id"] == file_id
-                assert done["result"]["characters"] == len("Review this source.")
-            else:
-                assert done["result"] is None
-    assert len(client.get("/api/v1/model-invocations").json()) == 7
-
-
 @pytest.mark.parametrize("credential_kind", ["session", "pat"])
 def test_start_and_input_reference_audits_share_request_id(client, credential_kind):
     file_id = upload(client).json()["id"]
@@ -907,20 +852,11 @@ def test_execution_context_preserves_transaction_errors_and_audit(client):
 
 
 def test_flow_binary_files_limits_and_idempotent_retention(client, monkeypatch):
-    from dataclasses import replace
 
     from keystone.platform.flow.workflows import context as host
 
     runtime = client.app.state.runtime
     runtime.settings.file_max_bytes = 32768
-    # This test exercises generic binary resources rather than the example's small text quota.
-    current = runtime.flow_definitions["document.review"]
-    runtime.flow_definitions = {
-        **runtime.flow_definitions,
-        current.key: replace(
-            current, limits=current.limits.model_copy(update={"file_bytes": 65536})
-        ),
-    }
     data = b"\xff\x00\x81" * 6000
     source = upload(client, data).json()["id"]
     run_id = start(client, source).json()["id"]

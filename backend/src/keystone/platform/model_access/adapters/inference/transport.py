@@ -50,7 +50,6 @@ class Observation:
         self.reported_cost = None
         self.rate_limited = False
         self.retry_after_seconds = None
-        self.request_budget = None
         self.phase = "preparing"
         self.request_bytes = None
         self.upstream_status = None
@@ -234,7 +233,7 @@ class SendTransport(httpx2.AsyncBaseTransport):
         if len(content) > self.max_request_bytes:
             raise ServiceError(413, "model_input_too_large", "模型请求超过本操作上限")
         self.observation.request_bytes = len(content)
-        self.observation.request_budget = self.validate(request)
+        self.validate(request)
         if self.observation.pricing_profile is not None:
             self.observation.pricing_context = request_context(
                 request, self.observation.pricing_profile

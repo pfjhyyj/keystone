@@ -9,9 +9,9 @@ from uuid import UUID, uuid4
 import pytest
 from PIL import Image
 from sqlalchemy import select
+from support.flow_admission import accept
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
-from test_flow_budgets import accept
 from test_identity import (
     NEW_PASSWORD,
     PASSWORD,
@@ -28,7 +28,7 @@ from test_model_access import model_configuration as model_configuration
 
 from keystone.core.time import utcnow
 from keystone.platform.files.models import FileReference
-from keystone.platform.flow.models import FlowRun, FlowRunBudget
+from keystone.platform.flow.models import FlowRun
 from keystone.platform.identity.models import User
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.schemas.images import (
@@ -177,9 +177,6 @@ def test_permissions_filter_before_pagination_without_default_history_window(cli
     assert {row["invocation_id"] for row in file_rows} == {None, str(ids[1]), str(ids[3])}
     # Inspect and retained reference do not confer content access.
     assert client.get(f"/api/v1/_test/materials/{files[1]}/content").status_code == 404
-    budget = client.get(path, params={"section": "budget"}).json()
-    assert budget["models"] is None and budget["files"] is None
-    assert budget["budget"]["counters"]["model_requests"] == "0"
     assert client.get(path, params={"limit": 101}).status_code == 422
     assert client.get(path, params={"offset": -1}).status_code == 422
     assert client.get(path, params={"section": "checkpoints"}).status_code == 422
@@ -216,21 +213,6 @@ def test_run_visibility_never_grants_other_resource_permissions(client):
     query(client, move)
     assert client.get(f"/api/v1/flow-runs/{run_id}/diagnostics").status_code == 404
     assert client.get(f"/api/v1/flow-runs/{uuid4()}/diagnostics").status_code == 404
-
-
-def test_missing_budget_is_an_error_and_other_sections_remain_available(client):
-    response, _ = accept(client)
-    run_id = UUID(response.json()["id"])
-    path = f"/api/v1/flow-runs/{run_id}/diagnostics"
-
-    async def remove(session):
-        await session.delete(await session.get(FlowRunBudget, run_id))
-
-    query(client, remove)
-    response = client.get(path, params={"section": "budget"})
-    assert response.status_code == 503 and response.json()["code"] == "flow_budget_unavailable"
-    # A failing budget panel does not prevent explicit model/file diagnostics.
-    assert client.get(path, params={"section": "models"}).status_code == 200
 
 
 def test_flow_manager_does_not_gain_read_all_model_scope(client):

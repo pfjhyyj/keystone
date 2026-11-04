@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onScopeDispose, ref, watch } from 'vue'
+import { onScopeDispose, ref, watch } from 'vue'
 import { ApiError } from '../../../api/client'
 import { flowApi, type Diagnostics, type DiagnosticSection, type Steps } from '../../../api/flows'
 import { callStates } from '../../../api/models'
@@ -7,36 +7,13 @@ import { can, sessionVersion } from '../../../stores/session'
 import InvocationDialog from '../../models/components/InvocationDialog.vue'
 const props = defineProps<{ id: string; refresh: number; steps: Steps | null }>()
 const emit = defineEmits<{ unavailable: [message: string] }>()
-const budget = ref<Diagnostics['budget']>(null),
-  models = ref<Diagnostics['models']>(null),
+const models = ref<Diagnostics['models']>(null),
   files = ref<Diagnostics['files']>(null),
   selected = ref('')
-const errors = ref({ budget: '', models: '', files: '' })
-const loading = ref({ budget: false, models: false, files: false })
-const generations = { budget: 0, models: 0, files: 0 }
+const errors = ref({ models: '', files: '' })
+const loading = ref({ models: false, files: false })
+const generations = { models: 0, files: 0 }
 let alive = true
-const labels = {
-  model_requests: '模型请求 · 已预留',
-  tool_calls: '工具操作 · 已记账',
-  iterations: '迭代 · 已记账',
-  file_count: '文件数 · 已预留',
-  file_bytes: '文件字节 · 已预留',
-  input_tokens: '输入 token · 已报告',
-  output_tokens: '输出 token · 已预留',
-} as const
-const usage = computed(() =>
-  Object.entries(labels).map(([key, label]) => {
-    const consumed = BigInt(budget.value?.counters?.[key as keyof typeof labels] ?? '0')
-    const limit = BigInt(budget.value?.limits?.[key as keyof typeof labels] ?? '0')
-    const remaining = limit - consumed
-    return {
-      label,
-      consumed: consumed.toString(),
-      limit: limit.toString(),
-      remaining: (remaining > 0n ? remaining : 0n).toString(),
-    }
-  }),
-)
 function position(workflow: string | null, step: number | null) {
   if (workflow === null || step === null) return '历史 Step 位置未记录'
   const record = props.steps?.items.find(
@@ -69,8 +46,7 @@ async function load(section: DiagnosticSection, more = false) {
   try {
     const result = await flowApi.diagnostics(props.id, section, offset)
     if (!current()) return
-    if (section === 'budget') budget.value = result.budget
-    else if (section === 'models')
+    if (section === 'models')
       models.value = result.models && {
         ...result.models,
         items: [...(more ? (models.value?.items ?? []) : []), ...result.models.items],
@@ -84,14 +60,12 @@ async function load(section: DiagnosticSection, more = false) {
   } catch (reason) {
     if (!current()) return
     // Keep independent sections usable, but never keep data after authority is lost.
-    if (section === 'budget') budget.value = null
-    else if (section === 'models') {
+    if (section === 'models') {
       models.value = null
       selected.value = ''
     } else files.value = null
     errors.value[section] = reason instanceof Error ? reason.message : '诊断暂不可用'
     if (reason instanceof ApiError && [401, 403, 404].includes(reason.status)) {
-      budget.value = null
       models.value = null
       files.value = null
       selected.value = ''
@@ -108,50 +82,24 @@ watch(
     if (!previous || value.slice(1).some((item, index) => item !== previous[index + 1]))
       selected.value = ''
     if (!can('flow:read')) {
-      budget.value = null
       models.value = null
       files.value = null
-      for (const section of ['budget', 'models', 'files'] as const) {
+      for (const section of ['models', 'files'] as const) {
         generations[section]++
         loading.value[section] = false
       }
       return
     }
-    void Promise.all((['budget', 'models', 'files'] as const).map((section) => load(section)))
+    void Promise.all((['models', 'files'] as const).map((section) => load(section)))
   },
   { immediate: true },
 )
 onScopeDispose(() => {
   alive = false
-  for (const section of ['budget', 'models', 'files'] as const) generations[section]++
+  for (const section of ['models', 'files'] as const) generations[section]++
 })
 </script>
 <template>
-  <section aria-label="运行预算">
-    <h3>运行累计预算</h3>
-    <p>预留额跨恢复累计；已预留的输出 token 不是已报告用量，预算也不表示实际费用。</p>
-    <p v-if="loading.budget" role="status">正在查询预算…</p>
-    <el-alert v-if="errors.budget" role="alert" type="error" :closable="false">{{
-      errors.budget
-    }}</el-alert>
-    <template v-else-if="budget">
-      <dl v-for="item in usage" :key="item.label">
-        <dt>{{ item.label }}</dt>
-        <dd>
-          {{ item.consumed }} / {{ item.limit }}；剩余
-          {{ item.remaining }}
-        </dd>
-      </dl>
-      <p>
-        未结清文本请求：{{ budget.counters.unreported_text_requests }}；输入 token
-        尚未报告，不等于零用量。
-      </p>
-      <p>
-        受控并发上限 {{ budget.limits.concurrent_operations }}；临时空间上限
-        {{ budget.limits.temporary_bytes }} B。
-      </p>
-    </template>
-  </section>
   <section aria-label="关联模型调用">
     <h3>关联模型调用</h3>
     <el-alert v-if="errors.models" role="alert" type="error" :closable="false">{{

@@ -12,7 +12,7 @@ ModelEntry.pricing 为 inherit/override/disabled，pricing_revision 单调递增
 
 百炼输入档位按 K=1000，方舟按接口整数边界（32K=32768、128K=131072）；完整输入选档后对全部数量用该档价格。qwen-plus 按实际 thinking 设置，百炼隐式缓存使用官方折扣、实时原价，不套活动或显式缓存；方舟默认仅标准服务，fast/flex/auto 需覆盖价。未核实的缓存单价不猜测。
 
-价格可记录采购单价/折扣及来源，不自动扣免费额度、资源包或代金券。查询目录、余额/月账单、轮询和下载均不增加计价次数；币种不自动换汇，预估不参与 Flow 资源预算。
+价格可记录采购单价/折扣及来源，不自动扣免费额度、资源包或代金券。查询目录、余额/月账单、轮询和下载均不增加计价次数；币种不自动换汇，预估只用于费用展示，不限制 Flow 受理或执行。
 
 依据：[百炼价格](https://help.aliyun.com/zh/model-studio/model-pricing)、[隐式缓存](https://help.aliyun.com/zh/model-studio/context-cache)、[方舟价格](https://docs.volcengine.com/docs/ark/model-pricing?lang=zh)；条件树及快照参考 [NewAPI 计价表达式](https://github.com/QuantumNous/new-api/blob/main/pkg/billingexpr/expr.md)，不采用其钱包或用户组售价。
 
@@ -37,7 +37,7 @@ prompt、正文、URL、密钥不进入估价事实。max_tokens、请求 n、�
 | KlingImages | 原任务成功生成张数及请求数，不提供计费秒或 credits；轮询不计次 |
 | 未装配视频/音频等 | 不允许通过配置启用计量 |
 
-文本/向量/同步图片使用 v2，Kling 使用 kling_images.v1；每种协议只安装当前计量规范。v2 校验 input/prompt、output/completion 及明细别名一致；DeepSeek hit/miss 仅在总量关系成立时推导。预算 usage() 与估价归一化分别保存，不改变预算口径。
+文本/向量/同步图片使用 v2，Kling 使用 kling_images.v1；每种协议只安装当前计量规范。v2 校验 input/prompt、output/completion 及明细别名一致；DeepSeek hit/miss 仅在总量关系成立时推导。调用统计 usage() 与估价归一化分别保存，不改变实际用量口径。
 
 规则为输入、输出各选一个互斥分区：
 

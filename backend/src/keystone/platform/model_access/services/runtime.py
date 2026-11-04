@@ -69,11 +69,10 @@ async def settle(coroutine):
 
 
 class ModelRuntime:
-    def __init__(self, service, *, admission=None, settlement=None, operation_scope=None):
+    def __init__(self, service, *, operation_scope=None):
         self.service = service
         self.identity, self.clients = service.identity, service.clients
         self.dispatch = ModelDispatchService(self.identity.database, self.identity.settings)
-        self.admission, self.settlement = admission, settlement
         self.operation_scope = operation_scope
 
     async def invoke(self, data, *, invocation_id=None, selection=None):
@@ -337,7 +336,7 @@ class ModelRuntime:
             if selected.operation in {"image.generate", "image.edit"}
             else 4 * 1024 * 1024,
         )
-        budget = AsyncExitStack()
+        permits = AsyncExitStack()
         dispatch_scope = None
 
         def committed(_session):
@@ -352,13 +351,15 @@ class ModelRuntime:
                 raise ServiceError(409, "model_result_unavailable", "同一次调用不能再次发送")
             async with self.identity.access("model:invoke") as (session, _):
                 original = await locked(session, Channel, selected.channel_id)
-                budget_secret = self.clients.credentials.decrypt(
+                credential_secret = self.clients.credentials.decrypt(
                     original.api_key_encrypted, original.id, "inference"
                 )
-                budget_scope = self.clients.credentials.scope(original.api_base, budget_secret)
-                dispatch_scope = budget_scope
-            permit = await budget.enter_async_context(
-                self.clients.coordination.inference(budget_scope)
+                credential_scope = self.clients.credentials.scope(
+                    original.api_base, credential_secret
+                )
+                dispatch_scope = credential_scope
+            permit = await permits.enter_async_context(
+                self.clients.coordination.inference(credential_scope)
             )
             while True:
                 async with self.identity.access("model:invoke") as (session, auth):
@@ -385,7 +386,7 @@ class ModelRuntime:
                     secret = self.clients.credentials.decrypt(
                         channel.api_key_encrypted, channel.id, "inference"
                     )
-                    if secret != budget_secret:
+                    if secret != credential_secret:
                         raise ServiceError(
                             409, "model_configuration_changed", "渠道密钥已改变，请重新选择模型"
                         )
@@ -397,10 +398,8 @@ class ModelRuntime:
                         raise ServiceError(
                             409, "model_result_unavailable", "已有调用记录，禁止再次发送"
                         )
-                    delay = await self.dispatch.claim_in_transaction(session, budget_scope)
+                    delay = await self.dispatch.claim_in_transaction(session, credential_scope)
                     if delay == 0:
-                        if self.admission is not None:
-                            await self.admission(session, identifier, observation.request_budget)
                         pricing = freeze_pricing(
                             entry,
                             channel,
@@ -483,8 +482,6 @@ class ModelRuntime:
                 return
             try:
                 async with self.identity.database.transaction() as session:
-                    if self.settlement is not None:
-                        await self.settlement(session, identifier, observation.usage)
                     row = await locked(session, ModelInvocation, identifier)
                     if row.status != "running":
                         raise ServiceError(
@@ -589,5 +586,5 @@ class ModelRuntime:
                 "invocation_id": str(identifier) if registered else None,
             }
         finally:
-            await budget.aclose()
+            await permits.aclose()
             observation.buffer.clear()

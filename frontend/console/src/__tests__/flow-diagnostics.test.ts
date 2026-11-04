@@ -7,27 +7,6 @@ const runId = '11111111-1111-4111-8111-111111111111',
   invocationId = '22222222-2222-4222-8222-222222222222',
   fileId = '33333333-3333-4333-8333-333333333333'
 const props = { id: runId, refresh: 1, steps: null }
-const limits = {
-  model_requests: 2,
-  tool_calls: 3,
-  iterations: 4,
-  file_count: 5,
-  file_bytes: 100,
-  input_tokens: 20,
-  output_tokens: 10,
-  concurrent_operations: 2,
-  temporary_bytes: 100,
-}
-const counters = {
-  model_requests: 1,
-  tool_calls: 1,
-  iterations: 1,
-  file_count: 1,
-  file_bytes: 5,
-  input_tokens: 0,
-  output_tokens: 10,
-  unreported_text_requests: 1,
-}
 const page = <T>(items: T[], next: number | null = null) => ({
   available: true,
   items,
@@ -46,7 +25,6 @@ const invocation = (id: string) => ({
   step_id: 3,
   error_code: null,
 })
-const budget = { limits, counters }
 it('keeps an opened invocation through polling and clears it when authority changes', async () => {
   authorize(['flow:read', 'model_invocation:read'])
   fakeApi(defaults)
@@ -70,14 +48,13 @@ const button = (wrapper: VueWrapper, text: string) =>
   wrapper.findAll('button').find((item) => item.text() === text)!
 const section = (path: string) => new URLSearchParams(path.split('?')[1]).get('section')
 function defaults(path: string) {
-  if (section(path) === 'budget') return { run_id: runId, budget }
   if (section(path) === 'models') return { run_id: runId, models: page([invocation(invocationId)]) }
   return {
     run_id: runId,
     files: page([{ file_id: fileId, slot: 'artifact.report', invocation_id: null }]),
   }
 }
-it('isolates failed model diagnostics from budget and files and supports retry', async () => {
+it('isolates failed model diagnostics from files and supports retry', async () => {
   authorize(['flow:read', 'model_invocation:read'])
   let failed = true
   fakeApi((path) =>
@@ -88,8 +65,6 @@ it('isolates failed model diagnostics from budget and files and supports retry',
   const wrapper = mount(FlowRunDiagnostics, { props })
   await flushPromises()
   expect(wrapper.text()).toContain('调用诊断暂不可用')
-  expect(wrapper.text()).toContain('输出 token · 已预留')
-  expect(wrapper.text()).toContain('未结清文本请求：1')
   expect(wrapper.text()).toContain(fileId)
   expect(wrapper.text()).not.toContain('下载文件')
   failed = false
@@ -185,7 +160,7 @@ it('does not fetch unauthorized resource panels', async () => {
   })
   const wrapper = mount(FlowRunDiagnostics, { props })
   await flushPromises()
-  expect(paths.map(section).sort()).toEqual(['budget', 'files'])
+  expect(paths.map(section).sort()).toEqual(['files'])
   expect(wrapper.text()).toContain('无查看模型调用权限')
   expect(wrapper.text()).toContain(fileId)
 })
@@ -228,18 +203,4 @@ it('shows missing Step positions explicitly and clears all data on Run access lo
   expect(wrapper.emitted('unavailable')).toBeTruthy()
   expect(wrapper.text()).not.toContain(invocationId)
   expect(wrapper.text()).not.toContain(fileId)
-})
-
-it('keeps budget counts and remaining exact above the JavaScript safe integer range', async () => {
-  authorize(['flow:read'])
-  fakeApi(() => ({
-    run_id: runId,
-    budget: {
-      limits: { ...limits, input_tokens: '9007199254740994' },
-      counters: { ...counters, input_tokens: '9007199254740993' },
-    },
-  }))
-  const wrapper = mount(FlowRunDiagnostics, { props })
-  await flushPromises()
-  expect(wrapper.text()).toContain('9007199254740993 / 9007199254740994；剩余 1')
 })

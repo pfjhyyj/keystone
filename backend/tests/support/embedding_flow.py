@@ -1,6 +1,5 @@
 """Independent embedding contract and deterministic fault injection; no business imports."""
 
-from keystone.platform.flow.schemas.budgets import FlowLimits
 from keystone.platform.flow.schemas.definitions import FlowDefinition, ModelRole
 from keystone.platform.flow.schemas.packages import FlowPackage
 from keystone.platform.model_access.schemas.embeddings import EmbeddingRequest, EmbeddingResult
@@ -15,7 +14,6 @@ definition = FlowDefinition(
     entrypoint="test.embedding.run",
     required_permissions=("model:invoke",),
     model_roles=(ModelRole("embed", "Text vectors", "text.embed"),),
-    limits=FlowLimits(model_requests=1, output_tokens=0),
 )
 
 PACKAGE = FlowPackage(

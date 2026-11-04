@@ -4,7 +4,6 @@ import json
 from dataclasses import dataclass
 
 from keystone.platform.model_access.adapters.inference import images
-from keystone.platform.model_access.schemas.budgets import TEXT_OPERATIONS, ModelRequestBudget
 from keystone.platform.model_access.schemas.errors import AdapterError
 from keystone.platform.model_access.schemas.structured import JsonOutput, StructuredRequest
 
@@ -54,8 +53,7 @@ def validate_request(request, selected, target, *, require_parameters=False):
                 raise AdapterError(
                     422, "model_invalid_request", "结构化输出须使用受控严格 Schema"
                 ) from None
-    maximum = 0
-    if selected.operation in TEXT_OPERATIONS:
+    if selected.operation in {"text.generate", "text.structured", "image.understand"}:
         if type(payload.get("n", 1)) is not int or payload.get("n", 1) != 1 or "best_of" in payload:
             raise AdapterError(422, "model_invalid_request", "文本操作只允许单份输出")
         maximum = payload.get("max_completion_tokens", payload.get("max_tokens"))
@@ -66,7 +64,6 @@ def validate_request(request, selected, target, *, require_parameters=False):
             and "max_tokens" in payload
         ):
             raise AdapterError(422, "model_invalid_request", "文本请求须明确受控输出 token 上限")
-    return ModelRequestBudget(operation=selected.operation, max_output_tokens=maximum)
 
 
 @dataclass(frozen=True)

@@ -36,7 +36,6 @@ class FlowModel(Model):
         runtime, selected, invocation_id = await ctx._model(
             self.deps["model_role"], operation=operation
         )
-        await ctx.consume_iteration("agent_model_request")
         settings = runtime.sdk_settings(selected, settings)
 
         async def request(sdk):

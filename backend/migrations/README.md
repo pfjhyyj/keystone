@@ -11,12 +11,12 @@
 | `0003_dictionary_initial.py` / `0003` | 字典 | dictionaries、dictionary_items |
 | `0004_files_initial.py` / `0004` | 文件 | files、file_references |
 | `0005_model_access_initial.py` / `0005` | 模型接入与费用 | model_channels、model_entries、model_invocations、model_dispatch_scopes |
-| `0006_flow_initial.py` / `0006` | Flow | flow_runs、flow_run_budgets、flow_budget_claims |
+| `0006_flow_initial.py` / `0006` | Flow | flow_runs |
 | `0007_worker_initial.py` / `0007` | Worker | worker_registrations、worker_heartbeats |
 
 七份迁移依序创建 20 张领域表，唯一 head 为 `0007`。Files 基线直接创建可空的 `completed_at` 和回收索引。模型接入基线直接包含火山方舟、百炼业务空间和费用预估字段及约束。
 
-模型接入基线包含渠道凭据密文、操作声明（含 `text.embed`）、调用归属、费用与回执、受限结果证据、发送间隔/冷却表、NewAPI 渠道类型、可修改的模型显示名称，以及 Run 关联调用表达式索引。显示名称为空时按固定 key 展示；改名不改变 key、选择或历史调用。条目 `operations` 默认仅 `text.generate`，调用 `operation` 默认 `text.generate`、`result_context` 可空，不按模型名推断媒体能力。Flow 基线包含快照、协调字段、累计预算和稳定预留；每个 Run 均保存完整预算契约和账本。Worker 基线包含固定身份登记、心跳及其约束和索引。
+模型接入基线包含渠道凭据密文、操作声明（含 `text.embed`）、调用归属、费用与回执、受限结果证据、发送间隔/冷却表、NewAPI 渠道类型、可修改的模型显示名称，以及 Run 关联调用表达式索引。显示名称为空时按固定 key 展示；改名不改变 key、选择或历史调用。条目 `operations` 默认仅 `text.generate`，调用 `operation` 默认 `text.generate`、`result_context` 可空，不按模型名推断媒体能力。Flow 基线只保存运行快照、状态与协调字段，调用及用量统计使用实际模型记录。Worker 基线包含固定身份登记、心跳及其约束和索引。
 
 ## 初始化与已有数据库
 

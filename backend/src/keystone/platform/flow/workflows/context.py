@@ -14,7 +14,6 @@ from keystone.platform.flow.services.resources import FlowResourceService
 
 _bound_runtime = None
 _execution = ContextVar("flow_execution_scope", default=None)
-_operations = ContextVar("flow_operation_scope", default=None)
 _workspaces = ContextVar("flow_workspaces", default=())
 _model_wait = ContextVar("flow_model_wait", default=None)
 
@@ -35,7 +34,7 @@ def _identity(run_id):
 
 
 @asynccontextmanager
-async def _execution_scope(run_id, *, permissions=(), guard=None):
+async def _execution_scope(run_id, *, permissions=()):
     """Keep this Run's original authority live across a long operation, outside SQL I/O.
 
     Extra permissions are trusted business declarations. Yield a fresh check for
@@ -57,8 +56,6 @@ async def _execution_scope(run_id, *, permissions=(), guard=None):
     reason = None
 
     async def check():
-        if guard is not None:
-            await guard()
         async with context.access() as (_, auth):
             for permission in sorted(required):
                 auth.require(permission)
@@ -75,22 +72,16 @@ async def _execution_scope(run_id, *, permissions=(), guard=None):
         while True:
             await asyncio.sleep(1)
             try:
-                if waiting[1]:
-                    # A model already in its bounded send/wait path retains the right
-                    # to save receipts. Runtime still authorizes every new physical send.
-                    if guard is not None:
-                        await guard()
-                else:
+                # An in-flight model retains the right to save its receipt;
+                # each new physical send still authorizes before registration.
+                if not waiting[1]:
                     await check()
             except ServiceError as error:
-                if waiting[1] and error.code != "flow_operation_interrupted":
-                    continue
                 if error.status in {401, 403, 404} or error.code in {
                     "flow_cancelled",
                     "flow_not_found",
                     "execution_not_authorized",
                     "execution_version_unavailable",
-                    "flow_operation_interrupted",
                 }:
                     reason = error
                     parent.cancel()
@@ -130,72 +121,8 @@ async def _execution_scope(run_id, *, permissions=(), guard=None):
 
 
 @asynccontextmanager
-async def _operation_scope(run_id):
-    from keystone.core.advisory import session_lease
-    from keystone.platform.flow.services.budgets import FlowBudgetService
-
-    run_id, owner = UUID(str(run_id)), asyncio.current_task()
-    outer = _operations.get()
-    if outer and outer[0] != run_id:
-        raise ServiceError(404, "flow_not_found", "不能复用其他运行的操作许可")
-    if outer and outer[1] is owner:
-        await outer[2]()
-        yield outer[2]
-        return
-    limits = await FlowBudgetService(_identity(run_id)).limits()
-    manager = session_lease(
-        _runtime().database,
-        capacities=[(f"flow-operations:{run_id}", limits.concurrent_operations)],
-    )
-    try:
-        lease = await manager.__aenter__()
-    except ServiceError as error:
-        if error.code == "model_capacity_busy":
-            raise ServiceError(409, "flow_capacity_busy", "本次运行的并发操作额度已满") from None
-        raise
-
-    async def check():
-        try:
-            await lease()
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            raise ServiceError(
-                503, "flow_operation_interrupted", "运行操作许可连接已中断"
-            ) from None
-
-    token, failed = _operations.set((run_id, owner, check)), False
-    try:
-        await check()
-        yield check
-    except BaseException:
-        failed = True
-        raise
-    finally:
-        _operations.reset(token)
-        # Keep the physical owner until native work/cleanup has drained, even on repeated cancel.
-        closing = asyncio.create_task(manager.__aexit__(None, None, None))
-        interrupted = False
-        while not closing.done():
-            try:
-                await asyncio.shield(closing)
-            except asyncio.CancelledError:
-                interrupted = True
-        closing.result()
-        if interrupted and not failed:
-            raise asyncio.CancelledError()
-
-
-@asynccontextmanager
-async def _controlled_scope(run_id, *, permissions=()):
-    async with _operation_scope(run_id) as guard:
-        async with _execution_scope(run_id, permissions=permissions, guard=guard) as check:
-            yield check
-
-
-@asynccontextmanager
 async def _model_operation_scope(run_id):
-    async with _controlled_scope(run_id, permissions=("model:invoke",)):
+    async with _execution_scope(run_id, permissions=("model:invoke",)):
         waiting = _model_wait.get()
         waiting[1] += 1
         try:
@@ -207,9 +134,9 @@ async def _model_operation_scope(run_id):
 @asynccontextmanager
 async def _workspace(run_id, *, max_bytes):
     resource = _resources(run_id)
-    files = await resource.scoped_files()
+    files = resource.files
     with files.transfer() as transfer:
-        async with _controlled_scope(run_id):
+        async with _execution_scope(run_id):
             async with transfer.workspace(max_bytes) as path:
                 state = [UUID(str(run_id)), asyncio.current_task(), path, max_bytes, True]
                 token = _workspaces.set((*_workspaces.get(), state))
@@ -249,7 +176,7 @@ async def _run_process(run_id, arguments, *, permissions=(), **options):
             raise ServiceError(
                 422, "flow_process_output_denied", "进程输出需要当前托管工作区和明确额度"
             )
-    async with _controlled_scope(run_id, permissions=permissions):
+    async with _execution_scope(run_id, permissions=permissions):
         return await execute(arguments, **options)
 
 
@@ -262,12 +189,12 @@ async def _inputs(run_id):
 
 
 async def _read_file(run_id, identifier, *, max_bytes):
-    async with _controlled_scope(run_id):
+    async with _execution_scope(run_id):
         return await _resources(run_id).read_file(identifier, max_bytes=max_bytes)
 
 
 async def _upload(run_id, key, name, content, *, content_type, storage_key=None):
-    async with _controlled_scope(run_id):
+    async with _execution_scope(run_id):
         return await _resources(run_id).upload(
             key,
             name,
@@ -278,7 +205,7 @@ async def _upload(run_id, key, name, content, *, content_type, storage_key=None)
 
 
 async def _artifact(run_id, key, *, max_bytes=None):
-    async with _controlled_scope(run_id):
+    async with _execution_scope(run_id):
         return await _resources(run_id).artifact(key, max_bytes=max_bytes)
 
 
@@ -287,10 +214,10 @@ async def _materialize_file(run_id, identifier):
     # Preserve slot -> live execution scope -> authorized reader/workspace nesting.
     resource = _resources(run_id)
     await resource.require_file(identifier)
-    files = await resource.scoped_files()
+    files = resource.files
     with files.transfer() as transfer:
         async with (
-            _controlled_scope(run_id),
+            _execution_scope(run_id),
             transfer.materialize_file(UUID(str(identifier))) as path,
         ):
             yield path
@@ -298,9 +225,9 @@ async def _materialize_file(run_id, identifier):
 
 async def _upload_file(run_id, key, path, *, name, content_type, storage_key=None):
     resource = _resources(run_id)
-    files = await resource.scoped_files()
+    files = resource.files
     with files.transfer() as transfer:
-        async with _controlled_scope(run_id):
+        async with _execution_scope(run_id):
             return await resource.upload_file(
                 key,
                 path,
@@ -334,29 +261,10 @@ class FlowContext:
                 auth.require(permission)
 
     def execution_scope(self, *, permissions=()):
-        return _controlled_scope(self.run_id, permissions=permissions)
+        return _execution_scope(self.run_id, permissions=permissions)
 
     def workspace(self, *, max_bytes):
         return _workspace(self.run_id, max_bytes=max_bytes)
-
-    async def _consume(self, kind, key, request_digest):
-        from dbos import DBOS
-
-        from keystone.platform.flow.services.budgets import FlowBudgetService, claim_key, digest
-
-        if DBOS.workflow_id is None or DBOS.step_id is None:
-            raise RuntimeError("Budget consumption requires a durable DBOS step")
-        claim_key(key)  # Bound the trusted logical key before forming a compact identity.
-        stable = digest([DBOS.workflow_id, DBOS.step_id, key])
-        await FlowBudgetService(_identity(self.run_id)).consume(kind, stable, request_digest)
-
-    async def consume_tool(self, key, *, request_digest):
-        return await self._consume("tool", key, request_digest)
-
-    async def consume_iteration(self, key):
-        from keystone.platform.flow.services.budgets import digest
-
-        return await self._consume("iteration", key, digest(["iteration", key]))
 
     async def read_file(self, file_id, *, max_bytes):
         return await _read_file(self.run_id, file_id, max_bytes=max_bytes)
@@ -415,14 +323,10 @@ class FlowContext:
             raise ServiceError(409, "model_operation_unavailable", "模型角色操作不匹配")
         identifier = uuid5(self.run_id, f"model:{DBOS.workflow_id}:{DBOS.step_id}")
         service = ModelEntryService(_identity(self.run_id), _runtime().models)
-        from keystone.platform.flow.services.budgets import FlowBudgetService
 
-        budget = FlowBudgetService(service.identity)
         return (
             ModelRuntime(
                 service,
-                admission=budget.reserve_model,
-                settlement=budget.settle_model,
                 operation_scope=lambda: _model_operation_scope(self.run_id),
             ),
             selected,

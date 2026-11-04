@@ -102,10 +102,6 @@ class FlowDiagnostics:
         async with self.flows.identity.access("flow:read") as (session, auth):
             await self.flows.visible(session, auth, identifier)
             result = Diagnostics(run_id=identifier)
-            if section in {"all", "budget"}:
-                result.budget = await self.flows.budget_diagnostic_in_transaction(
-                    session, auth, identifier
-                )
             if section in {"all", "models"}:
                 result.models = await self.models.flow_diagnostics_in_transaction(
                     session, auth, identifier, offset, limit

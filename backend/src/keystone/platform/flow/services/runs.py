@@ -12,14 +12,11 @@ from keystone.platform.files.services.references import (
     FileReferences,
     describe_inputs_in_transaction,
 )
-from keystone.platform.flow.models import TERMINAL, FlowRun, FlowRunBudget
+from keystone.platform.flow.models import TERMINAL, FlowRun
 from keystone.platform.flow.schemas import view
-from keystone.platform.flow.schemas.budgets import BudgetCounters, FlowLimits
-from keystone.platform.flow.schemas.diagnostics import BudgetDiagnostic
 from keystone.platform.flow.schemas.files import compile_file_paths, extract_file_ids
 from keystone.platform.flow.schemas.snapshots import read_snapshot
 from keystone.platform.flow.schemas.values import small_json
-from keystone.platform.flow.services.budgets import initialize_in_transaction
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access.services.entries import resolve_bindings_in_transaction
 
@@ -122,8 +119,7 @@ class FlowService:
         )
         session.add(run)
         await session.flush()
-        files = await describe_inputs_in_transaction(session, identifiers)
-        await initialize_in_transaction(session, run.id, definition.limits, files)
+        await describe_inputs_in_transaction(session, identifiers)
         await FileReferences(
             session, auth, "flow", correlation_id=self.identity.correlation_id
         ).replace(str(run.id), "input", identifiers)
@@ -151,19 +147,6 @@ class FlowService:
     async def get_in_transaction(self, session, auth, identifier):
         """Current Run view under the existing read/actor scope, without another transaction."""
         return view(await self.visible(session, auth, identifier))
-
-    async def budget_diagnostic_in_transaction(self, session, auth, identifier):
-        await self.visible(session, auth, identifier)
-        row = await session.get(FlowRunBudget, identifier)
-        try:
-            if row is None:
-                raise ValueError()
-            return BudgetDiagnostic.from_values(
-                FlowLimits.model_validate(row.limits),
-                BudgetCounters.model_validate(row.counters),
-            )
-        except ValueError:
-            raise ServiceError(503, "flow_budget_unavailable", "运行预算状态不可用") from None
 
     async def visible(self, session, auth, identifier, *, lock=False):
         stmt = select(FlowRun).where(FlowRun.id == identifier, *scope(auth))

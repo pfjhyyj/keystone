@@ -6,7 +6,6 @@ from uuid import UUID
 from pydantic import Field, field_validator
 
 from keystone.core.schemas import Input
-from keystone.platform.flow.schemas.budgets import FlowLimits
 from keystone.platform.flow.schemas.definitions import FlowDefinition, ModelRole
 from keystone.platform.flow.schemas.packages import FlowPackage, PackageResource
 
@@ -80,15 +79,6 @@ definition = FlowDefinition(
     output_file_fields=("report_file_id",),
     model_roles=(ModelRole("review", "审查"),),
     timeout_seconds=180,
-    limits=FlowLimits(
-        model_requests=4,
-        tool_calls=3,
-        iterations=4,
-        input_tokens=16000,
-        output_tokens=8192,
-        file_count=2,
-        file_bytes=SOURCE_BYTES + 8192,
-    ),
 )
 
 

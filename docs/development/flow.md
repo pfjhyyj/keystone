@@ -23,7 +23,7 @@ bind 内再导入执行模块，用 Runtime 和 ExecutionIdentity(runtime, run_i
 document_review/
 ├── __init__.py
 ├── contracts.py             # 轻量输入输出、工具结果 DTO、业务验收、FlowDefinition 与 PACKAGE
-├── workflow.py              # 预算、Agent、工具及 DBOS workflow/step
+├── workflow.py              # Agent、工具及 DBOS workflow/step
 └── skills/review-text/SKILL.md
 ```
 
@@ -120,65 +120,20 @@ async def generate_images(run_id):
 
 - Judgment 校验枚举、字符数和非空白摘要。
 - prepare 从原文件读取可信 source_file_id/字符数，放入 deps。
-- accept_judgment 校验归属与计数；可公开的输出错误最多反馈模型修正一次，仍消耗原预算。
+- accept_judgment 校验归属与计数；可公开的输出错误最多反馈模型修正一次，使用同一运行和原身份。
 - save_report 上传前再次验收，使用稳定 owner/slot/request_key；协调器另按原 JSON Schema 验证最终结果和引用。
 
 业务规则放自己的验收函数，output validator 不执行上传、审批或采用。授权失败/结果未知不触发模型修正重发。元数据校验不能证明判断准确，needs_attention 表示待复核，内容质量需真实人工样例验证。
 
-## 3. 预算：在可信代码中集中声明
+## 3. 单次操作与执行观测
 
-FlowLimits 约束整个 Run，局部 ReviewBudget/UsageLimits 额外约束示例 Agent，不替代累计账本。输入和模型不能提高限额，不能捕获预算异常后另建 Agent 继续。
+Workflow 使用普通 Python 组合 DBOS Step，不登记实际用量统计或预留工具次数。模型调用通过 FlowModel/FlowContext 使用原身份和稳定调用 ID；次数、token、状态和费用从实际调用记录统计，模型未知结果不自动重发。DBOS 历史记录步骤、工具执行及重试，业务日志使用 run_id、节点、状态和耗时关联。
 
-| 示例限制 | 值/执行位置 |
-|---|---|
-| 模型/成功工具调用 | 4/3，UsageLimits，含输出修正 |
-| 总 token | 16000，真实 usage 响应后检查 |
-| 每次输出 token | 2048，可信设置允许 1～4096，默认 1024 |
-| 输出修正 | 1，Agent retries |
-| 流程时限 | 180 秒，DBOS 与局部 timeout |
-| 源文本/预览/分段 | 16 KiB UTF-8 / 512 / 2048 字符 |
+工具和业务 Service 在每次新副作用前授权，发布时复核对象版本和原任务归属。模型输入/响应、工具返回 DTO、单文件和每个工作区仍须有界；文件引用与产物采用稳定键，不依赖额度记账实现幂等。
 
-示例声明 FlowLimits(model_requests=4, tool_calls=3, iterations=4, input_tokens=16000, output_tokens=8192, file_count=2, file_bytes=24576)。多个 Agent 仍共享同一 Run 预算；token 响应后计量不代表预付费或费用上限。
+ctx.workspace(max_bytes=...) 提供显式大小限制的临时工作区，ctx.run_process(output=..., output_limit=...) 只允许当前 Task 管理的工作区。进程保持超时和输出上限，取消后等待子进程和原生 I/O 完成再清理。并发由实际资源和执行队列控制，不使用每 Run 操作许可。
 
-DBOS 首次出队确定执行截止，排队不计入，恢复不重置；局部 timeout 重入不能替代它。安全错误为 flow_budget_exceeded、flow_timeout、flow_invalid_output，引擎取消/超时按原状态投影。
-
-### 3.1 工具、循环、产物和临时空间
-
-工具在自己的 Step 调 consume_tool，摘要为参数稳定 SHA-256；候选循环调 consume_iteration，同 Step 多次须不同可信 key。稳定 claim 防重计，不替代工具副作用幂等；FlowModel 自动计 Agent 每轮。
-
-输入按唯一 File ID 计额，产物上传前按稳定 key、元数据和实际摘要预留；失败/未知不退款，原键恢复不双扣，读取不重复计文件量。
-
-workspace 返回仅作用域内有效的 Path；run_process 只写当前 Task 活跃工作区且不超过 output_limit，子 Task 不继承许可。无文件输出使用有界 stdout/stderr，退出前完成进程、I/O 及清理。以下复制 Step 的 argv 来自可信代码：
-
-```python
-import hashlib
-import sys
-from dbos import DBOS
-from keystone.platform.flow.workflows.context import flow_context
-
-@DBOS.step(name="example.copy", retries_allowed=False)
-async def copy_file(run_id):
-    ctx = flow_context(run_id)
-    data = await ctx.inputs()
-    await ctx.consume_iteration("copy")
-    await ctx.consume_tool(
-        "copy", request_digest=hashlib.sha256(str(data["source_file_id"]).encode()).hexdigest()
-    )
-    async with ctx.materialize_file(data["source_file_id"]) as source:
-        async with ctx.workspace(max_bytes=16 * 1024**2) as target:
-            result = await ctx.run_process(
-                [sys.executable, "-c", "import shutil,sys; shutil.copyfile(sys.argv[1],sys.argv[2])", str(source), str(target)],
-                output=target, output_limit=16 * 1024**2,
-            )
-            if result.returncode:
-                raise ValueError("Copy failed")
-            file_id = await ctx.upload_file("copy", target, name="copy.bin", content_type="application/octet-stream")
-    return {"file_id": str(file_id)}
-```
-
-此例最坏同时保留三个 16 MiB 临时副本/三个传输槽，定义至少 temporary_bytes=48 MiB、file_count=2、file_bytes=32 MiB、tool_calls=1、iterations=1。宿主磁盘限制同时生效；嵌套同 Task 复用一个操作许可，子 Task 独立申请，满额 flow_capacity_busy。
-
-额外业务 I/O 由 Workflow 显式计工具额并持 execution_scope，Service 保持普通授权/事务。Context 不拦截任意 Python 自行写盘或创建的非托管 Task。
+Agent 示例保留单次输出参数、输出修正次数和流程超时；显式禁用 SDK 默认累计请求次数限制。工具仅读取已授权文件与有界片段，不返回任意路径或原始异常。
 
 ## 4. 工具摘要与按需读回
 
@@ -190,16 +145,8 @@ inspect_document 返回摘要，read_document 仅接受本次输入，按 Unicod
 
 ## 5. 验证
 
-backend 目录执行：
-
-```sh
-uv run --locked pytest -q tests/unit/test_document_review.py tests/unit/test_flow_contracts.py
-# 按 development.md 配置专用 keystone_test 数据库后：
-uv run --locked pytest --require-postgres -q tests/integration/test_flow.py tests/integration/test_model_live.py tests/integration/test_review_recovery.py tests/integration/test_flow_extensions.py
-```
-
-单元验证业务验收、空白结果禁止上传、Agent 修正/预算和 Unicode 分段。集成用真实 Worker/PostgreSQL/DBOS 和本地 HTTP 替身，覆盖多角色绑定及登记、响应、产物、Agent 消费前的崩溃恢复；检查请求数、原 ID、预算、截止、引用和原检查点恢复。不访问付费模型，不将协议回归作为业务质量证明。
+复用现有单元测试验证业务验收、输出修正及有界工具返回。真实 PostgreSQL/DBOS 集成验证授权、调用登记与取消收尾、原调用恢复、产物引用和新基线与 ORM 一致。统计断言来自实际调用记录，不维护第二份累计账本，不访问付费模型。
 
 ## 运行诊断
 
-控制台展示 Run、步骤、预算、模型、文件和费用；业务无需复制执行日志。接口和授权只在 [Flow 诊断](../domains/flow.md#8-api授权与诊断)维护，步骤尚无执行位置时明确显示未记录；预算以 Run 保存的账本为准。资源可见与 Run 可见分别判断，文件下载再次检查内容权。
+控制台独立加载运行步骤、关联模型调用、文件用途及费用。失去运行或资源权限后清空对应详情，迟到结果不覆盖当前代次；接口与授权见 Flow 领域文档。

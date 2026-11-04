@@ -7,7 +7,6 @@ from email.policy import default
 from urllib.parse import urlsplit
 
 from keystone.platform.model_access.adapters.inference import images
-from keystone.platform.model_access.schemas.budgets import ModelRequestBudget
 from keystone.platform.model_access.schemas.errors import AdapterError
 from keystone.platform.model_access.schemas.images import (
     MAX_IMAGE_BYTES,
@@ -136,7 +135,6 @@ def validate_request(request, selected, target):
             raise ValueError()
     except (KeyError, TypeError, ValueError, AttributeError, UnicodeError):
         raise AdapterError(422, "model_invalid_request", "图片请求不符合受控协议") from None
-    return ModelRequestBudget(operation=selected.operation, max_output_tokens=0)
 
 
 class OpenAIImages:

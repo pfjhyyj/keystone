@@ -1,4 +1,4 @@
-"""Persisted contracts retain their original limits and execution identity."""
+"""Persisted contracts require the current schema and fixed execution identity."""
 
 from types import SimpleNamespace
 
@@ -25,7 +25,7 @@ def test_observation_uses_persisted_identity():
     assert not matches_observation(run, {**state, "name": "job.renamed"})
 
 
-@pytest.mark.parametrize("field", ["format_version", "limits"])
+@pytest.mark.parametrize("field", ["format_version", "entrypoint"])
 def test_snapshot_requires_current_contract(field):
     snapshot = snapshot_for(definition)
     snapshot.pop(field)

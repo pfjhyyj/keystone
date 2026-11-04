@@ -3,7 +3,6 @@
 import json
 from dataclasses import dataclass
 
-from keystone.platform.model_access.schemas.budgets import ModelRequestBudget
 from keystone.platform.model_access.schemas.embeddings import EmbeddingRequest, validate_vectors
 from keystone.platform.model_access.schemas.errors import AdapterError
 
@@ -43,7 +42,6 @@ class Embeddings:
             EmbeddingRequest(texts=value["input"], dimensions=value["dimensions"])
         except (TypeError, ValueError):
             raise AdapterError(422, "model_invalid_request", "向量文本或维度无效") from None
-        return ModelRequestBudget(operation="text.embed", max_output_tokens=0)
 
     async def invoke(self, sdk, selected, data):
         reply = await sdk.embeddings.with_raw_response.create(

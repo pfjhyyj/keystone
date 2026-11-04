@@ -1,16 +1,14 @@
-"""Business acceptance, real Agent correction budgets, and bounded tool readback."""
+"""Business acceptance, real Agent correction, and bounded tool readback."""
 
-from dataclasses import replace
 from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse, RetryPromptPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.usage import RequestUsage
 
 from keystone.core.errors import ServiceError
 from keystone.examples.document_review import workflow
@@ -26,8 +24,6 @@ def mock_workflow_context(monkeypatch):
         inputs=AsyncMock(),
         read_file=AsyncMock(),
         upload=AsyncMock(),
-        consume_tool=AsyncMock(),
-        consume_iteration=AsyncMock(),
     )
     monkeypatch.setattr(workflow, "flow_context", lambda _: context)
     return context
@@ -71,7 +67,7 @@ async def test_acceptance_saves_normalized_result_with_stable_artifact_key(monke
     assert upload.call_args.args[2] == b"reviewed\n\nChecked.\n"
 
 
-async def test_real_agent_repairs_source_mismatch_within_request_budget(source):
+async def test_real_agent_repairs_source_mismatch(source):
     requests = []
 
     def respond(messages, info):
@@ -119,77 +115,6 @@ async def test_repeated_invalid_output_fails_workflow_without_publishing(monkeyp
     save.assert_not_called()
 
 
-async def test_correction_cannot_start_a_request_beyond_total_budget(monkeypatch, source):
-    attempts = []
-    monkeypatch.setattr(workflow, "BUDGET", replace(workflow.BUDGET, requests=2))
-    monkeypatch.setattr(
-        workflow,
-        "inspect_source",
-        AsyncMock(
-            return_value={
-                **source,
-                "status": "succeeded",
-                "summary": "Source",
-                "preview": "hello",
-                "truncated": False,
-            }
-        ),
-    )
-
-    def respond(messages, info):
-        attempts.append(1)
-        if len(attempts) == 1:
-            return ModelResponse([ToolCallPart("inspect_document", {})])
-        return ModelResponse([ToolCallPart("submit_review", judgment(source, characters=6))])
-
-    with workflow.agent.override(model=FunctionModel(respond)):
-        with pytest.raises(UsageLimitExceeded):
-            await workflow.review(str(uuid4()), source)
-    assert len(attempts) == 2
-
-
-async def test_observed_tokens_are_bounded_even_for_structurally_valid_output(monkeypatch, source):
-    monkeypatch.setattr(workflow, "BUDGET", replace(workflow.BUDGET, total_tokens=10))
-
-    def respond(messages, info):
-        return ModelResponse(
-            [ToolCallPart("submit_review", judgment(source))],
-            usage=RequestUsage(input_tokens=8, output_tokens=8),
-        )
-
-    with workflow.agent.override(model=FunctionModel(respond)):
-        with pytest.raises(UsageLimitExceeded):
-            await workflow.review(str(uuid4()), source)
-
-
-async def test_tool_budget_prevents_extra_execution(monkeypatch, source):
-    monkeypatch.setattr(workflow, "BUDGET", replace(workflow.BUDGET, tool_calls=1))
-    inspected = AsyncMock(
-        return_value={
-            **source,
-            "status": "succeeded",
-            "summary": "Source",
-            "preview": "hello",
-            "truncated": False,
-        }
-    )
-    monkeypatch.setattr(workflow, "inspect_source", inspected)
-
-    def respond(messages, info):
-        # Two successful tool calls would exceed the one-call allowance before dispatch.
-        return ModelResponse(
-            [
-                ToolCallPart("inspect_document", {}, tool_call_id="a"),
-                ToolCallPart("inspect_document", {}, tool_call_id="b"),
-            ]
-        )
-
-    with workflow.agent.override(model=FunctionModel(respond)):
-        with pytest.raises(UsageLimitExceeded):
-            await workflow.review(str(uuid4()), source)
-    assert inspected.await_count <= 1
-
-
 async def test_tools_return_bounded_unicode_preview_and_exact_excerpt(monkeypatch):
     source_id, run_id = str(uuid4()), str(uuid4())
     text = "汉🙂" * 1600
@@ -223,7 +148,6 @@ async def test_invalid_tool_ranges_do_not_read_files(monkeypatch, offset, length
 @pytest.mark.parametrize(
     "error,code",
     [
-        (UsageLimitExceeded("private"), "flow_budget_exceeded"),
         (TimeoutError("private"), "flow_timeout"),
         (UnexpectedModelBehavior("private"), "flow_invalid_output"),
         (ServiceError(403, "execution_not_authorized", "private"), "execution_not_authorized"),
@@ -274,7 +198,6 @@ async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
     context = SimpleNamespace(
         _invocation_context=Mock(side_effect=correlation),
         execution_scope=scope,
-        consume_iteration=AsyncMock(),
         _model=AsyncMock(
             return_value=(
                 SimpleNamespace(invoke_sdk=invoke, sdk_settings=prepare_settings),

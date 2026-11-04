@@ -62,7 +62,6 @@ sequenceDiagram
 | file_fields/output_file_fields | 输入/输出文件路径 |
 | model_roles | 最多 16 个独立模型用途 |
 | timeout_seconds | 1～86400，默认 300，恢复不重置截止 |
-| limits | 受理后固定的 FlowLimits |
 
 ModelRole 含 key、label、operation、delivery；key 为 `[a-z][a-z0-9_]{0,63}`，label trim 后 1～128。所有角色必须绑定，不自动默认/回退，多个角色可用同一模型。操作与交付见[模型接入](model-access.md#6-模型操作与产物)。
 
@@ -85,15 +84,15 @@ composition.FLOW_PACKAGES 显式装配；API 只读轻量契约，Worker 导入�
 | error_code/observed_at/finished_at | 安全错误、最近观察、终态时间 |
 | created_at/updated_at | 受理/投影时间 |
 
-只有 succeeded 保存 result；成功表示输出契约和引用通过，不代表业务批准。format=2 快照保存包/宿主版本、权限、期限、Schema、文件路径、角色/绑定及 limits。绑定固定 Entry、Channel、provider/model/base、operation/delivery，无秘密；公开只投影白名单及角色→模型 key。
+只有 succeeded 保存 result；成功表示输出契约和引用通过，不代表业务批准。format=3 快照保存包/宿主版本、权限、期限、Schema、文件路径、角色与绑定。绑定固定 Entry、Channel、provider/model/base、operation/delivery，无秘密；公开只投影白名单及角色→模型 key。
 
 ## 3. 受理与幂等
 
 当前 POST /api/v1/flow-runs 接收 definition_key、request_key、input，可选 definition_revision/model_bindings。选择在 input 外，不接受内部 Selection、调用 ID 或限额。
 
-一个事务完成当前授权、查重、规范化、模型绑定、预算、输入引用和审计。查重先于当前定义/模型解析；同键同请求返回原 Run，不同输入、角色、显式版本或原 PAT 冲突。规范输入、完整请求和快照各检查 64 KiB，历史按原摘要先查重。
+一个事务完成当前授权、查重、规范化、模型绑定、输入引用和审计。查重先于当前定义/模型解析；同键同请求返回原 Run，不同输入、角色、显式版本或原 PAT 冲突。规范输入、完整请求和快照各检查 64 KiB，历史按原摘要先查重。
 
-锁序：身份/Run → 全部 Entry → 全部 Channel → dispatch → Run 预算/claim/调用 → 按 ID 排序 File，不包含外部 I/O。Worker 从已提交 pending 发现投递。
+锁序：身份/Run → 全部 Entry → 全部 Channel → dispatch → 调用记录 → 按 ID 排序 File，不包含外部 I/O。Worker 从已提交 pending 发现投递。
 
 | 事务内入口 | 行为 |
 |---|---|
@@ -128,31 +127,16 @@ flow_context(run_id) 在 Step 内重建短期能力，不进入检查点、不�
 | invoke_text/structured/vision/embedding | 匹配角色的明确 DTO |
 | invoke_image/edit_image | 当前生成/编辑组合，返回 File 引用 |
 | submit_image/image_result | 原异步图片任务，pending 由 Workflow 显式 sleep |
-| consume_tool(key, request_digest=...)/consume_iteration(key) | 原生 Step 内预留工具/迭代次数 |
 
 Context 不隐式创建 Workflow/Step。稳定调用 ID 由 Run、workflow_id/step_id 派生，同 Step 不能换角色取得新身份；每个 Agent 请求分别登记，同 Agent 调用共享 agent_call_id。deps 只存小型可序列化标识。
 
 每次外部操作复查原身份/PAT、Run、取消、角色及固定目标。已发送响应可有界收尾，取消/撤权不开始新发送或产物发布。接口用法见[Flow 开发](../development/flow.md)。
 
-## 6. 累计预算与资源
+## 6. 执行统计与单次操作限制
 
-| FlowLimits | 默认 | 上限 |
-|---|---:|---:|
-| model_requests | 64 | 4096 |
-| tool_calls/iterations | 各 256 | 各 16384 |
-| concurrent_operations | 4 | 16，最小 1 |
-| file_count | 100 | 10000 |
-| file_bytes | 256 MiB | 32 TiB |
-| temporary_bytes | 64 MiB | 32 TiB |
-| input_tokens/output_tokens | 1000000/65536 | 各 2⁶³−1 |
+Flow 不维护累计模型次数、token、工具调用、循环次数或文件总量配额，也不获取每 Run 操作许可。模型调用和 token/费用统计查询 ModelInvocation，按 Run、节点、角色和 Agent 聚合；上游未报告的用量保持未知。步骤、工具执行和重试查询 DBOS 历史，业务可记录带 run_id 的结构化阶段日志，不保存正文或凭据。
 
-严格整数，零预算禁止对应操作，仅可信定义可设。FlowRunBudget 保存固定 limits/counters，FlowBudgetClaim 以 run/kind/key 唯一登记摘要；同内容重入不双扣，内容变化冲突。失败、未知或取消不退还已承诺消耗，重启不重置。
-
-发送登记同事务预留模型次数和 max_tokens，输出不按实际退款。输入为上游已报告值，达到上限后停止后续相关请求；结束却缺用量的文本调用也阻断后续文本发送，进行中的并发调用不误判。图片生成/原任务 GET 不捏造 token 或第二次生成。
-
-工具/迭代用稳定 workflow/step/key，工具摘要只存 SHA-256。FlowModel 计 Agent 每轮，其他外部工具由作者显式 consume_tool 并持 execution_scope；平台不拦截任意 Python。
-
-Run 操作许可使用 PostgreSQL 会话容量锁，同 Task 嵌套复用、子 Task 独立获取。取消/失锁先结束 I/O、进程和文件清理再释放，不以 TTL/PID 猜测回收。Files TransferScope 同时约束临时承诺和宿主物理容量，路径/句柄不进检查点；账本与部署限制见[文件实现](../reference/files.md#临时空间与本地定位)。
+每次请求仍校验协议、目标、输入大小和输出参数；文件保留单文件限制与引用幂等，workspace(max_bytes=...) 保留明确的单次工作区上限，原生进程保留超时、stdout/stderr 和输出文件上限。模型、媒体及后台队列继续按实际资源控制并发。取消须等待 I/O、进程和文件清理完成。调用登记、未知结果保护与统计不依赖预算账本。
 
 ## 7. 取消与恢复
 
@@ -193,7 +177,7 @@ sequenceDiagram
 
 费用记录不能替代结果正文。检查点不保证第三方 exactly-once；恢复使用原制品、身份、契约及稳定 ID，不能换 Run 绕过未知结果。
 
-只接受完整的 format=2 快照，包含固定模型选择和 limits；缺失预算账本拒绝执行。损坏格式返回 flow_snapshot_unavailable。结果按原快照同步，不因当前定义下线重解释。
+只接受完整的 format=3 当前快照，固定原模型选择、输入输出 Schema 和执行身份；损坏或不支持的格式返回 flow_snapshot_unavailable。新制品不能冒充旧执行版本接管检查点。
 
 ## 8. API、授权与诊断
 
@@ -203,13 +187,12 @@ sequenceDiagram
 | POST /flow-runs/{id}/cancel | flow:cancel＋本人或 manage |
 | GET /flow-runs/{id}/steps | Run 可见；最多 32 关联流程/500 步骤，只含名称/位置/时间 |
 | GET /flow-runs/{id}/costs | Run＋模型记录权限；当前费用窗口最近 30 天 |
-| GET /flow-runs/{id}/diagnostics | section=all/budget/models/files，默认 50、最高 100，offset 分页 |
+| GET /flow-runs/{id}/diagnostics | section=all/models/files，默认 50、最高 100，offset 分页 |
 
 诊断在短身份事务组合公开 Service，前后复查 Run；模型调用先按独立读取范围过滤，文件仅列当前 Run 的引用，再分页。模型调用不可见时返回 available=false。未请求的板块返回 null，列表通过 truncated/next_offset 分页。
 
 - 模型：read/read_all 独立判断，返回调用、操作、角色/节点/Agent、原 Step 位置及安全错误，不因 flow:manage 扩权。
 - 文件：Run 可见后列出关联 File ID/slot，不授予内容读取权；同 Run 可见图片调用与原 Manifest 的产物键、摘要、大小、MIME 全部匹配才补 invocation_id，不按名称/时间猜测。
-- 预算：limits/counters，诊断整数为十进制字符串，前端 BigInt；费用独立。
 
 不返回检查点、私有 result/cost_context、供应商任务/下载地址、原文异常、秘密或本地路径。控制台各板块独立加载，失权清相应数据，迟到结果丢弃；仅活动 Run 自动轮询，终态缺步骤/费用可手动刷新。
 

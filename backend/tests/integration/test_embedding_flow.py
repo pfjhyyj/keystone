@@ -14,7 +14,6 @@ from test_identity import bearer, query, token
 from test_model_access import channel, entry
 from test_model_access import model_configuration as model_configuration
 
-from keystone.platform.flow.models import FlowRunBudget
 from keystone.platform.model_access.models import ModelInvocation
 
 pytestmark = pytest.mark.postgres
@@ -57,7 +56,7 @@ def calls(client):
     return query(client, lambda session: session.scalars(select(ModelInvocation))).all()
 
 
-def test_embedding_uses_original_role_budget_cost_and_checkpoint(embedding, tmp_path):
+def test_embedding_uses_original_role_usage_cost_and_checkpoint(embedding, tmp_path):
     client, configured = embedding
     run, journal = start(client), tmp_path / "calls.txt"
     with worker(client, tmp_path, code=bootstrap(journal)) as (process, log):
@@ -71,9 +70,6 @@ def test_embedding_uses_original_role_budget_cost_and_checkpoint(embedding, tmp_
     assert records[0].operation == "text.embed" and records[0].result_context is None
     assert records[0].status == "succeeded" and records[0].cost_amount == Decimal("0.0002")
     assert records[0].usage == {"input_tokens": 9, "total_tokens": 9}
-    budget = query(client, lambda session: session.get(FlowRunBudget, UUID(run["id"])))
-    assert budget.counters["model_requests"] == 1 and budget.counters["input_tokens"] == 9
-    assert budget.counters.get("output_tokens", 0) == 0
 
 
 def test_embedding_revoke_during_send_does_not_repeat_or_publish(embedding, tmp_path):

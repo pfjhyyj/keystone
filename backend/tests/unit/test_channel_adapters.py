@@ -197,7 +197,6 @@ async def test_shared_chat_wire_keeps_channel_receipts_and_actual_cost_semantics
     assert result == [{"type": "result", "content": "ok"}] and len(calls) == 1
     assert len(authorizations) == int(custom_auth)
     assert observation.usage == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
-    assert observation.request_budget.max_output_tokens == 1024
     final = receipts[-1]
     if provider == "openrouter":
         assert final.request_id == "response-id" and final.fee.record("response-id") == {
@@ -294,7 +293,6 @@ async def test_structured_wire_registers_once_and_keeps_each_channel_contract(
     assert len(events) == len(requests) == len(receipts) == 1
     assert parse_structured(events[0]["content"], data.output) == {"answer": 7}
     assert observation.receipt_ids["x-api-request-id"] == "original-billing-receipt"
-    assert observation.request_budget.operation == "text.structured"
     assert observation.usage == {"input_tokens": 3, "output_tokens": 2, "total_tokens": 5}
 
 

@@ -1,12 +1,11 @@
 """Lightweight, immutable Flow contracts; importing never registers an executor."""
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import MappingProxyType
 
 from pydantic import BaseModel
 
-from keystone.platform.flow.schemas.budgets import FlowLimits
 from keystone.platform.flow.schemas.files import compile_file_paths
 from keystone.platform.model_access.schemas.operations import OPERATIONS, Delivery, Operation
 
@@ -47,16 +46,8 @@ class FlowDefinition:
     model_roles: tuple[ModelRole, ...] = ()
 
     timeout_seconds: int = 300
-    limits: FlowLimits = field(default_factory=FlowLimits)
 
     def __post_init__(self):
-        object.__setattr__(
-            self,
-            "limits",
-            FlowLimits.model_validate(
-                self.limits.model_dump() if isinstance(self.limits, FlowLimits) else self.limits
-            ),
-        )
         for name in ("required_permissions", "file_fields", "output_file_fields", "model_roles"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if not self.revision.strip() or len(self.revision) > 64:
@@ -108,19 +99,17 @@ class FlowDefinition:
                 for r in self.model_roles
             ],
             "timeout_seconds": self.timeout_seconds,
-            "limits": self.limits.model_dump(mode="json"),
         }
 
     def snapshot(self, *, package_key, model_bindings):
         return {
-            "format_version": 2,
+            "format_version": 3,
             "package_key": package_key,
             "host_api_version": 1,
             "revision": self.revision,
             "entrypoint": self.entrypoint,
             "required_permissions": list(self.required_permissions),
             "timeout_seconds": self.timeout_seconds,
-            "limits": self.limits.model_dump(mode="json"),
             "input_schema": self.input_schema(),
             "output_schema": self.output_schema(),
             "file_fields": list(self.file_fields),
