@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { adminApi, type AuditLog } from '../../api/admin'
 import { usePagedList } from '../../composables/usePagedList'
 import AppDialog from '../../components/AppDialog.vue'
@@ -14,6 +14,15 @@ const filters = reactive({
   outcome: '',
   since: '',
   until: '',
+})
+// Same browser-local wall-clock strings the former datetime-local inputs produced.
+const dateRange = computed<[string, string] | null>({
+  get: (): [string, string] | null =>
+    filters.since && filters.until ? [filters.since, filters.until] : null,
+  set: (value: [string, string] | null) => {
+    filters.since = value?.[0] ?? ''
+    filters.until = value?.[1] ?? ''
+  },
 })
 const initialUntil = Date.now()
 const applied = ref<Record<string, string>>({
@@ -116,8 +125,16 @@ function reset() {
               maxlength="100"
               placeholder="例如 file" /></label
           ><label>目标 ID<el-input v-model="filters.target_id" maxlength="128" /></label>
-          <label>开始时间<el-input v-model="filters.since" type="datetime-local" /></label
-          ><label>结束时间<el-input v-model="filters.until" type="datetime-local" /></label>
+          <label class="range-field"
+            >时间区间<el-date-picker
+              v-model="dateRange"
+              type="datetimerange"
+              format="YYYY-MM-DD HH:mm"
+              value-format="YYYY-MM-DDTHH:mm"
+              range-separator="至"
+              start-placeholder="开始时间"
+              end-placeholder="结束时间"
+          /></label>
         </div>
       </details>
       <el-button :disabled="loading" native-type="submit" type="default">查询审计</el-button

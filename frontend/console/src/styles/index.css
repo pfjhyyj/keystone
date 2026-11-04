@@ -263,13 +263,6 @@ code {
 .page-view {
   min-height: calc(100vh - 150px);
 }
-.page-view > section:not(.overview-page):not(.dashboard-page),
-.access-denied {
-  background: #fff;
-  padding: 24px;
-  border: 1px solid #e7ebf0;
-  border-radius: 8px;
-}
 .page-view > section > section {
   margin-top: 20px;
 }
@@ -316,9 +309,11 @@ code {
   align-items: flex-end;
   gap: 12px;
   flex-wrap: wrap;
-  border-bottom: 1px solid #e4e8ed;
-  padding: 0 0 18px;
-  margin: 18px 0;
+  padding: 20px;
+  margin: 0 0 16px;
+  background: #fff;
+  border: 1px solid #e4e8ed;
+  border-radius: 8px;
 }
 label,
 .form-field {
@@ -387,6 +382,10 @@ input[type='file']::file-selector-button {
   width: 100%;
   min-width: 0;
   margin-top: 16px;
+  background: #fff;
+  border: 1px solid #e4e8ed;
+  border-radius: 8px;
+  padding: 16px;
 }
 .data-table {
   --el-table-header-bg-color: #f7f8fa;
@@ -1387,9 +1386,6 @@ dd {
   .workspace {
     padding: 14px;
   }
-  .page-view > section:not(.overview-page):not(.dashboard-page) {
-    padding: 16px;
-  }
   .heading {
     margin-bottom: 18px;
   }
@@ -1397,7 +1393,7 @@ dd {
     font-size: 20px;
   }
   .module-form {
-    padding: 0 0 16px;
+    padding: 16px;
     gap: 12px;
   }
   .module-form > label,

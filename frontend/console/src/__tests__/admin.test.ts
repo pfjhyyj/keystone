@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
+import { ElDatePicker } from 'element-plus'
 import UsersView from '../views/users/UsersView.vue'
 import RolesView from '../views/roles/RolesView.vue'
 import AuditView from '../views/audit/AuditView.vue'
@@ -187,9 +188,16 @@ describe('roles and audit', () => {
         const wrapper = mount(AuditView)
         await flushPromises()
         if (boundary !== 'default') {
-          await wrapper
-            .findAll('input[type=datetime-local]')
-            [boundary === 'since' ? 0 : 1]!.setValue('2026-10-01T00:00')
+          // Pair the edited bound with the default value of the other bound.
+          wrapper
+            .getComponent(ElDatePicker)
+            .vm.$emit(
+              'update:modelValue',
+              boundary === 'since'
+                ? ['2026-10-01T00:00', '2026-10-20T00:00']
+                : ['2026-09-21T00:00', '2026-10-01T00:00'],
+            )
+          await flushPromises()
           await wrapper.get('form').trigger('submit')
           await flushPromises()
         }
@@ -323,9 +331,10 @@ describe('roles and audit', () => {
     const wrapper = mount(AuditView)
     await flushPromises()
     const calls = vi.mocked(fetch).mock.calls.length
-    const dates = wrapper.findAll('input[type=datetime-local]')
-    await dates[0]!.setValue('2020-01-01T00:00')
-    await dates[1]!.setValue('2026-01-01T00:00')
+    wrapper
+      .getComponent(ElDatePicker)
+      .vm.$emit('update:modelValue', ['2020-01-01T00:00', '2026-01-01T00:00'])
+    await flushPromises()
     await wrapper.get('form').trigger('submit')
     expect(wrapper.text()).toContain('不超过 366 天')
     expect(vi.mocked(fetch).mock.calls.length).toBe(calls)

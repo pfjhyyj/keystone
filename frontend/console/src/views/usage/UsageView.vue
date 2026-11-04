@@ -78,6 +78,16 @@ const draft = reactive(
     string
   >,
 )
+// Picker values are Shanghai wall-clock strings, so display never depends on the browser timezone.
+const dateRange = computed<[string, string] | null>({
+  get: (): [string, string] | null =>
+    draft.since && draft.until ? [draft.since, draft.until] : null,
+  set: (value: [string, string] | null) => {
+    draft.since = value?.[0] ?? ''
+    draft.until = value?.[1] ?? ''
+    preset.value = 'custom'
+  },
+})
 function resetCostFilters() {
   draft.cost_status = ''
   draft.cost_source = ''
@@ -229,6 +239,11 @@ function setPreset(value: string) {
   const range = rangeFor(value)
   draft.since = localInput(range.since)
   draft.until = localInput(range.until)
+}
+// Choice-type filters take effect immediately; typed text and custom ranges wait for submit.
+function choosePreset(value: string) {
+  setPreset(value)
+  if (value !== 'custom') void apply()
 }
 async function apply() {
   validation.value = ''
@@ -420,7 +435,7 @@ onScopeDispose(() => {
             >时间范围<AppSelect
               :model-value="preset"
               aria-label="时间快捷范围"
-              @update:model-value="setPreset"
+              @update:model-value="choosePreset"
               ><el-option value="custom" label="自定义" /><el-option
                 value="today"
                 label="今天" /><el-option value="7" label="近 7 天" /><el-option
@@ -433,6 +448,7 @@ onScopeDispose(() => {
               dimension="channel"
               label="渠道筛选"
               :filters="current"
+              @update:model-value="apply"
           /></label>
           <label
             >业务模型<StatisticsPicker
@@ -440,6 +456,15 @@ onScopeDispose(() => {
               dimension="model"
               label="模型筛选"
               :filters="current"
+              @update:model-value="apply"
+          /></label>
+          <label v-if="can('model_invocation:read_all')"
+            >用户 / 系统<StatisticsPicker
+              v-model="draft.user_id"
+              dimension="user"
+              label="用户筛选"
+              :filters="current"
+              @update:model-value="apply"
           /></label>
         </div>
         <details
@@ -448,29 +473,22 @@ onScopeDispose(() => {
         >
           <summary>更多筛选与自定义时间</summary>
           <div class="filter-grid">
-            <label
-              >开始时间（上海）<el-input
-                v-model="draft.since"
-                type="datetime-local"
-                step="1"
-                @input="preset = 'custom'"
+            <label class="range-field"
+              >时间区间（上海）<el-date-picker
+                v-model="dateRange"
+                type="datetimerange"
+                format="YYYY-MM-DD HH:mm"
+                value-format="YYYY-MM-DDTHH:mm:ss"
+                range-separator="至"
+                start-placeholder="开始时间"
+                end-placeholder="结束时间"
             /></label>
             <label
-              >结束时间（上海）<el-input
-                v-model="draft.until"
-                type="datetime-local"
-                step="1"
-                @input="preset = 'custom'"
-            /></label>
-            <label v-if="can('model_invocation:read_all')"
-              >用户 / 系统<StatisticsPicker
-                v-model="draft.user_id"
-                dimension="user"
-                label="用户筛选"
-                :filters="current"
-            /></label>
-            <label
-              >调用来源<AppSelect v-model="draft.source" aria-label="调用来源" clearable
+              >调用来源<AppSelect
+                v-model="draft.source"
+                aria-label="调用来源"
+                clearable
+                @update:model-value="apply"
                 ><el-option
                   v-for="(label, key) in sourceLabels"
                   :key="key"
@@ -478,7 +496,11 @@ onScopeDispose(() => {
                   :label="label" /></AppSelect
             ></label>
             <label
-              >操作类型<AppSelect v-model="draft.operation" aria-label="操作类型" clearable
+              >操作类型<AppSelect
+                v-model="draft.operation"
+                aria-label="操作类型"
+                clearable
+                @update:model-value="apply"
                 ><el-option
                   v-for="(label, key) in operationLabels"
                   :key="key"
@@ -493,9 +515,14 @@ onScopeDispose(() => {
                 :dimension="field.dimension"
                 :label="field.label"
                 :filters="current"
+                @update:model-value="apply"
             /></label>
             <label
-              >调用结果<AppSelect v-model="draft.status" aria-label="调用结果" clearable
+              >调用结果<AppSelect
+                v-model="draft.status"
+                aria-label="调用结果"
+                clearable
+                @update:model-value="apply"
                 ><el-option
                   v-for="(label, key) in callStates"
                   :key="key"
@@ -506,13 +533,22 @@ onScopeDispose(() => {
               >费用口径<AppSelect
                 v-model="draft.cost_basis"
                 aria-label="费用口径"
-                @change="resetCostFilters"
+                @update:model-value="
+                  () => {
+                    resetCostFilters()
+                    void apply()
+                  }
+                "
                 ><el-option value="estimated" label="预估费用" /><el-option
                   value="actual"
                   label="上游实扣" /></AppSelect
             ></label>
             <label v-if="draft.cost_basis !== 'actual'"
-              >预估状态<AppSelect v-model="draft.estimate_status" aria-label="预估状态" clearable
+              >预估状态<AppSelect
+                v-model="draft.estimate_status"
+                aria-label="预估状态"
+                clearable
+                @update:model-value="apply"
                 ><el-option
                   v-for="(label, key) in estimateStates"
                   :key="key"
@@ -520,7 +556,11 @@ onScopeDispose(() => {
                   :label="label" /></AppSelect
             ></label>
             <label v-if="draft.cost_basis === 'actual'"
-              >查费状态<AppSelect v-model="draft.cost_status" aria-label="查费状态" clearable
+              >查费状态<AppSelect
+                v-model="draft.cost_status"
+                aria-label="查费状态"
+                clearable
+                @update:model-value="apply"
                 ><el-option
                   v-for="(label, key) in costCheckStates"
                   :key="key"
@@ -528,7 +568,11 @@ onScopeDispose(() => {
                   :label="label" /></AppSelect
             ></label>
             <label v-if="draft.cost_basis === 'actual'"
-              >费用来源<AppSelect v-model="draft.cost_source" aria-label="费用来源" clearable
+              >费用来源<AppSelect
+                v-model="draft.cost_source"
+                aria-label="费用来源"
+                clearable
+                @update:model-value="apply"
                 ><el-option
                   v-for="(label, key) in feeSourceLabels"
                   :key="key"
@@ -536,7 +580,11 @@ onScopeDispose(() => {
                   :label="label" /></AppSelect
             ></label>
             <label
-              >费用是否已知<AppSelect v-model="draft.cost_known" aria-label="费用是否已知" clearable
+              >费用是否已知<AppSelect
+                v-model="draft.cost_known"
+                aria-label="费用是否已知"
+                clearable
+                @update:model-value="apply"
                 ><el-option value="true" label="已有金额" /><el-option
                   value="false"
                   label="费用未知" /></AppSelect
@@ -548,18 +596,6 @@ onScopeDispose(() => {
                 placeholder="如 USD、credits"
             /></label>
             <label>Agent 调用 ID<el-input v-model="draft.agent_call_id" maxlength="36" /></label>
-          </div>
-          <div class="row-actions bucket-controls">
-            <label
-              >时间粒度<AppSelect
-                :model-value="bucket"
-                aria-label="时间粒度"
-                @update:model-value="navigate({ bucket: $event, group_page: null })"
-                ><el-option value="hour" label="小时" /><el-option
-                  value="day"
-                  label="天" /><el-option value="month" label="月" /></AppSelect
-            ></label>
-            <span>按小时统计最长 31 天。</span>
           </div>
         </details>
         <p v-if="missingLabels">
@@ -578,7 +614,7 @@ onScopeDispose(() => {
             :disabled="statsLoading || callsLoading"
             @click="refresh()"
             >刷新统计</el-button
-          ><span>筛选条件保存在当前链接中。</span>
+          ><span>下拉选项会立即查询；时间区间、费用单位和调用 ID 需要点「应用筛选」。</span>
         </div>
       </form>
       <div class="applied-filters" aria-label="已应用筛选">
@@ -613,6 +649,18 @@ onScopeDispose(() => {
         >调用明细暂不可用：{{ callsError }}</el-alert
       >
       <p v-if="statsLoading" role="status">正在计算用量与费用…</p>
+      <div class="view-toolbar">
+        <label class="bucket-control"
+          >时间粒度<AppSelect
+            :model-value="bucket"
+            aria-label="时间粒度"
+            @update:model-value="navigate({ bucket: $event, group_page: null })"
+            ><el-option value="hour" label="小时" /><el-option value="day" label="天" /><el-option
+              value="month"
+              label="月" /></AppSelect
+        ></label>
+        <span>按小时统计最长 31 天</span>
+      </div>
       <el-tabs v-model="tab">
         <el-tab-pane label="总览" name="overview"
           ><template v-if="statistics"
@@ -711,8 +759,11 @@ onScopeDispose(() => {
   }
 }
 .usage-filters {
-  padding: 18px 0;
-  border-bottom: 1px solid #e4e8ed;
+  padding: 20px;
+  background: #fff;
+  border: 1px solid #e4e8ed;
+  border-radius: 8px;
+  margin-bottom: 16px;
 }
 .filter-grid {
   display: grid;
@@ -729,10 +780,29 @@ summary {
   cursor: pointer;
   padding: 0 0 8px;
 }
-.bucket-controls {
-  margin: 18px 0;
+.range-field {
+  grid-column: span 2;
 }
-.bucket-controls label {
-  min-width: 130px;
+.view-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin: 16px 0 -8px;
+  color: #617084;
+  font-size: 12px;
+}
+.bucket-control {
+  display: grid;
+  grid-template-columns: auto minmax(110px, 140px);
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #263445;
+}
+@media (max-width: 600px) {
+  .range-field {
+    grid-column: auto;
+  }
 }
 </style>
