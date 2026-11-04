@@ -27,16 +27,10 @@ async def backlog(database):
         return pending, oldest
 
 
-def matches_observation(runtime, run, state):
-    definition = runtime.flow_definitions.get(run.definition_key)
+def matches_observation(run, state):
     snapshot = read_snapshot(run.definition_snapshot)
-    expected = snapshot.get("entrypoint")
-    if expected is None and definition and run.execution_version == runtime.execution_version():
-        expected = definition.entrypoint
-    return not state or (
-        state["version"] == run.execution_version
-        and (expected is None or state["name"] == expected)
-    )
+    expected = snapshot["entrypoint"]
+    return not state or (state["version"] == run.execution_version and state["name"] == expected)
 
 
 async def claim_batch(runtime):
@@ -64,7 +58,7 @@ async def prepare(runtime, identifier, state):
         if run is None or run.status in TERMINAL:
             return "skip"
         run.observed_at = utcnow()
-        if not matches_observation(runtime, run, state):
+        if not matches_observation(run, state):
             log.error("flow_engine_version_mismatch run_id=%s", identifier)
             return "skip"
         if run.cancel_requested_at is not None:
@@ -103,7 +97,7 @@ async def submission(runtime, identifier):
             or not matches_definition(read_snapshot(run.definition_snapshot), definition)
         ):
             return None
-        return run, definition
+        return run
 
 
 async def project(runtime, identifier, state, *, submission_error=None):
@@ -111,7 +105,7 @@ async def project(runtime, identifier, state, *, submission_error=None):
         current = await session.get(FlowRun, identifier, with_for_update=True)
         if current is None or current.status in TERMINAL:
             return
-        if not matches_observation(runtime, current, state):
+        if not matches_observation(current, state):
             log.error("flow_engine_version_mismatch run_id=%s", identifier)
             return
         current.observed_at = utcnow()

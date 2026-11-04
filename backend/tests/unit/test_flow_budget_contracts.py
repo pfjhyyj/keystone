@@ -38,20 +38,12 @@ def test_limits_are_strict_immutable_and_not_a_public_request_override():
         BudgetCounters(input_tokens=True)
 
 
-def test_budget_snapshots_are_explicit_but_do_not_backfill_old_values():
+def test_budget_snapshots_preserve_declared_limits():
     current = replace(definition, limits=FlowLimits(model_requests=2))
     value = snapshot_for(current)
     assert value["limits"]["model_requests"] == 2
     assert matches_definition(read_snapshot(value), current)
     assert public_snapshot(value)["limits"] == value["limits"]
-    old = {k: v for k, v in value.items() if k != "limits"}
-    assert read_snapshot(old)["limits"] is None
-    assert "limits" not in old
-    assert not matches_definition(read_snapshot(old), current)
-    assert read_snapshot({"output_schema": {}, "output_file_fields": []}) == {
-        "output_schema": {},
-        "output_file_fields": [],
-    }
 
 
 def test_request_allowances_match_actual_text_or_image_operation():

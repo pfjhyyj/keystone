@@ -8,7 +8,7 @@ import httpx2
 import pytest
 from support import model_stub
 from test_files_dictionary import client as client
-from test_identity import bearer, query, token
+from test_identity import query
 from test_model_access import SECRET, channel, entry, invoke
 from test_model_access import model_configuration as model_configuration
 
@@ -133,49 +133,6 @@ def test_automatic_and_manual_queries_confirm_actual_cost_without_resending(clie
     assert billing["posts"] == 1
 
 
-def test_legacy_unbound_call_recovers_gateway_receipt_and_audits_binding(client, billing):
-    identifier = called(client)
-
-    async def legacy(session):
-        row = await session.get(ModelInvocation, identifier)
-        row.cost_context = None
-        row.cost_check_status, row.cost_check_reason = "unavailable", "cost_query_unavailable"
-        row.upstream_request_id = row.receipt_ids["body_id"]
-        owner = await session.get(Channel, row.channel_id)
-        owner.cost_scope = owner.cost_context = None
-
-    query(client, legacy)
-    limited = bearer(token(client, ["model:manage"])["token"])
-    assert (
-        client.post(f"/api/v1/model-invocations/{identifier}/cost", headers=limited).status_code
-        == 403
-    )
-    assert stored(client, identifier).cost_context is None
-    assert client.post(f"/api/v1/model-invocations/{identifier}/cost").status_code == 200
-    current = stored(client, identifier)
-    assert current.cost_check_status == "confirmed" and current.cost_amount == Decimal("0.000056")
-    assert current.receipt_ids["body_id"] != current.upstream_request_id
-    logs = client.get("/api/v1/audit-logs?action=model.cost.bind").json()
-    assert len(logs) == 1 and logs[0]["target_id"] == str(identifier)
-    assert billing["posts"] == 1
-
-
-def test_legacy_call_does_not_rebind_after_configuration_change(client, billing):
-    identifier = called(client)
-
-    async def changed(session):
-        row = await session.get(ModelInvocation, identifier)
-        row.cost_context = None
-        row.cost_check_status, row.cost_check_reason = "unavailable", "cost_query_unavailable"
-        owner = await session.get(Channel, row.channel_id)
-        owner.updated_at = row.created_at + timedelta(seconds=1)
-
-    query(client, changed)
-    assert client.post(f"/api/v1/model-invocations/{identifier}/cost").status_code == 200
-    assert stored(client, identifier).cost_context is None
-    assert client.get("/api/v1/audit-logs?action=model.cost.bind").json() == []
-
-
 def test_recent_log_cap_reports_older_missing_call_as_unavailable(client, billing):
     identifier = called(client)
     now = int(utcnow().timestamp())
@@ -249,3 +206,18 @@ def test_api_base_paths_can_both_reconcile_without_context_conflicts(client, bil
         assert response.json()["cost_check_status"] == "confirmed"
         assert Decimal(response.json()["cost_amount"]) == Decimal("0.000056")
     assert billing["posts"] == 2
+
+
+def test_missing_cost_context_is_not_rebound(client, billing):
+    identifier = called(client)
+
+    async def missing(session):
+        row = await session.get(ModelInvocation, identifier)
+        row.cost_context = None
+        row.cost_check_status, row.cost_check_reason = "unavailable", "cost_query_unavailable"
+
+    query(client, missing)
+    assert client.post(f"/api/v1/model-invocations/{identifier}/cost").status_code == 200
+    assert stored(client, identifier).cost_context is None
+    assert stored(client, identifier).cost_amount is None
+    assert billing["posts"] == 1

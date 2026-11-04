@@ -7,9 +7,8 @@ from typing import get_args
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.flow.models import FlowBudgetClaim, FlowRun, FlowRunBudget
+from keystone.platform.flow.models import FlowBudgetClaim, FlowRunBudget
 from keystone.platform.flow.schemas.budgets import BudgetCounters, ClaimKind, FlowLimits
-from keystone.platform.flow.schemas.snapshots import read_snapshot
 from keystone.platform.model_access.schemas.budgets import TOKEN_OPERATIONS, ModelRequestBudget
 from keystone.platform.model_access.services.usage import (
     has_unreported_completed_text_in_transaction,
@@ -33,9 +32,6 @@ def claim_key(value):
 async def budget_in_transaction(session, run_id):
     row = await session.get(FlowRunBudget, run_id, with_for_update=True)
     if row is None:
-        run = await session.get(FlowRun, run_id)
-        if run is not None and read_snapshot(run.definition_snapshot).get("limits") is None:
-            return None
         raise ServiceError(503, "flow_budget_unavailable", "运行预算状态不可用")
     try:
         FlowLimits.model_validate(row.limits)
@@ -52,8 +48,6 @@ async def reserve_in_transaction(session, run_id, *, kind, key, amounts, request
     key = claim_key(key)
     amounts = BudgetCounters.model_validate(amounts).model_dump()
     row = await budget_in_transaction(session, run_id)
-    if row is None:
-        return False
     old = await session.get(FlowBudgetClaim, (run_id, kind, key))
     if old is not None:
         if old.amounts != amounts or old.request_digest != request_digest:
@@ -101,7 +95,7 @@ class FlowBudgetService:
     async def limits(self):
         async with self.identity.access() as (session, _):
             row = await budget_in_transaction(session, self.run_id)
-            return FlowLimits.model_validate(row.limits) if row is not None else None
+            return FlowLimits.model_validate(row.limits)
 
     async def consume(self, kind, key, request_digest):
         if kind not in {"tool", "iteration"}:
@@ -136,8 +130,6 @@ class FlowBudgetService:
     async def reserve_model(self, session, identifier, request):
         request = ModelRequestBudget.model_validate(request.model_dump())
         row = await budget_in_transaction(session, self.run_id)
-        if row is None:
-            return
         uses_tokens = request.operation in TOKEN_OPERATIONS
         if uses_tokens and (
             row.counters["input_tokens"] >= row.limits["input_tokens"]
@@ -160,8 +152,6 @@ class FlowBudgetService:
     async def settle_model(self, session, identifier, usage):
         """Known attempt only, after send; no fresh authority or new I/O is granted here."""
         row = await budget_in_transaction(session, self.run_id)
-        if row is None:
-            return
         key = claim_key(str(identifier))
         original = await session.get(FlowBudgetClaim, (self.run_id, "model", key))
         if original is None:

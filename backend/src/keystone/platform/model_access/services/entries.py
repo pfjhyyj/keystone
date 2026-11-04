@@ -188,9 +188,7 @@ class ModelEntryService:
                 .where(ModelInvocation.model_entry_id == identifier)
                 .limit(1)
             )
-            if called or await self.clients.model_referenced(
-                session, entry_id=identifier, key=row.key
-            ):
+            if called or await self.clients.model_referenced(session, entry_id=identifier):
                 raise ServiceError(
                     409, "model_entry_referenced", "模型已有调用记录或流程引用，只能停用，不能删除"
                 )

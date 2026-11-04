@@ -112,7 +112,7 @@ Yunwu 页最多 256 KiB，NewAPI 最近日志 4 MiB，公开口径 1 MiB；拒�
 
 费用、证据及进度在持锁连接短事务提交，外部 HTTP 不持业务事务。cost_check_* 与调用 status、error_code 独立。金额 Numeric(38,18)/Decimal，重复只补原行；矛盾阻塞，可信查询替换响应口径时保留 previous 证据，不静默累加。confirmed 后不自动推断退款或长期账单修订。
 
-内部 cost_context、receipt_ids、cost_evidence 不公开；显式重查审计 model.cost.recheck。旧调用仅在原配置未改且已有合法网关回执时补原范围，并记录 model.cost.bind；不发送推理。
+内部 cost_context、receipt_ids、cost_evidence 不公开；显式重查审计 model.cost.recheck。查费只使用调用登记时的范围与回执；缺少范围时不可查询，不按当前渠道补绑。
 
 ## 发送与协调
 
@@ -171,7 +171,7 @@ Manifest 可保留 TaskReceipt，以便生成成功后重新取原产物；摘�
 
 两个站点共用 OpenAIImages，支持 gpt-image-2、gpt-image-2-c、gpt-image-2.5-sunburst、gpt-image-2.5-flare。生成 POST /images/generations JSON，编辑 /images/edits multipart，重复 image 字段；模型声明仍须包含操作。
 
-可选 aspect_ratio 为 1:1、16:9、9:16、4:3、3:4，quality 为 low/medium/high，默认 1:1/medium；resolution 为 1K/2K/4K，转换成符合比例、16 倍数及像素/边长限制的 size，输出 png/jpeg/webp。OpenRouter 不接受这组新增控制；空字段不改变旧请求摘要。
+可选 aspect_ratio 为 1:1、16:9、9:16、4:3、3:4，quality 为 low/medium/high，默认 1:1/medium；resolution 为 1K/2K/4K，转换成符合比例、16 倍数及像素/边长限制的 size，输出 png/jpeg/webp。OpenRouter 不接受这组新增控制；请求摘要使用完整的当前 DTO。
 
 仅该协议发送协调及 SDK 总窗口为 600 秒，建议图片 Flow timeout_seconds 至少 900 秒覆盖下载/保存，旧快照不自动延长。
 

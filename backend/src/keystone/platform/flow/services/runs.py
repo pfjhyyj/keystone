@@ -49,17 +49,11 @@ class FlowService:
         Uses the current authorization under its identity lock; never commits, opens
         another transaction or performs external I/O. Worker discovers pending rows.
         """
-        # Preserve the original bounded request on legacy replay. New envelope
-        # limits apply after lookup; a populated new envelope is never downgraded.
-        small_json(data.input)
-        if data.definition_revision is not None or data.model_bindings:
-            small_json(data.model_dump(mode="json"))
+        small_json(data.model_dump(mode="json"))
         pat_id = auth.credential.id if auth.kind == "pat" else None
-
-        def digest(*, legacy=False):
-            payload = [data.definition_key, data.input, str(pat_id) if pat_id else None]
-            if not legacy:
-                payload = [
+        request_digest = hashlib.sha256(
+            small_json(
+                [
                     2,
                     data.definition_key,
                     data.definition_revision,
@@ -67,7 +61,8 @@ class FlowService:
                     data.model_bindings,
                     str(pat_id) if pat_id else None,
                 ]
-            return hashlib.sha256(small_json(payload)).hexdigest()
+            )
+        ).hexdigest()
 
         lock = int.from_bytes(
             hashlib.sha256(f"{auth.user.id}:{data.request_key}".encode()).digest()[:4],
@@ -80,17 +75,10 @@ class FlowService:
             .execution_options(populate_existing=True)
         )
         if old:
-            snapshot = read_snapshot(old.definition_snapshot)
-            legacy = "format_version" not in snapshot
-            if (
-                legacy
-                and (data.definition_revision is not None or data.model_bindings)
-                or old.request_digest != digest(legacy=legacy)
-            ):
+            if old.request_digest != request_digest:
                 raise ServiceError(409, "idempotency_conflict", "同一请求键对应不同流程请求")
             auth.require("flow:read")
             return view(old)
-        small_json(data.model_dump(mode="json"))
         auth.require("flow:start")
         definition = self.flow_definitions.get(data.definition_key)
         if definition is None:
@@ -129,7 +117,7 @@ class FlowService:
             actor_id=auth.user.id,
             personal_access_token_id=pat_id,
             request_key=data.request_key,
-            request_digest=digest(),
+            request_digest=request_digest,
             input=inputs,
         )
         session.add(run)
@@ -165,9 +153,7 @@ class FlowService:
         return view(await self.visible(session, auth, identifier))
 
     async def budget_diagnostic_in_transaction(self, session, auth, identifier):
-        run = await self.visible(session, auth, identifier)
-        if read_snapshot(run.definition_snapshot).get("limits") is None:
-            return BudgetDiagnostic(recorded=False)
+        await self.visible(session, auth, identifier)
         row = await session.get(FlowRunBudget, identifier)
         try:
             if row is None:

@@ -99,7 +99,7 @@ class ModelInvocation(Base):
     estimate_amount: Mapped[Decimal | None] = mapped_column(Numeric(38, 18))
     estimate_currency: Mapped[str | None] = mapped_column(String(3))
     estimate_reason: Mapped[str | None] = mapped_column(
-        String(64), default="legacy_no_snapshot", server_default="legacy_no_snapshot"
+        String(64), default="snapshot_missing", server_default="snapshot_missing"
     )
     estimate_detail: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     estimate_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

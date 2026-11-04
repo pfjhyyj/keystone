@@ -315,10 +315,6 @@ def test_snapshot_projection_keeps_bindings_private_and_formats_fail_closed():
     assert "model_bindings" not in projected
     assert "api_base" not in str(projected)
     assert read_snapshot(snapshot) == snapshot
-    assert read_snapshot({"output_schema": {}, "output_file_fields": []}) == {
-        "output_schema": {},
-        "output_file_fields": [],
-    }
     for invalid in ({**snapshot, "format_version": 99}, {**snapshot, "model_bindings": {}}):
         with pytest.raises(ServiceError) as error:
             read_snapshot(invalid)

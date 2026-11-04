@@ -28,7 +28,7 @@ SCHEMA = {
 }
 
 
-def test_operation_contracts_are_explicit_and_legacy_selection_defaults_to_text():
+def test_operation_contracts_are_explicit_and_selection_requires_provider():
     args = dict(channel_id=uuid4(), provider_model="model")
     assert EntryCreate(key="model", **args).operations == ["text.generate"]
     assert EntryEdit(**args).operations is None
@@ -37,8 +37,10 @@ def test_operation_contracts_are_explicit_and_legacy_selection_defaults_to_text(
             EntryCreate(key="model", operations=operations, **args)
     snapshot = snapshot_for(definition)
     snapshot["model_bindings"]["review"]["selection"].pop("operation")
-    old = Selection.model_validate(snapshot["model_bindings"]["review"]["selection"])
-    assert old.operation == "text.generate"
+    selected = Selection.model_validate(snapshot["model_bindings"]["review"]["selection"])
+    assert selected.operation == "text.generate"
+    with pytest.raises(ValidationError):
+        Selection.model_validate(selected.model_dump(exclude={"provider"}))
     assert (
         read_snapshot(snapshot)["model_bindings"]["review"]["selection"]["operation"]
         == "text.generate"

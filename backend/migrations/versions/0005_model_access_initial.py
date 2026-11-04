@@ -165,7 +165,7 @@ def upgrade():
         sa.Column("estimate_status", sa.String(16), nullable=False, server_default="unavailable"),
         sa.Column("estimate_amount", sa.Numeric(38, 18)),
         sa.Column("estimate_currency", sa.String(3)),
-        sa.Column("estimate_reason", sa.String(64), server_default="legacy_no_snapshot"),
+        sa.Column("estimate_reason", sa.String(64), server_default="snapshot_missing"),
         sa.Column("estimate_detail", postgresql.JSONB()),
         sa.Column("estimate_checked_at", sa.DateTime(timezone=True)),
         sa.Column("cost_note", sa.String(length=100), nullable=True),

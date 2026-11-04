@@ -78,7 +78,7 @@ def metrics(row, *, estimated=False):
     if estimated:
         values["estimate_coverage"] = {
             key: int(row[f"{key}_calls"] or 0)
-            for key in ("partial", "unavailable", "invalid", "legacy", "price_missing")
+            for key in ("partial", "unavailable", "invalid", "snapshot_missing", "price_missing")
         }
         values["estimate_coverage"].update(
             estimated=values["known_calls"], pending=values["pending_calls"]
@@ -187,8 +187,8 @@ class StatisticsService:
                         for state in ("partial", "unavailable", "invalid")
                     ),
                     func.count()
-                    .filter(f.estimate_reason == "legacy_no_snapshot")
-                    .label("legacy_calls"),
+                    .filter(f.estimate_reason == "snapshot_missing")
+                    .label("snapshot_missing_calls"),
                     func.count()
                     .filter(f.estimate_reason == "price_missing")
                     .label("price_missing_calls"),

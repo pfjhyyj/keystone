@@ -37,7 +37,7 @@ prompt、正文、URL、密钥不进入估价事实。max_tokens、请求 n、�
 | KlingImages | 原任务成功生成张数及请求数，不提供计费秒或 credits；轮询不计次 |
 | 未装配视频/音频等 | 不允许通过配置启用计量 |
 
-新文本/向量/同步图片使用 v2，Kling 保持 v1，旧规范保留解释旧快照。v2 校验 input/prompt、output/completion 及明细别名一致；DeepSeek hit/miss 仅在总量关系成立时推导。预算 usage() 与估价归一化分别保存，不改变预算口径。
+文本/向量/同步图片使用 v2，Kling 使用 kling_images.v1；每种协议只安装当前计量规范。v2 校验 input/prompt、output/completion 及明细别名一致；DeepSeek hit/miss 仅在总量关系成立时推导。预算 usage() 与估价归一化分别保存，不改变预算口径。
 
 规则为输入、输出各选一个互斥分区：
 
@@ -53,7 +53,7 @@ prompt、正文、URL、密钥不进入估价事实。max_tokens、请求 n、�
 
 input_total_tokens 用于完整上下文档位，包含缓存。所选分区的所有可能非零项必须配置，免费项也显式 rate=0；编译拒绝总量与子集重复收费、单位错误、未声明字段。缺细分可用 aggregate，不能按比例拆分交集。
 
-当前 chat.v1 为直连文本规范；relay_chat.v1/OpenRouter 图片规范 cache 分区需显式普通输入、读取、写入，上游未回写入不能补 0。GPT Image 缺文本/图片分项时记 partial。
+当前 chat.v2 为直连文本规范；relay_chat.v2/OpenRouter 图片规范 cache 分区需显式普通输入、读取、写入，上游未回写入不能补 0。GPT Image 缺文本/图片分项时记 partial。
 
 upstream_success_count 只在原请求/任务成功确认时为 1，不随 SSE、轮询或多图增加。generated_images 为实际受控结果数量，不等于请求 n 或成功下载数。秒数/credits 须有明确上游字段，不能从耗时或费用反算。
 
@@ -109,21 +109,21 @@ time_basis 声明时区、all_days/weekdays（日历不含法定节假日调整�
 
 | ModelInvocation 字段 | 契约 |
 |---|---|
-| estimate_snapshot | 登记时只写一次；历史无快照为 null |
+| estimate_snapshot | 登记时只写一次 |
 | estimate_facts | 白名单计量/来源/完整性，最多 8 KiB，可由原调用可靠回执补齐 |
 | estimate_status | pending、estimated、partial、unavailable、invalid |
 | estimate_amount/currency | 仅 estimated 保存非负总额，其他总额 null，合法零价可为 0 |
-| estimate_reason | 白名单，如 price_missing、pricing_disabled、legacy_no_snapshot、metric_missing、condition_missing、meter_conflict、price_overflow |
+| estimate_reason | 白名单，如 price_missing、pricing_disabled、snapshot_missing、metric_missing、condition_missing、meter_conflict、price_overflow |
 | estimate_detail | 命中叶、项目数量/单价/金额、factor、缺项、规则/事实哈希，最多 16 KiB |
 | estimate_checked_at | 最近计算或记录缺失结果时间 |
 
-partial 的已知项仅放 detail，不作为总额。估价与 cost_* 互不覆盖；同快照/事实重复计算一致，轮询/下载不能累加计量。历史无快照保持 legacy_no_snapshot，明确历史试算可返回但不覆盖原行；未知格式/计量版本不静默重算。
+partial 的已知项仅放 detail，不作为总额。估价与 cost_* 互不覆盖；同快照/事实重复计算一致，轮询/下载不能累加计量。缺少快照时标记 snapshot_missing，不补用当前价格；未知格式/计量版本不可计算。
 
 同步/SSE 保存最终可信计量，不累计重复 usage chunk。流中断仅完整计量可成总额，部分计量为 partial；failed/unknown 不证明零费。可信未发送且有效币种快照才可确定零。
 
 图片/异步在确认生成时保存数量与事件，不等下载；下载失败、取消、部分文件取回不抹去生成量。同 task_id 重复终态不计次，未知数量不填请求 n。估价失败不回滚真实调用/用量/产物、不覆盖推理错误或重发；数据库失败沿原未知结果保护。
 
-字段按迁移链追加，旧条目 inherit/revision=0，旧调用无快照，不改旧 Flow 或实扣证据。代码、格式更新须支持旧快照或明确不可计算。
+新条目默认 inherit/revision=0；调用登记时冻结完整价格快照，恢复沿用同一快照与计量事实。
 
 ## 接口与展示
 

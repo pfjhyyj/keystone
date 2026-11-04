@@ -107,7 +107,7 @@ KEYSTONE_WORKER_ID=keystone-worker-02 uv run --locked keystone-worker
 
 新进程先取得部署共享锁和本身份的 OS/PostgreSQL 排他锁，再串行校验宿主、版本、公共执行配置、实际协调卷与未退役名额。通过后登记并沿用自身旧实例恢复、启动前预算注册、DBOS 启动和计划安装顺序。重复身份、已退役身份的普通启动、不兼容配置及超出四个名额均拒绝；拒绝不能污染登记、心跳或队列/计划。并发争用最后一个名额只允许一个新身份成功。
 
-API 从未退役登记及最新心跳发现新成员，随后可用 --inspect 或控制台核对就绪数量；无需修改配置或重启 API、原 Worker，也不执行初始化、迁移或历史 Flow 专项收尾。新成员不提高共享预算、不复制维护计划，现有并发、去重和恢复机制保持原样。
+API 从未退役登记及最新心跳发现新成员，随后可用 --inspect 或控制台核对就绪数量；无需修改配置或重启 API、原 Worker，也不执行初始化或迁移。新成员不提高共享预算、不复制维护计划，现有并发、去重和恢复机制保持原样。
 
 容器使用不同固定服务身份、相同只读执行配置和真实共享卷，不能直接 scale 同身份服务。主机校验继续使用进程读取的 hostname；同一宿主的容器须统一该 hostname，统一名称不能替代实际共享本地卷。进程管理器配置原身份重启；终止宽限期须大于 worker_shutdown_seconds 并给事实收尾/文件 I/O 留出时间。代码版本、公共预算或存储配置变化仍采用停机发布，不能由新进程覆盖在用声明。
 
@@ -128,27 +128,17 @@ uv run --locked keystone-worker --inspect
 
 --inspect 不启动执行器，输出实例/共享维护及活动 DBOS 队列的身份、版本、状态和数量，不含输入输出。最多读取 1000 条并标记 truncated，截断或 unknown 时不能据此认定没有遗留执行；必要时通过 DBOS 公开客户端按 executor/版本过滤核对。该视图也不证明外部请求已经停止，永久移除身份仍须核对原业务与模型记录。
 
-### 4.3 旧版本执行的离线收尾
+### 4.3 API 调用的离线收尾
 
-旧库的结构兼容与数据迁移以[迁移说明](../../backend/migrations/README.md#初始化与已有数据库)为准，不在此复制版本号。原版本先完成业务执行；升级前停止全部 API、Worker 和自定义执行进程，保留原制品、身份、协调卷及联合备份。
-
-仅当旧 Flow 调用缺少 Worker 归属时，保持全部进程停止，在 backend/ 执行：
-
-```bash
-uv run --locked keystone recover-model-calls --legacy-flow --confirm-api-stopped --confirm-workers-stopped
-```
-
-普通 API 遗留调用使用：
+停止全部 API 进程，并确保收尾期间不会重启后，在 backend/ 执行：
 
 ```bash
 uv run --locked keystone recover-model-calls --confirm-api-stopped
 ```
 
-确认标志由操作者保证停机，命令不探测进程。专项入口持原 OS 全局锁与部署级 PostgreSQL 锁，仅收尾历史无归属 Flow 调用并记录审计，不猜测新 Worker 归属、不重发推理。旧制品不参与新的数据库锁时，仍须依靠原协调卷互斥。
+确认标志由操作者保证停机，命令不探测进程。它将中断的 API 调用标记为 unknown，保留原调用、费用和审计，不重发推理。已提交批次保留，重新确认停机后可重跑。
 
-旧 DBOS 活动业务由原版本处理。仅对已确认无进程执行、能从领域状态重建的维护任务，按原 ID/版本通过 DBOS 公开接口受控取消并保留历史；不删除业务执行或防重发记录。旧 PENDING 可能占用全局队列容量，不能用另一个 Worker 就绪替代核实。
-
-状态更新、审计和实例标记使用持锁连接提交，失锁回滚当前批并停止，不换连接继续。已提交批次保留，重新确认停机后可重跑。核对原调用、费用、执行状态及公共配置后，按原身份启动匹配制品。
+Flow 调用由原身份 Worker 使用原制品恢复，按下节的单实例故障恢复处理。
 
 ### 4.4 固定槽位调整与故障恢复
 
@@ -166,7 +156,7 @@ uv run --locked keystone recover-model-calls --confirm-api-stopped
 2. 退役入口取得目标身份锁，并与登记事务串行核对：旧进程已结束，没有归属该 executor 的在途或待恢复 DBOS 执行，也没有该身份遗留的 running 模型调用。仅看心跳或 stopped 不足以通过；查询失败、未知或截断时拒绝退役。同身份并发启动与退役必须互斥，不能仅先查再写。
 3. 符合条件后显式将登记标记退役，保留登记、模型调用、执行及操作审计历史。API 动态更新 expected_workers，释放一个未退役名额；其他实例无需重启。
 
-共享队列中尚未绑定该身份的任务仍由其他匹配 Worker 领取，不因退役删除或取消。退役只锁目标身份，不使用要求全部 API/Worker 停止的 legacy-flow 收尾命令，也不删除 DBOS 历史。排空超时或仍有归属执行时保留成员和原身份/制品恢复路径，先恢复收尾后再退役；已经退役的身份需要显式重新启用并重新准入，不能普通启动静默重新登记。
+共享队列中尚未绑定该身份的任务仍由其他匹配 Worker 领取，不因退役删除或取消。退役只锁目标身份，保留 DBOS 历史。排空超时或仍有归属执行时保留成员和原身份/制品恢复路径，先恢复收尾后再退役；已经退役的身份需要显式重新启用并重新准入，不能普通启动静默重新登记。
 
 目标进程退出后，在 backend/ 执行：
 
@@ -235,7 +225,7 @@ uv run --locked keystone-worker --inspect
 
 三类扫描仍使用独立串行维护队列，费用 HTTP 使用独立查询队列。排障检查 file_cleanup_failed、flow_reconcile_failed、flow_sync_deferred、cost_scan_failed、cost_reconcile_failed，以及 worker_failed 的安全错误码。worker_deployment_conflict 表示主机、版本或公共配置冲突；不要随机更换身份绕过。共享维护扫描停止时查看 DBOS 的 PENDING，故障/旧版本记录可能占住全局容量；先按原身份/版本恢复或走[停机发布核对](#4-多-worker-部署与发布)，不删 DBOS 历史。
 
-SIGINT/SIGTERM 触发 draining，停止领取后按 worker_shutdown_seconds 有限等待，再关闭并报告 stopped。超时仍需保留原槽位恢复路径；心跳过期不是外部请求停止证明。只清理超过 24 小时的 stopped 观测，未处理故障记录继续保留。历史无归属 Flow 调用需要明确停机确认的专项入口，不允许新 Worker 启动时全局收尾；命令和条件见[旧版本离线收尾](#43-旧版本执行的离线收尾)。
+SIGINT/SIGTERM 触发 draining，停止领取后按 worker_shutdown_seconds 有限等待，再关闭并报告 stopped。超时仍需保留原槽位恢复路径；心跳过期不是外部请求停止证明。只清理超过 24 小时的 stopped 观测，未处理故障记录继续保留。Worker 启动只收尾自身前一实例的调用，不进行全局收尾；API 调用按[离线收尾](#43-api-调用的离线收尾)处理。
 
 ## 历史保留与清理
 

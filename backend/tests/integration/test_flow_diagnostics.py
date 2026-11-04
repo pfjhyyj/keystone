@@ -179,7 +179,7 @@ def test_permissions_filter_before_pagination_without_default_history_window(cli
     assert client.get(f"/api/v1/_test/materials/{files[1]}/content").status_code == 404
     budget = client.get(path, params={"section": "budget"}).json()
     assert budget["models"] is None and budget["files"] is None
-    assert budget["budget"]["recorded"] and budget["budget"]["counters"]["model_requests"] == "0"
+    assert budget["budget"]["counters"]["model_requests"] == "0"
     assert client.get(path, params={"limit": 101}).status_code == 422
     assert client.get(path, params={"offset": -1}).status_code == 422
     assert client.get(path, params={"section": "checkpoints"}).status_code == 422
@@ -218,7 +218,7 @@ def test_run_visibility_never_grants_other_resource_permissions(client):
     assert client.get(f"/api/v1/flow-runs/{uuid4()}/diagnostics").status_code == 404
 
 
-def test_historical_budget_is_unrecorded_and_current_missing_budget_is_an_error(client):
+def test_missing_budget_is_an_error_and_other_sections_remain_available(client):
     response, _ = accept(client)
     run_id = UUID(response.json()["id"])
     path = f"/api/v1/flow-runs/{run_id}/diagnostics"
@@ -231,15 +231,6 @@ def test_historical_budget_is_unrecorded_and_current_missing_budget_is_an_error(
     assert response.status_code == 503 and response.json()["code"] == "flow_budget_unavailable"
     # A failing budget panel does not prevent explicit model/file diagnostics.
     assert client.get(path, params={"section": "models"}).status_code == 200
-
-    async def historical(session):
-        run = await session.get(FlowRun, run_id)
-        run.definition_snapshot = {"output_schema": {"type": "object"}, "output_file_fields": []}
-
-    query(client, historical)
-    response = client.get(path)
-    assert response.status_code == 200, response.text
-    assert response.json()["budget"] == {"recorded": False, "limits": None, "counters": None}
 
 
 def test_flow_manager_does_not_gain_read_all_model_scope(client):

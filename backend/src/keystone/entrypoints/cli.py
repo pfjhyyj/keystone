@@ -4,31 +4,25 @@ import json
 import logging
 
 from alembic import command
-from sqlalchemy import func, select, update
+from sqlalchemy import select
 
 from keystone.bootstrap import build_runtime
 from keystone.composition import build_catalog
-from keystone.core.advisory import session_lease
 from keystone.core.asyncio import run as run_async
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.errors import ServiceError
 from keystone.core.logging import configure_logging, safe_exception
 from keystone.core.migrations import expected_heads, migration_config
-from keystone.core.models import WorkerHeartbeat, WorkerRegistration
-from keystone.core.worker_identity import DEPLOYMENT_LOCK
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.identity.adapters.security import Passwords
 from keystone.platform.identity.models import User
 from keystone.platform.identity.schemas import UserCreate
 from keystone.platform.identity.services.initialize import initialize_admin
 from keystone.platform.model_access.services.maintenance import recover_api_calls
-from keystone.platform.model_access.services.recovery import recover_calls
 
 
-async def recover_model_calls(
-    settings, *, api_stopped=False, legacy_flow=False, workers_stopped=False
-):
+async def recover_model_calls(settings, *, api_stopped=False):
     if not api_stopped:
         raise ServiceError(409, "api_stop_required", "请先停止全部 API 进程并明确确认")
     database = Database(settings, catalog=build_catalog())
@@ -36,27 +30,7 @@ async def recover_model_calls(
         checks = await database.readiness(expected_heads(settings))
         if any(value != "ok" for value in checks.values()):
             raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
-        if legacy_flow:
-            if not workers_stopped:
-                raise ServiceError(409, "worker_stop_required", "请先停止全部 Worker 并明确确认")
-            with StorageRegistry(settings).lease("keystone-flow-worker"):
-                async with session_lease(database, keys=[DEPLOYMENT_LOCK]) as lease:
-                    count = await recover_calls(
-                        database,
-                        flow=True,
-                        source="offline_flow_recovery",
-                        legacy_only=True,
-                        lease=lease,
-                    )
-                    async with lease.transaction() as session:
-                        await session.execute(update(WorkerHeartbeat).values(state="stopped"))
-                        await session.execute(
-                            update(WorkerRegistration)
-                            .where(WorkerRegistration.state == "registered")
-                            .values(stopped_at=func.clock_timestamp())
-                        )
-        else:
-            count = await recover_api_calls(database, api_stopped=True)
+        count = await recover_api_calls(database, api_stopped=True)
         logging.getLogger(__name__).info("model_calls_recovered count=%s", count)
         return count
     finally:
@@ -164,16 +138,6 @@ def main() -> None:
         action="store_true",
         help="Confirm all API processes are stopped and will stay stopped during recovery",
     )
-    parser.add_argument(
-        "--legacy-flow",
-        action="store_true",
-        help="Offline recovery of pre-ownership Flow calls only",
-    )
-    parser.add_argument(
-        "--confirm-workers-stopped",
-        action="store_true",
-        help="Confirm all Workers are stopped for legacy Flow recovery",
-    )
     args = parser.parse_args()
     if args.apply and args.command != "prune-history":
         parser.error("--apply only applies to prune-history")
@@ -194,15 +158,6 @@ def main() -> None:
         )
     if args.confirm_api_stopped and args.command != "recover-model-calls":
         parser.error("--confirm-api-stopped is only valid with recover-model-calls")
-    if args.legacy_flow or args.confirm_workers_stopped:
-        if (
-            args.command != "recover-model-calls"
-            or not args.legacy_flow
-            or not args.confirm_workers_stopped
-        ):
-            parser.error(
-                "Legacy Flow recovery requires --legacy-flow and --confirm-workers-stopped"
-            )
     try:
         settings = Settings()
         configure_logging(settings.log_level)
@@ -240,8 +195,6 @@ def main() -> None:
                 recover_model_calls(
                     settings,
                     api_stopped=args.confirm_api_stopped,
-                    legacy_flow=args.legacy_flow,
-                    workers_stopped=args.confirm_workers_stopped,
                 )
             )
             return

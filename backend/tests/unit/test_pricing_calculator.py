@@ -15,7 +15,7 @@ from keystone.platform.model_access.adapters.inference.pricing import (
 from keystone.platform.model_access.schemas.pricing import PriceRule, PricingFacts, PricingSnapshot
 from keystone.platform.model_access.services.pricing_calculator import estimate, validate_rule
 
-CHAT = PROFILES["chat.v1"]
+CHAT = PROFILES["chat.v2"]
 BINDING = {
     "channel_id": "test",
     "provider": "newapi",
@@ -217,7 +217,7 @@ def test_amount_overflow_is_invalid_not_zero_or_truncated():
 
 
 @pytest.mark.parametrize(
-    "profile_name", ["openai_images.v1", "openrouter_images.v1", "kling_images.v1"]
+    "profile_name", ["openai_images.v2", "openrouter_images.v2", "kling_images.v1"]
 )
 def test_image_quantity_and_request_event_are_independent_of_requested_n(profile_name):
     profile = PROFILES[profile_name]
@@ -232,7 +232,7 @@ def test_image_quantity_and_request_event_are_independent_of_requested_n(profile
 
 
 def test_embeddings_total_tokens_are_input_and_output_is_structural_zero():
-    profile = PROFILES["embedding.v1"]
+    profile = PROFILES["embedding.v2"]
     measured = normalize_pricing_facts(profile, {"total_tokens": 1000}, complete=True, success=True)
     result = calculate(token_rule(), measured, profile=profile)
     assert Decimal(result.amount) == Decimal("0.002")
@@ -240,7 +240,7 @@ def test_embeddings_total_tokens_are_input_and_output_is_structural_zero():
 
 
 def test_image_native_usage_modalities_and_missing_cache_intersection():
-    profile = PROFILES["openai_images.v1"]
+    profile = PROFILES["openai_images.v2"]
     measured = normalize_pricing_facts(
         profile,
         {
@@ -275,7 +275,7 @@ def test_corrupt_cache_counts_never_make_negative_regular_tokens():
 
 
 def test_relay_cache_writes_are_separate_and_never_assumed_zero():
-    profile = PROFILES["relay_chat.v1"]
+    profile = PROFILES["relay_chat.v2"]
     usage = {
         "prompt_tokens": 1000,
         "completion_tokens": 200,
@@ -294,7 +294,7 @@ def test_relay_cache_writes_are_separate_and_never_assumed_zero():
 
 
 def test_unsupported_parameter_values_and_fake_structural_output_are_invalid():
-    profile = PROFILES["openai_images.v1"]
+    profile = PROFILES["openai_images.v2"]
     assert (
         calculate(
             image_rule(),
@@ -304,7 +304,7 @@ def test_unsupported_parameter_values_and_fake_structural_output_are_invalid():
         ).status
         == "invalid"
     )
-    embedding = PROFILES["embedding.v1"]
+    embedding = PROFILES["embedding.v2"]
     assert (
         calculate(
             token_rule(),
@@ -339,8 +339,8 @@ def test_time_conditions_require_the_declared_source_not_a_poll_or_http_date():
     assert observed_time_context(parsed, datetime.now(UTC)) == {}
 
 
-def test_legacy_and_unsupported_snapshot_versions_are_explicit():
-    assert estimate(None, facts(), CHAT).reason == "legacy_no_snapshot"
+def test_missing_and_unsupported_snapshot_versions_are_explicit():
+    assert estimate(None, facts(), CHAT).reason == "snapshot_missing"
     saved = snapshot(token_rule()).model_dump(mode="json", by_alias=True)
     saved["format"] = 2
     assert estimate(saved, facts(), CHAT).status == "invalid"
@@ -382,7 +382,7 @@ def test_format_version_is_an_integer_and_a_price_requires_provenance(version):
 
 @pytest.mark.parametrize("factor", ["1", "0.000000000000000001", "999999.999999999999999999"])
 def test_rational_prices_round_like_an_independent_exact_fraction(factor):
-    profile = PROFILES["openai_images.v1"]
+    profile = PROFILES["openai_images.v2"]
     quantities = [
         "usage.input_text_tokens",
         "usage.input_image_tokens",

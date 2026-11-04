@@ -89,7 +89,7 @@ FileService.transfer() 返回作用域内有效的 FileTransferService。materia
 
 可信宿主可传 TransferScope(owner, max_temporary_bytes)。workspace 提供受限临时 Path，upload_file 的可选 admission(data) 在句柄校验后、正文发送前执行；不向 HTTP 开放任意 owner/额度。
 
-容量账本 v2 在 OS 所有者记录 scope/scope_bytes/scope_limit，全局锁下汇总 live 承诺并取最严格上限。顺序刷盘不提前释放完整临时承诺；正式副本受物理容量管理，不重复计临时额度。无 scope 写 v1，读兼容 v1/v2；崩溃只以 OS 锁释放回收，损坏 live 记录拒绝，不靠 PID/时间推断。超 scope 返回 file_scope_limit；发布前停止全部旧协调写入进程，旧代码不可与 v2 混跑。
+容量账本 v2 在 OS 所有者记录 scope/scope_bytes/scope_limit，全局锁下汇总 live 承诺并取最严格上限。顺序刷盘不提前释放完整临时承诺；正式副本受物理容量管理，不重复计临时额度。所有预留统一使用 v2，无 scope 时 scope/scope_limit 为 null、scope_bytes 为 0；崩溃只以 OS 锁释放回收，损坏 live 记录拒绝，不靠 PID/时间推断。超 scope 返回 file_scope_limit。
 
 local_origin(file_id) 仅供可信本地业务，只接受 filesystem；业务须完成对象和本地目录准入授权。核验后返回实际路径、大小和校验和，返回前复查；无通用 HTTP 路由。
 

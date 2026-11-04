@@ -198,8 +198,8 @@ uv run --locked pytest -q tests/unit/test_document_review.py tests/unit/test_flo
 uv run --locked pytest --require-postgres -q tests/integration/test_flow.py tests/integration/test_model_live.py tests/integration/test_review_recovery.py tests/integration/test_flow_extensions.py
 ```
 
-单元验证业务验收、空白结果禁止上传、Agent 修正/预算和 Unicode 分段。集成用真实 Worker/PostgreSQL/DBOS 和本地 HTTP 替身，覆盖多角色绑定及登记、响应、产物、Agent 消费前的崩溃恢复；检查请求数、原 ID、预算、截止、引用和旧格式重放。不访问付费模型，不将协议回归作为业务质量证明。
+单元验证业务验收、空白结果禁止上传、Agent 修正/预算和 Unicode 分段。集成用真实 Worker/PostgreSQL/DBOS 和本地 HTTP 替身，覆盖多角色绑定及登记、响应、产物、Agent 消费前的崩溃恢复；检查请求数、原 ID、预算、截止、引用和原检查点恢复。不访问付费模型，不将协议回归作为业务质量证明。
 
 ## 运行诊断
 
-控制台展示 Run、步骤、预算、模型、文件和费用；业务无需复制执行日志。接口和授权只在 [Flow 诊断](../domains/flow.md#8-api授权与诊断)维护，历史缺位置/预算明确显示未记录，不按当前定义补造。资源可见与 Run 可见分别判断，文件下载再次检查内容权。
+控制台展示 Run、步骤、预算、模型、文件和费用；业务无需复制执行日志。接口和授权只在 [Flow 诊断](../domains/flow.md#8-api授权与诊断)维护，步骤尚无执行位置时明确显示未记录；预算以 Run 保存的账本为准。资源可见与 Run 可见分别判断，文件下载再次检查内容权。

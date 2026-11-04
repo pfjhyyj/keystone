@@ -46,7 +46,7 @@ const invocation = (id: string) => ({
   step_id: 3,
   error_code: null,
 })
-const budget = { recorded: true, limits, counters }
+const budget = { limits, counters }
 it('keeps an opened invocation through polling and clears it when authority changes', async () => {
   authorize(['flow:read', 'model_invocation:read'])
   fakeApi(defaults)
@@ -204,7 +204,7 @@ it('clears revoked panels and ignores their outstanding results', async () => {
   expect(wrapper.text()).toContain(fileId)
   expect(wrapper.text()).toContain('无查看模型调用权限')
 })
-it('shows historical omissions explicitly and clears all data on Run access loss', async () => {
+it('shows missing Step positions explicitly and clears all data on Run access loss', async () => {
   authorize(['flow:read', 'model_invocation:read'])
   let lost = false
   fakeApi((path) => {
@@ -212,8 +212,6 @@ it('shows historical omissions explicitly and clears all data on Run access loss
       return new Response(JSON.stringify({ code: 'flow_not_found', detail: '流程不可访问' }), {
         status: 404,
       })
-    if (section(path) === 'budget')
-      return { run_id: runId, budget: { recorded: false, limits: null, counters: null } }
     if (section(path) === 'models')
       return {
         run_id: runId,
@@ -223,7 +221,6 @@ it('shows historical omissions explicitly and clears all data on Run access loss
   })
   const wrapper = mount(FlowRunDiagnostics, { props })
   await flushPromises()
-  expect(wrapper.text()).toContain('历史运行未记录此版本累计预算')
   expect(wrapper.text()).toContain('历史 Step 位置未记录')
   lost = true
   await wrapper.setProps({ refresh: 2 })
@@ -238,7 +235,6 @@ it('keeps budget counts and remaining exact above the JavaScript safe integer ra
   fakeApi(() => ({
     run_id: runId,
     budget: {
-      recorded: true,
       limits: { ...limits, input_tokens: '9007199254740994' },
       counters: { ...counters, input_tokens: '9007199254740993' },
     },

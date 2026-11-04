@@ -45,7 +45,7 @@ async def reconcile_one(runtime, engine, identifier, *, prepare=None, project=No
                     raise
                 candidate, submission_error = None, error.code
             if candidate is not None:
-                await engine.enqueue(*candidate)
+                await engine.enqueue(candidate)
     elif action == "cancel":
         state = await engine.state(identifier)
         if (

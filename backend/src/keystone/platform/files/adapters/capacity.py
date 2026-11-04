@@ -88,7 +88,7 @@ class Capacity:
             amounts, floor, slot = record["amounts"], record["floor"], record["slot"]
             if (
                 type(record["version"]) is not int
-                or record["version"] not in {1, 2}
+                or record["version"] != 2
                 or not isinstance(amounts, dict)
                 or not 1 <= len(amounts) <= 3
                 or any(
@@ -102,7 +102,7 @@ class Capacity:
                 or (slot is not None and (type(slot) is not int or not 0 <= slot < 32))
             ):
                 raise ValueError()
-            if record["version"] == 2:
+            if record["scope"] is not None:
                 from keystone.platform.files.schemas.transfers import TransferScope
 
                 scope = TransferScope(
@@ -113,6 +113,8 @@ class Capacity:
                     or not 0 <= record["scope_bytes"] <= scope.max_temporary_bytes
                 ):
                     raise ValueError()
+            elif record["scope_limit"] is not None or record["scope_bytes"] != 0:
+                raise ValueError()
             return record
         except (OSError, ValueError, KeyError, TypeError):
             raise invalid() from None
@@ -205,7 +207,7 @@ class Capacity:
         with self.locked():
             records = self.live()
             if scope is not None:
-                related = [r for r in records.values() if r.get("scope") == scope.owner]
+                related = [r for r in records.values() if r["scope"] == scope.owner]
                 maximum = min([scope.max_temporary_bytes] + [r["scope_limit"] for r in related])
                 if sum(r["scope_bytes"] for r in related) + scope_bytes > maximum:
                     raise ServiceError(413, "file_scope_limit", "本次执行的临时空间额度已耗尽")
@@ -239,18 +241,14 @@ class Reservation:
         directory = self.capacity.directory()
         path = directory / f"{self.identifier}.tmp"
         record = {
-            "version": 1,
+            "version": 2,
             "amounts": self.amounts,
             "floor": self.capacity.settings.file_min_free_bytes,
             "slot": self.slot,
+            "scope": self.scope.owner if self.scope else None,
+            "scope_bytes": self.scope_bytes,
+            "scope_limit": self.scope.max_temporary_bytes if self.scope else None,
         }
-        if self.scope is not None:
-            record.update(
-                version=2,
-                scope=self.scope.owner,
-                scope_bytes=self.scope_bytes,
-                scope_limit=self.scope.max_temporary_bytes,
-            )
         with path.open("wb") as stream:
             stream.write(json.dumps(record).encode())
             stream.flush()

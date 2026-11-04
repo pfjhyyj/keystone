@@ -14,7 +14,6 @@ from keystone.platform.model_access.schemas.diagnostics import (
     diagnostic,
 )
 from keystone.platform.model_access.schemas.images import ImageManifest
-from keystone.platform.model_access.services.cost_recovery import bind_missing_cost_context
 from keystone.platform.model_access.services.costs import CostService
 from keystone.platform.model_access.services.queries import (
     cost_columns,
@@ -230,9 +229,6 @@ class InvocationService:
             if row.status == "running":
                 raise ServiceError(409, "model_call_running", "请等待当前调用结束")
             actor = Actor("user", auth.user.id)
-            await bind_missing_cost_context(
-                session, row, self.clients, actor, self.identity.correlation_id
-            )
             scope = row.cost_context.get("scope") if row.cost_context else None
         if scope and row.upstream_request_id:
             await CostService(self.identity.database, self.clients).reconcile(

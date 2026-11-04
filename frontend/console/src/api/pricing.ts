@@ -100,7 +100,7 @@ export const estimateReasons: Record<string, string> = {
   price_missing: '未配置此目标的价格',
   pricing_disabled: '已关闭预估',
   pricing_binding_changed: '价格绑定已变化，请重新配置',
-  legacy_no_snapshot: '历史调用没有价格快照',
+  snapshot_missing: '缺少价格快照',
   metric_missing: '缺少计费用量',
   condition_missing: '缺少价格选档条件',
   meter_conflict: '上游计量冲突',

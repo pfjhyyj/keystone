@@ -83,10 +83,9 @@ def test_rename_keeps_original_mapping_credentials_and_call_history(client):
     assert edit_channel(client, c, is_active=False).status_code == 200
 
 
-@pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize("terminal", [False, True])
 def test_flow_reference_blocks_delete_before_any_call_including_original_channel(
-    client, monkeypatch, legacy, terminal
+    client, monkeypatch, terminal
 ):
     from support.flow_packages import install_package
     from support.operation_flow import PACKAGE, definition
@@ -105,15 +104,6 @@ def test_flow_reference_blocks_delete_before_any_call_including_original_channel
     )
     assert result.status_code == 202, result.text
     run_id = UUID(result.json()["id"])
-    if legacy:
-
-        async def make_legacy(session):
-            run = await session.get(FlowRun, run_id)
-            selection = run.definition_snapshot["model_bindings"]["analyze"]["selection"]
-            run.definition_snapshot = {"output_schema": {}, "output_file_fields": []}
-            run.input = {"model_key": e["key"], "selection": selection}
-
-        query(client, make_legacy)
     if terminal:
 
         async def finish(session):

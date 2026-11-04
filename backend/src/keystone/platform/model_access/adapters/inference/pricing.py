@@ -30,7 +30,7 @@ MODAL_OUTPUT = ["usage.output_text_tokens", "usage.output_image_tokens"]
 def _profile(name, inputs, outputs, context, *, images=False, zeros=()):
     tokens = {key for parts in (inputs, outputs) for fields in parts.values() for key in fields}
     return MetricProfile(
-        id=f"{name}.v1",
+        id=name,
         quantities={
             **{key: "token" for key in tokens},
             "events.upstream_success_count": "request",
@@ -44,22 +44,22 @@ def _profile(name, inputs, outputs, context, *, images=False, zeros=()):
 
 
 PROFILES = {
-    "chat.v1": _profile("chat", INPUT, OUTPUT, {"context.enable_thinking": "integer"}),
-    "relay_chat.v1": _profile(
-        "relay_chat",
+    "chat.v2": _profile("chat.v2", INPUT, OUTPUT, {"context.enable_thinking": "integer"}),
+    "relay_chat.v2": _profile(
+        "relay_chat.v2",
         CACHE_WRITES,
         OUTPUT,
         {"context.enable_thinking": "integer", "context.cache_ttl": "string"},
     ),
-    "embedding.v1": _profile(
-        "embedding",
+    "embedding.v2": _profile(
+        "embedding.v2",
         {"none": [], "aggregate": INPUT["aggregate"]},
         {"none": [], "aggregate": OUTPUT["aggregate"]},
         {"context.dimensions": "integer"},
         zeros=("usage.output_total_tokens",),
     ),
-    "openrouter_images.v1": _profile(
-        "openrouter_images",
+    "openrouter_images.v2": _profile(
+        "openrouter_images.v2",
         CACHE_WRITES,
         OUTPUT,
         {
@@ -69,8 +69,8 @@ PROFILES = {
         },
         images=True,
     ),
-    "openai_images.v1": _profile(
-        "openai_images",
+    "openai_images.v2": _profile(
+        "openai_images.v2",
         {**INPUT, "modality": MODAL_INPUT},
         {"none": [], "aggregate": OUTPUT["aggregate"], "modality": MODAL_OUTPUT},
         {
@@ -82,17 +82,17 @@ PROFILES = {
         images=True,
     ),
     "kling_images.v1": _profile(
-        "kling_images", {"none": []}, {"none": []}, {"context.resolution": "string"}, images=True
+        "kling_images.v1", {"none": []}, {"none": []}, {"context.resolution": "string"}, images=True
     ),
 }
 for name, enums in {
-    "chat.v1": {"context.enable_thinking": [0, 1]},
-    "relay_chat.v1": {"context.enable_thinking": [0, 1], "context.cache_ttl": ["5m", "1h"]},
-    "openrouter_images.v1": {
+    "chat.v2": {"context.enable_thinking": [0, 1]},
+    "relay_chat.v2": {"context.enable_thinking": [0, 1], "context.cache_ttl": ["5m", "1h"]},
+    "openrouter_images.v2": {
         "context.resolution": ["1K", "2K", "4K"],
         "context.output_format": ["png", "jpeg", "webp"],
     },
-    "openai_images.v1": {
+    "openai_images.v2": {
         "context.quality": ["low", "medium", "high"],
         "context.output_format": ["png", "jpeg", "webp"],
     },
@@ -100,10 +100,8 @@ for name, enums in {
 }.items():
     PROFILES[name].context_enums = enums
 
-# Existing snapshots keep their original interpretation. New sends explicitly opt in.
-for legacy in ("chat", "relay_chat", "embedding", "openrouter_images", "openai_images"):
-    profile = PROFILES[f"{legacy}.v1"].model_copy(deep=True)
-    profile.id = f"{legacy}.v2"
+for name in ("chat", "relay_chat", "embedding", "openrouter_images", "openai_images"):
+    profile = PROFILES[f"{name}.v2"]
     if "cache" in profile.input_partitions:
         profile.quantities["usage.input_uncached_tokens"] = "token"
         profile.input_partitions["cache_read"] = [
@@ -112,7 +110,6 @@ for legacy in ("chat", "relay_chat", "embedding", "openrouter_images", "openai_i
         ]
         profile.context_fields["context.cache_mode"] = "string"
         profile.context_enums["context.cache_mode"] = ["implicit", "explicit"]
-    PROFILES[profile.id] = profile
 PROFILES["volcengine_chat.v2"] = PROFILES["chat.v2"].model_copy(deep=True)
 PROFILES["volcengine_chat.v2"].id = "volcengine_chat.v2"
 PROFILES["volcengine_chat.v2"].context_fields["context.service_tier"] = "string"
@@ -124,10 +121,9 @@ PROFILES["volcengine_chat.v2"].context_enums["context.service_tier"] = [
 ]
 
 
-def merge_usage(previous, incoming, *, profile=None):
+def merge_usage(previous, incoming):
     """Cumulative receipts replace fields, never add chunk totals or retain arbitrary JSON."""
     result = dict(previous or {})
-    modern = profile is not None and profile.id.endswith(".v2")
     for key in (
         "prompt_tokens",
         "completion_tokens",
@@ -136,15 +132,13 @@ def merge_usage(previous, incoming, *, profile=None):
         "total_tokens",
         "prompt_cache_hit_tokens",
         "prompt_cache_miss_tokens",
-        *(
-            ("reasoning_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
-            if modern
-            else ()
-        ),
+        "reasoning_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
     ):
         if key in incoming:
             value = incoming[key]
-            result[key] = value if type(value) is int or modern and value is None else -1
+            result[key] = value if type(value) is int or value is None else -1
     for key in (
         "prompt_tokens_details",
         "completion_tokens_details",
@@ -154,7 +148,7 @@ def merge_usage(previous, incoming, *, profile=None):
         if key not in incoming:
             continue
         details = incoming[key]
-        if modern and details is None:
+        if details is None:
             result.pop(key, None)
             continue
         if not isinstance(details, dict):
@@ -167,11 +161,12 @@ def merge_usage(previous, incoming, *, profile=None):
             "reasoning_tokens",
             "text_tokens",
             "image_tokens",
-            *(("cache_creation_input_tokens", "audio_tokens") if modern else ()),
+            "cache_creation_input_tokens",
+            "audio_tokens",
         ):
             if field in details:
                 value = details[field]
-                target[field] = value if type(value) is int or modern and value is None else -1
+                target[field] = value if type(value) is int or value is None else -1
         result[key] = target
     return result
 
@@ -217,8 +212,6 @@ def request_context(request, profile):
     else:
         body = json.loads(request.content)
         if profile.id in {
-            "openrouter_images.v1",
-            "openai_images.v1",
             "openrouter_images.v2",
             "openai_images.v2",
         }:
@@ -264,15 +257,7 @@ def request_context(request, profile):
     return result
 
 
-def normalize_pricing_facts(profile, usage, *, complete=False, success=False, generated=None):
-    if profile.id.endswith(".v2"):
-        return _normalize_v2(
-            profile, usage, complete=complete, success=success, generated=generated
-        )
-    return _normalize_v1(profile, usage, complete=complete, success=success, generated=generated)
-
-
-def _normalize_v1(profile, usage, *, complete=False, success=False, generated=None):
+def _measure(profile, usage, *, complete, success, generated):
     result = PricingFacts(profile=profile.id)
 
     def put(key, value, source="upstream_usage", *, final=None):
@@ -291,7 +276,7 @@ def _normalize_v1(profile, usage, *, complete=False, success=False, generated=No
 
     data = usage if isinstance(usage, dict) else {}
     # Only the currently installed OpenAI-compatible wire contracts are normalized.
-    image_wire = profile.id == "openai_images.v1"
+    image_wire = profile.id == "openai_images.v2"
     put("input_total_tokens", data.get("input_tokens" if image_wire else "prompt_tokens"))
     put("output_total_tokens", data.get("output_tokens" if image_wire else "completion_tokens"))
     details = data.get("input_tokens_details" if image_wire else "prompt_tokens_details")
@@ -305,7 +290,7 @@ def _normalize_v1(profile, usage, *, complete=False, success=False, generated=No
     out = data.get("output_tokens_details" if image_wire else "completion_tokens_details")
     out = out if isinstance(out, dict) else {}
     put("reasoning_tokens", out.get("reasoning_tokens"))
-    if profile.id == "embedding.v1":
+    if profile.id == "embedding.v2":
         if "usage.input_total_tokens" not in result.values:
             put("input_total_tokens", data.get("total_tokens"), "derived")
         put("output_total_tokens", 0, "protocol")
@@ -361,7 +346,7 @@ def _normalize_v1(profile, usage, *, complete=False, success=False, generated=No
     return result
 
 
-def _normalize_v2(profile, usage, *, complete, success, generated):
+def normalize_pricing_facts(profile, usage, *, complete=False, success=False, generated=None):
     """OpenAI-compatible aliases agree; absence is distinct from a reported zero."""
     data = usage if isinstance(usage, dict) else {}
     invalid = False
@@ -431,10 +416,9 @@ def _normalize_v2(profile, usage, *, complete, success, generated):
         prompt["cached_tokens"] = hit
     if reasoning is not None:
         output["reasoning_tokens"] = reasoning
-    legacy_id = profile.id.removesuffix(".v2") + ".v1"
-    if legacy_id == "embedding.v1" and outputs not in (None, 0):
+    if profile.id == "embedding.v2" and outputs not in (None, 0):
         invalid = True
-    image = legacy_id == "openai_images.v1"
+    image = profile.id == "openai_images.v2"
     canonical = {
         "input_tokens" if image else "prompt_tokens": inputs,
         "output_tokens" if image else "completion_tokens": outputs,
@@ -442,14 +426,13 @@ def _normalize_v2(profile, usage, *, complete, success, generated):
         "output_tokens_details" if image else "completion_tokens_details": output,
         "total_tokens": number(data.get("total_tokens")),
     }
-    result = _normalize_v1(
-        profile.model_copy(update={"id": legacy_id}),
+    result = _measure(
+        profile,
         canonical,
         complete=complete,
         success=success,
         generated=generated,
     )
-    result.profile = profile.id
     if (
         "usage.input_uncached_tokens" in profile.quantities
         and inputs is not None

@@ -1,6 +1,5 @@
 from sqlalchemy import select
 
-from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.model_access.models import ModelInvocation
@@ -20,26 +19,13 @@ async def has_worker_calls(session, worker_id):
 
 
 async def recover_interrupted_calls(database, owner, *, lease):
-    # Only at startup after exclusive Worker lock: the previous process is known to have ended.
-    async with lease.transaction() as session:
-        if await session.scalar(
-            select(ModelInvocation.id)
-            .where(
-                ModelInvocation.status == "running",
-                ModelInvocation.flow_context["flow_run_id"].astext.is_not(None),
-                ModelInvocation.worker_id.is_(None),
-            )
-            .limit(1)
-        ):
-            raise ServiceError(
-                409, "legacy_flow_recovery_required", "旧 Flow 调用无执行归属，请停机后执行专项收尾"
-            )
+    # The exclusive Worker lock establishes that the previous process has ended.
     return await recover_calls(
         database, flow=True, source="flow_worker_recovery", owner=owner, lease=lease
     )
 
 
-async def recover_calls(database, *, flow, source, owner=None, legacy_only=False, lease=None):
+async def recover_calls(database, *, flow, source, owner=None, lease=None):
     """Internal batch operation; entrypoints must establish the process-stop precondition."""
     context = ModelInvocation.flow_context["flow_run_id"].astext
     count = 0
@@ -59,7 +45,6 @@ async def recover_calls(database, *, flow, source, owner=None, legacy_only=False
                             if owner
                             else []
                         ),
-                        *([ModelInvocation.worker_id.is_(None)] if legacy_only else []),
                     )
                     .order_by(ModelInvocation.id)
                     .limit(100)

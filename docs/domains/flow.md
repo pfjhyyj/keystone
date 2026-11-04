@@ -193,7 +193,7 @@ sequenceDiagram
 
 费用记录不能替代结果正文。检查点不保证第三方 exactly-once；恢复使用原制品、身份、契约及稳定 ID，不能换 Run 绕过未知结果。
 
-旧 Selection-in-input、摘要和无版本输出快照按原义处理；旧点路径保留原 Unicode/数量/联合规则，仍核 UUID 和唯一文件数。format=2 历史缺 limits 表示未记录，不回填当前默认；新快照缺预算账本拒绝。损坏格式 flow_snapshot_unavailable，旧结果按原快照同步，不因当前定义下线重解释。
+只接受完整的 format=2 快照，包含固定模型选择和 limits；缺失预算账本拒绝执行。损坏格式返回 flow_snapshot_unavailable。结果按原快照同步，不因当前定义下线重解释。
 
 ## 8. API、授权与诊断
 
@@ -209,7 +209,7 @@ sequenceDiagram
 
 - 模型：read/read_all 独立判断，返回调用、操作、角色/节点/Agent、原 Step 位置及安全错误，不因 flow:manage 扩权。
 - 文件：Run 可见后列出关联 File ID/slot，不授予内容读取权；同 Run 可见图片调用与原 Manifest 的产物键、摘要、大小、MIME 全部匹配才补 invocation_id，不按名称/时间猜测。
-- 预算：recorded/limits/counters，诊断整数为十进制字符串，前端 BigInt；费用独立。
+- 预算：limits/counters，诊断整数为十进制字符串，前端 BigInt；费用独立。
 
 不返回检查点、私有 result/cost_context、供应商任务/下载地址、原文异常、秘密或本地路径。控制台各板块独立加载，失权清相应数据，迟到结果丢弃；仅活动 Run 自动轮询，终态缺步骤/费用可手动刷新。
 

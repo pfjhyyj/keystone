@@ -143,9 +143,6 @@ async def _operation_scope(run_id):
         yield outer[2]
         return
     limits = await FlowBudgetService(_identity(run_id)).limits()
-    if limits is None:
-        yield None
-        return
     manager = session_lease(
         _runtime().database,
         capacities=[(f"flow-operations:{run_id}", limits.concurrent_operations)],

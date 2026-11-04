@@ -91,7 +91,7 @@ def test_model_baseline_defaults_and_roundtrip_preserve_billing_and_recovery(mod
         assert {row["status"] for row in invocations.values()} == {"unknown"}
         assert all(row["estimate_snapshot"] is None for row in invocations.values())
         assert {row["estimate_status"] for row in invocations.values()} == {"unavailable"}
-        assert {row["estimate_reason"] for row in invocations.values()} == {"legacy_no_snapshot"}
+        assert {row["estimate_reason"] for row in invocations.values()} == {"snapshot_missing"}
     for _ in range(2):
         command.upgrade(config, "head")
         command.downgrade(config, "0005")

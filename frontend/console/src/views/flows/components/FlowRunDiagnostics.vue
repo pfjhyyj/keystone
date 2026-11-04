@@ -135,24 +135,21 @@ onScopeDispose(() => {
       errors.budget
     }}</el-alert>
     <template v-else-if="budget">
-      <p v-if="!budget.recorded">历史运行未记录此版本累计预算。</p>
-      <template v-else>
-        <dl v-for="item in usage" :key="item.label">
-          <dt>{{ item.label }}</dt>
-          <dd>
-            {{ item.consumed }} / {{ item.limit }}；剩余
-            {{ item.remaining }}
-          </dd>
-        </dl>
-        <p>
-          未结清文本请求：{{ budget.counters?.unreported_text_requests }}；输入 token
-          尚未报告，不等于零用量。
-        </p>
-        <p>
-          受控并发上限 {{ budget.limits?.concurrent_operations }}；临时空间上限
-          {{ budget.limits?.temporary_bytes }} B。
-        </p>
-      </template>
+      <dl v-for="item in usage" :key="item.label">
+        <dt>{{ item.label }}</dt>
+        <dd>
+          {{ item.consumed }} / {{ item.limit }}；剩余
+          {{ item.remaining }}
+        </dd>
+      </dl>
+      <p>
+        未结清文本请求：{{ budget.counters.unreported_text_requests }}；输入 token
+        尚未报告，不等于零用量。
+      </p>
+      <p>
+        受控并发上限 {{ budget.limits.concurrent_operations }}；临时空间上限
+        {{ budget.limits.temporary_bytes }} B。
+      </p>
     </template>
   </section>
   <section aria-label="关联模型调用">

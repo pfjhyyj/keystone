@@ -4,6 +4,9 @@ from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
 from types import SimpleNamespace
 
+from support.flow_fixture.contracts import definition
+from support.flow_packages import snapshot_for
+
 from keystone.platform.dictionary.schemas import item_view
 from keystone.platform.dictionary.schemas import view as dictionary_view
 from keystone.platform.files.schemas import view as file_view
@@ -80,7 +83,7 @@ def test_projection_ignores_new_internal_fields():
             receipt_ids={"body_id": "internal"},
         )
         if project is run_view:
-            row.definition_snapshot = {"output_schema": {}, "output_file_fields": []}
+            row.definition_snapshot = snapshot_for(definition)
         if project is invocation_view:
             row.estimate_snapshot = {
                 "binding": {"api_base": "https://private.invalid"},
@@ -102,6 +105,6 @@ def test_cost_decimal_and_run_timezone_keep_wire_semantics():
     invocation.cost_amount = Decimal("0.000000001234")
     assert invocation_view(invocation)["cost_amount"] == "0.000000001234"
     run = Row(**dict.fromkeys(CASES[5][1].split()))
-    run.definition_snapshot = {"output_schema": {}, "output_file_fields": []}
+    run.definition_snapshot = snapshot_for(definition)
     run.created_at = datetime(2026, 10, 19, 8, tzinfo=timezone(timedelta(hours=8)))
     assert run_view(run)["created_at"] == datetime(2026, 10, 19, tzinfo=UTC)

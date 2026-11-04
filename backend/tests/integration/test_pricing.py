@@ -211,7 +211,7 @@ def test_pricing_management_respects_pat_intersection(client, method, suffix):
     body = (
         {"expected_revision": 0, "config": config()}
         if method == "PUT"
-        else {"config": config(), "operation": "text.generate", "facts": {"profile": "chat.v1"}}
+        else {"config": config(), "operation": "text.generate", "facts": {"profile": "chat.v2"}}
     )
     response = client.request(
         method,
@@ -365,7 +365,7 @@ def test_statistics_currencies_unknown_coverage_and_actuals_stay_separate(client
         "partial": 1,
         "unavailable": 1,
         "invalid": 0,
-        "legacy": 0,
+        "snapshot_missing": 0,
         "price_missing": 1,
     }
     assert {r["unit"]: Decimal(r["amount"]) for r in report["costs"]} == {

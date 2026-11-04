@@ -126,7 +126,7 @@ async def test_image_wire_preserves_registration_receipt_and_nine_reference_file
     assert observation.request_budget.operation == selection.operation
 
 
-def test_exact_sizes_and_legacy_image_request_digest_are_stable():
+def test_exact_sizes_and_image_request_digest_are_stable():
     for ratio in ("1:1", "16:9", "9:16", "4:3", "3:4"):
         a, b = map(int, ratio.split(":"))
         for tier in ("1K", "2K", "4K"):
@@ -134,7 +134,14 @@ def test_exact_sizes_and_legacy_image_request_digest_are_stable():
             assert w * b == h * a and w % 16 == h % 16 == 0
             assert 655360 <= w * h <= 8294400 and max(w, h) <= 3840
     data = ImageGenerateRequest(prompt="old")
-    original = {"prompt": "old", "n": 1, "resolution": "1K", "output_format": "png"}
+    original = {
+        "prompt": "old",
+        "n": 1,
+        "resolution": "1K",
+        "output_format": "png",
+        "aspect_ratio": None,
+        "quality": None,
+    }
     raw = json.dumps(
         ["image.generate", original],
         sort_keys=True,

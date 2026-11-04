@@ -39,8 +39,8 @@ def view(row):
     }
     snapshot = read_snapshot(row.definition_snapshot)
     values["definition_snapshot"] = public_snapshot(snapshot)
-    values["definition_revision"] = snapshot.get("revision")
+    values["definition_revision"] = snapshot["revision"]
     values["model_bindings"] = {
-        key: binding["model_key"] for key, binding in snapshot.get("model_bindings", {}).items()
+        key: binding["model_key"] for key, binding in snapshot["model_bindings"].items()
     }
     return {k: v.astimezone(UTC) if isinstance(v, datetime) else v for k, v in values.items()}

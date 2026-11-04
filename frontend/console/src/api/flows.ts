@@ -60,7 +60,7 @@ export interface FlowLimits extends Omit<BudgetCounters, 'unreported_text_reques
 }
 export interface Diagnostics {
   run_id: string
-  budget: { recorded: boolean; limits: FlowLimits | null; counters: BudgetCounters | null } | null
+  budget: { limits: FlowLimits; counters: BudgetCounters } | null
   models: (DiagnosticPage<InvocationDiagnostic> & { available: boolean }) | null
   files: DiagnosticPage<{ file_id: string; slot: string; invocation_id: string | null }> | null
 }

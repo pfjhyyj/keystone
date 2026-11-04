@@ -34,15 +34,13 @@ class BudgetCounterValues(BudgetAmounts):
 
 
 class BudgetDiagnostic(Input):
-    recorded: bool
-    limits: BudgetLimitValues | None = None
-    counters: BudgetCounterValues | None = None
+    limits: BudgetLimitValues
+    counters: BudgetCounterValues
 
     @classmethod
     def from_values(cls, limits: FlowLimits, counters: BudgetCounters):
         # Decimal strings preserve every valid integer in browser JSON clients.
         return cls(
-            recorded=True,
             limits=BudgetLimitValues(
                 **{key: str(value) for key, value in limits.model_dump().items()}
             ),

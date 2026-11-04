@@ -1,4 +1,4 @@
-"""Persisted snapshot formats; legacy records remain read-only in their original shape."""
+"""Persisted execution contract for the current snapshot format."""
 
 from typing import Literal
 
@@ -7,7 +7,7 @@ from pydantic import Field, ValidationError, model_validator
 from keystone.core.errors import ServiceError
 from keystone.core.schemas import Input
 from keystone.platform.flow.schemas.budgets import FlowLimits
-from keystone.platform.flow.schemas.files import compile_file_paths, validate_legacy_file_paths
+from keystone.platform.flow.schemas.files import compile_file_paths
 from keystone.platform.flow.schemas.values import small_json
 from keystone.platform.model_access.schemas.invocations import ResolvedModelBinding
 from keystone.platform.model_access.schemas.operations import Delivery, Operation
@@ -16,11 +16,6 @@ from keystone.platform.model_access.schemas.operations import Delivery, Operatio
 class RoleSnapshot(Input):
     operation: Operation
     delivery: Delivery = "sync"
-
-
-class LegacySnapshot(Input):
-    output_schema: dict
-    output_file_fields: list[str]
 
 
 class Snapshot(Input):
@@ -37,7 +32,7 @@ class Snapshot(Input):
     output_file_fields: list[str]
     model_roles: dict[str, RoleSnapshot]
     model_bindings: dict[str, ResolvedModelBinding]
-    limits: FlowLimits | None = None
+    limits: FlowLimits
 
     @model_validator(mode="after")
     def coherent(self):
@@ -49,8 +44,6 @@ class Snapshot(Input):
             for role, b in self.model_bindings.items()
         ):
             raise ValueError("Snapshot operation does not match role")
-        if any(b.selection.provider is None for b in self.model_bindings.values()):
-            raise ValueError("Snapshot model bindings require a provider")
         compile_file_paths(self.input_schema, self.file_fields)
         compile_file_paths(self.output_schema, self.output_file_fields)
         return self
@@ -58,14 +51,8 @@ class Snapshot(Input):
 
 def read_snapshot(value):
     try:
-        if not isinstance(value, dict):
-            raise ValueError()
-        if "format_version" not in value:
-            data = LegacySnapshot.model_validate(value)
-            validate_legacy_file_paths(data.output_schema, data.output_file_fields)
-        else:
-            small_json(value)
-            data = Snapshot.model_validate(value)
+        small_json(value)
+        data = Snapshot.model_validate(value)
         return data.model_dump(mode="json")
     except (ValidationError, ValueError, KeyError, TypeError, ServiceError):
         raise ServiceError(503, "flow_snapshot_unavailable", "运行契约不可用") from None
@@ -73,8 +60,6 @@ def read_snapshot(value):
 
 def public_snapshot(value):
     snapshot = read_snapshot(value)
-    if "format_version" not in snapshot:
-        return snapshot
     return {
         key: snapshot[key]
         for key in (
@@ -93,13 +78,13 @@ def public_snapshot(value):
 
 
 def matches_definition(snapshot, definition):
-    return snapshot.get("format_version") == 2 and all(
+    return all(
         (
             snapshot["revision"] == definition.revision,
             snapshot["entrypoint"] == definition.entrypoint,
             snapshot["required_permissions"] == list(definition.required_permissions),
             snapshot["timeout_seconds"] == definition.timeout_seconds,
-            snapshot.get("limits") == definition.limits.model_dump(mode="json"),
+            snapshot["limits"] == definition.limits.model_dump(mode="json"),
             snapshot["input_schema"] == definition.input_schema(),
             snapshot["output_schema"] == definition.output_schema(),
             snapshot["file_fields"] == list(definition.file_fields),

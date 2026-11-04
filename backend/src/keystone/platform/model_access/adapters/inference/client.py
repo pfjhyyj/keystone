@@ -67,7 +67,7 @@ class InferenceClient:
         return self.http.transport(provider)
 
     def request_target(self, provider, selected):
-        if selected.provider is not None and provider != selected.provider:
+        if provider != selected.provider:
             raise ServiceError(409, "model_target_changed", "模型请求目标发生变化")
         protocol = self.protocol(selected, provider=provider)
         target = protocol.request_target(selected)
@@ -245,9 +245,6 @@ class InferenceClient:
             return await self.protocol(selected).invoke(sdk, selected, data)
 
     def sdk_settings(self, selected, settings):
-        if selected.provider is None:
-            # Legacy snapshots did not select provider-specific Agent settings.
-            return settings
         with adapter_errors():
             return self.protocol(selected).sdk_settings(selected.operation, settings)
 

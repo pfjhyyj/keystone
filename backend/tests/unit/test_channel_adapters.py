@@ -313,7 +313,6 @@ async def test_structured_wire_registers_once_and_keeps_each_channel_contract(
         ("aliyun_bailian", "text.generate", False),
         ("aliyun_bailian", "text.structured", False),
         ("volcengine", "text.structured", False),
-        (None, "text.generate", False),
     ],
 )
 def test_agent_settings_come_from_channel_code_and_preserve_caller_preferences(
@@ -324,7 +323,7 @@ def test_agent_settings_come_from_channel_code_and_preserve_caller_preferences(
         channel_id=uuid4(),
         provider_model="chat",
         provider=provider,
-        api_base=CHANNELS[provider or "openrouter"].api_base,
+        api_base=CHANNELS[provider].api_base,
         operation=operation,
     )
     original = {"max_tokens": 32, "extra_body": {"provider": {"allow_fallbacks": False}}}

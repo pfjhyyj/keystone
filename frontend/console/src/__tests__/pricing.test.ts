@@ -14,7 +14,7 @@ const entry = {
   is_active: true,
 }
 const profile = {
-  id: 'chat.v1',
+  id: 'chat.v2',
   quantities: {
     'usage.input_total_tokens': 'token',
     'usage.output_total_tokens': 'token',
@@ -141,7 +141,7 @@ it('previews a full-context tier draft with manual facts and never saves it', as
     ],
   })
   expect(preview.body?.facts).toMatchObject({
-    profile: 'chat.v1',
+    profile: 'chat.v2',
     values: {
       'usage.input_total_tokens': { value: 1000, source: 'manual' },
     },

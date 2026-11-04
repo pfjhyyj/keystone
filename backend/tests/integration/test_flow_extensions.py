@@ -1,9 +1,7 @@
 """Real SQL/Worker guarantees for independent roles and collection files."""
 
-import hashlib
 import json
 from dataclasses import replace
-from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -14,14 +12,12 @@ from support.multi_role_flow import PACKAGE, definition
 from test_files_dictionary import upload
 from test_flow import client as client
 from test_flow import configuration as configuration
-from test_flow import start, wait_run, worker
+from test_flow import wait_run, worker
 from test_identity import query
 from test_model_access import channel, entry
 
 from keystone.platform.files.models import FileReference
 from keystone.platform.flow.models import FlowRun
-from keystone.platform.flow.schemas.values import small_json
-from keystone.platform.flow.tasks.workflows import reconcile_one
 from keystone.platform.model_access.models import ModelInvocation
 
 pytestmark = [pytest.mark.postgres, pytest.mark.usefixtures("flow_engine")]
@@ -202,138 +198,3 @@ def test_bad_roles_rollback_and_idempotency_does_not_resolve_new_defaults(client
     assert (
         client.post("/api/v1/_test/review", json={**data, "request_key": "new"}).status_code == 409
     )
-
-
-def test_legacy_digest_lookup_and_history_are_not_rewritten(client):
-    file_id = upload(client).json()["id"]
-    row = start(client, file_id).json()
-    original_input = {"source_file_id": file_id, "model_key": "chat"}
-    legacy_snapshot = {
-        k: row["definition_snapshot"][k] for k in ("output_schema", "output_file_fields")
-    }
-    digest = hashlib.sha256(small_json(["document.review", original_input, None])).hexdigest()
-
-    async def legacy(session):
-        run = await session.get(FlowRun, UUID(row["id"]))
-        run.definition_snapshot, run.input, run.request_digest = (
-            legacy_snapshot,
-            original_input,
-            digest,
-        )
-
-    query(client, legacy)
-    response = client.post(
-        "/api/v1/_test/review",
-        json={
-            "definition_key": "document.review",
-            "request_key": "review",
-            "input": original_input,
-        },
-    )
-    assert response.status_code == 202, response.text
-    assert response.json()["id"] == row["id"]
-    assert response.json()["input"] == original_input
-    assert response.json()["definition_revision"] is None
-    assert (
-        client.post(
-            "/api/v1/_test/review",
-            json={
-                "definition_key": "document.review",
-                "request_key": "review",
-                "input": original_input,
-                "model_bindings": {"review": "chat"},
-            },
-        ).status_code
-        == 409
-    )
-
-
-@pytest.mark.parametrize("collection", [False, True])
-def test_legacy_output_union_reconciles_after_entrypoint_rename(client, collection):
-    file_id = upload(client).json()["id"]
-    row = start(client, file_id).json()
-    snapshot = {
-        "output_schema": {
-            "type": "object",
-            "properties": {
-                "files": {
-                    "anyOf": [
-                        {"type": "string", "format": "uuid"},
-                        {"type": "array", "items": {"type": "string", "format": "uuid"}},
-                    ]
-                }
-            },
-            "required": ["files"],
-        },
-        "output_file_fields": ["files"],
-    }
-
-    async def legacy(session):
-        run = await session.get(FlowRun, UUID(row["id"]))
-        run.definition_snapshot = snapshot
-        run.execution_version = "original-artifact"
-
-    query(client, legacy)
-    runtime = client.app.state.runtime
-    current = runtime.flow_definitions["document.review"]
-    runtime.flow_definitions = {current.key: replace(current, entrypoint="renamed.entrypoint")}
-    assert client.get(f"/api/v1/flow-runs/{row['id']}").status_code == 200
-    assert client.get("/api/v1/flow-runs").status_code == 200
-    engine = AsyncMock()
-    result = {"files": [file_id] if collection else file_id}
-    engine.state.return_value = {
-        "version": "original-artifact",
-        "name": "original.entrypoint",
-        "status": "SUCCESS",
-        "result": result,
-    }
-    client.portal.call(reconcile_one, runtime, engine, UUID(row["id"]))
-    done = client.get(f"/api/v1/flow-runs/{row['id']}").json()
-    assert done["status"] == "succeeded" and done["result"] == result
-    stored = query(client, lambda s: s.get(FlowRun, UUID(row["id"])))
-    assert stored.definition_snapshot == snapshot
-    refs = query(
-        client,
-        lambda s: s.scalars(
-            select(FileReference).where(FileReference.owner == f"flow:{row['id']}")
-        ),
-    ).all()
-    assert {r.slot for r in refs} == {"input", "output"}
-    engine.enqueue.assert_not_awaited()
-    engine.cancel.assert_not_awaited()
-
-
-def test_large_legacy_replay_precedes_new_envelope_limit(client):
-    file_id = upload(client).json()["id"]
-    key = "r" * 128
-    row = start(client, file_id, key=key).json()
-    inputs = {"text": "x" * 65400}
-    digest = hashlib.sha256(small_json(["document.review", inputs, None])).hexdigest()
-    snapshot = {"output_schema": {"description": "s" * 65536}, "output_file_fields": []}
-
-    async def legacy(session):
-        run = await session.get(FlowRun, UUID(row["id"]))
-        run.input, run.request_digest, run.definition_snapshot = inputs, digest, snapshot
-
-    query(client, legacy)
-    client.app.state.runtime.flow_definitions = {}
-    data = {"definition_key": "document.review", "request_key": key, "input": inputs}
-    response = client.post("/api/v1/_test/review", json=data)
-    assert response.status_code == 202, response.text
-    assert response.json()["id"] == row["id"] and response.json()["input"] == inputs
-    assert client.get("/api/v1/flow-runs").status_code == 200
-    for changes in (
-        {"request_key": "n" * 128},
-        {"model_bindings": {"review": "chat"}},
-        {"definition_revision": "1"},
-    ):
-        rejected = client.post("/api/v1/_test/review", json={**data, **changes})
-        assert rejected.status_code == 422, rejected.text
-        assert rejected.json()["code"] == "flow_value_too_large"
-    stored = query(client, lambda s: s.get(FlowRun, UUID(row["id"])))
-    assert (stored.input, stored.request_digest, stored.definition_snapshot) == (
-        inputs,
-        digest,
-        snapshot,
-    )
-    assert len(query(client, lambda s: s.scalars(select(FlowRun))).all()) == 1

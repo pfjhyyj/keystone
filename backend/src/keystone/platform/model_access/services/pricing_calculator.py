@@ -151,7 +151,7 @@ def estimate(
 ) -> EstimateResult:
     """Unknown quantities never become zero; only estimated results carry a total."""
     if snapshot is None:
-        return EstimateResult(status="unavailable", reason="legacy_no_snapshot")
+        return EstimateResult(status="unavailable", reason="snapshot_missing")
     try:
         snapshot = PricingSnapshot.model_validate(snapshot)
         facts = PricingFacts.model_validate(facts)

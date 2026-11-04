@@ -101,10 +101,6 @@ class ModelRuntime:
     @staticmethod
     def image_digest(data, operation):
         values = data.model_dump(mode="json")
-        # Preserve old digests: newly added optional controls were absent from old DTOs.
-        for key in ("aspect_ratio", "quality"):
-            if values.get(key) is None:
-                values.pop(key, None)
         raw = json.dumps(
             [operation, values],
             sort_keys=True,
@@ -368,7 +364,7 @@ class ModelRuntime:
                         )
                     if not entry.is_active or not channel.is_active:
                         raise ServiceError(409, "model_disabled", "模型或渠道已停用")
-                    if selected.provider is not None and (
+                    if (
                         entry.channel_id != selected.channel_id
                         or entry.provider_model != selected.provider_model
                         or channel.provider != selected.provider

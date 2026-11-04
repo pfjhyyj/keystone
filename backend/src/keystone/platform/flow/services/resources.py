@@ -29,9 +29,7 @@ class FlowResourceService:
             self.storage,
             transfer_scope=TransferScope(
                 owner=f"flow:{self.identity.run_id}", max_temporary_bytes=limits.temporary_bytes
-            )
-            if limits is not None
-            else None,
+            ),
         )
 
     async def inputs(self):
@@ -53,7 +51,7 @@ class FlowResourceService:
         async with self.identity.access("model:invoke") as (session, _):
             run = await session.get(FlowRun, self.identity.run_id)
             snapshot = read_snapshot(run.definition_snapshot)
-            binding = snapshot.get("model_bindings", {}).get(role)
+            binding = snapshot["model_bindings"].get(role)
             if binding is None:
                 raise ServiceError(409, "flow_model_role_unavailable", "模型角色未绑定")
             return binding

@@ -42,7 +42,7 @@ class Selection(Input):
     channel_id: UUID
     provider_model: ModelName
     api_base: str
-    provider: str | None = None
+    provider: str
     operation: Operation = "text.generate"
     delivery: Delivery = "sync"
 

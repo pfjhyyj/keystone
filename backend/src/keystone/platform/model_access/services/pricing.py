@@ -81,7 +81,7 @@ def apply_estimate(row, facts=None, *, pending=False):
     try:
         snapshot = getattr(row, "estimate_snapshot", None)
         if snapshot is None:
-            result = EstimateResult(status="unavailable", reason="legacy_no_snapshot")
+            result = EstimateResult(status="unavailable", reason="snapshot_missing")
         else:
             profile = PROFILES.get(snapshot.get("profile"))
             if profile is None:

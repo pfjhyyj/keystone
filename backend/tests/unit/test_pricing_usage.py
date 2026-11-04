@@ -37,7 +37,7 @@ def binding(provider="aliyun_bailian", model="qwen-plus", operation="text.genera
 
 def calculate(usage, rule=None, *, profile="relay_chat.v2", context=None):
     meter = PROFILES[profile]
-    facts = normalize_pricing_facts(meter, merge_usage({}, usage, profile=meter), complete=True)
+    facts = normalize_pricing_facts(meter, merge_usage({}, usage), complete=True)
     snapshot = PricingSnapshot(
         profile=profile,
         binding=binding(),
@@ -170,7 +170,6 @@ def test_nullable_optional_breakdowns_are_absent_not_invalid_or_zero():
         merge_usage(
             {"prompt_tokens_details": {"cached_tokens": 100}},
             {"prompt_tokens_details": None},
-            profile=PROFILES["chat.v2"],
         )
         == {}
     )
@@ -285,14 +284,3 @@ def test_effective_context_cannot_be_spoofed_by_synthetic_top_level_parameters()
     context = request_context(request, PROFILES["volcengine_chat.v2"])
     assert "service_tier" not in context
     assert reference(binding("volcengine", "doubao-seed-evolving"), context=context) is None
-
-
-def test_old_profile_meanings_remain_available_for_saved_snapshots():
-    assert "cache_read" not in PROFILES["chat.v1"].input_partitions
-    assert "usage.input_uncached_tokens" not in PROFILES["relay_chat.v1"].quantities
-    assert (
-        normalize_pricing_facts(
-            PROFILES["chat.v1"], {"input_tokens": 100, "output_tokens": 20}, complete=True
-        ).values
-        == {}
-    )

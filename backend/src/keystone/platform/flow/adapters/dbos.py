@@ -80,16 +80,14 @@ class Engine:
             observability_query_timeout_sec=5,
         )
 
-    async def enqueue(self, run, definition):
+    async def enqueue(self, run):
         await self.client.enqueue_async(
             {
-                "workflow_name": run.definition_snapshot.get("entrypoint", definition.entrypoint),
+                "workflow_name": run.definition_snapshot["entrypoint"],
                 "queue_name": QUEUE,
                 "workflow_id": workflow_id(run.id),
                 "app_version": run.execution_version,
-                "workflow_timeout": run.definition_snapshot.get(
-                    "timeout_seconds", definition.timeout_seconds
-                ),
+                "workflow_timeout": run.definition_snapshot["timeout_seconds"],
             },
             str(run.id),
         )
