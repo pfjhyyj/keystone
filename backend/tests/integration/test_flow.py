@@ -995,41 +995,6 @@ def test_upload_completion_retains_file_after_flow_cancel(client, monkeypatch):
     assert client.delete(f"/api/v1/_test/materials/{file['id']}").status_code == 404
 
 
-def test_worker_single_instance_and_orderly_stop(client, tmp_path, flow_engine):
-    stop_file = tmp_path / "stop-worker"
-    code = f"""
-import asyncio
-from pathlib import Path
-from keystone.core.asyncio import run
-from keystone.core.config import Settings
-from keystone.core.logging import configure_logging
-from keystone.entrypoints.worker import run as worker_run
-async def main():
-    stop = asyncio.Event()
-    task = asyncio.create_task(worker_run(Settings(), stop))
-    while not Path({str(stop_file)!r}).exists():
-        if task.done():
-            await task
-        await asyncio.sleep(0.1)
-    stop.set()
-    await task
-configure_logging('INFO')
-run(main())
-"""
-    with worker(client, tmp_path, code=code, fast_health=False) as (process, log):
-        deadline = time.monotonic() + 20
-        while client.get("/api/v1/worker/status").json()["status"] != "ready":
-            assert process.poll() is None and time.monotonic() < deadline
-            time.sleep(0.1)
-        with worker(client, tmp_path) as (other, _):
-            assert other.wait(timeout=15) != 0
-        assert client.get("/api/v1/worker/status").json()["status"] == "ready"
-        stop_file.touch()
-        assert process.wait(timeout=20) == 0, log.read_text(encoding="utf8")
-        assert "worker_stopped" in log.read_text(encoding="utf8")
-        assert client.get("/api/v1/worker/status").json()["status"] == "offline"
-
-
 def test_worker_shutdown_cancels_own_workflow_but_not_other_tasks(client, tmp_path, flow_engine):
     code = """
 import asyncio

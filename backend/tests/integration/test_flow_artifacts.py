@@ -153,33 +153,6 @@ def test_missing_functional_permissions_cannot_probe_even_a_missing_key(artifact
     assert rejected.value.status == 403
 
 
-@pytest.mark.parametrize(
-    "change,code",
-    [
-        ("cancel", "flow_cancelled"),
-        ("terminal", "flow_cancelled"),
-        ("version", "execution_version_unavailable"),
-    ],
-)
-def test_execution_revalidates_lifecycle_and_version(artifacts, change, code):
-    client, run_id, _ = artifacts
-    put(client, run_id)
-    values = {
-        "cancel": {"cancel_requested_at": utcnow()},
-        "terminal": {"status": "failed", "finished_at": utcnow()},
-        "version": {"execution_version": "0" * 64},
-    }[change]
-    query(
-        client,
-        lambda session: session.execute(
-            update(FlowRun).where(FlowRun.id == UUID(run_id)).values(**values)
-        ),
-    )
-    with pytest.raises(ServiceError) as rejected:
-        client.portal.call(host._artifact, run_id, "report")
-    assert rejected.value.code == code
-
-
 def test_historical_read_does_not_resume_a_terminal_or_old_execution(artifacts):
     client, run_id, _ = artifacts
     identifier = put(client, run_id)

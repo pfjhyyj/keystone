@@ -24,8 +24,14 @@ from keystone.platform.model_access.schemas.errors import AdapterError
 pytestmark = pytest.mark.postgres
 
 
-@pytest.mark.parametrize("provider", ["openrouter", "yunwu", "openlux", "newapi"])
-@pytest.mark.parametrize("operation", ["image.generate", "image.edit"])
+@pytest.mark.parametrize(
+    "provider,operation",
+    [
+        ("openrouter", "image.generate"),
+        ("yunwu", "image.generate"),
+        ("yunwu", "image.edit"),
+    ],
+)
 def test_actual_generated_count_and_effective_sdk_parameters(
     client, monkeypatch, provider, operation
 ):

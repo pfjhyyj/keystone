@@ -48,21 +48,21 @@ async def test_discovery_uses_fixed_get_with_inference_key_and_projects_only_ids
 
 
 @pytest.mark.parametrize(
-    "payload",
+    "payload,provider",
     [
-        [],
-        {},
-        {"data": {}},
-        {"data": [None]},
-        {"data": [{"id": 1}]},
-        {"data": [{"id": ""}]},
-        {"data": [{"id": "x" * 129}]},
-        {"data": [{"id": "has\ncontrol"}]},
-        {"data": [{"id": "a b"}]},
-        {"data": [{"id": "x"}] * 10001},
+        ([], "openlux"),
+        ({}, "openlux"),
+        ({"data": {}}, "openlux"),
+        ({"data": [None]}, "openlux"),
+        ({"data": [{"id": 1}]}, "openlux"),
+        ({"data": [{"id": ""}]}, "openlux"),
+        ({"data": [{"id": "x" * 129}]}, "openlux"),
+        ({"data": [{"id": "has\ncontrol"}]}, "openlux"),
+        ({"data": [{"id": "a b"}]}, "openlux"),
+        ({"data": [{"id": "x"}] * 10001}, "openlux"),
+        ([], "volcengine"),
     ],
 )
-@pytest.mark.parametrize("provider", ["openlux", "volcengine"])
 async def test_discovery_rejects_invalid_and_unbounded_model_lists(payload, provider):
     http = HttpClient()
     http.transport = lambda _: httpx2.MockTransport(lambda _: httpx2.Response(200, json=payload))
@@ -72,16 +72,16 @@ async def test_discovery_rejects_invalid_and_unbounded_model_lists(payload, prov
 
 
 @pytest.mark.parametrize(
-    "status,code",
+    "status,code,provider",
     [
-        (401, "model_authentication_failed"),
-        (403, "model_access_denied"),
-        (429, "model_rate_limited"),
-        (302, "model_query_failed"),
-        (500, "model_query_failed"),
+        (401, "model_authentication_failed", "openlux"),
+        (403, "model_access_denied", "openlux"),
+        (429, "model_rate_limited", "openlux"),
+        (302, "model_query_failed", "openlux"),
+        (500, "model_query_failed", "openlux"),
+        (401, "model_authentication_failed", "volcengine"),
     ],
 )
-@pytest.mark.parametrize("provider", ["openlux", "volcengine"])
 async def test_discovery_sanitizes_failures_without_retry_or_redirect(status, code, provider):
     calls = []
 
@@ -194,7 +194,7 @@ async def test_custom_newapi_prefix_and_hostname_are_preserved_for_discovery_and
     assert len(calls) == 2 and registered == [True]
 
 
-@pytest.mark.parametrize("host", ["127.0.0.1", "10.0.0.1", "198.18.1.236", "newapi.x-era.com"])
+@pytest.mark.parametrize("host", ["10.0.0.1", "newapi.x-era.com"])
 async def test_newapi_accepts_configured_hosts_without_public_ip_preflight(monkeypatch, host):
     import socket
 

@@ -40,4 +40,4 @@ Alembic 连接固定 `search_path=public`，只管理 `keystone` schema。DBOS �
 
 平台与业务模型由 `keystone.model_registry.load_models()` 显式加载，bootstrap 与 `env.py` 共用该入口；业务实体共享 Base/keystone schema，模型注册不导入 API、workflow 或初始化数据。
 
-验证覆盖迁移发现、安装后定位、脚手架、逐模块建表与回滚、完整结构和 ORM 一致、重复初始化、每个基线到 head 的升级、调用/费用/恢复证据与 Flow 数据保留，以及不可解析的旧 revision 拒绝且不改数据。数据库测试及回滚仅在随机隔离 PostgreSQL 库执行。
+验证覆盖迁移发现、安装后定位、脚手架、逐模块建表与回滚、完整结构和 ORM 一致、重复初始化、从最早基线到 head 的升级、调用/费用/恢复证据与 Flow 数据保留。数据库测试及回滚仅在随机隔离 PostgreSQL 库执行。

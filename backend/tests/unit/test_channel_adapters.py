@@ -1,15 +1,12 @@
 """Installed channel compositions share protocols without sharing billing semantics."""
 
-import ast
 import json
 from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx2
 import pytest
-from support.ast_support import imports
 
 from keystone.core.errors import ServiceError
 from keystone.platform.model_access.adapters.billing.contracts import BillingQueryError
@@ -307,9 +304,6 @@ async def test_structured_wire_registers_once_and_keeps_each_channel_contract(
         ("openrouter", "text.structured", True),
         ("openrouter", "text.generate", False),
         ("openlux", "text.generate", False),
-        ("openlux", "text.structured", False),
-        ("yunwu", "text.structured", False),
-        ("newapi", "text.structured", False),
         ("aliyun_bailian", "text.generate", False),
         ("aliyun_bailian", "text.structured", False),
         ("volcengine", "text.structured", False),
@@ -355,36 +349,3 @@ async def test_protocol_errors_are_translated_only_at_the_host_boundary():
     with pytest.raises(ServiceError) as unknown:
         BillingClient(None).adapter("unknown")
     assert unknown.value.code == "model_provider_unavailable"
-
-
-def test_protocol_implementations_do_not_import_host_or_execution_dependencies():
-    root = Path(__file__).parents[2] / "src/keystone/platform/model_access"
-    files = [root / "adapters/channels.py", root / "schemas/errors.py"]
-    files += [
-        root / "adapters/inference" / name
-        for name in ("protocols.py", "images.py", "kling.py", "openai_images.py")
-    ]
-    files += [p for p in (root / "adapters/billing").glob("*.py") if p.name != "registry.py"]
-    for path in files:
-        package = "keystone.platform.model_access." + ".".join(path.relative_to(root).parts[:-1])
-        dependencies = list(imports(ast.parse(path.read_text(encoding="utf8")), package))
-        assert not any(
-            name.startswith(
-                (
-                    "sqlalchemy",
-                    "dbos",
-                    "fastapi",
-                    "keystone.core.errors",
-                    "keystone.core.database",
-                    "keystone.core.execution",
-                    "keystone.composition",
-                    "keystone.bootstrap",
-                )
-            )
-            or ".services" in name
-            or ".models" in name
-            or ".workflows" in name
-            or name.startswith("keystone.platform.identity")
-            or name.endswith(("adapters.http", "adapters.coordination", "adapters.credentials"))
-            for name in dependencies
-        ), path

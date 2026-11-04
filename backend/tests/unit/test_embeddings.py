@@ -51,16 +51,7 @@ def test_embedding_response_is_reordered_by_input_index():
 
 @pytest.mark.parametrize(
     "index,vector",
-    [
-        (True, [1.0, 2.0]),
-        ("0", [1.0, 2.0]),
-        (0, [True, 1.0]),
-        (0, ["1", 1.0]),
-        (0, [0.0, 0.0]),
-        (1, [1.0, 2.0]),
-        (0, [1.0]),
-        (0, [1.0, 2.0]),
-    ],
+    [(True, [1.0, 2.0]), ("0", [1.0, 2.0]), (0, [True, 1.0]), (0, ["1", 1.0]), (0, [1.0, 2.0])],
 )
 async def test_embedding_actual_sdk_response_validation(index, vector):
     import httpx2

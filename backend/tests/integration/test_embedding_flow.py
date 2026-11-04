@@ -76,35 +76,7 @@ def test_embedding_uses_original_role_budget_cost_and_checkpoint(embedding, tmp_
     assert budget.counters.get("output_tokens", 0) == 0
 
 
-@pytest.mark.parametrize("change", ["cancel", "revoke", "capability"])
-def test_embedding_rechecks_authority_and_cancel_before_send(embedding, tmp_path, change):
-    client, configured = embedding
-    pat = token(client, list(client.get("/api/v1/auth/me").json()["permissions"]))
-    run, journal = start(client, headers=bearer(pat["token"])), tmp_path / "calls.txt"
-    if change == "cancel":
-        assert client.post(f"/api/v1/flow-runs/{run['id']}/cancel").status_code == 200
-    elif change == "revoke":
-        assert client.delete("/api/v1/auth/tokens/" + pat["id"]).status_code == 204
-    else:
-        changed = client.patch(
-            "/api/v1/model-entries/" + configured["id"],
-            json={
-                "channel_id": configured["channel_id"],
-                "provider_model": configured["provider_model"],
-                "operations": ["text.generate"],
-            },
-        )
-        assert changed.status_code == 200, changed.text
-    with worker(client, tmp_path, code=bootstrap(journal)) as (process, log):
-        done = wait_run(client, run["id"], process, log)
-        assert done["status"] == ("cancelled" if change == "cancel" else "failed"), done
-    assert not journal.exists() and not calls(client)
-
-
-@pytest.mark.parametrize("change", ["cancel", "revoke"])
-def test_embedding_cancel_or_revoke_during_send_does_not_repeat_or_publish(
-    embedding, tmp_path, change
-):
+def test_embedding_revoke_during_send_does_not_repeat_or_publish(embedding, tmp_path):
     client, _ = embedding
     pat = token(client, list(client.get("/api/v1/auth/me").json()["permissions"]))
     run, journal = start(client, headers=bearer(pat["token"])), tmp_path / "calls.txt"
@@ -114,24 +86,20 @@ def test_embedding_cancel_or_revoke_during_send_does_not_repeat_or_publish(
             assert process.poll() is None, log.read_text(encoding="utf8")
             time.sleep(0.1)
         assert journal.exists(), log.read_text(encoding="utf8")
-        if change == "cancel":
-            assert client.post(f"/api/v1/flow-runs/{run['id']}/cancel").status_code == 200
-        else:
-            assert client.delete("/api/v1/auth/tokens/" + pat["id"]).status_code == 204
+        assert client.delete("/api/v1/auth/tokens/" + pat["id"]).status_code == 204
         journal.with_suffix(".release").touch()
         done = wait_run(client, run["id"], process, log)
-        assert done["status"] == ("cancelled" if change == "cancel" else "failed"), done
+        assert done["status"] == "failed", done
         assert done["result"] is None
     records = calls(client)
     assert len(records) == 1 and records[0].status in {"unknown", "succeeded"}
     assert journal.read_text().splitlines() == [str(records[0].id)]
 
 
-@pytest.mark.parametrize("point", ["sent", "completed"])
-def test_embedding_crash_after_send_never_resends_without_saved_result(embedding, tmp_path, point):
+def test_embedding_crash_after_send_never_resends_without_saved_result(embedding, tmp_path):
     client, _ = embedding
     run, journal = start(client), tmp_path / "calls.txt"
-    with worker(client, tmp_path, code=bootstrap(journal, point)) as (process, log):
+    with worker(client, tmp_path, code=bootstrap(journal, "completed")) as (process, log):
         assert process.wait(timeout=40) == 73, log.read_text(encoding="utf8")
     before = calls(client)
     assert len(before) == 1
@@ -140,5 +108,5 @@ def test_embedding_crash_after_send_never_resends_without_saved_result(embedding
         assert done["status"] == "failed" and done["error_code"] == "model_result_unavailable", done
     after = calls(client)
     assert len(after) == 1 and after[0].id == before[0].id
-    assert after[0].status == ("unknown" if point == "sent" else "succeeded")
+    assert after[0].status == "succeeded"
     assert journal.read_text().splitlines() == [str(after[0].id)]

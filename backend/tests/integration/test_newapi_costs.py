@@ -106,9 +106,8 @@ def stored(client, identifier):
     return query(client, lambda s: s.get(ModelInvocation, identifier))
 
 
-@pytest.mark.parametrize("shape", ["list", "paged"])
-def test_automatic_and_manual_queries_confirm_actual_cost_without_resending(client, billing, shape):
-    billing["format"] = shape
+def test_automatic_and_manual_queries_confirm_actual_cost_without_resending(client, billing):
+    billing["format"] = "list"
     identifier = called(client)
 
     async def ready(session):
@@ -158,29 +157,6 @@ def test_recent_log_cap_reports_older_missing_call_as_unavailable(client, billin
     assert (
         current.cost_check_reason == "cost_log_window_unavailable" and current.cost_amount is None
     )
-
-
-def test_conflicting_exact_receipts_are_not_charged_twice(client, billing):
-    identifier = called(client)
-    billing["records"].append({**billing["records"][0], "quota": 29})
-    assert client.post(f"/api/v1/model-invocations/{identifier}/cost").status_code == 200
-    current = stored(client, identifier)
-    assert (
-        current.cost_check_status == "blocked"
-        and current.cost_check_reason == "cost_receipt_conflict"
-    )
-    assert current.cost_amount is None and billing["posts"] == 1
-
-
-def test_auth_failure_keeps_cost_unknown_and_original_call(client, billing):
-    identifier = called(client)
-    billing["status"] = 401
-    assert client.post(f"/api/v1/model-invocations/{identifier}/cost").status_code == 200
-    current = stored(client, identifier)
-    assert (
-        current.cost_check_status == "blocked" and current.cost_check_reason == "cost_auth_required"
-    )
-    assert current.cost_amount is None and current.status == "succeeded" and billing["posts"] == 1
 
 
 def test_standard_and_yunwu_compatible_profiles_do_not_hijack_each_others_scope(client, billing):

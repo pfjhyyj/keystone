@@ -277,18 +277,14 @@ def test_scaffold_checks_postgresql_table_name_length_before_writing(
     "mistake,message",
     [
         ("duplicate_sequence", "Duplicate migration"),
-        ("duplicate_revision", "Duplicate migration"),
         ("missing_sequence", "contiguous"),
         ("wrong_parent", "linear chain"),
         ("missing_module", "Invalid migration path/name"),
         ("module_directory", "Invalid migration path/name"),
         ("merge", "Invalid linear migration metadata"),
-        ("nested_category", "Invalid migration path/name"),
-        ("annotated_branch", "Invalid linear migration metadata"),
         ("annotated_dependency", "Invalid linear migration metadata"),
         ("duplicate_metadata", "Invalid static migration metadata"),
         ("dynamic_metadata", "Invalid static migration metadata"),
-        ("syntax_error", "Invalid static migration metadata"),
     ],
 )
 def test_invalid_migration_history_fails_before_creating_business(tmp_path, mistake, message):

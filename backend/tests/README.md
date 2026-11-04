@@ -33,14 +33,14 @@ cd backend
 ## 组织与断言
 
 - 同一规则的输入矩阵放 unit；真实授权、事务、锁或失败窗口留在 integration。相同字段的纯校验不重复启动数据库/Worker。
-- 图片中转的供应商/编辑/响应格式矩阵在 unit 验证 SDK 报文；Worker 保留代表性完整链路和各持久化失败窗口。费用凭据冲突通过真实媒体 API/SQL 核对，异步任务的非法结果和查询上限通过真实授权/SQL/SDK 服务验证，不为这些规则重复启动 Worker。Flow 的 DBOS 初始化仅用于执行器和历史检查，发送中取消用明确屏障同步。
+- 图片中转的供应商/编辑/响应格式矩阵在 unit 验证 SDK 报文；Worker 保留代表性完整链路和各持久化失败窗口。费用凭据冲突通过真实媒体 API/SQL 核对；预算准入、异步任务查询/下载重试及结果证据校验通过真实授权/SQL/SDK Service 验证，不为这些规则重复启动 Worker。Flow 的 DBOS 初始化仅用于执行器和历史检查，发送中取消用明确屏障同步。
 - 合并相同装配和数据构造，保留每个独立保证的断言。共享辅助函数放 support，unit 不导入 integration。
 - `support.flow_packages` 提供轻量快照、install_package 和关联断言。安装后立即清理制品缓存，测试间由全局夹具再次清理；契约模块导入不加载执行器。
-- `support.flow_engine.flow_engine` 显式初始化测试 DBOS Schema 与历史客户端；复用 Flow 配置的执行器测试须请求该夹具，普通授权/事务用例不依赖它。结构化输出的供应商报文矩阵在真实 SDK 单元测试中核对，Worker 用例覆盖代表性路由、自定义 API 地址和执行前撤销模型能力。
+- `support.flow_engine.flow_engine` 显式初始化测试 DBOS Schema 与历史客户端；复用 Flow 配置的执行器测试须请求该夹具，普通授权/事务用例不依赖它。结构化输出的供应商报文矩阵在真实 SDK 单元测试中核对，Worker 用例覆盖代表性路由和自定义 API 地址；执行前撤销模型能力在真实身份与 SQL Service 层验证。
 - `test_flow.worker()` 启动真实执行器。fast_health 只缩短依赖/心跳观察周期为 0.2 秒；DBOS 队列、持久计划、身份锁、恢复期限及关闭预算不变。验证默认周期使用 fast_health=False，自定义无桩启动保持默认。
 - 并发使用事件、门闩和明确状态，不依赖短 sleep 的偶然顺序。反复取消须等待原生 I/O/进程/文件清理。
 - 领域终态、调用收尾与 DBOS 检查点完成是独立事实；需要 Workflow 完成时等待 SUCCESS，取消中的步骤历史可以暂缺，保留真实发送位置。
-- `test_model_flow_migrations.py` 使用原始隔离库验证模型/Flow 完整基线、默认值与约束、含数据的升级/回滚，以及不可解析的旧 revision 拒绝后数据与版本不变；不导入自动升级 head 的应用夹具。回滚只发生在测试库。
+- `test_model_flow_migrations.py` 使用原始隔离库验证模型/Flow 完整基线、默认值与约束、含数据的升级/回滚；不导入自动升级 head 的应用夹具。回滚只发生在测试库。
 - 架构检查递归覆盖平台/业务、相对导入、嵌套任务与例外绕过；脚手架输出遵守相同规范。
 - `test_operations.py` 使用真实身份、领域表、DBOS 原生客户端和 Worker，验证状态明细认证、积压口径、预览与清理、终态 Run 的 PAT 引用、未知调用、活动父任务及历史分叉保护，以及自动清理默认关闭/显式启用。`test_business_flow_hooks.py` 验证业务入口限制、原身份先行的执行守卫、依赖故障暂缓和准入后的 Runtime 绑定。
 - `test_scaffold_business.py` 在临时目录生成本人资源模块及追加迁移，显式装配目录、模型和路由，在随机库初始化并检查 ORM 一致，通过真实 HTTP 验证部分更新、对象范围、PAT 交集、撤权、审计摘要与事务回滚。`test_identity_locks.py` 验证真实共享/排他锁的有界等待、取消后清理、身份变更失败不落库及重试；不以 mock 替代数据库锁语义。

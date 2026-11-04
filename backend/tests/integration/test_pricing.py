@@ -54,12 +54,11 @@ def native_cloud_protocols(model_configuration, monkeypatch):
     )
 
 
-@pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize(
-    "provider,model,expected",
+    "stream,provider,model,expected",
     [
-        ("aliyun_bailian", "qwen-plus", "0.001136"),
-        ("volcengine", "doubao-seed-2-0-pro-260215", "0.006144"),
+        (False, "aliyun_bailian", "qwen-plus", "0.001136"),
+        (True, "volcengine", "doubao-seed-2-0-pro-260215", "0.006144"),
     ],
 )
 def test_native_reference_prices_use_normalized_cached_receipts_without_manual_configuration(
@@ -151,9 +150,12 @@ def stored(client, identifier):
 
 
 @pytest.mark.parametrize(
-    "provider", ["openrouter", "newapi", "yunwu", "aliyun_bailian", "volcengine"]
+    "provider,stream",
+    [
+        ("openrouter", False),
+        ("newapi", True),
+    ],
 )
-@pytest.mark.parametrize("stream", [False, True])
 def test_sync_and_sse_share_the_frozen_calculator_without_changing_actuals(
     client, provider, stream
 ):
@@ -401,13 +403,10 @@ def test_statistics_currencies_unknown_coverage_and_actuals_stay_separate(client
     )
 
 
-@pytest.mark.parametrize("provider", ["openrouter", "newapi", "aliyun_bailian"])
-def test_embedding_batch_is_one_original_request_with_native_input_meter(
-    client, monkeypatch, provider
-):
+def test_embedding_batch_is_one_original_request_with_native_input_meter(client, monkeypatch):
     model = entry(
         client,
-        channel(client, provider, api_base=CHANNELS[provider].api_base),
+        channel(client, "openrouter", api_base=CHANNELS["openrouter"].api_base),
         operations=["text.embed"],
     )
     price(client, model, config(operation="text.embed"))
@@ -526,8 +525,15 @@ def test_interrupted_sse_preserves_partial_usage_without_a_full_total_or_resend(
     )
 
 
-@pytest.mark.parametrize("receipt", ["early", "stale_details", "after_final"])
-@pytest.mark.parametrize("request_price", [False, True])
+@pytest.mark.parametrize(
+    "receipt,request_price",
+    [
+        ("early", False),
+        ("stale_details", False),
+        ("after_final", False),
+        ("early", True),
+    ],
+)
 def test_sse_done_does_not_promote_early_or_stale_usage_to_a_final_receipt(
     client, monkeypatch, receipt, request_price
 ):

@@ -104,11 +104,10 @@ def assert_routing(client, request_log, distinct, roles=("analyze", "review")):
     return by_role
 
 
-@pytest.mark.parametrize("distinct", [False, True])
-def test_roles_and_array_outputs_in_real_worker(client, tmp_path, monkeypatch, distinct):
+def test_roles_and_array_outputs_in_real_worker(client, tmp_path, monkeypatch):
     install(client, monkeypatch)
     file_id = upload(client, b"Review this text").json()["id"]
-    data = bind_models(client, payload(file_id), distinct)
+    data = bind_models(client, payload(file_id), True)
     accepted = client.post("/api/v1/_test/review", json=data)
     assert accepted.status_code == 202, accepted.text
     run = accepted.json()
@@ -118,7 +117,7 @@ def test_roles_and_array_outputs_in_real_worker(client, tmp_path, monkeypatch, d
     with worker(client, tmp_path, code=worker_code(request_log)) as (process, log):
         done = wait_run(client, run["id"], process, log)
         assert done["status"] == "succeeded", (done, log.read_text())
-    assert_routing(client, request_log, distinct)
+    assert_routing(client, request_log, True)
     stored = query(client, lambda s: s.get(FlowRun, UUID(run["id"])))
     assert stored.definition_snapshot["package_key"] == PACKAGE.key
     refs = query(
@@ -131,7 +130,7 @@ def test_roles_and_array_outputs_in_real_worker(client, tmp_path, monkeypatch, d
     assert client.post("/api/v1/_test/review", json=data).json()["id"] == run["id"]
 
 
-@pytest.mark.parametrize("crash", ["registered", "response", "checkpoint"])
+@pytest.mark.parametrize("crash", ["registered", "checkpoint"])
 def test_direct_text_crash_recovery_never_resends(client, tmp_path, monkeypatch, crash):
     install(client, monkeypatch)
     file_id = upload(client, b"Recover this text").json()["id"]
@@ -198,3 +197,17 @@ def test_bad_roles_rollback_and_idempotency_does_not_resolve_new_defaults(client
     assert (
         client.post("/api/v1/_test/review", json={**data, "request_key": "new"}).status_code == 409
     )
+
+
+def test_two_roles_can_bind_the_same_model_in_one_transaction(client, monkeypatch):
+    install(client, monkeypatch)
+    file_id = upload(client).json()["id"]
+    data = payload(file_id)
+    response = client.post("/api/v1/_test/review", json=data)
+    assert response.status_code == 202, response.text
+    run = query(client, lambda s: s.get(FlowRun, UUID(response.json()["id"])))
+    bindings = run.definition_snapshot["model_bindings"]
+    assert bindings["analyze"]["selection"] == bindings["review"]["selection"]
+    assert response.json()["model_bindings"] == {"analyze": "chat", "review": "chat"}
+    assert client.post("/api/v1/_test/review", json=data).json()["id"] == str(run.id)
+    assert query(client, lambda s: s.scalar(select(ModelInvocation.id))) is None

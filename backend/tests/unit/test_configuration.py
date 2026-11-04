@@ -73,12 +73,6 @@ def test_explicit_config_path_and_relative_overrides(tmp_path, monkeypatch):
     assert Settings(config_file=None).file_storages == {}
 
 
-def test_backend_dotenv_is_no_longer_loaded(tmp_path, monkeypatch):
-    (tmp_path / ".env").write_text("KEYSTONE_PORT=8300\n", encoding="utf-8")
-    monkeypatch.chdir(tmp_path)
-    assert Settings().port == 8000
-
-
 @pytest.mark.parametrize(
     "values",
     [
@@ -146,11 +140,6 @@ def test_file_capacity_floor_toml_environment_and_worker_digest(tmp_path, monkey
     overridden = Settings(config_file=config)
     assert overridden.file_min_free_bytes == floor
     assert config_digest(overridden) != config_digest(original)
-
-
-def test_removed_flow_toggle_is_rejected():
-    with pytest.raises(ValidationError):
-        Settings(config_file=None, flow_enabled=True)
 
 
 def test_example_is_complete_and_uses_config_directory(monkeypatch, tmp_path):

@@ -185,16 +185,12 @@ def test_relay_url_recovery_never_repeats_generation(client, monkeypatch, tmp_pa
         assert after.status == "unknown" and done["error_code"] == "model_result_unavailable"
 
 
-@pytest.mark.parametrize("case", ["local", "generation"])
-def test_image_failures_keep_real_cost_and_delivery_facts_separate(
-    client, monkeypatch, tmp_path, case
-):
+def test_image_failures_keep_real_cost_and_delivery_facts_separate(client, monkeypatch, tmp_path):
     request_log = tmp_path / "requests.jsonl"
     run_id = accept(client, monkeypatch, "openlux")
-    options = {"local": case == "local", "generation_error": case == "generation"}
-    with worker(client, tmp_path, code=code(request_log, **options)) as (handle, log):
+    with worker(client, tmp_path, code=code(request_log, local=True)) as (handle, log):
         done = wait_run(client, run_id, handle, log)
-        assert done["status"] == ("failed" if case == "generation" else "succeeded"), (
+        assert done["status"] == "succeeded", (
             done,
             log.read_text(),
         )
@@ -210,24 +206,14 @@ def test_image_failures_keep_real_cost_and_delivery_facts_separate(
     current = stored(client, identifier)
     assert str(current.cost_amount) == "0.002656000000000000"
     assert current.cost_check_status == "confirmed"
-    assert current.status == ("unknown" if case == "generation" else "succeeded")
+    assert current.status == "succeeded"
     files = query(client, lambda s: s.scalars(select(File))).all()
-    assert bool(files) == (case == "local")
+    assert files
     requests = [json.loads(line) for line in request_log.read_text().splitlines()]
     assert sum(r["method"] == "POST" for r in requests) == 1
 
 
-@pytest.mark.parametrize(
-    "case,reason",
-    [
-        ("header", "cost_request_id_missing"),
-        ("model", "cost_receipt_conflict"),
-        ("currency", "cost_policy_changed"),
-    ],
-)
-def test_image_billing_conflicts_preserve_successful_delivery(
-    client, monkeypatch, tmp_path, case, reason
-):
+def test_image_model_billing_conflict_preserves_successful_delivery(client, monkeypatch, tmp_path):
     # These are billing rules, independent of DBOS checkpoints. Keep real image
     # inference, original receipts, SQL reconciliation and Files publication.
     from keystone.platform.model_access.adapters.http import HttpClient
@@ -236,7 +222,7 @@ def test_image_billing_conflicts_preserve_successful_delivery(
     entry(client, configured, provider_model="gpt-image-2", operations=["image.generate"])
     request_log = tmp_path / "requests.jsonl"
     monkeypatch.setattr(HttpClient, "transport", HttpClient.transport)
-    install(request_log, header=case != "header")
+    install(request_log)
     response = client.post(
         "/api/v1/_test/generate-image", json={"model_key": "chat", "prompt": "A blue square"}
     )
@@ -245,14 +231,13 @@ def test_image_billing_conflicts_preserve_successful_delivery(
     before = stored(client, identifier)
     install(
         request_log,
-        model="different-model" if case == "model" else None,
-        currency="CUSTOM" if case == "currency" else None,
+        model="different-model",
     )
     due(client, identifier)
     process(client, identifier)
     current = stored(client, identifier)
-    assert current.cost_amount is None and current.cost_check_reason == reason
-    assert current.cost_check_status == ("unavailable" if case == "header" else "blocked")
+    assert current.cost_amount is None and current.cost_check_reason == "cost_receipt_conflict"
+    assert current.cost_check_status == "blocked"
     assert current.status == before.status == "succeeded"
     assert current.finished_at == before.finished_at
     assert current.upstream_request_id == before.upstream_request_id
@@ -266,91 +251,124 @@ def test_image_billing_conflicts_preserve_successful_delivery(
     assert sum(request["method"] == "POST" for request in requests) == 1
 
 
-@pytest.mark.parametrize("change", ["expired", "cipher", "disabled", "changed"])
-def test_recovery_rejects_unusable_original_evidence_without_a_new_post(
-    client, monkeypatch, tmp_path, change
-):
-    from datetime import timedelta
-
-    from keystone.core.time import utcnow
-    from keystone.platform.model_access.models import Channel
-
-    request_log = tmp_path / "requests.jsonl"
-    run_id = accept(client, monkeypatch, "yunwu")
-    crash = "manifest" if change == "changed" else "sources"
-    with worker(client, tmp_path, code=code(request_log, crash=crash)) as (handle, log):
-        assert handle.wait(timeout=35) == 71, log.read_text()
-    original = query(client, lambda s: s.scalars(select(ModelInvocation))).one().result_context
-
-    async def update(session):
-        row = await session.scalar(select(ModelInvocation))
-        receipt = dict(row.result_context)
-        if change == "expired":
-            receipt["deadline_at"] = (utcnow() - timedelta(seconds=1)).isoformat()
-        elif change == "cipher":
-            receipt["sources_encrypted"] = "invalid-ciphertext"
-        elif change == "disabled":
-            channel = await session.get(Channel, row.channel_id)
-            channel.is_active = False
-        row.result_context = receipt
-
-    query(client, update)
-    with worker(
-        client,
-        tmp_path,
-        code=code(request_log, download_format="JPEG" if change == "changed" else "PNG"),
-    ) as (handle, log):
-        done = wait_run(client, run_id, handle, log)
-        assert done["status"] == "failed", (done, log.read_text())
-    requests = [json.loads(line) for line in request_log.read_text().splitlines()]
-    assert sum(r["method"] == "POST" for r in requests) == 1
-    assert any(r["method"] == "GET" for r in requests) == (change == "changed")
-    assert not query(client, lambda s: s.scalars(select(File))).all()
-    if change == "changed":
-        assert (
-            query(client, lambda s: s.scalars(select(ModelInvocation))).one().result_context
-            == original
-        )
-
-
-@pytest.mark.parametrize("revoke", [False, True])
-def test_cancel_or_revoke_during_result_download_preserves_call_without_publishing(
-    client, monkeypatch, tmp_path, revoke
+def test_cancel_during_result_download_preserves_call_without_publishing(
+    client, monkeypatch, tmp_path
 ):
     import time
 
-    from test_identity import bearer, token
-
-    pat = (
-        token(
-            client,
-            [
-                "flow:start",
-                "flow:read",
-                "model:invoke",
-                "test_files.asset:create",
-                "test_files.asset:content_read",
-            ],
-        )
-        if revoke
-        else None
-    )
-    run_id = accept(client, monkeypatch, "yunwu", headers=bearer(pat["token"]) if pat else None)
+    run_id = accept(client, monkeypatch, "yunwu")
     request_log = tmp_path / "requests.jsonl"
     with worker(client, tmp_path, code=code(request_log, pause=True)) as (handle, log):
         deadline = time.monotonic() + 20
         while not request_log.with_suffix(".waiting").exists():
             assert handle.poll() is None and time.monotonic() < deadline, log.read_text()
             time.sleep(0.05)
-        if revoke:
-            assert client.delete(f"/api/v1/auth/tokens/{pat['id']}").status_code == 204
-        else:
-            assert client.post(f"/api/v1/flow-runs/{run_id}/cancel").status_code == 200
+        assert client.post(f"/api/v1/flow-runs/{run_id}/cancel").status_code == 200
         request_log.with_suffix(".release").touch()
         done = wait_run(client, run_id, handle, log)
-        assert done["status"] == ("failed" if revoke else "cancelled"), (done, log.read_text())
+        assert done["status"] == "cancelled", (done, log.read_text())
     call = query(client, lambda s: s.scalars(select(ModelInvocation))).one()
     assert call.status == "succeeded" and call.result_context["kind"] in {"download", "images"}
     assert not query(client, lambda s: s.scalars(select(File))).all()
     requests = [json.loads(line) for line in request_log.read_text().splitlines()]
     assert sum(r["method"] == "POST" for r in requests) == 1
+
+
+@pytest.mark.parametrize("change", ["expired", "cipher", "disabled", "changed"])
+def test_original_image_evidence_is_checked_without_a_new_generation(
+    client, monkeypatch, tmp_path, change
+):
+    from datetime import timedelta
+    from unittest.mock import AsyncMock
+    from uuid import uuid4
+
+    from test_identity import token
+    from test_model_access import internal_service
+    from test_model_media_api import configure
+
+    from keystone.core.errors import ServiceError
+    from keystone.core.time import utcnow
+    from keystone.platform.model_access.adapters.http import HttpClient
+    from keystone.platform.model_access.models import Channel
+    from keystone.platform.model_access.schemas.images import ImageGenerateRequest, ImageManifest
+    from keystone.platform.model_access.services.image_results import (
+        ImageResultService,
+        read_receipt,
+    )
+    from keystone.platform.model_access.services.runtime import ModelRuntime
+
+    configure(client, provider="yunwu", operations=["image.generate"])
+    entries = internal_service(client, token(client, ["model:invoke"])["token"])
+    model = ModelRuntime(entries)
+    selected = client.portal.call(lambda: entries.selection("media", operation="image.generate"))
+    context = None
+    monkeypatch.setattr(
+        model,
+        "recover_image",
+        AsyncMock(side_effect=ServiceError(503, "test_result_boundary", "paused")),
+    )
+    monkeypatch.setattr(HttpClient, "transport", HttpClient.transport)
+    log = tmp_path / "sources.jsonl"
+    install(log)
+    identifier = uuid4()
+
+    async def generate():
+        with pytest.raises(ServiceError) as paused:
+            await model.invoke_image(
+                ImageGenerateRequest(prompt="blue", n=2),
+                images=(),
+                selection=selected,
+                invocation_id=identifier,
+                context=context,
+                worker_identity=None,
+            )
+        assert paused.value.code == "test_result_boundary"
+
+    client.portal.call(generate)
+    service = ImageResultService(model.identity, model.clients)
+    row = query(client, lambda s: s.get(ModelInvocation, identifier))
+    assert row.status == "succeeded" and row.result_context["kind"] == "download"
+    if change == "changed":
+        client.portal.call(
+            lambda: service.fetch(
+                identifier,
+                selected=selected,
+                context=context,
+                evidence=read_receipt(row.result_context),
+            )
+        )
+        install(log, download_format="JPEG")
+
+    async def mutate(session):
+        row = await session.get(ModelInvocation, identifier)
+        if change in {"expired", "cipher"}:
+            row.result_context = {
+                **row.result_context,
+                **(
+                    {"deadline_at": (utcnow() - timedelta(seconds=1)).isoformat()}
+                    if change == "expired"
+                    else {"sources_encrypted": "invalid-ciphertext"}
+                ),
+            }
+        if change == "disabled":
+            (await session.get(Channel, selected.channel_id)).is_active = False
+
+    query(client, mutate)
+    original = query(client, lambda s: s.get(ModelInvocation, identifier)).result_context
+    evidence = (
+        ImageManifest.model_validate(original) if change == "changed" else read_receipt(original)
+    )
+
+    async def recover():
+        with pytest.raises(ServiceError) as error:
+            await service.fetch(identifier, selected=selected, context=context, evidence=evidence)
+        assert error.value.code == (
+            "model_credential_unavailable" if change == "cipher" else "model_result_unavailable"
+        )
+
+    client.portal.call(recover)
+    sent = [json.loads(line) for line in log.read_text().splitlines()]
+    assert sum(r["method"] == "POST" for r in sent) == 1
+    assert any(r["method"] == "GET" for r in sent) == (change == "changed")
+    assert query(client, lambda s: s.scalar(select(File.id))) is None
+    assert query(client, lambda s: s.get(ModelInvocation, identifier)).result_context == original

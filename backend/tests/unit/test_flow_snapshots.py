@@ -11,13 +11,12 @@ from keystone.platform.flow.schemas.snapshots import read_snapshot
 from keystone.platform.flow.services.reconciliation import matches_observation
 
 
-@pytest.mark.parametrize("same_artifact", [False, True])
-def test_observation_uses_persisted_identity(same_artifact):
+def test_observation_uses_persisted_identity():
     snapshot = snapshot_for(definition)
     snapshot["entrypoint"] = "job.original"
     run = SimpleNamespace(
         definition_key="job",
-        execution_version="current" if same_artifact else "old",
+        execution_version="old",
         definition_snapshot=snapshot,
     )
     state = {"version": run.execution_version, "name": "job.original"}

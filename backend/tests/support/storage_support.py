@@ -6,6 +6,10 @@ from threading import Thread
 from types import SimpleNamespace
 from urllib.parse import unquote, urlsplit
 
+import pytest
+
+from keystone.core.storage_config import StorageConfig
+
 
 @contextmanager
 def s3_endpoint():
@@ -68,3 +72,21 @@ def s3_endpoint():
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
+
+
+@pytest.fixture
+def s3():
+    with s3_endpoint() as state:
+        yield state
+
+
+def cloud_config(s3, **changes):
+    return StorageConfig(
+        driver="s3",
+        endpoint=s3.endpoint,
+        bucket="backups",
+        prefix="business-a",
+        access_key="fixture-access",
+        secret_key="fixture-secret",
+        **changes,
+    )

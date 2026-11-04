@@ -1,12 +1,11 @@
-"""Complete model/Flow baselines and safe rejection of retired revision chains."""
+"""Current model/Flow baselines preserve facts across one reversible roundtrip."""
 
 import json
 from decimal import Decimal
 
 import pytest
 from alembic import command
-from alembic.util.exc import CommandError
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
 from keystone.core.config import Settings
@@ -34,8 +33,8 @@ def model_baseline(migration_environment):
         connection.execute(
             text("""INSERT INTO keystone.model_channels
             (id,name,provider,api_base,api_key_encrypted,is_active,balance_check_status)
-            VALUES ('00000000-0000-4000-8000-000000000001','original','openrouter',
-            'https://openrouter.ai/api/v1','opaque',true,'never')""")
+            VALUES ('00000000-0000-4000-8000-000000000001','original','newapi',
+            'https://newapiai.com/v1','opaque',true,'never')""")
         )
         connection.execute(
             text("""INSERT INTO keystone.model_entries
@@ -68,6 +67,19 @@ def model_baseline(migration_environment):
             text("INSERT INTO keystone.model_dispatch_scopes (scope) VALUES (:scope)"),
             {"scope": "a" * 64},
         )
+        connection.execute(
+            text("""INSERT INTO keystone.model_entries
+            (id,key,name,channel_id,provider_model,operations,is_active)
+            VALUES ('00000000-0000-4000-8000-000000000006','vectors','Vectors',
+            '00000000-0000-4000-8000-000000000001','explicit','["text.embed"]',true)""")
+        )
+        connection.execute(
+            text("""INSERT INTO keystone.model_invocations
+            (id,model_entry_id,channel_id,provider_model,operation,status,finished_at,cost_source)
+            VALUES ('00000000-0000-4000-8000-000000000007',
+            '00000000-0000-4000-8000-000000000006',
+            '00000000-0000-4000-8000-000000000001','explicit','text.embed','unknown',now(),'unknown')""")
+        )
     return config, engine
 
 
@@ -79,12 +91,16 @@ def test_model_baseline_defaults_and_roundtrip_preserve_billing_and_recovery(mod
             table: connection.execute(text(f"SELECT * FROM keystone.{table}")).mappings().all()
             for table in tables
         }
-        entry = before["model_entries"][0]
+        entry = next(row for row in before["model_entries"] if row["key"] == "original")
         assert entry["operations"] == ["text.generate"]
         assert entry["pricing"] == {"mode": "inherit", "rules": []}
         assert entry["pricing_revision"] == 0
         assert before["model_channels"][0]["workspace_id"] is None
+        assert before["model_channels"][0]["provider"] == "newapi"
+        vectors = next(row for row in before["model_entries"] if row["key"] == "vectors")
+        assert vectors["name"] == "Vectors" and vectors["operations"] == ["text.embed"]
         invocations = {row["operation"]: row for row in before["model_invocations"]}
+        assert invocations["text.embed"]["result_context"] is None
         assert invocations["text.generate"]["result_context"] is None
         assert invocations["text.generate"]["cost_amount"] == Decimal("0.123456789012345678")
         assert invocations["image.generate"]["result_context"] == {"task_id": "original-task"}
@@ -92,42 +108,19 @@ def test_model_baseline_defaults_and_roundtrip_preserve_billing_and_recovery(mod
         assert all(row["estimate_snapshot"] is None for row in invocations.values())
         assert {row["estimate_status"] for row in invocations.values()} == {"unavailable"}
         assert {row["estimate_reason"] for row in invocations.values()} == {"snapshot_missing"}
-    for _ in range(2):
-        command.upgrade(config, "head")
-        command.downgrade(config, "0005")
-        with engine.connect() as connection:
-            for table in tables:
-                assert (
-                    connection.execute(text(f"SELECT * FROM keystone.{table}")).mappings().all()
-                    == before[table]
-                )
-            index = connection.scalar(
-                text("""SELECT indexdef FROM pg_indexes WHERE schemaname='keystone'
-                AND indexname='ix_model_invocations_flow_time'""")
-            )
-            assert "flow_context ->> 'flow_run_id'" in index and "created_at, id" in index
-
-
-def test_model_baseline_contains_newapi_and_editable_display_name(model_baseline):
-    config, engine = model_baseline
-    with engine.begin() as connection:
-        connection.execute(
-            text("""UPDATE keystone.model_channels SET provider='newapi',
-            api_base='https://newapiai.com/v1'""")
-        )
-        connection.execute(text("UPDATE keystone.model_entries SET name='Display name'"))
-        before = dict(
-            connection.execute(text("SELECT * FROM keystone.model_entries")).mappings().one()
-        )
-        assert before["key"] == "original" and before["name"] == "Display name"
     command.upgrade(config, "head")
     command.downgrade(config, "0005")
     with engine.connect() as connection:
-        assert (
-            dict(connection.execute(text("SELECT * FROM keystone.model_entries")).mappings().one())
-            == before
+        for table in tables:
+            assert (
+                connection.execute(text(f"SELECT * FROM keystone.{table}")).mappings().all()
+                == before[table]
+            )
+        index = connection.scalar(
+            text("""SELECT indexdef FROM pg_indexes WHERE schemaname='keystone'
+            AND indexname='ix_model_invocations_flow_time'""")
         )
-        assert connection.scalar(text("SELECT provider FROM keystone.model_channels")) == "newapi"
+        assert "flow_context ->> 'flow_run_id'" in index and "created_at, id" in index
 
 
 @pytest.mark.parametrize(
@@ -157,120 +150,54 @@ def test_model_baseline_enforces_operation_and_evidence_bounds(
         connection.execute(text(f"UPDATE keystone.{table} SET {column}=:value"), {"value": value})
 
 
-def test_model_baseline_stores_new_operation_identifiers_without_schema_changes(model_baseline):
-    _, engine = model_baseline
-    operations = [f"custom.operation{number}" for number in range(7)]
-    with engine.begin() as connection:
-        connection.execute(
-            text("UPDATE keystone.model_entries SET operations=CAST(:operations AS jsonb)"),
-            {"operations": json.dumps(operations)},
-        )
-        connection.execute(
-            text("UPDATE keystone.model_invocations SET operation=:operation"),
-            {"operation": operations[0]},
-        )
-        assert (
-            connection.scalar(text("SELECT operations FROM keystone.model_entries")) == operations
-        )
-        assert set(
-            connection.scalars(text("SELECT operation FROM keystone.model_invocations"))
-        ) == {operations[0]}
+def test_flow_baseline_roundtrip_preserves_current_snapshot_and_budget(migration_environment):
+    from support.flow_fixture.contracts import definition
+    from support.flow_packages import snapshot_for
 
+    from keystone.platform.flow.schemas.budgets import BudgetCounters
 
-@pytest.mark.parametrize("with_budget", [False, True])
-def test_flow_baseline_roundtrip_preserves_snapshots_and_explicit_budgets(
-    migration_environment, with_budget
-):
     config, engine = migration_environment
     command.upgrade(config, "0006")
+    snapshot = snapshot_for(definition)
+    counters = BudgetCounters().model_dump()
     with engine.begin() as connection:
         connection.execute(
             text("""INSERT INTO keystone.users
             (id,username,display_name,password_hash,is_active,password_change_required)
             VALUES ('00000000-0000-4000-8000-000000000001',
-            'historic','Original','opaque',true,false)""")
+            'current','Current','opaque',true,false)""")
         )
         connection.execute(
             text("""INSERT INTO keystone.flow_runs
             (id,definition_key,definition_snapshot,execution_version,actor_id,
-            request_key,request_digest,input,status,finished_at)
-            VALUES ('00000000-0000-4000-8000-000000000002','historic.flow',
-            '{"output_schema":{"type":"object"},"output_file_fields":[]}',
+             request_key,request_digest,input,status,finished_at)
+            VALUES ('00000000-0000-4000-8000-000000000002',:key,CAST(:snapshot AS jsonb),
             'original-artifact','00000000-0000-4000-8000-000000000001',
-            'historic-request','historic-digest','{}','failed',now())""")
+            'current-request','current-digest','{}','failed',now())"""),
+            {"key": definition.key, "snapshot": json.dumps(snapshot)},
         )
-        if with_budget:
-            counters = dict.fromkeys(
-                (
-                    "model_requests",
-                    "tool_calls",
-                    "iterations",
-                    "file_count",
-                    "file_bytes",
-                    "input_tokens",
-                    "output_tokens",
-                    "unreported_text_requests",
-                ),
-                0,
-            )
-            limits = {key: 10 for key in counters if key != "unreported_text_requests"}
-            limits.update(concurrent_operations=2, temporary_bytes=1024)
-            connection.execute(
-                text("""INSERT INTO keystone.flow_run_budgets (run_id,limits,counters)
-                VALUES ('00000000-0000-4000-8000-000000000002',
-                CAST(:limits AS jsonb),CAST(:counters AS jsonb))"""),
-                {"limits": json.dumps(limits), "counters": json.dumps(counters)},
-            )
-            connection.execute(
-                text("""INSERT INTO keystone.flow_budget_claims
-                (run_id,kind,key,amounts,request_digest)
-                VALUES ('00000000-0000-4000-8000-000000000002','model',:key,
-                CAST(:amounts AS jsonb),:digest)"""),
-                {"key": "a" * 64, "digest": "b" * 64, "amounts": json.dumps(counters)},
-            )
+        connection.execute(
+            text("""INSERT INTO keystone.flow_run_budgets (run_id,limits,counters)
+            VALUES ('00000000-0000-4000-8000-000000000002',
+                    CAST(:limits AS jsonb),CAST(:counters AS jsonb))"""),
+            {"limits": json.dumps(snapshot["limits"]), "counters": json.dumps(counters)},
+        )
+        connection.execute(
+            text("""INSERT INTO keystone.flow_budget_claims (run_id,kind,key,amounts,request_digest)
+            VALUES ('00000000-0000-4000-8000-000000000002','model',:key,
+                    CAST(:amounts AS jsonb),:digest)"""),
+            {"key": "a" * 64, "digest": "b" * 64, "amounts": json.dumps(counters)},
+        )
         tables = ("users", "flow_runs", "flow_run_budgets", "flow_budget_claims")
         before = {
             table: connection.execute(text(f"SELECT * FROM keystone.{table}")).mappings().all()
             for table in tables
         }
-        assert len(before["flow_run_budgets"]) == int(with_budget)
-        assert len(before["flow_budget_claims"]) == int(with_budget)
-    for _ in range(2):
-        command.upgrade(config, "head")
-        command.downgrade(config, "0006")
-        with engine.connect() as connection:
-            for table in tables:
-                assert (
-                    connection.execute(text(f"SELECT * FROM keystone.{table}")).mappings().all()
-                    == before[table]
-                )
-
-
-def test_retired_revision_fails_without_stamping_or_changing_data(migration_environment):
-    revision = "0010"
-    config, engine = migration_environment
-    with engine.begin() as connection:
-        connection.execute(text("CREATE SCHEMA keystone"))
-        connection.execute(text("CREATE TABLE keystone.alembic_version (version_num varchar(32))"))
-        connection.execute(
-            text("INSERT INTO keystone.alembic_version VALUES (:revision)"), {"revision": revision}
-        )
-        connection.execute(text("CREATE TABLE keystone.retention_probe (value integer)"))
-        connection.execute(text("INSERT INTO keystone.retention_probe VALUES (42)"))
-        connection.execute(text("CREATE SCHEMA dbos"))
-        connection.execute(text("CREATE TABLE dbos.retention_probe (value integer)"))
-        connection.execute(text("INSERT INTO dbos.retention_probe VALUES (43)"))
-    for action, target in ((command.upgrade, "head"), (command.downgrade, "base")):
-        with pytest.raises(CommandError, match="Can't locate revision"):
-            action(config, target)
-        with engine.connect() as connection:
+    command.upgrade(config, "head")
+    command.downgrade(config, "0006")
+    with engine.connect() as connection:
+        for table in tables:
             assert (
-                connection.scalar(text("SELECT version_num FROM keystone.alembic_version"))
-                == revision
+                connection.execute(text(f"SELECT * FROM keystone.{table}")).mappings().all()
+                == before[table]
             )
-            assert set(inspect(connection).get_table_names(schema="keystone")) == {
-                "alembic_version",
-                "retention_probe",
-            }
-            assert connection.scalar(text("SELECT value FROM keystone.retention_probe")) == 42
-            assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 43

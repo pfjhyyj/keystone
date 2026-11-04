@@ -115,7 +115,6 @@ def test_delivery_and_native_model_support_are_checked_before_admission(client, 
     "provider,base,remove_before_send",
     [
         ("openrouter", "https://openrouter.ai/api/v1", False),
-        ("newapi", "https://relay.example/gateway/v1", False),
         ("openlux", "https://api.openlux.ai/v1", True),
     ],
 )
@@ -132,7 +131,7 @@ def test_structured_operation_routes_and_revalidates_with_real_worker(
 
     from keystone.platform.flow.models import FlowRun
 
-    runtime = install_package(client, monkeypatch, PACKAGE)
+    runtime = install_package(client, monkeypatch, PACKAGE, engine=not remove_before_send)
     runtime.flow_definitions = {definition.key: definition}
     first = channel(client, provider=provider, api_base=base)
     selected = entry(client, first, operations=["text.generate", "text.structured"])
@@ -158,6 +157,47 @@ def test_structured_operation_routes_and_revalidates_with_real_worker(
             },
         )
         assert response.status_code == 200
+        from uuid import uuid4
+
+        from keystone.core.errors import ServiceError
+        from keystone.core.worker_identity import WorkerIdentity
+        from keystone.platform.flow.services.identity import ExecutionIdentity
+        from keystone.platform.model_access.schemas.invocations import InvocationContext, Selection
+        from keystone.platform.model_access.schemas.structured import StructuredRequest
+        from keystone.platform.model_access.services.entries import ModelEntryService
+        from keystone.platform.model_access.services.runtime import ModelRuntime
+
+        model = ModelRuntime(
+            ModelEntryService(ExecutionIdentity(runtime, UUID(run_id)), runtime.models)
+        )
+
+        async def invoke():
+            await model.invoke_text(
+                StructuredRequest(
+                    messages=[{"role": "user", "content": "Answer"}],
+                    output={
+                        "name": "Answer",
+                        "json_schema": {
+                            "type": "object",
+                            "properties": {"answer": {"type": "integer"}},
+                            "required": ["answer"],
+                            "additionalProperties": False,
+                        },
+                    },
+                ),
+                selection=Selection.model_validate(binding),
+                invocation_id=uuid4(),
+                context=InvocationContext(flow_run_id=UUID(run_id), node_key="analyze"),
+                worker_identity=WorkerIdentity(
+                    runtime.settings.worker_id, uuid4(), runtime.execution_version()
+                ),
+            )
+
+        with pytest.raises(ServiceError) as error:
+            client.portal.call(invoke)
+        assert error.value.code == "model_configuration_changed"
+        assert query(client, lambda s: s.scalar(select(ModelInvocation.id))) is None
+        return
     code = """from keystone import composition
 from support.operation_flow import PACKAGE
 composition.FLOW_PACKAGES = (PACKAGE,)
@@ -167,14 +207,10 @@ main()
 """
     with worker(client, tmp_path, code=code) as (process, log):
         done = wait_run(client, run_id, process, log)
-        assert done["status"] == ("failed" if remove_before_send else "succeeded"), (
+        assert done["status"] == "succeeded", (
             done,
             log.read_text(),
         )
-    if remove_before_send:
-        assert done["error_code"] == "model_configuration_changed"
-        assert query(client, lambda s: s.scalar(select(ModelInvocation.id))) is None
-        return
     assert done["result"]["answer"] == 7
     call = query(client, lambda s: s.get(ModelInvocation, UUID(done["result"]["invocation_id"])))
     assert call.model_entry_id == UUID(selected["id"]) and call.status == "succeeded"
@@ -194,8 +230,7 @@ main()
     assert len(query(client, lambda s: s.scalars(select(FlowRun))).all()) == 1
 
 
-@pytest.mark.parametrize("case", ["normal", "unregistered"])
-def test_vision_uses_only_authorized_valid_run_files(client, tmp_path, monkeypatch, case):
+def test_vision_uses_only_authorized_valid_run_files(client, tmp_path, monkeypatch):
     from io import BytesIO
 
     from PIL import Image
@@ -223,8 +258,6 @@ def test_vision_uses_only_authorized_valid_run_files(client, tmp_path, monkeypat
 
     file_id = upload_image("input.png")
     inputs = {"prompt": "Describe this image", "source_file_id": file_id}
-    if case == "unregistered":
-        inputs["image_file_id"] = upload_image("outside.png")
     response = client.post(
         "/api/v1/_test/review",
         json={
@@ -244,17 +277,14 @@ main()
 """
     with worker(client, tmp_path, code=code) as (process, log):
         done = wait_run(client, response.json()["id"], process, log)
-        assert done["status"] == ("succeeded" if case == "normal" else "failed"), (
+        assert done["status"] == "succeeded", (
             done,
             log.read_text(),
         )
     calls = query(client, lambda s: s.scalars(select(ModelInvocation))).all()
-    assert len(calls) == (1 if case == "normal" else 0)
-    if case != "normal":
-        assert done["error_code"] == "flow_file_scope_denied"
-    else:
-        assert calls[0].status == "succeeded"
-        assert "data:image" not in str(done)
+    assert len(calls) == 1
+    assert calls[0].status == "succeeded"
+    assert "data:image" not in str(done)
 
 
 def test_native_structured_agent_uses_its_declared_operation(client, monkeypatch, tmp_path):

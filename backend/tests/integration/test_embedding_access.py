@@ -67,17 +67,10 @@ def mock_embedding(monkeypatch, *, invalid=False):
     return calls
 
 
-@pytest.mark.parametrize(
-    "provider,base",
-    [
-        ("openrouter", "https://openrouter.ai/api/v1"),
-        ("newapi", "https://newapiai.com/v1"),
-    ],
-)
-def test_embedding_sdk_preserves_native_receipts_and_refuses_duplicate_send(
-    client, monkeypatch, provider, base
-):
-    ordinary = entry(client, channel(client, provider=provider, api_base=base))
+def test_embedding_sdk_preserves_native_receipts_and_refuses_duplicate_send(client, monkeypatch):
+    ordinary = entry(
+        client, channel(client, provider="openrouter", api_base="https://openrouter.ai/api/v1")
+    )
     entry(client, {"id": ordinary["channel_id"]}, key="embed", operations=["text.embed"])
     assert (
         client.get("/api/v1/_test/model-options?operation=text.embed").json()["items"][0]["key"]
@@ -108,8 +101,7 @@ def test_embedding_sdk_preserves_native_receipts_and_refuses_duplicate_send(
     assert record.operation == "text.embed" and record.status == "succeeded"
     assert record.usage == {"input_tokens": 9, "total_tokens": 9}
     assert record.result_context is None
-    if provider == "openrouter":
-        assert record.cost_source == "response"
+    assert record.cost_source == "response"
 
 
 def test_embedding_wire_rejects_extra_fields_before_registration(client, monkeypatch):

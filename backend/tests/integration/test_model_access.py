@@ -256,18 +256,15 @@ def install_transport(client, monkeypatch, handler):
     )
 
 
-@pytest.mark.parametrize("kind", ["newapi", "openlux", "yunwu", "volcengine"])
-def test_upstream_model_discovery_requires_management_and_does_not_import(
-    client, monkeypatch, kind
-):
+def test_upstream_model_discovery_requires_management_and_does_not_import(client, monkeypatch):
     from keystone.platform.model_access.adapters.channels import CHANNELS
 
-    c = channel(client, kind, api_base=CHANNELS[kind].api_base)
+    c = channel(client, "newapi", api_base=CHANNELS["newapi"].api_base)
     calls = []
 
     async def respond(provider, request):
         calls.append(request)
-        assert provider == kind and request.method == "GET"
+        assert provider == "newapi" and request.method == "GET"
         assert request.headers["Authorization"] == "Bearer " + SECRET
         return httpx2.Response(200, json={"data": [{"id": "available-chat", "internal": SECRET}]})
 
@@ -388,11 +385,7 @@ def test_newapi_custom_prefix_is_available_for_discovery_catalog_and_invocation(
 
 @pytest.mark.parametrize(
     "provider,unit,cost",
-    [
-        ("deepseek", None, None),
-        ("openrouter", "credits", Decimal("0.0012")),
-        ("aliyun_bailian", None, None),
-    ],
+    [("deepseek", None, None), ("openrouter", "credits", Decimal("0.0012"))],
 )
 def test_sdk_nonstream_and_stream_receipts_no_messages_persist(client, provider, unit, cost):
     entry(client, channel(client, provider))

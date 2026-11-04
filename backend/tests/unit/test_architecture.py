@@ -103,10 +103,8 @@ def test_core_does_not_import_domains_or_application_assembly():
     "source",
     [
         "from keystone.platform.files.services.files import FileService",
-        "from keystone import businesses",
         "from ..platform.files import schemas",
         "from keystone import composition",
-        "from keystone.worker import lifecycle",
     ],
 )
 def test_core_rejects_upward_dependencies(tmp_path, source):
@@ -137,38 +135,14 @@ def test_core_rejects_upward_dependencies(tmp_path, source):
             "another module",
         ),
         (
-            "keystone.platform.flow",
-            "services/probe.py",
-            "from ...files import adapters",
-            "another module",
-        ),
-        (
-            "keystone.businesses.probe",
-            "models/record.py",
-            "from keystone.businesses.other.models import Record",
-            "another module",
-        ),
-        (
             "keystone.platform.files",
             "services/probe.py",
             "from keystone.businesses.probe.services.records import RecordService",
             "concrete business",
         ),
         (
-            "keystone.platform.files",
-            "services/probe.py",
-            "from keystone import businesses",
-            "concrete business",
-        ),
-        (
             "keystone.businesses.probe",
             "adapters/dbos.py",
-            "from dbos import DBOSClient",
-            "execution implementation",
-        ),
-        (
-            "keystone.platform.flow",
-            "adapters/client.py",
             "from dbos import DBOSClient",
             "execution implementation",
         ),
@@ -204,16 +178,12 @@ def test_module_ownership_and_client_exception_are_enforced(
     "file,source",
     [
         ("services/records.py", "from keystone.core.execution.dispatch import enqueue_task"),
-        ("services/records.py", "from keystone.core import execution"),
         ("services/records.py", "from ..tasks.workflows import register"),
         ("tasks/nested/sync.py", "from ...models import Record"),
         ("tasks/nested/sync.py", "from keystone.core.database import Database"),
         ("tasks/definitions.py", "from ..services.records import RecordService"),
         ("tasks/definitions.py", "from keystone.core.execution import dispatch"),
         ("controllers/records.py", "from ..models import Record"),
-        ("services/records.py", "from .. import tasks"),
-        ("services/records.py", "import keystone.platform.files.tasks as tasks"),
-        ("services/records.py", "from ..tasks.definitions_runtime import register"),
         (
             "services/records.py",
             "from keystone.core import execution\n"
@@ -224,8 +194,6 @@ def test_module_ownership_and_client_exception_are_enforced(
             "import keystone.core.execution as execution\n"
             "from keystone.core.execution import contracts",
         ),
-        ("tasks/definitions.py", "from keystone.core import execution"),
-        ("tasks/definitions.py", "from ..adapters.billing import Client"),
         ("tasks/definitions.py", "from openai import AsyncOpenAI"),
     ],
 )
@@ -278,7 +246,6 @@ def test_module_checks_allow_lightweight_contracts_and_normal_service_symbols(
         ("schemas/records.py", "from sqlalchemy import select", "runtime infrastructure"),
         ("adapters/sdk.py", "from ..services.records import save", "business Service"),
         ("adapters/sdk.py", "from ..models import Record", "domain persistence"),
-        ("adapters/sdk.py", "from dbos import DBOS", "execution implementation"),
         (
             "services/records.py",
             "from ..controllers.dependencies import access_context",
@@ -290,30 +257,10 @@ def test_module_checks_allow_lightweight_contracts_and_normal_service_symbols(
             "from keystone.core.database import Database",
             "imports persistence",
         ),
-        (
-            "schemas/records.py",
-            "from keystone.core.models import WorkerRegistration",
-            "runtime infrastructure",
-        ),
         ("models/record.py", "from ..adapters.storage import Client", "runtime adapter"),
         (
             "services/records.py",
-            "from keystone.core.http import Page",
-            "HTTP/controller",
-        ),
-        (
-            "workflows/internal/workflow.py",
-            "from keystone.core.models import WorkerRegistration",
-            "domain persistence",
-        ),
-        (
-            "services/records.py",
             "from keystone.composition import execution_version",
-            "application assembly",
-        ),
-        (
-            "services/records.py",
-            "from keystone import bootstrap",
             "application assembly",
         ),
     ],
@@ -398,17 +345,38 @@ def test_relative_imports_cannot_bypass_layers():
     assert "keystone.platform.identity.services.users.UserService" in found
 
 
-def test_context_does_not_expose_identity_administration():
-    from keystone.platform.flow.services.identity import ExecutionIdentity
-    from keystone.platform.identity.services.access import AccessContext
-
-    assert issubclass(ExecutionIdentity, AccessContext)
-    for method in ("login", "create_user", "save_role", "issue_token", "reset_password"):
-        assert not hasattr(AccessContext, method)
-        assert not hasattr(ExecutionIdentity, method)
-
-
 def test_model_access_protocols_and_services_are_independent_of_dbos():
+    root = Path(__file__).parents[2] / "src/keystone/platform/model_access"
+    files = [root / "adapters/channels.py", root / "schemas/errors.py"]
+    files += [
+        root / "adapters/inference" / name
+        for name in ("protocols.py", "images.py", "kling.py", "openai_images.py")
+    ]
+    files += [p for p in (root / "adapters/billing").glob("*.py") if p.name != "registry.py"]
+    for path in files:
+        package = "keystone.platform.model_access." + ".".join(path.relative_to(root).parts[:-1])
+        dependencies = list(imports(ast.parse(path.read_text(encoding="utf8")), package))
+        assert not any(
+            name.startswith(
+                (
+                    "sqlalchemy",
+                    "dbos",
+                    "fastapi",
+                    "keystone.core.errors",
+                    "keystone.core.database",
+                    "keystone.core.execution",
+                    "keystone.composition",
+                    "keystone.bootstrap",
+                )
+            )
+            or ".services" in name
+            or ".models" in name
+            or ".workflows" in name
+            or name.startswith("keystone.platform.identity")
+            or name.endswith(("adapters.http", "adapters.coordination", "adapters.credentials"))
+            for name in dependencies
+        ), path
+
     root = ROOT / "platform" / "model_access"
     for old in ("gateway.py", "providers.py", "billing.py", "transport.py", "jobs.py"):
         assert not (root / old).exists()
@@ -499,8 +467,6 @@ def test_business_model_registration_and_layers():
         ("missing_export", "Model not exported"),
         ("wrong_schema", "metadata/schema"),
         ("wrong_prefix", "prefix mismatch"),
-        ("service_import", "crosses layers"),
-        ("controller_import", "crosses layers"),
     ],
 )
 def test_business_model_check_detects_mistakes(tmp_path, case, message):

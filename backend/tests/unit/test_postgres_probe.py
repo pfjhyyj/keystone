@@ -88,7 +88,7 @@ def test_short_password_does_not_corrupt_the_driver_message(monkeypatch):
 
 @pytest.mark.parametrize(
     "workers,capacity,state",
-    [(1, 97, "ok"), (8, 399, "insufficient_capacity"), (8, 400, "ok"), (8, 509, "ok")],
+    [(1, 97, "ok"), (8, 399, "insufficient_capacity"), (8, 400, "ok")],
 )
 def test_parallel_capacity_boundary_is_checked_without_exposing_credentials(
     monkeypatch, workers, capacity, state

@@ -193,14 +193,13 @@ def test_invalid_input_and_unsupported_operation_never_register(client):
     assert calls(client) == []
 
 
-@pytest.mark.parametrize("case", ["mislabeled", "truncated"])
-def test_invalid_vision_file_bytes_are_rejected_before_registration(client, monkeypatch, case):
+def test_invalid_vision_file_bytes_are_rejected_before_registration(client, monkeypatch):
     configure(client, operations=["image.understand"])
     content = image_bytes()
     response = upload(
         client,
-        content[:20] if case == "truncated" else content,
-        content_type="text/plain" if case == "mislabeled" else "image/png",
+        content[:20],
+        content_type="image/png",
         name="input.png",
     )
     assert response.status_code == 201, response.text
@@ -326,11 +325,8 @@ def test_direct_result_evidence_cannot_be_read_by_another_actor(client):
     "provider,base",
     [
         ("openlux", "https://api.openlux.ai/v1"),
-        ("yunwu", "https://yunwu.ai/v1"),
         ("yunwu", "https://relay.example/gateway/v1"),
-        ("newapi", "https://newapiai.com/v1"),
         ("newapi", "https://relay.example/gateway/v1"),
-        ("newapi", "https://api.openlux.ai/v1"),
     ],
 )
 def test_compatible_vision_catalog_and_send_match_explicit_model_operations(

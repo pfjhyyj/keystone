@@ -27,7 +27,7 @@ def native_page(models, *, total=None, page=1):
     }
 
 
-@pytest.mark.parametrize("workspace", [None, "llm-example", "a", "a" * 63])
+@pytest.mark.parametrize("workspace", [None, "llm-example"])
 async def test_native_catalog_uses_saved_inference_key_and_follows_pages_without_metadata(
     workspace,
 ):

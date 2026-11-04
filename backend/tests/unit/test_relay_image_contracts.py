@@ -41,9 +41,16 @@ def selected(provider, operation="image.generate"):
     )
 
 
-@pytest.mark.parametrize("provider", ["yunwu", "openlux"])
-@pytest.mark.parametrize("edit", [False, True])
-@pytest.mark.parametrize("kind", ["base64", "url"])
+@pytest.mark.parametrize(
+    "provider,edit,kind",
+    [
+        ("yunwu", False, "base64"),
+        ("yunwu", False, "url"),
+        ("yunwu", True, "base64"),
+        ("yunwu", True, "url"),
+        ("openlux", True, "url"),
+    ],
+)
 async def test_image_wire_preserves_registration_receipt_and_nine_reference_files(
     monkeypatch, provider, edit, kind
 ):

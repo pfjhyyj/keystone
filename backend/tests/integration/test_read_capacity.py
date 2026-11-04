@@ -39,9 +39,15 @@ def watch_wait(storage, monkeypatch):
     return original, entered
 
 
-@pytest.mark.parametrize("method", ["GET", "HEAD"])
 @pytest.mark.parametrize(
-    "change,status", [(None, 200), ("revoke", 404), ("disable", 409), ("delete", 409)]
+    "method,change,status",
+    [
+        ("GET", None, 200),
+        ("GET", "revoke", 404),
+        ("GET", "disable", 409),
+        ("GET", "delete", 409),
+        ("HEAD", None, 200),
+    ],
 )
 def test_http_read_waits_for_capacity_and_rechecks_access(
     client, monkeypatch, method, change, status

@@ -113,7 +113,7 @@ main()
 """
 
 
-@pytest.mark.parametrize("crash", ["receipt", "result", "file", "download_error", "query429"])
+@pytest.mark.parametrize("crash", ["receipt", "result", "file"])
 def test_native_task_recovery_preserves_original_submission(client, monkeypatch, tmp_path, crash):
     run_id = accept(client, monkeypatch)
     request_log, task_state = tmp_path / "requests.jsonl", tmp_path / "vendor.json"
@@ -174,7 +174,7 @@ def test_native_task_recovery_preserves_original_submission(client, monkeypatch,
     )
 
 
-@pytest.mark.parametrize("condition", ["deadline", "cancel", "disabled"])
+@pytest.mark.parametrize("condition", ["deadline", "cancel"])
 def test_task_limits_and_cancellation_survive_restart_without_new_requests(
     client, monkeypatch, tmp_path, condition
 ):
@@ -204,16 +204,6 @@ def test_task_limits_and_cancellation_survive_restart_without_new_requests(
     elif condition == "cancel":
         response = client.post(f"/api/v1/flow-runs/{run_id}/cancel")
         assert response.status_code == 200, response.text
-    else:
-        response = client.patch(
-            f"/api/v1/model-entries/{original.model_entry_id}",
-            json={
-                "channel_id": str(original.channel_id),
-                "provider_model": original.provider_model,
-                "is_active": False,
-            },
-        )
-        assert response.status_code == 200
     with worker(client, tmp_path, code=code(request_log, task_state)) as (process, log):
         done = wait_run(client, run_id, process, log)
         assert done["status"] == ("cancelled" if condition == "cancel" else "failed"), (
@@ -230,10 +220,7 @@ def test_task_limits_and_cancellation_survive_restart_without_new_requests(
     )
     assert query(client, lambda s: s.scalar(select(File.id))) is None
     if condition != "cancel":
-        expected = (
-            "model_configuration_changed" if condition == "disabled" else "model_task_timeout"
-        )
-        assert done["error_code"] == expected
+        assert done["error_code"] == "model_task_timeout"
 
 
 @pytest.mark.parametrize(

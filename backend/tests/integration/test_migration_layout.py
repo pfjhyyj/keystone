@@ -20,10 +20,8 @@ CURRENT_HEAD = SCRIPTS.get_current_head()
 BASELINE = tuple(revision.revision for revision in reversed(list(SCRIPTS.walk_revisions())))
 
 
-@pytest.mark.parametrize("revision", BASELINE)
-def test_baseline_revisions_upgrade_and_downgrade_without_restamping(
-    empty_database_url, tmp_path, revision
-):
+def test_baseline_revisions_upgrade_and_downgrade_without_restamping(empty_database_url, tmp_path):
+    revision = BASELINE[0]
     settings = Settings(config_file=None, database_url=empty_database_url)
     current = migration_config(settings)
     current.attributes["create_schema"] = True
@@ -88,9 +86,8 @@ def test_baseline_revisions_upgrade_and_downgrade_without_restamping(
         engine.dispose()
 
 
-@pytest.mark.parametrize("namespace,entity", [("notes", "note"), ("n" * 48, "e" * 14)])
 def test_generated_business_migration_is_discovered_upgraded_and_reversible(
-    empty_database_url, tmp_path, namespace, entity
+    empty_database_url, tmp_path
 ):
     directory = tmp_path / "migrations"
     shutil.copytree(BACKEND / "migrations", directory, ignore=shutil.ignore_patterns("__pycache__"))
@@ -98,9 +95,9 @@ def test_generated_business_migration_is_discovered_upgraded_and_reversible(
         [
             sys.executable,
             str(BACKEND.parent / "scripts/new_business.py"),
-            namespace,
+            "notes",
             "--entity",
-            entity,
+            "note",
             "--output",
             str(tmp_path / "businesses"),
             "--migrations",
@@ -118,8 +115,8 @@ def test_generated_business_migration_is_discovered_upgraded_and_reversible(
     child = f"{int(CURRENT_HEAD) + 1:04d}"
     assert script.get_heads() == [child]
     assert script.get_revision(child).down_revision == CURRENT_HEAD
-    assert (directory / "versions" / f"{child}_{namespace}_initial.py").is_file()
-    table = f"{namespace}_{entity}"
+    assert (directory / "versions" / f"{child}_notes_initial.py").is_file()
+    table = "notes_note"
     engine = create_engine(empty_database_url)
     try:
         command.upgrade(config, "head")

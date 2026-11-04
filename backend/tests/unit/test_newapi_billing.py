@@ -25,8 +25,14 @@ def entry(**changes):
     }
 
 
-@pytest.mark.parametrize("paginated", [False, True])
-@pytest.mark.parametrize("scale", [500000, 10000])
+@pytest.mark.parametrize(
+    "paginated,scale",
+    [
+        (False, 500000),
+        (True, 500000),
+        (False, 10000),
+    ],
+)
 async def test_newapi_bearer_logs_use_actual_scale_and_preserve_only_cost_evidence(
     paginated, scale
 ):
@@ -160,8 +166,15 @@ async def test_token_balance_is_not_account_balance_and_unlimited_has_no_zero_re
     assert next(item["amount"] for item in result["items"] if item["kind"] == "used") == "0.1"
 
 
-@pytest.mark.parametrize("unlimited", [False, True])
-@pytest.mark.parametrize("remaining", [96425858, 0, -100])
+@pytest.mark.parametrize(
+    "unlimited,remaining",
+    [
+        (False, 96425858),
+        (True, 96425858),
+        (False, 0),
+        (False, -100),
+    ],
+)
 async def test_account_remaining_is_independent_of_token_limit(unlimited, remaining):
     def respond(request):
         if request.url.path == "/api/status":

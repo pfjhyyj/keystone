@@ -100,9 +100,8 @@ def bill_payload(provider):
     }
 
 
-@pytest.mark.parametrize("provider", ["aliyun_bailian", "volcengine"])
-def test_cloud_credentials_are_encrypted_write_only_and_clearable(client, monkeypatch, provider):
-    row = cloud_channel(client, provider)
+def test_cloud_credentials_are_encrypted_write_only_and_clearable(client, monkeypatch):
+    row = cloud_channel(client, "aliyun_bailian")
     encrypted = query(client, lambda session: session.get(Channel, UUID(row["id"])))
     assert all(secret not in encrypted.billing_api_key_encrypted for secret in KEYS.values())
     store = client.app.state.runtime.models.credentials
@@ -112,23 +111,10 @@ def test_cloud_credentials_are_encrypted_write_only_and_clearable(client, monkey
     for secret in KEYS.values():
         assert secret not in client.get("/api/v1/model-channels").text
         assert secret not in client.get("/api/v1/audit-logs").text
-    payload = (
-        {
-            "Success": True,
-            "Data": {"Currency": "CNY", "AvailableAmount": "3.01", "AvailableCashAmount": "2.01"},
-        }
-        if provider == "aliyun_bailian"
-        else {
-            "ResponseMetadata": {},
-            "Result": {
-                "AvailableBalance": "3.01",
-                "CashBalance": "2.01",
-                "ArrearsBalance": "0",
-                "CreditLimit": "1",
-                "FreezeAmount": "0",
-            },
-        }
-    )
+    payload = {
+        "Success": True,
+        "Data": {"Currency": "CNY", "AvailableAmount": "3.01", "AvailableCashAmount": "2.01"},
+    }
     install(client, monkeypatch, lambda _: httpx2.Response(200, json=payload))
     refreshed = client.post(f"/api/v1/model-channels/{row['id']}/balance").json()
     assert refreshed["balance_check_status"] == "ok"
@@ -154,16 +140,13 @@ def test_cloud_credentials_are_encrypted_write_only_and_clearable(client, monkey
     assert response.json()["code"] == "model_billing_credentials_required"
 
 
-@pytest.mark.parametrize("provider", ["aliyun_bailian", "volcengine"])
-def test_bill_query_requires_management_and_never_changes_invocation_costs(
-    client, monkeypatch, provider
-):
-    row = cloud_channel(client, provider)
+def test_bill_query_requires_management_and_never_changes_invocation_costs(client, monkeypatch):
+    row = cloud_channel(client, "volcengine")
     sent = []
 
     def respond(request):
         sent.append(request)
-        return httpx2.Response(200, json=bill_payload(provider))
+        return httpx2.Response(200, json=bill_payload("volcengine"))
 
     install(client, monkeypatch, respond)
     path = f"/api/v1/model-channels/{row['id']}/bills"

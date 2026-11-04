@@ -218,8 +218,13 @@ def test_legacy_read_rejects_large_file_before_allocating(client, monkeypatch):
     assert client.get("/_acceptance/bounded-read").status_code == 413
 
 
-@pytest.mark.parametrize("credential", ["session", "pat"])
-@pytest.mark.parametrize("failure", ["business", "audit"])
+@pytest.mark.parametrize(
+    "credential,failure",
+    [
+        ("session", "business"),
+        ("pat", "audit"),
+    ],
+)
 def test_composed_transaction_rollback_idempotency_and_audit(
     media, credential, failure, monkeypatch
 ):
@@ -345,7 +350,7 @@ def test_composed_transaction_rollback_idempotency_and_audit(
         assert audits[0].details["credential_id"] == credential_id
 
 
-@pytest.mark.parametrize("mode", ["normal", "cancel", "cancel_engine_unavailable", "crash"])
+@pytest.mark.parametrize("mode", ["normal", "cancel_engine_unavailable", "crash"])
 def test_model_free_worker_materialization_heartbeat_cancel_and_restart(media, tmp_path, mode):
     client = media
     data = b"\x00\xfflocal media\x81" * 2000

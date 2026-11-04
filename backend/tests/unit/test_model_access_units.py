@@ -10,10 +10,13 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import SecretStr
 from pydantic_ai.exceptions import ModelHTTPError
 
+from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
 from keystone.platform.files.adapters.storage import initialize
 from keystone.platform.model_access.adapters.billing.openrouter import OpenRouter
 from keystone.platform.model_access.adapters.credentials import KEY_FILE, ChannelCredentials
+from keystone.platform.model_access.adapters.http import HttpClient
+from keystone.platform.model_access.adapters.inference import client as gateway
 from keystone.platform.model_access.adapters.inference.client import (
     OPENROUTER_BASE,
     InferenceClient,
@@ -207,3 +210,12 @@ def test_upstream_error_codes_are_whitelisted_and_context_limit_is_specific(sdk_
     body["error"]["type"] = "secret"
     assert upstream_error(error) == {"upstream_status": 400}
     assert classify_error(error)[1] == "model_invalid_request"
+
+
+def test_real_transport_is_the_default_without_mode_configuration():
+    assert "model_mode" not in Settings.model_fields
+    transport = gateway.InferenceClient(HttpClient()).transport("openrouter")
+    assert isinstance(transport, httpx2.AsyncHTTPTransport)
+    with pytest.raises(ServiceError) as unsupported:
+        gateway.InferenceClient(HttpClient()).transport("deepseek")
+    assert unsupported.value.code == "model_provider_unavailable"

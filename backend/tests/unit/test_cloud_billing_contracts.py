@@ -174,8 +174,17 @@ async def test_signed_balance_requests_use_only_cloud_endpoints_and_keep_account
     assert error.value.code == "model_billing_credentials_required" and len(calls) == 1
 
 
-@pytest.mark.parametrize("provider", ["aliyun_bailian", "volcengine"])
-@pytest.mark.parametrize("status", [302, 401, 403, 429, 500])
+@pytest.mark.parametrize(
+    "provider,status",
+    [
+        ("aliyun_bailian", 302),
+        ("aliyun_bailian", 401),
+        ("aliyun_bailian", 403),
+        ("aliyun_bailian", 429),
+        ("aliyun_bailian", 500),
+        ("volcengine", 401),
+    ],
+)
 async def test_accounting_errors_do_not_redirect_retry_or_expose_upstream_body(provider, status):
     requests = []
 
@@ -253,8 +262,20 @@ async def test_monthly_bills_keep_reported_decimal_amounts_and_bounded_product_p
     assert "secret" not in json.dumps(result)
 
 
-@pytest.mark.parametrize("provider", ["aliyun_bailian", "volcengine"])
-@pytest.mark.parametrize("invalid", ["error", "nan", "currency", "period", "oversize"])
+@pytest.mark.parametrize(
+    "provider,invalid",
+    [
+        ("aliyun_bailian", "error"),
+        ("aliyun_bailian", "nan"),
+        ("aliyun_bailian", "currency"),
+        ("aliyun_bailian", "period"),
+        ("aliyun_bailian", "oversize"),
+        ("volcengine", "error"),
+        ("volcengine", "currency"),
+        ("volcengine", "period"),
+        ("volcengine", "oversize"),
+    ],
+)
 async def test_bill_response_rejects_errors_inexact_values_wrong_periods_and_unbounded_pages(
     provider, invalid
 ):

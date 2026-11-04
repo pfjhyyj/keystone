@@ -374,3 +374,14 @@ def test_file_schema_references_fail_closed_without_external_resolution():
     with pytest.raises(ServiceError) as error:
         read_snapshot(snapshot)
     assert error.value.code == "flow_snapshot_unavailable"
+
+
+async def test_iteration_consumption_uses_the_shared_durable_budget_key(monkeypatch):
+    from keystone.platform.flow.services.budgets import digest
+    from keystone.platform.flow.workflows.context import FlowContext
+
+    consume = AsyncMock()
+    monkeypatch.setattr(FlowContext, "_consume", consume)
+    ctx = FlowContext(uuid4())
+    await ctx.consume_iteration("loop:1")
+    consume.assert_awaited_once_with("iteration", "loop:1", digest(["iteration", "loop:1"]))

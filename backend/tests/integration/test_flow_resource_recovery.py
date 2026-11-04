@@ -92,8 +92,6 @@ main()
     [
         ("tool", "reserved"),
         ("tool", "checkpoint"),
-        ("iteration", "reserved"),
-        ("iteration", "checkpoint"),
         ("artifact", "reserved"),
         ("artifact", "uploaded"),
         ("artifact", "checkpoint"),

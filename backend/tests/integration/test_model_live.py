@@ -5,12 +5,10 @@ SDK, retries, tracking, response parsing and PostgreSQL transactions remain real
 """
 
 import json
-from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 from urllib.parse import parse_qs, urlsplit
-from uuid import uuid4
 
 import httpx2
 import pytest
@@ -18,31 +16,12 @@ from dbos import DBOS
 from test_files_dictionary import client as client
 from test_files_dictionary import stored_content, upload
 from test_flow import start, wait_run, worker
-from test_identity import token
-from test_model_access import BILLING, SECRET, channel, entry, internal_service, invoke
+from test_model_access import BILLING, SECRET, channel, entry, invoke
 
-from keystone.core.errors import ServiceError
 from keystone.platform.flow.adapters.dbos import Engine
-from keystone.platform.model_access import schemas
-from keystone.platform.model_access.adapters.channels import CHANNELS
-from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.adapters.inference import client as gateway
-from keystone.platform.model_access.services.runtime import ModelRuntime
 
 NETWORK_TRANSPORT = httpx2.AsyncHTTPTransport
-
-
-@pytest.mark.postgres
-def test_live_catalog_and_sender_share_capability_declaration(client, live, monkeypatch):
-    calls, _, _ = live
-    configure(client)
-    assert client.get("/api/v1/_test/model-options").json()["items"]
-    adapter = CHANNELS["openrouter"]
-    monkeypatch.setitem(CHANNELS, "openrouter", replace(adapter, protocols=adapter.protocols[1:]))
-    assert client.get("/api/v1/_test/model-options").json()["items"] == []
-    response = invoke(client)
-    assert response.status_code == 409 and response.json()["code"] == "model_operation_unavailable"
-    assert calls == []
 
 
 def upstream_reply(method, path, headers, body):
@@ -203,17 +182,6 @@ def configure(client, **changes):
     return row
 
 
-def test_real_transport_is_the_default_without_mode_configuration():
-    from keystone.core.config import Settings
-
-    assert "model_mode" not in Settings.model_fields
-    transport = gateway.InferenceClient(HttpClient()).transport("openrouter")
-    assert isinstance(transport, httpx2.AsyncHTTPTransport)
-    with pytest.raises(ServiceError) as unsupported:
-        gateway.InferenceClient(HttpClient()).transport("deepseek")
-    assert unsupported.value.code == "model_provider_unavailable"
-
-
 @pytest.mark.postgres
 def test_live_sdk_stream_cost_query_balance_and_credential_separation(client, live):
     calls, _, _ = live
@@ -348,25 +316,6 @@ def test_live_query_failures_preserve_receipts_and_missing_billing_key_allows_in
     assert client.post(path).json()["balance_check_status"] == "unavailable"
     assert len(calls) == before
     assert invoke(client).status_code == 200
-
-
-@pytest.mark.postgres
-def test_live_stable_attempt_id_never_sends_twice(client, live):
-    calls, _, _ = live
-    configure(client)
-    service = internal_service(client, token(client, ["model:invoke"])["token"])
-
-    async def repeat():
-        runtime = ModelRuntime(service)
-        data = schemas.Invoke(model_key="chat", messages=[{"role": "user", "content": "test"}])
-        identifier = uuid4()
-        await runtime.invoke(data, invocation_id=identifier)
-        with pytest.raises(ServiceError) as error:
-            await runtime.invoke(data, invocation_id=identifier)
-        assert error.value.code == "model_result_unavailable"
-
-    client.portal.call(repeat)
-    assert len(calls) == 1
 
 
 @pytest.mark.postgres

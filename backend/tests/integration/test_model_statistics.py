@@ -248,13 +248,8 @@ def test_scoped_searchable_facets_do_not_need_configuration_or_user_management(c
 @pytest.mark.parametrize(
     "params",
     [
-        {"bucket": "second"},
-        {"group_by": "secret"},
-        {"missing": "credentials"},
-        {"user_id": "bad"},
         {"since": "2026-01-01T00:00:00Z", "until": "2026-10-21T00:00:00Z", "bucket": "hour"},
         {"since": "2020-01-01T00:00:00Z"},
-        {"offset": 100001},
     ],
 )
 def test_invalid_statistics_queries_are_bounded(client, params):

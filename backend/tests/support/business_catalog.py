@@ -18,3 +18,12 @@ def install_catalog(monkeypatch=None):
         composition.BUSINESS_CATALOGS = catalogs
     else:
         monkeypatch.setattr(composition, "BUSINESS_CATALOGS", catalogs)
+
+
+NOTES_READ = "test_notes.note:read"
+NOTES_WRITE = "test_notes.note:write"
+NOTES_ACTION = "test_notes.note.save"
+NOTES_CATALOG = Catalog(
+    permissions={NOTES_READ: "Read test notes", NOTES_WRITE: "Write test notes"},
+    audit_actions={NOTES_ACTION: {"after", "status"}},
+)

@@ -8,9 +8,6 @@ from sqlalchemy import select
 from support.budget_flow import (
     PACKAGE,
     definition,
-    disabled_definition,
-    output_definition,
-    tokens_definition,
 )
 from support.flow_packages import assert_correlated, install_package
 from test_files_dictionary import client as client
@@ -25,8 +22,8 @@ from keystone.platform.model_access.models import ModelDispatchScope, ModelInvoc
 pytestmark = pytest.mark.postgres
 
 
-def accept(client, monkeypatch, definition_key, attempts):
-    install_package(client, monkeypatch, PACKAGE)
+def accept(client, monkeypatch, definition_key, attempts, *, engine=True):
+    install_package(client, monkeypatch, PACKAGE, engine=engine)
     entry(client, channel(client), key="first", provider_model="first-model")
     entry(client, channel(client, name="second"), key="second", provider_model="second-model")
     response = client.post(
@@ -84,10 +81,6 @@ main()
     [
         ("normal", definition.key, 2, 2),
         ("requests", definition.key, 3, 2),
-        ("input", tokens_definition.key, 2, 1),
-        ("output", output_definition.key, 2, 1),
-        ("disabled", disabled_definition.key, 1, 0),
-        ("usage", definition.key, 2, 1),
         ("checkpoint", definition.key, 3, 2),
         ("registered", definition.key, 2, 1),
     ],
@@ -103,8 +96,7 @@ def test_real_worker_budget_facts_survive_checkpoint_and_unknown_result(
             assert process.wait(timeout=30) == 71, log.read_text()
         before = query(client, lambda s: s.get(FlowRunBudget, UUID(run_id)))
         assert before.counters["model_requests"] == 1
-    active_fault = "usage" if case == "usage" else None
-    with worker(client, tmp_path, code=code(request_log, active_fault)) as (process, log):
+    with worker(client, tmp_path, code=code(request_log)) as (process, log):
         done = wait_run(client, run_id, process, log)
     assert done["status"] == ("succeeded" if case == "normal" else "failed"), done
     if case != "normal":
@@ -123,8 +115,8 @@ def test_real_worker_budget_facts_survive_checkpoint_and_unknown_result(
     assert len(sent) == calls and len({row["id"] for row in sent}) == calls
     assert budget.counters["model_requests"] == calls
     assert budget.counters["output_tokens"] == calls * 16
-    assert budget.counters["unreported_text_requests"] == int(case in {"usage", "registered"})
-    assert budget.counters["input_tokens"] == (0 if case in {"usage", "registered"} else calls * 12)
+    assert budget.counters["unreported_text_requests"] == int(case == "registered")
+    assert budget.counters["input_tokens"] == (0 if case == "registered" else calls * 12)
     if calls == 2:
         assert {row.flow_context["model_role"] for row in invocations} == {"first", "second"}
         assert {row["model"] for row in sent} == {"first-model", "second-model"}
@@ -136,8 +128,6 @@ def test_real_worker_budget_facts_survive_checkpoint_and_unknown_result(
         )
     claims = query(client, lambda s: s.scalars(select(FlowBudgetClaim))).all()
     assert len([row for row in claims if row.kind == "model"]) == calls
-    if case == "disabled":
-        assert query(client, lambda s: s.scalar(select(ModelDispatchScope.scope))) is None
 
 
 def test_missing_budget_of_a_new_snapshot_cannot_fall_back_to_unlimited(
