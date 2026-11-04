@@ -59,7 +59,6 @@ class FlowFileDiagnostic(Input):
 
 
 class FlowFileDiagnostics(Input):
-    available: bool
     items: list[FlowFileDiagnostic] = []
     truncated: bool = False
     next_offset: int | None = None

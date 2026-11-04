@@ -113,7 +113,7 @@ def test_roles_and_array_outputs_in_real_worker(client, tmp_path, monkeypatch, d
     install(client, monkeypatch)
     file_id = upload(client, b"Review this text").json()["id"]
     data = bind_models(client, payload(file_id), distinct)
-    accepted = client.post("/api/v1/flow-runs", json=data)
+    accepted = client.post("/api/v1/_test/review", json=data)
     assert accepted.status_code == 202, accepted.text
     run = accepted.json()
     assert run["model_bindings"] == data["model_bindings"]
@@ -132,7 +132,7 @@ def test_roles_and_array_outputs_in_real_worker(client, tmp_path, monkeypatch, d
         ),
     ).all()
     assert len({r.file_id for r in refs if r.slot == "output"}) == 2
-    assert client.post("/api/v1/flow-runs", json=data).json()["id"] == run["id"]
+    assert client.post("/api/v1/_test/review", json=data).json()["id"] == run["id"]
 
 
 @pytest.mark.parametrize("crash", ["registered", "response", "checkpoint"])
@@ -140,7 +140,7 @@ def test_direct_text_crash_recovery_never_resends(client, tmp_path, monkeypatch,
     install(client, monkeypatch)
     file_id = upload(client, b"Recover this text").json()["id"]
     data = bind_models(client, payload(file_id), True)
-    response = client.post("/api/v1/flow-runs", json=data)
+    response = client.post("/api/v1/_test/review", json=data)
     assert response.status_code == 202, response.text
     run_id = response.json()["id"]
     request_log = tmp_path / "requests.jsonl"
@@ -180,18 +180,28 @@ def test_bad_roles_rollback_and_idempotency_does_not_resolve_new_defaults(client
     file_id = upload(client).json()["id"]
     data = payload(file_id)
     for bindings in ({"analyze": "chat"}, {"analyze": "chat", "review": "missing"}):
-        response = client.post("/api/v1/flow-runs", json={**data, "model_bindings": bindings})
+        response = client.post("/api/v1/_test/review", json={**data, "model_bindings": bindings})
         assert response.status_code in {409, 422}, response.text
         assert query(client, lambda s: s.scalar(select(FlowRun.id))) is None
-        assert query(client, lambda s: s.scalar(select(FileReference.file_id))) is None
-    accepted = client.post("/api/v1/flow-runs", json=data).json()
+        assert (
+            query(
+                client,
+                lambda s: s.scalar(
+                    select(FileReference.file_id).where(FileReference.owner.like("flow:%"))
+                ),
+            )
+            is None
+        )
+    accepted = client.post("/api/v1/_test/review", json=data).json()
     client.app.state.runtime.flow_definitions = {definition.key: replace(definition, revision="2")}
-    assert client.post("/api/v1/flow-runs", json=data).json()["id"] == accepted["id"]
+    assert client.post("/api/v1/_test/review", json=data).json()["id"] == accepted["id"]
     assert (
-        client.post("/api/v1/flow-runs", json={**data, "definition_revision": "2"}).status_code
+        client.post("/api/v1/_test/review", json={**data, "definition_revision": "2"}).status_code
         == 409
     )
-    assert client.post("/api/v1/flow-runs", json={**data, "request_key": "new"}).status_code == 409
+    assert (
+        client.post("/api/v1/_test/review", json={**data, "request_key": "new"}).status_code == 409
+    )
 
 
 def test_legacy_digest_lookup_and_history_are_not_rewritten(client):
@@ -213,7 +223,7 @@ def test_legacy_digest_lookup_and_history_are_not_rewritten(client):
 
     query(client, legacy)
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": "document.review",
             "request_key": "review",
@@ -226,7 +236,7 @@ def test_legacy_digest_lookup_and_history_are_not_rewritten(client):
     assert response.json()["definition_revision"] is None
     assert (
         client.post(
-            "/api/v1/flow-runs",
+            "/api/v1/_test/review",
             json={
                 "definition_key": "document.review",
                 "request_key": "review",
@@ -308,7 +318,7 @@ def test_large_legacy_replay_precedes_new_envelope_limit(client):
     query(client, legacy)
     client.app.state.runtime.flow_definitions = {}
     data = {"definition_key": "document.review", "request_key": key, "input": inputs}
-    response = client.post("/api/v1/flow-runs", json=data)
+    response = client.post("/api/v1/_test/review", json=data)
     assert response.status_code == 202, response.text
     assert response.json()["id"] == row["id"] and response.json()["input"] == inputs
     assert client.get("/api/v1/flow-runs").status_code == 200
@@ -317,7 +327,7 @@ def test_large_legacy_replay_precedes_new_envelope_limit(client):
         {"model_bindings": {"review": "chat"}},
         {"definition_revision": "1"},
     ):
-        rejected = client.post("/api/v1/flow-runs", json={**data, **changes})
+        rejected = client.post("/api/v1/_test/review", json={**data, **changes})
         assert rejected.status_code == 422, rejected.text
         assert rejected.json()["code"] == "flow_value_too_large"
     stored = query(client, lambda s: s.get(FlowRun, UUID(row["id"])))

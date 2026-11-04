@@ -54,7 +54,7 @@ def accept(client, *, limits=None, sources=None, request_key="budget"):
             definition,
             input_model=Sources,
             file_fields=("files",),
-            required_permissions=("file:content_read",),
+            required_permissions=("test_files.asset:content_read",),
         )
     runtime = client.app.state.runtime
     runtime.flow_definitions = {definition.key: definition}
@@ -63,7 +63,7 @@ def accept(client, *, limits=None, sources=None, request_key="budget"):
         "request_key": request_key,
         "input": {"files": sources} if sources is not None else {},
     }
-    response = client.post("/api/v1/flow-runs", json=data)
+    response = client.post("/api/v1/_test/review", json=data)
     return response, data
 
 
@@ -79,9 +79,17 @@ def test_input_files_are_unique_budgeted_and_rejected_atomically(client):
     assert rejected.status_code == 409 and rejected.json()["code"] == "flow_budget_exceeded"
     assert query(client, lambda s: s.scalar(select(FlowRun.id))) is None
     assert query(client, lambda s: s.scalar(select(FlowRunBudget.run_id))) is None
-    assert query(client, lambda s: s.scalar(select(FileReference.file_id))) is None
+    assert (
+        query(
+            client,
+            lambda s: s.scalar(
+                select(FileReference.file_id).where(FileReference.owner.like("flow:%"))
+            ),
+        )
+        is None
+    )
     response = client.post(
-        "/api/v1/flow-runs", json={**data, "input": {"files": [file_id, file_id]}}
+        "/api/v1/_test/review", json={**data, "input": {"files": [file_id, file_id]}}
     )
     assert response.status_code == 202, response.text
     run_id = UUID(response.json()["id"])
@@ -93,7 +101,9 @@ def test_input_files_are_unique_budgeted_and_rejected_atomically(client):
     runtime.flow_definitions = {
         BASE.key: replace(runtime.flow_definitions[BASE.key], limits=FlowLimits(file_count=0))
     }
-    replay = client.post("/api/v1/flow-runs", json={**data, "input": {"files": [file_id, file_id]}})
+    replay = client.post(
+        "/api/v1/_test/review", json={**data, "input": {"files": [file_id, file_id]}}
+    )
     assert replay.json()["id"] == str(run_id)
     assert replay.json()["definition_snapshot"]["limits"]["file_count"] == 1
 

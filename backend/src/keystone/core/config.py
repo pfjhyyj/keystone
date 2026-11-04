@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     file_temp_bytes: int = Field(default=64 * 1024**3, ge=1, le=32 * 1024**4)
     file_min_free_bytes: int = Field(default=1024**3, ge=0, le=1024**4)
     file_upload_timeout_seconds: int = Field(default=3600, ge=1, le=86400)
+    file_unreferenced_grace_seconds: int | None = Field(default=None, ge=1, le=31536000)
     flow_worker_concurrency: int = Field(default=2, ge=1, le=16)
     flow_global_concurrency: int = Field(default=4, ge=1, le=64)
     worker_id: str = "keystone-worker"

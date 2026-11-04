@@ -195,7 +195,7 @@ def test_retention_preserves_active_recent_and_run_linked_credentials_and_calls(
     personal = token(client, client.get("/api/v1/auth/me").json()["permissions"])
     file_id = upload(client).json()["id"]
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         headers=bearer(personal["token"]),
         json={
             "definition_key": "document.review",

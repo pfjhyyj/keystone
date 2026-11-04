@@ -64,8 +64,9 @@ def receipt(identifier, quota=1328, **overrides):
 
 @pytest.fixture
 def billing(client, monkeypatch):
+    from support.flow_fixture.contracts import PACKAGE
+
     from keystone import composition
-    from keystone.examples.document_review.contracts import PACKAGE
 
     monkeypatch.setattr(composition, "FLOW_PACKAGES", (PACKAGE,))
     composition.execution_version.cache_clear()

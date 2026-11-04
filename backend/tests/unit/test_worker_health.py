@@ -1,9 +1,11 @@
 import asyncio
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from keystone.bootstrap import Runtime
 from keystone.core import worker_health
 from keystone.core.config import Settings
 from keystone.core.worker_health import WorkerHealth
@@ -78,10 +80,12 @@ def runtime(monkeypatch):
     result = SimpleNamespace(
         database=SimpleNamespace(close=AsyncMock()),
         flow_engine=SimpleNamespace(close=AsyncMock()),
+        tasks=SimpleNamespace(close=AsyncMock()),
         storage=object(),
         readiness=AsyncMock(return_value={"status": "ready", "checks": {"database": "ok"}}),
         observations=[],
     )
+    result.close = partial(Runtime.close, result)
 
     async def publish(self, state):
         result.observations.append(state)

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 from test_files_dictionary import client as client
-from test_files_dictionary import upload
+from test_files_dictionary import stored_files, upload
 
 from keystone.platform.files.adapters import capacity as disk
 from keystone.platform.files.services import access as policy
@@ -16,7 +16,7 @@ def test_disk_pressure_does_not_block_reading_existing_content(client, monkeypat
     file = upload(client, b"0123456789").json()
     monkeypatch.setattr(disk.shutil, "disk_usage", lambda path: SimpleNamespace(free=0))
     response = client.request(
-        method, f"/api/v1/files/{file['id']}/content", headers={"Range": "bytes=2-5"}
+        method, f"/api/v1/_test/materials/{file['id']}/content", headers={"Range": "bytes=2-5"}
     )
     if method == "GET":
         assert response.status_code == 206 and response.content == b"2345"
@@ -35,7 +35,7 @@ def test_upload_rejects_missing_final_copy_capacity_before_registering_file(clie
     response = upload(client, b"hello")
     assert response.status_code == 507
     assert response.json()["code"] == "file_capacity_full"
-    assert client.get("/api/v1/files").json() == []
+    assert stored_files(client) == []
     root = settings.file_coordination_root
     assert not list((root / ".capacity").iterdir())
     assert not list((root / ".transfers").iterdir())
@@ -69,7 +69,7 @@ def test_disk_pressure_at_final_copy_returns_507_and_retains_retryable_file(
     response = upload(client, b"hello")
     assert response.status_code == 507
     assert response.json()["code"] == "file_capacity_full"
-    files = client.get("/api/v1/files").json()
+    files = stored_files(client)
     assert len(files) == 1 and files[0]["status"] == "failed"
     root = runtime.settings.file_coordination_root
     assert not list((root / ".capacity").iterdir())

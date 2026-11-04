@@ -86,7 +86,7 @@ class FlowResourceService:
             request_key=request_key,
             checksum_sha256=hashlib.sha256(content).hexdigest(),
         )
-        await self.files.prepare_upload(data.expected_size, storage_key)
+        self.files.prepare_upload(data.expected_size, storage_key)
         await self.budget.reserve_artifact(key, data)
         result = await self.files.upload_referenced(
             data,

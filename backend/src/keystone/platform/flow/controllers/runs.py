@@ -4,7 +4,6 @@ from uuid import UUID
 from fastapi import APIRouter, Request
 
 from keystone.core.http import Page
-from keystone.platform.flow.schemas import Start
 from keystone.platform.flow.schemas.diagnostics import Diagnostics, DiagnosticSection
 from keystone.platform.flow.services.runs import FlowService
 from keystone.platform.identity.controllers.dependencies import access_context
@@ -14,16 +13,6 @@ router = APIRouter(prefix="/api/v1", tags=["flow"])
 
 def _service(request: Request) -> FlowService:
     return request.app.state.runtime.flow_service(access_context(request))
-
-
-@router.get("/flow-definitions")
-async def definitions(request: Request):
-    return await _service(request).definitions()
-
-
-@router.post("/flow-runs", status_code=202)
-async def start(data: Start, request: Request):
-    return await _service(request).start(data)
 
 
 @router.get("/flow-runs")

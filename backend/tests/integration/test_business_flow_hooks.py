@@ -1,6 +1,5 @@
 """Business entry and execution guards keep the platform's original authority checks."""
 
-from dataclasses import replace
 from uuid import UUID
 
 import pytest
@@ -8,7 +7,7 @@ from sqlalchemy import select, text
 from test_files_dictionary import upload
 from test_flow import client as client
 from test_flow import configuration as configuration
-from test_flow import start, worker
+from test_flow import worker
 from test_identity import bearer, query, token
 
 from keystone.core.errors import ServiceError
@@ -25,11 +24,9 @@ pytestmark = pytest.mark.postgres
 def test_business_entry_is_required_but_transactional_admission_remains_available(client):
     runtime = client.app.state.runtime
     definition = next(iter(runtime.flow_definitions.values()))
-    runtime.flow_definitions = {definition.key: replace(definition, business_managed=True)}
-    assert client.get("/api/v1/flow-definitions").json()["items"][0]["business_managed"] is True
     file_id = upload(client).json()["id"]
-    blocked = start(client, file_id)
-    assert blocked.status_code == 403 and blocked.json()["code"] == "flow_business_entry_required"
+    assert client.get("/api/v1/flow-definitions").status_code == 404
+    assert client.post("/api/v1/flow-runs", json={}).status_code == 405
     assert query(client, lambda session: session.scalars(select(FlowRun))).all() == []
     personal = token(client, client.get("/api/v1/auth/me").json()["permissions"])
     identity = AccessContext(
@@ -57,7 +54,7 @@ def test_execution_guard_rechecks_business_facts_and_cannot_replace_revoked_pat(
     personal = token(client, client.get("/api/v1/auth/me").json()["permissions"])
     file_id = upload(client).json()["id"]
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         headers=bearer(personal["token"]),
         json={
             "definition_key": "document.review",
@@ -131,7 +128,7 @@ def test_worker_binds_services_with_its_admitted_runtime(client, tmp_path):
     code = f"""
 from pathlib import Path
 from keystone import composition
-from keystone.examples.document_review.contracts import PACKAGE
+from support.flow_fixture.contracts import PACKAGE
 composition.FLOW_PACKAGES = (PACKAGE,)
 def bind(runtime):
     Path({str(marker)!r}).write_text(runtime.worker_identity.worker_id)

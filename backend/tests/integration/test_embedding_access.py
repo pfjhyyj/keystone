@@ -79,7 +79,10 @@ def test_embedding_sdk_preserves_native_receipts_and_refuses_duplicate_send(
 ):
     ordinary = entry(client, channel(client, provider=provider, api_base=base))
     entry(client, {"id": ordinary["channel_id"]}, key="embed", operations=["text.embed"])
-    assert client.get("/api/v1/models?operation=text.embed").json()["items"][0]["key"] == "embed"
+    assert (
+        client.get("/api/v1/_test/model-options?operation=text.embed").json()["items"][0]["key"]
+        == "embed"
+    )
     assert client.get("/api/v1/model-entries").json()[0]["operations"] == ["text.generate"]
     calls, model, identifier = mock_embedding(monkeypatch), runtime(client), uuid4()
 

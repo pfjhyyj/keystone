@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import UUID
 
 from keystone.core.errors import ServiceError
+from keystone.platform.flow.schemas.artifacts import ImageResult
 from keystone.platform.flow.services.identity import ExecutionIdentity
 from keystone.platform.flow.services.resources import FlowResourceService
 
@@ -211,7 +212,7 @@ async def _workspace(run_id, *, max_bytes):
     resource = _resources(run_id)
     files = await resource.scoped_files()
     with files.transfer() as transfer:
-        async with _controlled_scope(run_id, permissions=("file:create",)):
+        async with _controlled_scope(run_id):
             async with transfer.workspace(max_bytes) as path:
                 state = [UUID(str(run_id)), asyncio.current_task(), path, max_bytes, True]
                 token = _workspaces.set((*_workspaces.get(), state))
@@ -264,12 +265,12 @@ async def _inputs(run_id):
 
 
 async def _read_file(run_id, identifier, *, max_bytes):
-    async with _controlled_scope(run_id, permissions=("file:content_read",)):
+    async with _controlled_scope(run_id):
         return await _resources(run_id).read_file(identifier, max_bytes=max_bytes)
 
 
 async def _upload(run_id, key, name, content, *, content_type, storage_key=None):
-    async with _controlled_scope(run_id, permissions=("file:create",)):
+    async with _controlled_scope(run_id):
         return await _resources(run_id).upload(
             key,
             name,
@@ -486,9 +487,7 @@ class FlowContext:
         request = ImageTaskRequest.model_validate(request)
         handle, tasks, selected, context = None, None, None, None
         try:
-            async with self.execution_scope(
-                permissions=("model:invoke", "file:create", "file:content_read")
-            ):
+            async with self.execution_scope(permissions=("model:invoke",)):
                 model, selected, identifier = await self._model(
                     role,
                     operation="image.generate",
@@ -513,7 +512,6 @@ class FlowContext:
         from keystone.platform.model_access.schemas.images import (
             ImageManifest,
             ImagePending,
-            ImageResult,
         )
         from keystone.platform.model_access.services.image_tasks import ImageTaskService
         from keystone.platform.model_access.services.runtime import settle
@@ -521,9 +519,7 @@ class FlowContext:
         identifier = UUID(str(invocation_id))
         tasks, selected, context = None, None, None
         try:
-            async with self.execution_scope(
-                permissions=("model:invoke", "file:create", "file:content_read")
-            ):
+            async with self.execution_scope(permissions=("model:invoke",)):
                 model, selected, _ = await self._model(
                     role, operation="image.generate", delivery="async"
                 )
@@ -617,9 +613,9 @@ class FlowContext:
         return await self._image_result(role, request, node_key=node_key, operation="image.edit")
 
     async def _image_result(self, role, request, *, node_key, operation):
-        from keystone.platform.model_access.schemas.images import ImageManifest, ImageResult
+        from keystone.platform.model_access.schemas.images import ImageManifest
 
-        permissions = ("model:invoke", "file:create", "file:content_read")
+        permissions = ("model:invoke",)
         async with self.execution_scope(permissions=permissions) as check:
             model, selected, identifier = await self._model(role, operation=operation)
             context = self._invocation_context(role, node_key=node_key)
@@ -671,7 +667,7 @@ class FlowContext:
         if isinstance(request, VisionRequest):
             request = request.model_dump(mode="json")
         request = VisionRequest.model_validate(request)
-        async with self.execution_scope(permissions=("model:invoke", "file:content_read")) as check:
+        async with self.execution_scope(permissions=("model:invoke",)) as check:
             model, selected, identifier = await self._model(role, operation="image.understand")
             images = await self._image_inputs(request.images)
             await check()

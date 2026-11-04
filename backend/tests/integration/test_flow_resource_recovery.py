@@ -40,7 +40,7 @@ def accept(client, monkeypatch, kind):
         entry(client, channel(client))
         bindings = {"review": "chat"}
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": definition.key,
             "request_key": "resource-recovery",

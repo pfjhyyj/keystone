@@ -1,6 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
 import { choose, more, watchWindowErrors } from './controls'
-import { testDirectMedia } from './models-media'
 
 test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through the console UI', async ({
   page,
@@ -115,16 +114,19 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
     await pricing.getByRole('button', { name: '保存价格', exact: true }).click()
     await expect(pricing).toBeHidden()
     await expect(modelRow.getByRole('button', { name: '自定义价格', exact: true })).toBeVisible()
-    await page.getByRole('tab', { name: '调用测试', exact: true }).click()
-    const probe = page.getByRole('region', { name: '真实调用', exact: true })
-    await probe.getByRole('button', { name: '刷新可用模型' }).click()
-    await choose(probe, '模型', `${provider}_chat`)
-    await probe.getByLabel('测试消息', { exact: true }).fill('验证渠道，不调用真实模型。')
-    await expect(probe.getByLabel('流式响应', { exact: true })).toHaveCount(0)
-    await probe.getByRole('button', { name: '发送真实请求', exact: true }).click()
-    await expect(probe.locator('pre')).toContainText('模拟渠道响应')
-    await expect(page.getByRole('region', { name: '调用记录与费用', exact: true })).toHaveCount(0)
-    await probe.getByLabel('测试消息', { exact: true }).fill('')
+    const identity = await (await page.request.get('/api/v1/auth/me')).json()
+    const response = await page.request.post('/api/v1/_test/generate-text', {
+      headers: {
+        Origin: 'http://127.0.0.1:5175',
+        'X-Keystone-Request': '1',
+        'X-CSRF-Token': identity.csrf_token,
+      },
+      data: {
+        model_key: `${provider}_chat`,
+        messages: [{ role: 'user', content: '验证业务调用' }],
+      },
+    })
+    expect(response.ok()).toBe(true)
   }
   await page.getByRole('tab', { name: '渠道配置', exact: true }).click()
   for (const provider of ['openrouter', 'newapi_prefix', 'newapi_other']) {
@@ -243,20 +245,33 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await page.unroute('**/api/v1/model-invocations/statistics?*')
   await page.setViewportSize({ width: 1440, height: 1000 })
 
-  await page.getByRole('link', { name: 'Flow 流程', exact: true }).click()
-  await page.getByRole('tab', { name: '流程目录', exact: true }).click()
-  const catalog = page.getByRole('region', { name: '流程目录', exact: true })
-  await expect(catalog.getByRole('row').filter({ hasText: 'document.review' })).toBeVisible()
-  await page.getByLabel('搜索流程', { exact: true }).fill('不存在的流程')
-  await expect(catalog).toContainText('没有匹配的流程')
-  await page.getByLabel('搜索流程', { exact: true }).fill('document.review')
-  await page.getByRole('button', { name: '发起流程', exact: true }).click()
-  dialog = page.getByRole('dialog')
-  const files = await (await page.request.get('/api/v1/files?limit=50')).json()
-  const source = files.find((file: { name: string }) => file.name === 'referenced.txt')
-  await dialog.getByLabel('流程输入 JSON').fill(JSON.stringify({ source_file_id: source.id }))
-  await choose(dialog, '审查模型', 'openrouter_chat')
-  await dialog.getByRole('button', { name: '提交流程', exact: true }).click()
+  const identity = await (await page.request.get('/api/v1/auth/me')).json()
+  const headers = {
+    Origin: 'http://127.0.0.1:5175',
+    'X-Keystone-Request': '1',
+    'X-CSRF-Token': identity.csrf_token,
+  }
+  const upload = await page.request.post(
+    '/api/v1/_test/materials?name=source.txt&expected_size=7',
+    {
+      headers,
+      data: Buffer.from('fixture'),
+    },
+  )
+  expect(upload.ok(), await upload.text()).toBe(true)
+  const source = await upload.json()
+  const accepted = await page.request.post('/api/v1/_test/review', {
+    headers,
+    data: {
+      definition_key: 'document.review',
+      request_key: 'browser-review',
+      input: { source_file_id: source.id },
+      model_bindings: { review: 'openrouter_chat' },
+    },
+  })
+  expect(accepted.status()).toBe(202)
+  await page.getByRole('link', { name: 'Flow 运行', exact: true }).click()
+  await page.getByRole('button', { name: '查看运行', exact: true }).click()
   dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('heading', { name: '运行详情', exact: true })).toBeVisible()
   await expect(dialog.locator('.detail-summary .el-tag')).toHaveText('已完成', { timeout: 35000 })
@@ -284,20 +299,13 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
   await page.setViewportSize({ width: 1440, height: 1000 })
   await dialog.getByRole('button', { name: '关闭对话框' }).click()
-  await page.getByRole('tab', { name: '运行记录', exact: true }).click()
   const runRows = page.getByRole('region', { name: '运行记录' }).locator('tbody tr')
   await expect(runRows).toHaveCount(1)
   const original = await runRows.first().locator('small').getAttribute('title')
-  await page.getByRole('tab', { name: '流程目录', exact: true }).click()
-  await page.getByRole('button', { name: '发起流程', exact: true }).click()
-  await page.getByRole('dialog').getByRole('button', { name: '提交流程', exact: true }).click()
-  await expect(
-    page.getByRole('dialog').getByRole('heading', { name: '运行详情', exact: true }),
-  ).toBeVisible()
-  await page.getByRole('dialog').getByRole('button', { name: '关闭对话框' }).click()
-  await page.getByRole('tab', { name: '运行记录', exact: true }).click()
-  await expect(runRows).toHaveCount(1)
-  expect(await runRows.first().locator('small').getAttribute('title')).toBe(original)
+  await page.screenshot({ path: testInfo.outputPath('flows-desktop.png'), fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.screenshot({ path: testInfo.outputPath('flows-mobile.png'), fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 1000 })
   await choose(page, '运行状态', '失败')
   await page.getByRole('button', { name: '查询流程', exact: true }).click()
   await expect(page.getByRole('region', { name: '运行记录' })).toContainText('暂无符合条件的运行')
@@ -318,7 +326,6 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await expect(page.getByRole('dialog')).toContainText('模拟审查已完成')
   await page.getByRole('dialog').getByRole('button', { name: '关闭对话框' }).click()
   await renameAndDeleteUnusedConfiguration(page)
-  await testDirectMedia(page)
   expect(errors).toEqual([])
 })
 

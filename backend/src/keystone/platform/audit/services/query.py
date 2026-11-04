@@ -1,5 +1,6 @@
 from sqlalchemy import select
 
+from keystone.core.errors import ServiceError
 from keystone.core.time_range import history_range
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.schemas import view
@@ -24,7 +25,9 @@ class AuditService:
         offset=0,
         limit=50,
     ):
-        async with self.identity.access("audit:read") as (session, _):
+        async with self.identity.access("audit:read") as (session, auth):
+            if not auth.administrator:
+                raise ServiceError(403, "administrator_required", "只有内置管理员可查询全局审计")
             since, until = await history_range(session, since, until, error_code="invalid_range")
             statement = select(AuditLog).where(
                 AuditLog.occurred_at >= since, AuditLog.occurred_at <= until

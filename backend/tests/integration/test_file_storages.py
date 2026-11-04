@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import update
 from support.storage_support import s3_endpoint
-from test_files_dictionary import clean, upload
+from test_files_dictionary import clean, stored_files, upload
 from test_files_dictionary import client as client
 from test_identity import bearer, query, token
 
@@ -181,7 +181,7 @@ def multi_client(client, s3):
 @pytest.mark.postgres
 def test_source_routing_independent_files_and_pinned_replays(multi_client, s3):
     client = multi_client
-    options = client.get("/api/v1/files/options").json()
+    options = client.get("/api/v1/_test/materials/options").json()
     assert options["storage_keys"] == ["local", "cloud"]
     assert "fixture-secret" not in str(options)
     assert upload(client, storage_key="unknown").json()["code"] == "storage_unknown"
@@ -199,14 +199,17 @@ def test_source_routing_independent_files_and_pinned_replays(multi_client, s3):
     assert oversized_declaration.json()["code"] == "file_size_mismatch"
     assert upload(client, key="new-default").json()["storage_key"] == "cloud"
     for file in (local, cloud):
-        assert client.get(f"/api/v1/files/{file['id']}/content").content == b"hello"
+        assert client.get(f"/api/v1/_test/materials/{file['id']}/content").content == b"hello"
         assert "object_key" not in file and "storage_fingerprint" not in file
-    headers = bearer(token(client, ["file:inspect"])["token"])
-    assert client.get(f"/api/v1/files/{cloud['id']}/content", headers=headers).status_code == 403
-    assert client.delete(f"/api/v1/files/{cloud['id']}").status_code == 202
+    headers = bearer(token(client, ["test_files.asset:inspect"])["token"])
+    assert (
+        client.get(f"/api/v1/_test/materials/{cloud['id']}/content", headers=headers).status_code
+        == 403
+    )
+    assert client.delete(f"/api/v1/_test/materials/{cloud['id']}").status_code == 202
     clean(client)
-    assert client.get(f"/api/v1/files/{cloud['id']}").json()["status"] == "deleted"
-    assert client.get(f"/api/v1/files/{local['id']}/content").content == b"hello"
+    assert client.get(f"/api/v1/_test/materials/{cloud['id']}").json()["status"] == "deleted"
+    assert client.get(f"/api/v1/_test/materials/{local['id']}/content").content == b"hello"
 
 
 @pytest.mark.postgres
@@ -214,15 +217,15 @@ def test_s3_unknown_write_retry_and_late_write_cleanup(multi_client, s3):
     client = multi_client
     s3.fail_put = True
     assert upload(client, storage_key="cloud").status_code == 503
-    failed = client.get("/api/v1/files").json()[0]
+    failed = stored_files(client)[0]
     assert failed["status"] == "failed" and s3.objects
     s3.fail_put = False
     assert upload(client, storage_key="cloud").json()["id"] == failed["id"]
     assert upload(client, b"other", storage_key="cloud").json()["code"] == "idempotency_conflict"
-    client.delete(f"/api/v1/files/{failed['id']}")
+    client.delete(f"/api/v1/_test/materials/{failed['id']}")
     s3.unavailable = True
     clean(client)
-    assert client.get(f"/api/v1/files/{failed['id']}").json()["status"] == "deleting"
+    assert client.get(f"/api/v1/_test/materials/{failed['id']}").json()["status"] == "deleting"
     s3.unavailable = False
     clean(client)
     assert not s3.objects
@@ -239,8 +242,7 @@ def test_s3_unknown_write_retry_and_late_write_cleanup(multi_client, s3):
     query(client, age)
     clean(client)
     assert not s3.objects
-    assert client.get(f"/api/v1/files/{failed['id']}").json()["status"] == "deleted"
-    assert client.get(f"/api/v1/files/{failed['id']}/grants").json() == []
+    assert client.get(f"/api/v1/_test/materials/{failed['id']}").json()["status"] == "deleted"
 
 
 @pytest.mark.postgres
@@ -249,11 +251,11 @@ def test_missing_or_retargeted_source_never_uses_default(multi_client, s3):
     file = upload(client, storage_key="cloud").json()
     registry = client.app.state.runtime.storage
     source = registry.sources.pop("cloud")
-    assert client.get(f"/api/v1/files/{file['id']}/content").status_code == 503
+    assert client.get(f"/api/v1/_test/materials/{file['id']}/content").status_code == 503
     registry.sources["cloud"] = Storage(source.config.model_copy(update={"prefix": "other"}))
     calls = len(s3.calls)
-    assert client.get(f"/api/v1/files/{file['id']}/content").status_code == 503
+    assert client.get(f"/api/v1/_test/materials/{file['id']}/content").status_code == 503
     assert upload(client, storage_key="cloud").status_code == 503
-    client.delete(f"/api/v1/files/{file['id']}")
+    client.delete(f"/api/v1/_test/materials/{file['id']}")
     clean(client)
     assert len(s3.calls) == calls and s3.objects

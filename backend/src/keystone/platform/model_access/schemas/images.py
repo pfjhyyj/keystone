@@ -9,7 +9,6 @@ from pydantic import AwareDatetime, Field, model_validator
 
 from keystone.core.schemas import Input
 from keystone.platform.model_access.schemas.invocations import TextRequest
-from keystone.platform.model_access.schemas.types import Key
 
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 MAX_INPUT_IMAGE_BYTES = 8 * 1024 * 1024
@@ -40,27 +39,6 @@ class ImageGenerateRequest(Input):
 
 class ImageEditRequest(ImageGenerateRequest):
     images: list[ImageInput] = Field(min_length=1, max_length=9)
-
-
-class ImageGenerateInvoke(ImageGenerateRequest):
-    model_key: Key
-
-
-class ImageEditInvoke(ImageEditRequest):
-    model_key: Key
-
-
-class VisionInvoke(VisionRequest):
-    model_key: Key
-
-
-class ImageFile(Input):
-    file_id: UUID
-
-
-class ImageResult(Input):
-    invocation_id: UUID
-    files: list[ImageFile] = Field(min_length=1, max_length=2)
 
 
 class ImageOutput(Input):

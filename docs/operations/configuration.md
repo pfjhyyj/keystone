@@ -50,6 +50,7 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 | `file_temp_bytes` | `KEYSTONE_FILE_TEMP_BYTES` | 默认 64 GiB；每槽临时文件上限为总额除以槽数，同时不能超过 file_max_bytes |
 | `file_min_free_bytes` | `KEYSTONE_FILE_MIN_FREE_BYTES` | 默认 1 GiB，范围 0–1 TiB；协调卷、临时卷及本地正式存储各自保留的最低可用空间 |
 | `file_upload_timeout_seconds` | `KEYSTONE_FILE_UPLOAD_TIMEOUT_SECONDS` | 默认 3600 秒，范围 1–86400；包含 API 槽位排队、上传接收与确认的总期限 |
+| `file_unreferenced_grace_seconds` | `KEYSTONE_FILE_UNREFERENCED_GRACE_SECONDS` | 默认未设置、不回收无引用 active 文件；显式设为 1–31536000 秒前，须核对调用方及存量引用；completed_at 未知的文件始终跳过 |
 | `flow_worker_concurrency` | `KEYSTONE_FLOW_WORKER_CONCURRENCY` | 默认 2，范围 1–16；单 Worker 的持久队列并发 |
 | `flow_global_concurrency` | `KEYSTONE_FLOW_GLOBAL_CONCURRENCY` | 默认 4，范围 1–64；全部 Worker 的 Flow 总并发，不小于单进程预算 |
 | `worker_id` | `KEYSTONE_WORKER_ID` | 默认 `keystone-worker`；每个 Worker 单独指定合法固定身份，重启保留；探针使用同一身份，未退役名额由数据库限制为 4 |
@@ -70,7 +71,7 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 
 临时副本在整个上下文中占槽，处理期间再上传文件会占第二个槽，因此应按业务并发留出余量。普通上传和 Worker 默认满载返回 `503 file_transfer_busy`；HTTP 文件内容读取最多等待 3 秒，取得槽位后重新校验当前身份、文件状态及授权，客户端断开会取消等待。空间不足或系统报告磁盘/配额已满返回 `507 file_capacity_full`，容量账本不可用返回 `503 file_capacity_unavailable`，容量锁等待超过 5 秒返回 `503 file_capacity_busy`；每槽配额不足返回 `413 file_temporary_limit`。预留只协调本平台进程，不能阻止其他程序占用磁盘，也不为远端 S3 容量作保证。
 
-API/Worker 必须保持相同协调目录、槽位数、临时预算、磁盘保底和大小限制；升级或调整配置前停止全部旧进程，不允许不支持容量预留的旧进程混跑。不要手动清理 `.capacity`、`.locks` 或受管 `files`。字节可放 filesystem/NAS，协调目录仍须是同宿主可靠本地卷。当前 Nginx 文件路由为 16 GiB 上限、3600 秒上游期限，关闭请求/响应完整缓存；放大文件和时间限制时同时调整代理。上限是配置边界，实际 NAS 吞吐及容量须部署时实测。
+API/Worker 必须保持相同协调目录、槽位数、临时预算、磁盘保底和大小限制；升级或调整配置前停止全部旧进程，不允许不支持容量预留的旧进程混跑。不要手动清理 `.capacity`、`.locks` 或受管 `files`。字节可放 filesystem/NAS，协调目录仍须是同宿主可靠本地卷。默认 Nginx API 正文上限为 16 MiB。接入大文件业务时，给实际上传/内容路由单独设置正文上限、传输期限及 `proxy_request_buffering off` / `proxy_buffering off`，与后端限制一致；不放大全部 JSON API 的上限。上限是配置边界，实际 NAS 吞吐及容量须部署时实测。
 
 ## 3. 配置变更
 
@@ -119,7 +120,7 @@ export KEYSTONE_FILE_STORAGES__CLOUD__SECRET_KEY='example-secret'
 
 S3 要求 endpoint、bucket 和凭据，region 默认 `us-east-1`；prefix 可选，不能含路径穿越。bucket 需预先存在；使用 path-style 请求，不读取主机默认 AWS 凭据或 EC2 metadata。需要前缀对象的读写删除权限；就绪探针调用 OpenDAL 连通性检查，按所用版本可能还需要前缀的 ListBucket 权限。`keystone init` 已包含协调目录和 filesystem 源初始化，无需增加初始化步骤。
 
-`POST /api/v1/files` 可传 `storage_key=cloud`；省略时使用默认源。切换默认源只影响新请求，已有幂等请求仍定位原源。已有文件使用中的源名称和位置身份必须保留；更换 bucket、endpoint、prefix 或 region 时应创建新源并迁移业务数据，凭据轮换不改变存储身份。删除源配置后其历史文件不可读、不可清理，不会回退其他源。
+业务上传接口可使用 Upload 的 `storage_key=cloud`；省略时使用默认源。切换默认源只影响新请求，已有幂等请求仍定位原源。已有文件使用中的源名称和位置身份必须保留；更换 bucket、endpoint、prefix 或 region 时应创建新源并迁移业务数据，凭据轮换不改变存储身份。删除源配置后其历史文件不可读、不可清理，不会回退其他源。
 
 协调目录和内容目录分别配置，可共用路径；API 与 Worker 须共享同一宿主协调卷，不支持 NFS 或多宿主锁。依赖 Compose 不管理应用文件。无需 Redis 或模型发送模式开关。
 

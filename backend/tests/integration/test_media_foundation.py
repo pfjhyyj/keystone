@@ -12,20 +12,18 @@ from fastapi import Request
 from sqlalchemy import func, select, update
 from starlette.requests import ClientDisconnect
 from support.local_media_stub import definition
-from test_files_dictionary import clean, upload
+from test_files_dictionary import clean, reference_rows, stored_content, stored_files, upload
 from test_files_dictionary import client as client
 from test_flow import wait_run, worker
-from test_identity import bearer, query, role, token
+from test_identity import bearer, query, token
 
+from keystone.core.content_response import ContentResponse
 from keystone.core.errors import ServiceError
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.dictionary.models import Dictionary
-from keystone.platform.files.controllers.streaming import ContentResponse
-from keystone.platform.files.models import File, FileGrant, FileReference
-from keystone.platform.files.schemas import Grant
+from keystone.platform.files.models import File, FileReference
 from keystone.platform.files.services.files import FileService
-from keystone.platform.files.services.grants import FileGrantService
 from keystone.platform.files.services.references import FileReferences
 from keystone.platform.flow.adapters.dbos import Engine
 from keystone.platform.flow.models import FlowRun
@@ -55,7 +53,7 @@ def media(client, monkeypatch):
 
 def start(client, identifier, key="local", **inputs):
     return client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": definition.key,
             "request_key": key,
@@ -66,7 +64,7 @@ def start(client, identifier, key="local", **inputs):
 
 def test_head_range_empty_corruption_and_current_authorization(client, monkeypatch):
     file = upload(client, b"0123456789", content_type="video/mp4").json()
-    path = f"/api/v1/files/{file['id']}/content"
+    path = f"/api/v1/_test/materials/{file['id']}/content"
     head = client.head(path)
     assert head.status_code == 200 and not head.content
     assert head.headers["content-length"] == "10"
@@ -93,9 +91,11 @@ def test_head_range_empty_corruption_and_current_authorization(client, monkeypat
     )
     assert client.head(path, headers={"Range": "bytes=0-1"}).headers["content-length"] == "10"
     empty = upload(client, b"", key="empty").json()["id"]
-    assert client.get(f"/api/v1/files/{empty}/content").content == b""
+    assert client.get(f"/api/v1/_test/materials/{empty}/content").content == b""
     assert (
-        client.get(f"/api/v1/files/{empty}/content", headers={"Range": "bytes=0-"}).status_code
+        client.get(
+            f"/api/v1/_test/materials/{empty}/content", headers={"Range": "bytes=0-"}
+        ).status_code
         == 416
     )
 
@@ -123,20 +123,12 @@ def test_head_range_empty_corruption_and_current_authorization(client, monkeypat
     assert scans == 1
 
     valid = upload(client, key="revoked").json()
-    only_inspect = bearer(token(client, ["file:inspect"])["token"])
-    url = f"/api/v1/files/{valid['id']}/content"
+    only_inspect = bearer(token(client, ["test_files.asset:inspect"])["token"])
+    url = f"/api/v1/_test/materials/{valid['id']}/content"
     assert client.head(url, headers=only_inspect).status_code == 403
-    grant = next(
-        g
-        for g in client.get(f"/api/v1/files/{valid['id']}/grants").json()
-        if g["action"] == "content_read"
-    )
-    client.delete(f"/api/v1/files/{valid['id']}/grants/{grant['id']}")
-    assert client.get(url, headers={"Range": "bytes=0-1"}).status_code == 404
-    assert client.head(url).status_code == 404
 
 
-def test_stream_disconnect_shared_readers_and_delete_coordination(client):
+def test_stream_disconnect_and_readers_do_not_lock_out_cleanup(client):
     identifier = upload(client).json()["id"]
     runtime = client.app.state.runtime
 
@@ -153,23 +145,21 @@ def test_stream_disconnect_shared_readers_and_delete_coordination(client):
             await ContentResponse(service.open_content(UUID(identifier)), request)(
                 scope, request.receive, send
             )
-        # Two shared readers coexist, and no exclusive writer/cleaner can acquire their lease.
+        # Reads coexist without holding an object lease. Cleanup may proceed concurrently.
         async with service.open_content(UUID(identifier)), service.open_content(UUID(identifier)):
-            with pytest.raises(ServiceError) as busy:
-                with runtime.storage.lease(UUID(identifier)):
-                    pytest.fail("Writer entered while reading")
-            assert busy.value.code == "file_busy"
+            with runtime.storage.lease(UUID(identifier)):
+                pass
         return {"closed": True}
 
     assert client.get("/_acceptance/disconnect").json() == {"closed": True}
     with ExitStack() as stack:
         for _ in range(runtime.settings.file_transfer_slots):
             stack.enter_context(runtime.storage.transfers.slot())
-        response = client.get(f"/api/v1/files/{identifier}/content")
+        response = client.get(f"/api/v1/_test/materials/{identifier}/content")
         assert response.status_code == 503 and response.json()["code"] == "file_transfer_busy"
-    assert client.delete(f"/api/v1/files/{identifier}").status_code == 202
+    assert client.delete(f"/api/v1/_test/materials/{identifier}").status_code == 202
     clean(client)
-    assert client.get(f"/api/v1/files/{identifier}").json()["status"] == "deleted"
+    assert client.get(f"/api/v1/_test/materials/{identifier}").json()["status"] == "deleted"
 
 
 def test_disconnect_before_headers_cancels_integrity_scan(client, monkeypatch):
@@ -235,7 +225,6 @@ def test_composed_transaction_rollback_idempotency_and_audit(
 ):
     client = media
     identifier = upload(client).json()["id"]
-    target_role = role(client, "test-readers", ["file:content_read"])["id"]
     credential_id = None
     if credential == "pat":
         issued = token(
@@ -243,10 +232,10 @@ def test_composed_transaction_rollback_idempotency_and_audit(
             [
                 "flow:start",
                 "flow:read",
-                "file:manage",
-                "file:create",
-                "file:inspect",
-                "file:content_read",
+                "test_files.asset:manage",
+                "test_files.asset:create",
+                "test_files.asset:inspect",
+                "test_files.asset:content_read",
             ],
         )
         client.headers.update(bearer(issued["token"]))
@@ -272,12 +261,6 @@ def test_composed_transaction_rollback_idempotency_and_audit(
                     record.id,
                     {"key": record.key, "name": record.name},
                 )
-            await FileGrantService(context).grant_in_transaction(
-                session,
-                auth,
-                UUID(identifier),
-                Grant(subject_type="role", role_id=UUID(target_role), action="content_read"),
-            )
             await FileReferences(session, auth, "acceptance").replace(
                 str(record.id), "source", [identifier]
             )
@@ -310,7 +293,7 @@ def test_composed_transaction_rollback_idempotency_and_audit(
         with monkeypatch.context() as patch:
             patch.setattr(audit, "record", unavailable)
             assert client.post("/_acceptance/compose").status_code == 500
-    for model in (Dictionary, FlowRun, FileReference):
+    for model in (Dictionary, FlowRun):
         assert (
             query(
                 client,
@@ -321,8 +304,10 @@ def test_composed_transaction_rollback_idempotency_and_audit(
             == 0
         )
     assert (
-        query(client, lambda session: session.scalar(select(func.count()).select_from(FileGrant)))
-        == 3
+        query(
+            client, lambda session: session.scalar(select(func.count()).select_from(FileReference))
+        )
+        == 1
     )
     assert (
         query(
@@ -334,8 +319,6 @@ def test_composed_transaction_rollback_idempotency_and_audit(
                     AuditLog.action.in_(
                         [
                             "flow.start",
-                            "file.grant",
-                            "file.reference",
                             "dictionary.definition.create",
                         ]
                     ),
@@ -423,9 +406,9 @@ def test_model_free_worker_materialization_heartbeat_cancel_and_restart(media, t
         )
         if not cancelled:
             result_id = done["result"]["file_id"]
-            response = client.get(f"/api/v1/files/{result_id}/content")
-            assert hashlib.sha256(response.content).digest() == hashlib.sha256(data).digest()
-            assert len(client.get(f"/api/v1/files/{result_id}/references").json()) == 2
+            content = stored_content(client, result_id)
+            assert hashlib.sha256(content).digest() == hashlib.sha256(data).digest()
+            assert len(reference_rows(client, result_id)) == 2
         directory = client.app.state.runtime.settings.file_coordination_root / ".transfers"
         deadline = time.monotonic() + 5
         while list(directory.iterdir()):
@@ -476,7 +459,7 @@ def test_upload_waiting_for_api_slot_obeys_timeout(client):
     client.app.state.upload_slots = asyncio.Semaphore(0)
     result = upload(client)
     assert result.status_code == 408 and result.json()["code"] == "upload_timeout"
-    assert client.get("/api/v1/files").json() == []
+    assert stored_files(client) == []
     client.app.state.upload_slots = asyncio.Semaphore(1)
     assert upload(client).status_code == 201
 
@@ -504,9 +487,9 @@ def test_timeout_during_final_write_keeps_retryable_file(client, monkeypatch):
         finally:
             release.set()
         assert pending.result().status_code == 408
-    file = client.get("/api/v1/files").json()[0]
+    file = stored_files(client)[0]
     assert file["status"] == "failed"
-    assert client.get(f"/api/v1/files/{file['id']}/content").status_code == 409
+    assert client.get(f"/api/v1/_test/materials/{file['id']}/content").status_code == 404
     assert not list((runtime.settings.file_coordination_root / ".transfers").iterdir())
     monkeypatch.setattr(storage, "write", original)
     retried = upload(client).json()

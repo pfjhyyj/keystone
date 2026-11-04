@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ConfigDict, Field, field_serializer
+from support.business_catalog import DECLARATION
 from support.flow_fixture.contracts import definition
 from support.flow_packages import snapshot_for
 from support.multi_role_flow import PACKAGE
@@ -24,6 +25,8 @@ from keystone.platform.flow.schemas.files import compile_file_paths, extract_fil
 from keystone.platform.flow.schemas.packages import build_packages
 from keystone.platform.flow.schemas.snapshots import public_snapshot, read_snapshot
 from keystone.platform.flow.services.identity import ExecutionIdentity
+
+PERMISSIONS = PLATFORM_CATALOG.permissions | DECLARATION.permissions
 
 
 def test_invalid_flow_declarations_fail_during_assembly():
@@ -39,7 +42,7 @@ def test_invalid_flow_declarations_fail_during_assembly():
         ({"file_fields": ("source_file_id.child",)}, "file paths"),
     ):
         with pytest.raises(ValueError, match=message):
-            build_definitions((replace(definition, **changes),), PLATFORM_CATALOG.permissions)
+            build_definitions((replace(definition, **changes),), PERMISSIONS)
 
 
 class Attachments(Input):
@@ -66,7 +69,7 @@ def test_file_paths_reject_wrong_types_and_unsupported_traversal():
             invalid = replace(
                 definition, input_model=FileInput, model_roles=(), file_fields=(path,)
             )
-            build_definitions((invalid,), PLATFORM_CATALOG.permissions)
+            build_definitions((invalid,), PERMISSIONS)
 
 
 def test_nested_nullable_files_and_terminal_lists_match_extraction():
@@ -79,7 +82,7 @@ def test_nested_nullable_files_and_terminal_lists_match_extraction():
         file_fields=paths,
         output_file_fields=paths,
     )
-    build_definitions((valid,), PLATFORM_CATALOG.permissions)
+    build_definitions((valid,), PERMISSIONS)
     first, second = uuid4(), uuid4()
     data = FileInput(
         attachments=Attachments(primary=first, others=[first, second]), count=0, rows=[], mixed="ok"
@@ -111,7 +114,7 @@ def test_output_schema_matches_serialization_and_field_names_everywhere():
             return str(value)
 
     flow = replace(definition, output_model=Output)
-    build_definitions((flow,), PLATFORM_CATALOG.permissions)
+    build_definitions((flow,), PERMISSIONS)
     identifier = uuid4()
     output = Output.model_validate({"total": 7, "reportFile": identifier}).model_dump(
         mode="json", by_alias=False
@@ -253,29 +256,8 @@ async def test_execution_version_is_queried_again_at_each_authorization(monkeypa
     assert authorize.await_count == 1
 
 
-async def test_flow_directory_uses_its_application_version_source():
-    from contextlib import asynccontextmanager
-    from dataclasses import replace
-
-    from keystone.bootstrap import build_runtime
-    from keystone.core.config import Settings
-
-    runtime = build_runtime(Settings(config_file=None, database_url=None))
-    other = replace(runtime, execution_version=lambda: "another-application")
-
-    @asynccontextmanager
-    async def access(*args):
-        yield None, SimpleNamespace(permissions=set())
-
-    identity = SimpleNamespace(settings=runtime.settings, access=access)
-    first = await runtime.flow_service(identity).definitions()
-    second = await other.flow_service(identity).definitions()
-    assert first["execution_version"] == runtime.execution_version()
-    assert second["execution_version"] == "another-application"
-
-
 def test_explicit_package_and_roles_are_validated_and_frozen():
-    definitions, owners = build_packages((PACKAGE,), PLATFORM_CATALOG.permissions)
+    definitions, owners = build_packages((PACKAGE,), PERMISSIONS)
     assert owners[PACKAGE.definitions[0].key] == PACKAGE.key
     with pytest.raises(TypeError):
         definitions["other"] = definition
@@ -287,7 +269,7 @@ def test_explicit_package_and_roles_are_validated_and_frozen():
     with pytest.raises(ValueError, match="Duplicate"):
         replace(definition, model_roles=(ModelRole("review", "A"), ModelRole("review", "B")))
     with pytest.raises(ValueError):
-        build_packages((PACKAGE, PACKAGE), PLATFORM_CATALOG.permissions)
+        build_packages((PACKAGE, PACKAGE), PERMISSIONS)
 
 
 def test_array_file_paths_aliases_nulls_overlap_and_complexity():

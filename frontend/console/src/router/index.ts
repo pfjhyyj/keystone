@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type Router, type RouterHistory } from 'vue-router'
 import { h } from 'vue'
-import { ensureSession, identity, refreshSession } from '../stores/session'
+import { can, canReadAudit, ensureSession, identity, refreshSession } from '../stores/session'
 
 export const navigation = [
   { path: '/', label: '管理总览', permissions: [] },
@@ -8,20 +8,19 @@ export const navigation = [
   { path: '/users', label: '用户管理', permissions: ['user:read'] },
   { path: '/roles', label: '角色管理', permissions: ['role:read'] },
   { path: '/audit', label: '操作审计', permissions: ['audit:read'] },
-  {
-    path: '/files',
-    label: '文件库',
-    permissions: ['file:create', 'file:inspect', 'file:manage', 'file:content_read'],
-  },
   { path: '/dictionary', label: '业务字典', permissions: ['dictionary:read'] },
   {
     path: '/models',
     label: '模型接入',
-    permissions: ['model:invoke', 'model:manage'],
+    permissions: ['model:manage'],
   },
   { path: '/model-usage', label: '用量与费用', permissions: ['model_invocation:read'] },
-  { path: '/flows', label: 'Flow 流程', permissions: ['flow:start', 'flow:read'] },
+  { path: '/flows', label: 'Flow 运行', permissions: ['flow:read'] },
 ]
+export function canNavigate(item: (typeof navigation)[number]) {
+  if (item.path === '/audit') return canReadAudit()
+  return !item.permissions.length || item.permissions.some(can)
+}
 export function loginDestination(value: unknown, router: Router) {
   if (
     typeof value !== 'string' ||
@@ -46,7 +45,6 @@ export function makeRouter(history: RouterHistory = createWebHistory(import.meta
       { path: '/users', component: () => import('../views/users/UsersView.vue') },
       { path: '/roles', component: () => import('../views/roles/RolesView.vue') },
       { path: '/audit', component: () => import('../views/audit/AuditView.vue') },
-      { path: '/files', component: () => import('../views/files/FilesView.vue') },
       { path: '/dictionary', component: () => import('../views/dictionary/DictionaryView.vue') },
       { path: '/models', component: () => import('../views/models/ModelsView.vue') },
       { path: '/model-usage', component: () => import('../views/usage/UsageView.vue') },

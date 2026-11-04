@@ -29,7 +29,11 @@ definition = FlowDefinition(
     input_model=Sources,
     output_model=Reports,
     entrypoint="test.multi_role.run",
-    required_permissions=("model:invoke", "file:create", "file:content_read"),
+    required_permissions=(
+        "model:invoke",
+        "test_files.asset:create",
+        "test_files.asset:content_read",
+    ),
     model_roles=(ModelRole("analyze", "分析"), ModelRole("review", "复核")),
     file_fields=("documents.*.file_id",),
     output_file_fields=("reports.*.file_id",),

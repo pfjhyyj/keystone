@@ -39,6 +39,7 @@ def config_digest(settings):
         "file_temp_bytes",
         "file_min_free_bytes",
         "file_upload_timeout_seconds",
+        "file_unreferenced_grace_seconds",
         "history_cleanup_enabled",
         "session_retention_days",
         "pat_retention_days",

@@ -18,8 +18,8 @@ try {
   await expect(page.getByRole('heading', { name: '模型接入', exact: true })).toBeVisible()
   await page.reload()
   await expect(page.getByRole('heading', { name: '模型接入', exact: true })).toBeVisible()
-  await page.getByRole('link', { name: 'Flow 流程', exact: true }).click()
-  await expect(page.getByRole('button', { name: '发起流程', exact: true })).toBeVisible()
+  await page.getByRole('link', { name: 'Flow 运行', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Flow 运行', exact: true })).toBeVisible()
   await page.screenshot({ path: resolve(directory, 'deployed-console.png'), fullPage: true })
   expect(errors).toEqual([])
 } finally {

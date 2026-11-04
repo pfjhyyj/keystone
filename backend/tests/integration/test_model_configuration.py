@@ -75,7 +75,7 @@ def test_rename_keeps_original_mapping_credentials_and_call_history(client):
         "provider",
     ):
         assert getattr(old_channel, field) == getattr(new_channel, field)
-    assert client.get("/api/v1/models").json()["items"][0]["name"] == "常用文本模型"
+    assert client.get("/api/v1/_test/model-options").json()["items"][0]["name"] == "常用文本模型"
     assert client.get(f"/api/v1/model-invocations/{call}").json()["model_entry_id"] == e["id"]
     for path in (f"model-entries/{e['id']}", f"model-channels/{c['id']}"):
         response = client.delete("/api/v1/" + path)
@@ -95,7 +95,7 @@ def test_flow_reference_blocks_delete_before_any_call_including_original_channel
     c = channel(client)
     e = entry(client, c, operations=["text.generate", "text.structured"])
     result = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": definition.key,
             "request_key": str(uuid4()),
@@ -201,7 +201,7 @@ def test_binding_and_deletion_serialize_on_the_same_entry_lock(client, monkeypat
 
     def start():
         return client.post(
-            "/api/v1/flow-runs",
+            "/api/v1/_test/review",
             json={
                 "definition_key": definition.key,
                 "request_key": str(uuid4()),

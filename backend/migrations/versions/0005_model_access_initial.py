@@ -22,6 +22,7 @@ def upgrade():
         sa.Column("api_base", sa.String(length=512), nullable=False),
         sa.Column("api_key_encrypted", sa.Text(), nullable=True),
         sa.Column("billing_api_key_encrypted", sa.Text(), nullable=True),
+        sa.Column("workspace_id", sa.String(63), nullable=True),
         sa.Column("upstream_account_ref", sa.String(length=128), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False),
         sa.Column("balance_snapshot", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
@@ -52,8 +53,14 @@ def upgrade():
             name="channel_balance_status",
         ),
         sa.CheckConstraint(
-            "provider IN ('deepseek','openrouter','aliyun_bailian','newapi','openlux','yunwu')",
+            "provider IN ('deepseek','openrouter','aliyun_bailian',"
+            "'newapi','openlux','yunwu','volcengine')",
             name="channel_provider",
+        ),
+        sa.CheckConstraint(
+            "workspace_id IS NULL OR (provider = 'aliyun_bailian' "
+            "AND workspace_id ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')",
+            name="channel_workspace",
         ),
         sa.PrimaryKeyConstraint("id"),
         schema="keystone",
@@ -78,6 +85,13 @@ def upgrade():
             server_default=sa.text("'[\"text.generate\"]'::jsonb"),
             nullable=False,
         ),
+        sa.Column(
+            "pricing",
+            postgresql.JSONB(),
+            nullable=False,
+            server_default=sa.text('\'{"mode":"inherit","rules":[]}\'::jsonb'),
+        ),
+        sa.Column("pricing_revision", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("is_active", sa.Boolean(), nullable=False),
         sa.Column(
             "created_at",
@@ -96,6 +110,11 @@ def upgrade():
         sa.CheckConstraint(
             "jsonb_typeof(operations) = 'array' AND operations <> '[]'::jsonb",
             name="model_entry_operations",
+        ),
+        sa.CheckConstraint("pricing_revision >= 0", name="model_entry_pricing_revision"),
+        sa.CheckConstraint(
+            "jsonb_typeof(pricing) = 'object' AND octet_length(pricing::text) <= 262144",
+            name="model_entry_pricing",
         ),
         sa.ForeignKeyConstraint(
             ["channel_id"],
@@ -141,6 +160,14 @@ def upgrade():
         sa.Column("cost_amount", sa.Numeric(precision=38, scale=18), nullable=True),
         sa.Column("cost_unit", sa.String(length=32), nullable=True),
         sa.Column("cost_source", sa.String(length=16), nullable=False),
+        sa.Column("estimate_snapshot", postgresql.JSONB()),
+        sa.Column("estimate_facts", postgresql.JSONB()),
+        sa.Column("estimate_status", sa.String(16), nullable=False, server_default="unavailable"),
+        sa.Column("estimate_amount", sa.Numeric(38, 18)),
+        sa.Column("estimate_currency", sa.String(3)),
+        sa.Column("estimate_reason", sa.String(64), server_default="legacy_no_snapshot"),
+        sa.Column("estimate_detail", postgresql.JSONB()),
+        sa.Column("estimate_checked_at", sa.DateTime(timezone=True)),
         sa.Column("cost_note", sa.String(length=100), nullable=True),
         sa.Column("error_code", sa.String(length=64), nullable=True),
         sa.Column(
@@ -199,6 +226,32 @@ def upgrade():
             "(worker_id IS NOT NULL AND worker_instance_id IS NOT NULL "
             "AND execution_version IS NOT NULL)",
             name="invocation_worker_owner",
+        ),
+        sa.CheckConstraint(
+            "estimate_status IN ('pending','estimated','partial','unavailable','invalid')",
+            name="invocation_estimate_status",
+        ),
+        sa.CheckConstraint(
+            "(estimate_status = 'estimated' AND estimate_amount IS NOT NULL "
+            "AND estimate_amount >= 0 AND estimate_amount < 1e20 "
+            "AND estimate_currency IS NOT NULL) OR "
+            "(estimate_status <> 'estimated' AND estimate_amount IS NULL)",
+            name="invocation_estimate_amount",
+        ),
+        sa.CheckConstraint(
+            "estimate_snapshot IS NULL OR (jsonb_typeof(estimate_snapshot) = 'object' "
+            "AND octet_length(estimate_snapshot::text) <= 24576)",
+            name="invocation_estimate_snapshot",
+        ),
+        sa.CheckConstraint(
+            "estimate_facts IS NULL OR (jsonb_typeof(estimate_facts) = 'object' "
+            "AND octet_length(estimate_facts::text) <= 8192)",
+            name="invocation_estimate_facts",
+        ),
+        sa.CheckConstraint(
+            "estimate_detail IS NULL OR (jsonb_typeof(estimate_detail) = 'object' "
+            "AND octet_length(estimate_detail::text) <= 16384)",
+            name="invocation_estimate_detail",
         ),
         sa.ForeignKeyConstraint(
             ["channel_id"],

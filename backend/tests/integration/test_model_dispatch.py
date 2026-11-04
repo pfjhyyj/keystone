@@ -104,7 +104,7 @@ def test_429_without_receipt_blocks_api_and_a_new_real_worker(client, monkeypatc
 
     install_package(client, monkeypatch, PACKAGE)
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": definition.key,
             "request_key": "cooled-worker",
@@ -249,7 +249,7 @@ main()
 
     def start(key):
         response = client.post(
-            "/api/v1/flow-runs",
+            "/api/v1/_test/review",
             json={
                 "definition_key": definition.key,
                 "request_key": key,

@@ -70,7 +70,7 @@ async def check_database(settings: Settings) -> bool:
         logging.getLogger(__name__).info("database_check %s", result["checks"])
         return result["status"] == "ready"
     finally:
-        await runtime.database.close()
+        await runtime.close()
 
 
 async def init_admin(settings, data):
@@ -81,7 +81,7 @@ async def init_admin(settings, data):
         identifier = await initialize_admin(runtime.database, Passwords(), data)
         logging.getLogger(__name__).info("administrator_initialized user_id=%s", identifier)
     finally:
-        await runtime.database.close()
+        await runtime.close()
 
 
 async def ensure_admin(settings, *, username="admin", display_name="管理员", non_interactive=False):
@@ -223,9 +223,7 @@ def main() -> None:
                         raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
                     return await runtime.history_retention().execute(apply=args.apply)
                 finally:
-                    if runtime.flow_engine:
-                        await runtime.flow_engine.close()
-                    await runtime.database.close()
+                    await runtime.close()
 
             print(json.dumps(run_async(prune()), ensure_ascii=False))
             return

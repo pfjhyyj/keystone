@@ -78,7 +78,7 @@ def test_actual_generated_count_and_effective_sdk_parameters(
             client, model_stub.image_bytes(), content_type="image/png", name="ref.png"
         ).json()
         body["images"] = [{"file_id": image["id"]}]
-    path = "/api/v1/models/images/" + ("generate" if operation == "image.generate" else "edit")
+    path = "/api/v1/_test/" + ("generate-image" if operation == "image.generate" else "edit-image")
     response = client.post(path, json=body)
     assert response.status_code == 200, response.text
     row = stored(client, response.json()["invocation_id"])
@@ -113,7 +113,7 @@ def test_bad_base64_keeps_confirmed_upstream_generation_and_separate_actual_fee(
         ),
     )
     response = client.post(
-        "/api/v1/models/images/generate", json={"model_key": "chat", "prompt": "test"}
+        "/api/v1/_test/generate-image", json={"model_key": "chat", "prompt": "test"}
     )
     assert response.status_code == 502
     row = client.get("/api/v1/model-invocations").json()[0]
@@ -129,7 +129,7 @@ def test_vision_prices_reported_tokens_without_guessing_picture_token_count(clie
         client, model_stub.image_bytes(), content_type="image/png", name="ref.png"
     ).json()
     response = client.post(
-        "/api/v1/models/vision",
+        "/api/v1/_test/understand-image",
         json={
             "model_key": "chat",
             "messages": [{"role": "user", "content": "describe"}],

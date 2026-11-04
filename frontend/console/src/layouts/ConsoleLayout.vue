@@ -6,7 +6,6 @@ import {
   Coin,
   Collection,
   Document,
-  Files,
   Fold,
   Grid,
   Key,
@@ -26,7 +25,7 @@ import {
   refreshSession,
   SESSION_EVENT,
 } from '../stores/session'
-import { loginDestination, navigation } from '../router'
+import { canNavigate, loginDestination, navigation } from '../router'
 const route = useRoute(),
   router = useRouter()
 const collapsed = ref(false),
@@ -36,7 +35,7 @@ const collapsed = ref(false),
 const groups = [
   { title: '工作台', paths: ['/'] },
   { title: '运行与消费', paths: ['/platform', '/model-usage', '/models', '/flows'] },
-  { title: '资源', paths: ['/files', '/dictionary'] },
+  { title: '基础配置', paths: ['/dictionary'] },
   { title: '访问与审计', paths: ['/users', '/roles', '/audit'] },
 ]
 const icons = {
@@ -45,15 +44,12 @@ const icons = {
   '/users': User,
   '/roles': Key,
   '/audit': Document,
-  '/files': Files,
   '/dictionary': Collection,
   '/models': Setting,
   '/model-usage': Coin,
   '/flows': Management,
 }
-const visible = computed(() =>
-  navigation.filter((item) => !item.permissions.length || item.permissions.some(can)),
-)
+const visible = computed(() => navigation.filter(canNavigate))
 const menus = computed(() => {
   const business = visible.value.filter(
     (item) => !groups.some((group) => group.paths.includes(item.path)),
@@ -115,7 +111,7 @@ const allowed = computed(() => {
         (permission) => typeof permission === 'string' && can(permission),
       ),
   )
-  return permitted && (!item || !item.permissions.length || item.permissions.some(can))
+  return permitted && (!item || canNavigate(item))
 })
 watch(
   () => route.fullPath,

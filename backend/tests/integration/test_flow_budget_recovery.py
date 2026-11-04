@@ -30,7 +30,7 @@ def accept(client, monkeypatch, definition_key, attempts):
     entry(client, channel(client), key="first", provider_model="first-model")
     entry(client, channel(client, name="second"), key="second", provider_model="second-model")
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": definition_key,
             "request_key": "budget-recovery",

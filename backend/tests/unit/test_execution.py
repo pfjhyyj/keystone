@@ -2,11 +2,12 @@
 
 from dataclasses import replace
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pydantic import BaseModel, Field, RootModel, model_serializer
 
+from keystone.core.config import Settings
 from keystone.core.execution import dispatch, steps
 from keystone.core.execution.contracts import (
     NoInput,
@@ -22,6 +23,50 @@ from keystone.platform.model_access.tasks.definitions import COST_SCOPE
 
 async def nothing(payload):
     pass
+
+
+async def test_client_uses_lightweight_definition_and_validates_before_native_enqueue(monkeypatch):
+    native = SimpleNamespace(
+        enqueue=Mock(return_value=SimpleNamespace(get_workflow_id=lambda: "existing")),
+        destroy=Mock(),
+    )
+    constructor = Mock(return_value=native)
+    engine = SimpleNamespace(dispose=Mock())
+    create_engine = Mock(return_value=engine)
+    monkeypatch.setattr(dispatch, "DBOSClient", constructor)
+    monkeypatch.setattr(dispatch, "create_engine", create_engine)
+    client = dispatch.TaskClient(
+        Settings(config_file=None, database_url="postgresql+psycopg://localhost/unused"),
+        application_version=lambda: "release",
+    )
+    try:
+        for payload in ({"scope": "", "secret": "private"}, {"scope": ""}):
+            with pytest.raises(ValueError):
+                await client.enqueue(COST_SCOPE, payload, execution_key="request")
+        native.enqueue.assert_not_called()
+        ref = await client.enqueue(
+            COST_SCOPE, {"scope": "scope"}, execution_key="request", coalesce_key="scope"
+        )
+        assert ref.workflow_id == "existing"
+        options, payload = native.enqueue.call_args.args
+        assert options == {
+            "workflow_name": COST_SCOPE.entrypoint,
+            "queue_name": COST_SCOPE.queue,
+            "workflow_id": "request",
+            "app_version": "release",
+            "workflow_id_reuse_policy": "return-existing",
+            "deduplication_id": "scope:release",
+            "duplication_policy": "return-existing",
+        }
+        assert payload == {"scope": "scope"}
+        assert constructor.call_args.kwargs["lazy"] is True
+        assert constructor.call_args.kwargs["retry_connection_errors"] is False
+        assert constructor.call_args.kwargs["system_database_engine"] is engine
+        assert create_engine.call_args.kwargs["connect_args"]["connect_timeout"] == 3
+    finally:
+        await client.close()
+    native.destroy.assert_called_once()
+    engine.dispose.assert_called_once()
 
 
 async def test_enqueue_validates_before_io_and_returns_actual_coalesced_execution(monkeypatch):

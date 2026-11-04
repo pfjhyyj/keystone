@@ -16,7 +16,7 @@ import httpx2
 import pytest
 from dbos import DBOS
 from test_files_dictionary import client as client
-from test_files_dictionary import upload
+from test_files_dictionary import stored_content, upload
 from test_flow import start, wait_run, worker
 from test_identity import token
 from test_model_access import BILLING, SECRET, channel, entry, internal_service, invoke
@@ -36,10 +36,10 @@ NETWORK_TRANSPORT = httpx2.AsyncHTTPTransport
 def test_live_catalog_and_sender_share_capability_declaration(client, live, monkeypatch):
     calls, _, _ = live
     configure(client)
-    assert client.get("/api/v1/models").json()["items"]
+    assert client.get("/api/v1/_test/model-options").json()["items"]
     adapter = CHANNELS["openrouter"]
     monkeypatch.setitem(CHANNELS, "openrouter", replace(adapter, protocols=adapter.protocols[1:]))
-    assert client.get("/api/v1/models").json()["items"] == []
+    assert client.get("/api/v1/_test/model-options").json()["items"] == []
     response = invoke(client)
     assert response.status_code == 409 and response.json()["code"] == "model_operation_unavailable"
     assert calls == []
@@ -255,7 +255,7 @@ def test_live_rejects_untrusted_targets_and_unsupported_providers_before_send(cl
     entry(client, channel(client, "deepseek"), key="unsupported")
     response = invoke(client, key="unsupported")
     assert response.status_code == 503 and response.json()["code"] == "model_provider_unavailable"
-    assert client.get("/api/v1/models").json() == {"items": []}
+    assert client.get("/api/v1/_test/model-options").json() == {"items": []}
     assert client.get("/api/v1/model-invocations").json() == []
 
     assert calls == []
@@ -371,8 +371,9 @@ def test_live_stable_attempt_id_never_sends_twice(client, live):
 
 @pytest.mark.postgres
 def test_live_mode_real_dbos_worker_uses_same_send_boundary(client, live, tmp_path, monkeypatch):
+    from support.flow_fixture.contracts import PACKAGE
+
     from keystone import composition
-    from keystone.examples.document_review.contracts import PACKAGE
 
     monkeypatch.setattr(composition, "FLOW_PACKAGES", (PACKAGE,))
     composition.execution_version.cache_clear()
@@ -423,8 +424,5 @@ def test_live_mode_real_dbos_worker_uses_same_send_boundary(client, live, tmp_pa
                 continue
             assert len(rows) == sent == 2
             assert all(r["status"] == "succeeded" and r["cost_source"] == "response" for r in rows)
-            assert (
-                client.get(f"/api/v1/files/{done['result']['report_file_id']}/content").status_code
-                == 200
-            )
+            assert stored_content(client, done["result"]["report_file_id"])
     assert len(calls) == 3  # No late retry from either run.

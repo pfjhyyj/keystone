@@ -1,7 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, expect, it, vi } from 'vitest'
 import OverviewView from '../views/overview/OverviewView.vue'
-import FlowCatalog from '../views/flows/components/FlowCatalog.vue'
 import { fakeApi } from './support'
 
 it('shows backlog counts and preserves unknown observations', async () => {
@@ -34,28 +33,6 @@ it('shows backlog counts and preserves unknown observations', async () => {
   expect(wrapper.text()).toContain('4 项')
   expect(wrapper.text()).toContain('120 秒')
   expect(wrapper.text()).toContain('无法确认')
-})
-
-it('directs business managed flows back to their business page', async () => {
-  const wrapper = mount(FlowCatalog, {
-    props: {
-      loading: false,
-      definitions: [
-        {
-          key: 'business.flow',
-          name: '业务流程',
-          description: '',
-          revision: '1',
-          model_roles: [],
-          input_schema: {},
-          business_managed: true,
-        },
-      ],
-    },
-  })
-  await flushPromises()
-  expect(wrapper.text()).toContain('请从业务页面发起')
-  expect(wrapper.text()).not.toContain('发起流程')
 })
 
 afterEach(() => vi.useRealTimers())

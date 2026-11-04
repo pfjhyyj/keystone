@@ -47,19 +47,6 @@ export interface ModelEntry {
   operations: ModelOperation[]
   is_active: boolean
 }
-export interface CatalogModel {
-  key: string
-  name?: string
-  operations: ModelOperation[]
-  image_parameters?: ('aspect_ratio' | 'quality')[]
-  max_reference_images?: number
-  max_input_bytes?: number
-}
-export interface MediaResult {
-  invocation_id: string
-  content?: string
-  files?: { file_id: string }[]
-}
 export interface Invocation {
   estimate_status?: string
   estimate_amount?: string | null
@@ -130,23 +117,7 @@ export interface ModelOptions {
 export const modelApi = {
   channels: (offset: number) => request<Channel[]>(`/model-channels?offset=${offset}&limit=50`),
   entries: (offset: number) => request<ModelEntry[]>(`/model-entries?offset=${offset}&limit=50`),
-  catalog: (
-    offset: number,
-    operation: ModelOperation = 'text.generate',
-    delivery: ModelDelivery = 'sync',
-  ) =>
-    request<{ items: CatalogModel[] }>(
-      `/models?offset=${offset}&limit=50&operation=${encodeURIComponent(operation)}&delivery=${delivery}`,
-    ),
-  media: (operation: ModelOperation, body: unknown, signal: AbortSignal) => {
-    const path = {
-      'image.generate': '/models/images/generate',
-      'image.edit': '/models/images/edit',
-      'image.understand': '/models/vision',
-    }[operation as 'image.generate' | 'image.edit' | 'image.understand']
-    if (!path) throw new Error('不支持的图片操作')
-    return request<MediaResult>(path, 'POST', body, true, signal, 905000)
-  },
+
   calls: (offset: number, filters: Record<string, string>) =>
     request<Invocation[]>(
       `/model-invocations?${new URLSearchParams({ ...filters, offset: String(offset), limit: '50' })}`,

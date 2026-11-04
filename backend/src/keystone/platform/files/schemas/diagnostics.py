@@ -18,7 +18,6 @@ class ReferenceDiagnostic(Input):
 
 
 class ReferenceDiagnostics(Input):
-    available: bool
     items: list[ReferenceDiagnostic] = []
     truncated: bool = False
     next_offset: int | None = None

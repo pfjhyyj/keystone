@@ -24,15 +24,9 @@ from keystone.core.asyncio import run
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.migrations import migration_config
-from keystone.platform.files.adapters.storage import StorageRegistry, initialize
-from keystone.platform.files.schemas import Upload
-from keystone.platform.files.services.files import FileService
-from keystone.platform.files.services.references import FileReferences
+from keystone.platform.files.adapters.storage import initialize
 from keystone.platform.identity.adapters.security import Passwords
-from keystone.platform.identity.schemas import Login, UserCreate
-from keystone.platform.identity.schemas.credentials import Credential
-from keystone.platform.identity.services.access import AccessContext
-from keystone.platform.identity.services.auth import AuthService
+from keystone.platform.identity.schemas import UserCreate
 from keystone.platform.identity.services.initialize import initialize_admin
 
 
@@ -68,7 +62,10 @@ def main():
     args = parser.parse_args()
     console = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(console.parents[1] / "backend/tests"))
+    from support.business_catalog import install_catalog
     from support.postgres import probe_test_database
+
+    install_catalog()
     from support.processes import stop_process
 
     probe = probe_test_database()
@@ -120,20 +117,6 @@ def main():
                                 password="test-password-123",
                             ),
                         )
-                        # A trusted business fixture exercises read-only references and
-                        # deletion protection without adding a public reference write API.
-                        identity = AccessContext(database, settings)
-                        secret, _ = await AuthService(identity, Passwords()).login(
-                            Login(username="admin", password="test-password-123")
-                        )
-                        identity.credential = Credential("session", secret)
-                        stored = await FileService(identity, StorageRegistry(settings)).upload(
-                            Upload(name="referenced.txt", expected_size=7), b"fixture"
-                        )
-                        async with identity.access() as (session, auth):
-                            await FileReferences(session, auth, "e2e").replace(
-                                "record:1", "input", [stored["id"]]
-                            )
                     finally:
                         await database.close()
 
@@ -169,7 +152,10 @@ def main():
                             "-c",
                             "from support.model_stub import install; install(); "
                             "from support.flow_fixture import install; install(); "
-                            "from keystone.entrypoints.api import main; main()",
+                            "import keystone.entrypoints.api as api; "
+                            "from support.business_api import create_app; "
+                            "api.create_app = create_app; "
+                            "api.main()",
                         ],
                         cwd=directory,
                         env=env,

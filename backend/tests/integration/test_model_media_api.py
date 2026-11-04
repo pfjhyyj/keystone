@@ -19,6 +19,11 @@ from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.models import ModelInvocation
 
 pytestmark = pytest.mark.postgres
+MEDIA_PATH = {
+    "vision": "understand-image",
+    "images/generate": "generate-image",
+    "images/edit": "edit-image",
+}
 
 
 def configure(client, *, provider="openrouter", operations=None, key="media"):
@@ -50,7 +55,7 @@ def test_catalog_limits_follow_requested_operation_for_the_same_model(client):
         ("image.edit", 9, 32, ["aspect_ratio", "quality"]),
         ("image.understand", 4, 8, []),
     ]:
-        response = client.get("/api/v1/models", params={"operation": operation})
+        response = client.get("/api/v1/_test/model-options", params={"operation": operation})
         assert response.status_code == 200
         options = response.json()["items"][0]
         assert options["max_reference_images"] == count
@@ -70,7 +75,7 @@ def test_direct_media_records_one_call_without_a_flow(client, operation):
         body.pop("n")
         body["messages"] = [{"role": "user", "content": "private-vision-input"}]
     path = "vision" if operation == "vision" else f"images/{operation}"
-    response = client.post(f"/api/v1/models/{path}", json=body)
+    response = client.post(f"/api/v1/_test/{MEDIA_PATH[path]}", json=body)
     assert response.status_code == 200, response.text
     result = response.json()
     rows = calls(client)
@@ -90,7 +95,7 @@ def test_direct_media_records_one_call_without_a_flow(client, operation):
     else:
         assert len(result["files"]) == 2
         for item in result["files"]:
-            image = client.get(f"/api/v1/files/{item['file_id']}/content")
+            image = client.get(f"/api/v1/_test/materials/{item['file_id']}/content")
             assert image.status_code == 200 and image.content == image_bytes()
         public = client.get(f"/api/v1/model-invocations/{result['invocation_id']}").json()
         assert "result_context" not in public
@@ -104,7 +109,7 @@ def test_direct_relay_uses_original_result_and_publishes_files(client, monkeypat
     monkeypatch.setattr(HttpClient, "transport", original)
     install(log, kind=kind, retry=True)
     result = client.post(
-        "/api/v1/models/images/edit",
+        "/api/v1/_test/edit-image",
         json={
             "model_key": "media",
             "prompt": "blue",
@@ -119,8 +124,8 @@ def test_direct_relay_uses_original_result_and_publishes_files(client, monkeypat
     assert all(not r["auth"] for r in records if r["method"] == "GET" and "auth" in r)
     assert len(calls(client)) == 1 and calls(client)[0].status == "succeeded"
     file = result.json()["files"][0]["file_id"]
-    assert client.get(f"/api/v1/files/{file}/content").content == image_bytes()
-    options = client.get("/api/v1/models?operation=image.edit").json()["items"][0]
+    assert client.get(f"/api/v1/_test/materials/{file}/content").content == image_bytes()
+    options = client.get("/api/v1/_test/model-options?operation=image.edit").json()["items"][0]
     assert options["image_parameters"] == ["aspect_ratio", "quality"]
     assert options["max_reference_images"] == 9
 
@@ -129,8 +134,8 @@ def test_direct_relay_uses_original_result_and_publishes_files(client, monkeypat
     "permissions,path",
     [
         (["model:invoke"], "images/generate"),
-        (["file:create"], "images/generate"),
-        (["model:invoke", "file:create"], "images/edit"),
+        (["test_files.asset:create"], "images/generate"),
+        (["model:invoke", "test_files.asset:create"], "images/edit"),
     ],
 )
 def test_missing_functional_permissions_never_send(client, permissions, path):
@@ -139,7 +144,10 @@ def test_missing_functional_permissions_never_send(client, permissions, path):
     if path.endswith("edit"):
         body["images"] = [source(client)]
     headers = bearer(token(client, permissions)["token"])
-    assert client.post(f"/api/v1/models/{path}", json=body, headers=headers).status_code == 403
+    assert (
+        client.post(f"/api/v1/_test/{MEDIA_PATH[path]}", json=body, headers=headers).status_code
+        == 403
+    )
     assert calls(client) == []
 
 
@@ -147,7 +155,11 @@ def test_foreign_file_is_not_authorized_by_model_permission(client):
     configure(client)
     reference = source(client)
     user = create_user(client)
-    permissions = role(client, "media-user", ["model:invoke", "file:content_read", "file:create"])
+    permissions = role(
+        client,
+        "media-user",
+        ["model:invoke", "test_files.asset:content_read", "test_files.asset:create"],
+    )
     assign(client, user["id"], permissions["id"])
     login(client, "alice")
     client.post(
@@ -156,7 +168,7 @@ def test_foreign_file_is_not_authorized_by_model_permission(client):
     )
     login(client, "alice", "changed-password-123")
     response = client.post(
-        "/api/v1/models/vision",
+        "/api/v1/_test/understand-image",
         json={
             "model_key": "media",
             "messages": [{"role": "user", "content": "describe"}],
@@ -174,7 +186,9 @@ def test_invalid_input_and_unsupported_operation_never_register(client):
         ("images/generate", {"prompt": "blue", "n": 3}, 422),
         ("images/generate", {"prompt": "blue", "quality": "high"}, 422),
     ]:
-        response = client.post(f"/api/v1/models/{path}", json={"model_key": "media", **body})
+        response = client.post(
+            f"/api/v1/_test/{MEDIA_PATH[path]}", json={"model_key": "media", **body}
+        )
         assert response.status_code == status, response.text
     assert calls(client) == []
 
@@ -199,7 +213,7 @@ def test_invalid_vision_file_bytes_are_rejected_before_registration(client, monk
         client.app.state.runtime.models.http, "transport", lambda _: httpx2.MockTransport(forbidden)
     )
     result = client.post(
-        "/api/v1/models/vision",
+        "/api/v1/_test/understand-image",
         json={
             "model_key": "media",
             "images": [{"file_id": file_id}],
@@ -214,9 +228,9 @@ def test_invalid_vision_file_bytes_are_rejected_before_registration(client, monk
 def test_read_without_upload_permission_and_create_without_inspect(client):
     configure(client)
     reference = source(client)
-    headers = bearer(token(client, ["model:invoke", "file:content_read"])["token"])
+    headers = bearer(token(client, ["model:invoke", "test_files.asset:content_read"])["token"])
     result = client.post(
-        "/api/v1/models/vision",
+        "/api/v1/_test/understand-image",
         headers=headers,
         json={
             "model_key": "media",
@@ -225,15 +239,15 @@ def test_read_without_upload_permission_and_create_without_inspect(client):
         },
     )
     assert result.status_code == 200, result.text
-    headers = bearer(token(client, ["model:invoke", "file:create"])["token"])
+    headers = bearer(token(client, ["model:invoke", "test_files.asset:create"])["token"])
     result = client.post(
-        "/api/v1/models/images/generate",
+        "/api/v1/_test/generate-image",
         headers=headers,
         json={"model_key": "media", "prompt": "blue"},
     )
     assert result.status_code == 200, result.text
     file = result.json()["files"][0]["file_id"]
-    assert client.get(f"/api/v1/files/{file}", headers=headers).status_code == 403
+    assert client.get(f"/api/v1/_test/materials/{file}", headers=headers).status_code == 403
 
 
 def test_download_failure_preserves_generation_success_without_resending(client, monkeypatch):
@@ -255,7 +269,7 @@ def test_download_failure_preserves_generation_success_without_resending(client,
 
     monkeypatch.setattr(HttpClient, "transport", transport)
     response = client.post(
-        "/api/v1/models/images/generate", json={"model_key": "media", "prompt": "blue"}
+        "/api/v1/_test/generate-image", json={"model_key": "media", "prompt": "blue"}
     )
     assert response.status_code == 502, response.text
     assert sends.count("POST") == 1
@@ -275,7 +289,7 @@ def test_direct_result_evidence_cannot_be_read_by_another_actor(client):
 
     configure(client)
     response = client.post(
-        "/api/v1/models/images/generate", json={"model_key": "media", "prompt": "blue"}
+        "/api/v1/_test/generate-image", json={"model_key": "media", "prompt": "blue"}
     )
     identifier = UUID(response.json()["invocation_id"])
     user = create_user(client)
@@ -328,10 +342,13 @@ def test_compatible_vision_catalog_and_send_match_explicit_model_operations(
     configured = channel(client, provider, api_base=base)
     entry(client, configured, key="vision", operations=["image.understand"])
     entry(client, configured, key="text-only", operations=["text.generate"])
-    rows = client.get("/api/v1/models?operation=image.understand").json()["items"]
+    rows = client.get("/api/v1/_test/model-options?operation=image.understand").json()["items"]
     assert [row["key"] for row in rows] == ["vision"]
     assert (
-        client.get("/api/v1/models?operation=image.understand&delivery=async").json()["items"] == []
+        client.get("/api/v1/_test/model-options?operation=image.understand&delivery=async").json()[
+            "items"
+        ]
+        == []
     )
     sent = []
     original = HttpClient.transport
@@ -356,9 +373,11 @@ def test_compatible_vision_catalog_and_send_match_explicit_model_operations(
         "images": [source(client)],
         "messages": [{"role": "user", "content": "describe"}],
     }
-    denied = client.post("/api/v1/models/vision", json={**request, "model_key": "text-only"})
+    denied = client.post(
+        "/api/v1/_test/understand-image", json={**request, "model_key": "text-only"}
+    )
     assert denied.status_code == 409 and calls(client) == []
-    response = client.post("/api/v1/models/vision", json=request)
+    response = client.post("/api/v1/_test/understand-image", json=request)
     assert response.status_code == 200, response.text
     assert "模拟渠道响应" in response.json()["content"]
     assert sent == [base + "/chat/completions"]

@@ -79,12 +79,19 @@ def test_model_baseline_defaults_and_roundtrip_preserve_billing_and_recovery(mod
             table: connection.execute(text(f"SELECT * FROM keystone.{table}")).mappings().all()
             for table in tables
         }
-        assert before["model_entries"][0]["operations"] == ["text.generate"]
+        entry = before["model_entries"][0]
+        assert entry["operations"] == ["text.generate"]
+        assert entry["pricing"] == {"mode": "inherit", "rules": []}
+        assert entry["pricing_revision"] == 0
+        assert before["model_channels"][0]["workspace_id"] is None
         invocations = {row["operation"]: row for row in before["model_invocations"]}
         assert invocations["text.generate"]["result_context"] is None
         assert invocations["text.generate"]["cost_amount"] == Decimal("0.123456789012345678")
         assert invocations["image.generate"]["result_context"] == {"task_id": "original-task"}
         assert {row["status"] for row in invocations.values()} == {"unknown"}
+        assert all(row["estimate_snapshot"] is None for row in invocations.values())
+        assert {row["estimate_status"] for row in invocations.values()} == {"unavailable"}
+        assert {row["estimate_reason"] for row in invocations.values()} == {"legacy_no_snapshot"}
     for _ in range(2):
         command.upgrade(config, "head")
         command.downgrade(config, "0005")
@@ -239,23 +246,8 @@ def test_flow_baseline_roundtrip_preserves_snapshots_and_explicit_budgets(
                 )
 
 
-@pytest.mark.parametrize(
-    "revision",
-    [
-        *(f"{number:04d}" for number in range(11, 13)),
-        "identity",
-        "audit",
-        "dictionary",
-        "files",
-        "model_access",
-        "flow",
-        "core",
-        "model_costs",
-        "multi_workers",
-        "worker_registration",
-    ],
-)
-def test_retired_revisions_fail_without_stamping_or_changing_data(migration_environment, revision):
+def test_retired_revision_fails_without_stamping_or_changing_data(migration_environment):
+    revision = "0010"
     config, engine = migration_environment
     with engine.begin() as connection:
         connection.execute(text("CREATE SCHEMA keystone"))
@@ -282,55 +274,3 @@ def test_retired_revisions_fail_without_stamping_or_changing_data(migration_envi
             }
             assert connection.scalar(text("SELECT value FROM keystone.retention_probe")) == 42
             assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 43
-
-
-def test_volcengine_constraint_upgrade_preserves_data_and_refuses_unsafe_downgrade(model_baseline):
-    config, engine = model_baseline
-
-    def facts():
-        tables = ("model_entries", "model_invocations", "model_dispatch_scopes")
-        with engine.connect() as connection:
-            return {
-                "original_channels": connection.execute(
-                    text("SELECT * FROM keystone.model_channels WHERE name != 'ark'")
-                )
-                .mappings()
-                .all(),
-                **{
-                    table: connection.execute(text(f"SELECT * FROM keystone.{table}"))
-                    .mappings()
-                    .all()
-                    for table in tables
-                },
-            }
-
-    original = facts()
-    command.upgrade(config, "0008")
-    assert facts() == original
-    with engine.begin() as connection:
-        connection.execute(
-            text("""INSERT INTO keystone.model_channels
-            (id,name,provider,api_base,is_active,balance_check_status)
-            VALUES ('00000000-0000-4000-8000-000000000099','ark','volcengine',
-                    'https://ark.cn-beijing.volces.com/api/v3',true,'never')""")
-        )
-    with pytest.raises(IntegrityError):
-        command.downgrade(config, "0007")
-    with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM keystone.alembic_version")) == "0008"
-        assert (
-            connection.scalar(text("SELECT provider FROM keystone.model_channels WHERE name='ark'"))
-            == "volcengine"
-        )
-    assert facts() == original
-    with engine.begin() as connection:
-        connection.execute(text("DELETE FROM keystone.model_channels WHERE name='ark'"))
-    command.downgrade(config, "0007")
-    assert facts() == original
-    with pytest.raises(IntegrityError), engine.begin() as connection:
-        connection.execute(
-            text("""INSERT INTO keystone.model_channels
-            (id,name,provider,api_base,is_active,balance_check_status)
-            VALUES ('00000000-0000-4000-8000-000000000099','ark','volcengine',
-                    'https://ark.cn-beijing.volces.com/api/v3',true,'never')""")
-        )

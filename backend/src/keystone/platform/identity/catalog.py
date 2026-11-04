@@ -23,7 +23,7 @@ CATALOG = Catalog(
         "identity.user.update": {"before", "display_name", "after"},
         "identity.user.enable": {"is_active"},
         "identity.user.disable": {"is_active", "sessions_revoked", "tokens_revoked"},
-        "identity.password.reset": {"sessions_revoked"},
+        "identity.password.reset": {"sessions_revoked", "tokens_revoked"},
         "identity.credentials.revoke": {"sessions_revoked", "user_id", "tokens_revoked"},
         "identity.role.create": {"key", "name", "permissions"},
         "identity.role.update": {"before", "after", "permissions", "name", "description"},

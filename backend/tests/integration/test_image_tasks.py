@@ -28,7 +28,7 @@ def accept(client, monkeypatch, *, engine=True):
         operations=["image.generate"],
     )
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": task_definition.key,
             "request_key": "task",

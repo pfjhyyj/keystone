@@ -21,7 +21,11 @@ def register(runtime, health):
         state = await runtime.readiness()
         database_ready = all(state["checks"].get(key) == "ok" for key in ("database", "schema"))
         if state["status"] == "ready" or database_ready:
-            await cleanup(runtime.database, runtime.storage)
+            await cleanup(
+                runtime.database,
+                runtime.storage,
+                unreferenced_grace_seconds=runtime.settings.file_unreferenced_grace_seconds,
+            )
         return state["status"] == "ready"
 
     @DBOS.workflow(name=WORKFLOW)

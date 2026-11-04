@@ -56,7 +56,9 @@ def test_scope_checks_before_entry(artifacts, values, code):
 
 def test_missing_run_and_extra_permission_at_entry(artifacts):
     client, run_id, source = artifacts
-    issued = token(client, ["flow:start", "file:create", "file:content_read"])
+    issued = token(
+        client, ["flow:start", "test_files.asset:create", "test_files.asset:content_read"]
+    )
     pat_run = start(client, source, "limited", bearer(issued["token"]))
 
     async def operation(identifier, permissions):
@@ -103,7 +105,10 @@ def test_long_process_cancel_or_pat_revocation_releases_materialized_file(
     revoke,
 ):
     client, run_id, source = artifacts
-    issued = token(client, ["flow:start", "file:create", "file:content_read", "audit:read"])
+    issued = token(
+        client,
+        ["flow:start", "test_files.asset:create", "test_files.asset:content_read", "audit:read"],
+    )
     run_id = start(client, source, "process", bearer(issued["token"]))
     argv, heartbeat, gate = tree(tmp_path)
     local = []

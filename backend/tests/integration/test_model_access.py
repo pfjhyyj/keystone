@@ -214,7 +214,7 @@ def entry(client, channel, key="chat", **overrides):
 
 def invoke(client, key="chat", stream=False, **overrides):
     return client.post(
-        "/api/v1/models/invoke",
+        "/api/v1/_test/generate-text",
         json={
             "model_key": key,
             "messages": [{"role": "user", "content": "private-prompt-must-not-persist"}],
@@ -300,7 +300,7 @@ def test_independent_channel_sites_keep_their_targets_and_billing_scopes(
     base = CHANNELS[site].api_base
     c = channel(client, site, api_base=base)
     entry(client, c)
-    assert client.get("/api/v1/models").json()["items"][0]["key"] == "chat"
+    assert client.get("/api/v1/_test/model-options").json()["items"][0]["key"] == "chat"
 
     async def respond(provider, request):
         assert provider == site
@@ -373,7 +373,7 @@ def test_newapi_custom_prefix_is_available_for_discovery_catalog_and_invocation(
     assert client.get(f"/api/v1/model-channels/{c['id']}/models").json() == {
         "items": [{"id": "mock-chat"}]
     }
-    assert client.get("/api/v1/models").json()["items"][0]["key"] == e["key"]
+    assert client.get("/api/v1/_test/model-options").json()["items"][0]["key"] == e["key"]
     response = invoke(client)
     assert response.status_code == 200, response.text
     assert calls == [
@@ -618,7 +618,10 @@ def test_disabled_channel_models_independent_and_snapshot_mapping(client):
         client.portal.call(frozen)
     assert invoke(client).status_code == 200  # Current mapping uses the second channel.
     edit_channel(client, second, is_active=False)
-    assert invoke(client).status_code == 409 and client.get("/api/v1/models").json()["items"] == []
+    assert (
+        invoke(client).status_code == 409
+        and client.get("/api/v1/_test/model-options").json()["items"] == []
+    )
     assert client.get("/api/v1/model-entries").json()[0]["is_active"] is True
     assert client.delete("/api/v1/model-channels/" + c["id"]).status_code == 409
     assert client.delete("/api/v1/model-entries/" + e["id"]).status_code == 409
@@ -759,7 +762,7 @@ def test_history_self_all_and_pat_permissions_are_independent(client):
     all_only = token(client, ["model_invocation:read_all"])["token"]
     assert client.get("/api/v1/model-invocations", headers=bearer(all_only)).status_code == 403
     manage_only = token(client, ["model:manage"])["token"]
-    assert client.get("/api/v1/models", headers=bearer(manage_only)).status_code == 403
+    assert client.get("/api/v1/_test/model-options", headers=bearer(manage_only)).status_code == 403
     assert len(client.get("/api/v1/model-invocations").json()) == 2
 
 
@@ -778,7 +781,7 @@ def test_inflight_completion_after_user_revocation_and_channel_disable(client, m
     payload = {"model_key": "chat", "messages": [{"role": "user", "content": "test"}]}
     with ThreadPoolExecutor() as pool:
         pending = pool.submit(
-            client.post, "/api/v1/models/invoke", json=payload, headers=bearer(pat)
+            client.post, "/api/v1/_test/generate-text", json=payload, headers=bearer(pat)
         )
         try:
             assert entered.wait(5)
@@ -791,7 +794,8 @@ def test_inflight_completion_after_user_revocation_and_channel_disable(client, m
     row = client.get("/api/v1/model-invocations").json()[0]
     assert row["status"] == "succeeded" and row["cost_amount"] is not None
     assert (
-        client.post("/api/v1/models/invoke", json=payload, headers=bearer(pat)).status_code == 401
+        client.post("/api/v1/_test/generate-text", json=payload, headers=bearer(pat)).status_code
+        == 401
     )
 
 

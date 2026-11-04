@@ -38,15 +38,15 @@ async def registered_file_ids(session, owner, slot):
     )
 
 
-async def require_registered_file(session, auth, owner, slot, identifier):
+async def require_registered_file(session, owner, slot, identifier):
     """Caller holds its identity/business locks; serialize with file/reference changes.
 
-    For several files call in file-ID order. No commit, storage I/O or grant changes.
+    For several files call in file-ID order. No commit or storage I/O.
     """
     file = await policy.locked(session, identifier)
     if await registered_file_ids(session, owner, slot) != (identifier,):
         raise ServiceError(409, "file_reference_invalid", "文件没有当前业务的唯一使用记录")
-    await policy.require(session, auth, file, "content_read")
+    policy.available(file, content=True)
 
 
 class FileReferences:
@@ -77,7 +77,7 @@ class FileReferences:
         for identifier in sorted(old ^ ids):
             file = await policy.locked(self.session, identifier)
             if identifier in ids:
-                await policy.require(self.session, self.auth, file, "content_read")
+                policy.available(file, content=True)
                 self.session.add(FileReference(owner=key, slot=slot, file_id=identifier))
             else:
                 await self.session.execute(
@@ -212,14 +212,11 @@ class FileReferenceService:
                 )
         return True
 
-    async def flow_diagnostics_in_transaction(self, session, auth, run_id, offset, limit):
+    async def flow_diagnostics_in_transaction(self, session, run_id, offset, limit):
         """Trusted caller authorizes this Run under its current identity transaction.
 
         References never supply inspect or content grants. Filter before pagination.
         """
-        if "file:inspect" not in auth.permissions:
-            return ReferenceDiagnostics(available=False)
-        auth.require("file:inspect")
         rows = list(
             await session.execute(
                 select(
@@ -230,7 +227,7 @@ class FileReferenceService:
                     File.content_type,
                 )
                 .join(File, File.id == FileReference.file_id)
-                .where(FileReference.owner == f"flow:{run_id}", policy.scope(auth, "inspect"))
+                .where(FileReference.owner == f"flow:{run_id}")
                 .order_by(FileReference.slot, FileReference.file_id)
                 .offset(offset)
                 .limit(limit + 1)
@@ -238,7 +235,6 @@ class FileReferenceService:
         )
         truncated = len(rows) > limit
         return ReferenceDiagnostics(
-            available=True,
             items=[
                 ReferenceDiagnostic(
                     file_id=row.file_id,
@@ -295,20 +291,6 @@ class FileReferenceService:
                 )
         return removed
 
-    async def listing(self, identifier, offset=0, limit=50):
-        async with self.identity.access("file:manage") as (session, auth):
-            await policy.require(session, auth, await session.get(File, identifier), "manage")
-            return [
-                {"owner": row.owner, "slot": row.slot}
-                for row in await session.scalars(
-                    select(FileReference)
-                    .where(FileReference.file_id == identifier)
-                    .order_by(FileReference.owner, FileReference.slot)
-                    .offset(offset)
-                    .limit(limit)
-                )
-            ]
-
 
 async def retain_artifact(session, owner, file, slot):
     """Trusted integration only; caller has already authorized this artifact and owns the lock."""
@@ -349,7 +331,7 @@ async def require_usage(session, owner, identifier):
         raise ServiceError(403, "file_usage_denied", "文件没有当前业务的使用记录")
 
 
-async def describe_inputs_in_transaction(session, auth, identifiers):
+async def describe_inputs_in_transaction(session, identifiers):
     """Caller holds its identity transaction. Read immutable sizes before Budget→File locks.
 
     The caller must retain/revalidate references in the same transaction afterwards.
@@ -358,7 +340,7 @@ async def describe_inputs_in_transaction(session, auth, identifiers):
     values = []
     for identifier in sorted({UUID(str(value)) for value in identifiers}):
         file = await session.get(File, identifier)
-        await policy.require(session, auth, file, "content_read")
+        policy.available(file, content=True)
         values.append(
             {
                 "id": str(identifier),

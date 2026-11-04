@@ -49,7 +49,7 @@ cd backend
 
 `unit/test_cloud_billing_contracts.py` 验证官方 RPC/HMAC-SHA256 签名向量、签名目标、账务响应白名单、币种、精度、错误和分页；`integration/test_cloud_billing.py` 使用真实隔离库验证账务凭据加密、审计不含秘密、余额快照、管理权限与查询期间配置变化／撤权。全部云 HTTP 均为确定性协议桩，不查询真实账户或发起付费调用。
 
-`unit/test_dashscope_discovery.py` 验证原生目录分页、业务空间域名、响应投影及错误边界；`integration/test_aliyun_discovery.py` 验证真实数据库中的业务空间保存、权限、配置变更／撤权后的结果丢弃，以及迁移升级与回退的数据保留。HTTP 使用确定性协议桩，不调用付费模型。
+`unit/test_dashscope_discovery.py` 验证原生目录分页、业务空间域名、响应投影及错误边界；`integration/test_aliyun_discovery.py` 验证真实数据库中的业务空间保存、权限、配置变更／撤权后的结果丢弃，以及基线中的业务空间默认值与约束。HTTP 使用确定性协议桩，不调用付费模型。
 
 `unit/test_model_discovery.py` 覆盖火山方舟固定 GET 地址、推理 Key、ID 投影、列表大小及错误脱敏；`integration/test_model_access.py` 的火山方舟用例验证管理权限和只读查询不创建条目或调用记录。控制台 `volcengine-discovery.test.ts` 覆盖目录刷新和手填接入点保留；测试均使用 HTTP 协议桩，不调用付费模型。
 

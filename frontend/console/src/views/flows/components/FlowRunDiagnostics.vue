@@ -2,7 +2,6 @@
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { ApiError } from '../../../api/client'
 import { flowApi, type Diagnostics, type DiagnosticSection, type Steps } from '../../../api/flows'
-import { downloadFile } from '../../../api/files'
 import { callStates } from '../../../api/models'
 import { can, sessionVersion } from '../../../stores/session'
 import InvocationDialog from '../../models/components/InvocationDialog.vue'
@@ -11,9 +10,7 @@ const emit = defineEmits<{ unavailable: [message: string] }>()
 const budget = ref<Diagnostics['budget']>(null),
   models = ref<Diagnostics['models']>(null),
   files = ref<Diagnostics['files']>(null),
-  selected = ref(''),
-  downloadError = ref(''),
-  downloading = ref(false)
+  selected = ref('')
 const errors = ref({ budget: '', models: '', files: '' })
 const loading = ref({ budget: false, models: false, files: false })
 const generations = { budget: 0, models: 0, files: 0 }
@@ -53,20 +50,13 @@ async function load(section: DiagnosticSection, more = false) {
     alive &&
     token === generations[section] &&
     can('flow:read') &&
-    (section !== 'models' || can('model_invocation:read')) &&
-    (section !== 'files' || can('file:inspect'))
+    (section !== 'models' || can('model_invocation:read'))
   if (!can('flow:read')) return
   if (section === 'models' && !can('model_invocation:read')) {
     models.value = null
     selected.value = ''
     loading.value.models = false
     errors.value.models = '无查看模型调用权限'
-    return
-  }
-  if (section === 'files' && !can('file:inspect')) {
-    files.value = null
-    loading.value.files = false
-    errors.value.files = '无查看文件元数据权限'
     return
   }
   const offset = more
@@ -111,26 +101,8 @@ async function load(section: DiagnosticSection, more = false) {
     if (alive && token === generations[section]) loading.value[section] = false
   }
 }
-async function download(id: string) {
-  if (downloading.value) return
-  downloading.value = true
-  downloadError.value = ''
-  try {
-    await downloadFile(id, id)
-  } catch (reason) {
-    if (alive) downloadError.value = reason instanceof Error ? reason.message : '文件下载失败'
-  } finally {
-    if (alive) downloading.value = false
-  }
-}
 watch(
-  () => [
-    props.refresh,
-    sessionVersion.value,
-    can('flow:read'),
-    can('model_invocation:read'),
-    can('file:inspect'),
-  ],
+  () => [props.refresh, sessionVersion.value, can('flow:read'), can('model_invocation:read')],
   (value, previous) => {
     // Polling changes only refresh; authority changes must still clear private details.
     if (!previous || value.slice(1).some((item, index) => item !== previous[index + 1]))
@@ -230,23 +202,17 @@ onScopeDispose(() => {
   </section>
   <section aria-label="关联文件">
     <h3>关联文件</h3>
-    <p>文件引用只表示逻辑用途，读取内容仍检查当前文件授权。</p>
-    <el-alert v-if="errors.files || downloadError" role="alert" type="error" :closable="false">{{
-      errors.files || downloadError
+    <p>查看本次运行保留的文件标识与用途，内容访问由业务入口授权。</p>
+    <el-alert v-if="errors.files" role="alert" type="error" :closable="false">{{
+      errors.files
     }}</el-alert>
     <template v-if="files">
-      <p v-if="!files.available">当前权限不可查看文件元数据。</p>
-      <p v-else-if="!files.items.length">暂无可见文件引用。</p>
+      <p v-if="!files.items.length">暂无文件引用。</p>
       <dl v-for="item in files.items" :key="`${item.file_id}:${item.slot}`">
         <dt>{{ item.file_id }}</dt>
         <dd>{{ item.slot }}</dd>
         <dd v-if="item.invocation_id">来源调用 {{ item.invocation_id }}</dd>
         <dd v-else>Run 级用途；未记录可见的模型来源。</dd>
-        <dd v-if="can('file:content_read')">
-          <el-button :disabled="downloading" native-type="button" @click="download(item.file_id)"
-            >下载文件</el-button
-          >
-        </dd>
       </dl>
       <el-button
         v-if="files.truncated"

@@ -27,8 +27,10 @@ def test_operations_are_explicit_filtered_and_preserved_on_old_client_edit(clien
         key="not-implemented",
         operations=["text.structured"],
     )
-    assert [r["key"] for r in client.get("/api/v1/models").json()["items"]] == ["chat"]
-    result = client.get("/api/v1/models?operation=text.structured&limit=1").json()["items"]
+    assert [r["key"] for r in client.get("/api/v1/_test/model-options").json()["items"]] == ["chat"]
+    result = client.get("/api/v1/_test/model-options?operation=text.structured&limit=1").json()[
+        "items"
+    ]
     assert result == [
         {
             "key": "structured",
@@ -38,9 +40,10 @@ def test_operations_are_explicit_filtered_and_preserved_on_old_client_edit(clien
         }
     ]
     assert [
-        r["key"] for r in client.get("/api/v1/models?operation=image.generate").json()["items"]
+        r["key"]
+        for r in client.get("/api/v1/_test/model-options?operation=image.generate").json()["items"]
     ] == ["image-only"]
-    assert client.get("/api/v1/models?operation=unknown").status_code == 422
+    assert client.get("/api/v1/_test/model-options?operation=unknown").status_code == 422
     edited = client.patch(
         f"/api/v1/model-entries/{structured['id']}",
         json={
@@ -85,7 +88,7 @@ def test_delivery_and_native_model_support_are_checked_before_admission(client, 
     )
     for delivery, expected in (("sync", ["sync-image"]), ("async", ["async-image"])):
         rows = client.get(
-            f"/api/v1/models?operation=image.generate&delivery={delivery}&limit=1"
+            f"/api/v1/_test/model-options?operation=image.generate&delivery={delivery}&limit=1"
         ).json()["items"]
         assert [row["key"] for row in rows] == expected
     for definition, binding in (
@@ -94,7 +97,7 @@ def test_delivery_and_native_model_support_are_checked_before_admission(client, 
         (task_definition, "unsupported"),
     ):
         response = client.post(
-            "/api/v1/flow-runs",
+            "/api/v1/_test/review",
             json={
                 "definition_key": definition.key,
                 "request_key": "rejected-" + binding,
@@ -139,7 +142,7 @@ def test_structured_operation_routes_and_revalidates_with_real_worker(
         "input": {"prompt": "Answer"},
         "model_bindings": {"analyze": "chat"},
     }
-    response = client.post("/api/v1/flow-runs", json=data)
+    response = client.post("/api/v1/_test/review", json=data)
     assert response.status_code == 202, response.text
     run_id = response.json()["id"]
     stored = query(client, lambda s: s.get(FlowRun, UUID(run_id)))
@@ -185,8 +188,8 @@ main()
         },
     )
     assert update.status_code == 200
-    assert client.post("/api/v1/flow-runs", json=data).json()["id"] == run_id
-    refused = client.post("/api/v1/flow-runs", json={**data, "request_key": "new"})
+    assert client.post("/api/v1/_test/review", json=data).json()["id"] == run_id
+    refused = client.post("/api/v1/_test/review", json={**data, "request_key": "new"})
     assert refused.status_code == 409
     assert len(query(client, lambda s: s.scalars(select(FlowRun))).all()) == 1
 
@@ -223,7 +226,7 @@ def test_vision_uses_only_authorized_valid_run_files(client, tmp_path, monkeypat
     if case == "unregistered":
         inputs["image_file_id"] = upload_image("outside.png")
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": vision_definition.key,
             "request_key": "vision",
@@ -261,7 +264,7 @@ def test_native_structured_agent_uses_its_declared_operation(client, monkeypatch
     install_package(client, monkeypatch, PACKAGE)
     entry(client, channel(client), operations=["text.structured"])
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": agent_definition.key,
             "request_key": "native",

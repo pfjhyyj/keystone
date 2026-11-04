@@ -36,7 +36,7 @@ async def update_role(identifier: UUID, data: schemas.RoleUpdate, request: Reque
 
 @router.delete("/roles/{identifier}", status_code=204)
 async def delete_role(identifier: UUID, request: Request):
-    await request.app.state.runtime.role_deletion(_service(request)).execute(identifier)
+    await _service(request).delete(identifier)
 
 
 @router.put("/users/{user_id}/roles/{role_id}", status_code=204)

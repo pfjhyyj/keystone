@@ -1,14 +1,30 @@
 import asyncio
 import logging
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from keystone.bootstrap import create_app
+from keystone.bootstrap import Runtime, create_app
 from keystone.core.config import Settings
 from keystone.entrypoints import cli, worker
+
+
+@pytest.mark.parametrize("failed", ["tasks", "flow_engine"])
+async def test_runtime_close_releases_remaining_resources_after_client_failure(failed):
+    runtime = SimpleNamespace(
+        tasks=SimpleNamespace(close=AsyncMock()),
+        flow_engine=SimpleNamespace(close=AsyncMock()),
+        database=SimpleNamespace(close=AsyncMock()),
+    )
+    getattr(runtime, failed).close.side_effect = RuntimeError("client close failed")
+    with pytest.raises(RuntimeError, match="client close failed"):
+        await Runtime.close(runtime)
+    for resource in (runtime.tasks, runtime.flow_engine, runtime.database):
+        resource.close.assert_awaited_once()
 
 
 def test_offline_recovery_requires_explicit_stop_confirmation(monkeypatch):
@@ -132,6 +148,9 @@ async def test_worker_stop_closes_database(monkeypatch):
     class FakeRuntime:
         database = FakeDatabase()
         flow_engine = None
+
+        async def close(self):
+            await self.database.close()
 
         async def readiness(self):
             entered.set()

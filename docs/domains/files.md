@@ -2,7 +2,7 @@
 
 Files 提供受管文件的存储、读取、完整性校验、引用保留和清理。博客附件、素材库等业务负责对象关系、访问规则和页面，平台不建设独立通用文件库。
 
-本页描述已确认设计；[当前实现差异](#7-当前实现约定)尚未迁移，使用现有接口时须遵守[实现参考](../reference/files.md)。
+本页维护文件契约与主要流程，具体接入见[实现参考](../reference/files.md)。
 
 ## 1. 范围与边界
 
@@ -27,7 +27,9 @@ File 不排他归属某个业务，不增加 blog_id 或强制业务类型；同
 
 ### 1.2 业务授权与文件操作契约
 
-业务 Service 从已授权对象的记录取得实际 file_id，再调用内部 Files 能力。客户端知道 ID、是上传者或存在 FileReference，都不直接获得读取权。目标公共模型移除 FileGrant，由业务表达对象访问与共享。
+业务 Service 从已授权对象的记录取得实际 file_id，再调用内部 Files 能力。客户端知道 ID、是上传者或存在 FileReference，都不直接获得读取权。对象访问与共享由业务表达。
+
+装配层通过 runtime.managed_files(identity) 注入内部 FileService；业务入口负责功能与对象授权。平台不提供通用文件 HTTP 路由或文件权限目录。
 
 #### 普通业务附件读取
 
@@ -113,7 +115,7 @@ sequenceDiagram
 
 删除在事务外执行，失败保留 deleting；外部已删除而确认失败时，核实后继续确认。S3 迟到写入使用原精确对象与墓碑复核，不恢复文件状态。
 
-宽限时长、完成时间记录及存量引用迁移尚未落地；完成前不启用无引用 active 文件自动回收。业务有撤销删除或回收站时，在可恢复期间保留自己的引用。
+完成时记录 completed_at；file_unreferenced_grace_seconds 显式指定宽限秒数，默认未设置、不启用回收。启用前须核对所有调用方和存量引用。旧文件完成时间无法可靠推断，导入时保留 null，不进入自动回收；FileGrant 不转换成业务引用。业务有撤销删除或回收站时，在可恢复期间保留自己的引用。
 
 ### 1.5 Flow 文件使用与产物返回契约
 
@@ -215,7 +217,7 @@ FileReference 表示当前保留关系，AuditLog 表示历史变更。引用以
 | 实际内容容量 | 每个实际存储 File 计一次，含无引用残留 |
 | 期间引用增删 | 保留期内成功引用审计，不等于当前引用量或下载次数 |
 
-各业务容量可能重叠，不能相加冒充实际存储容量。当前有单文件引用分页查询，未提供通用汇总报表；按需查询，不增加计数缓存或统计任务。业务查询不暴露其他对象信息，全局审计仍仅供管理员。
+各业务容量可能重叠，不能相加冒充实际存储容量。当前提供可信事务内引用查询与 Run 诊断，未提供通用汇总报表；按需查询，不增加计数缓存或统计任务。业务查询不暴露其他对象信息，全局审计仍仅供管理员。
 
 ### 1.8 业务服务组合模型与文件
 
@@ -253,16 +255,13 @@ sequenceDiagram
 | id、name、owner_id | 稳定 ID、可改展示名、固定来源用户；来源不自动授予访问权 |
 | content_type、size_bytes、checksum_sha256 | 实际内容类型、大小和完整性，完成后确定 |
 | upload_key、upload_digest | 上传幂等键、原请求摘要，不随改名改变 |
+| completed_at | 首次确认内容可用的时间；存量未知为 null，不自动回收 |
 | storage_key | 固定存储源键，可公开 |
 | storage_fingerprint、object_key | 内部存储身份和定位，不公开 |
 | status、deleted_at | 处理状态、内容删除确认时间 |
 | created_at/by、updated_at/by | UTC 创建/修改事实，实际操作者可与来源用户不同 |
 
-### 2.2 文件授权 FileGrant
-
-目标移除。当前仍保存 file_id、subject_type（user/role/authenticated）、user_id/role_id、action（inspect/content_read/manage）及创建审计字段；现行授权与角色外键约束见[实现参考](../reference/files.md#授权与接口)。
-
-### 2.3 业务引用 FileReference
+### 2.2 业务引用 FileReference
 
 只有 owner、slot、file_id，三元组唯一；引用增删由公开事务内服务维护，不扫描业务表推测，不开放任意 owner/slot 写接口。普通读取不依赖该表再次证明业务归属。
 
@@ -275,7 +274,7 @@ sequenceDiagram
 | uploading | 明确失败 | failed，不开放半文件 |
 | uploading/failed | 原键、同摘要重试，旧 I/O 已协调 | 使用同一 File 重试 |
 | active | 管理停用 | disabled，保留内容和引用，不接受新读取/引用 |
-| disabled | 管理启用 | active，不恢复已撤销授权 |
+| disabled | 管理启用 | active，业务仍须检查当前访问资格 |
 | 可删除记录 | 无引用，受理删除 | deleting，阻止新读取/引用 |
 | deleting | 清理及数据库确认成功 | deleted，设置 deleted_at；不恢复 |
 
@@ -333,11 +332,8 @@ Run 使用 input、artifact.<稳定键>、output 槽位。产物完成与保留�
 
 ## 7. 当前实现约定
 
-| 已确认目标 | 当前差异 |
-|---|---|
-| 业务入口负责对象授权，移除公共 FileGrant | 通用文件接口、授权和文件库页面仍存在，须迁移调用方及存量关系 |
-| 普通读取不加读锁 | 当前仍持共享文件锁，清理会跳过正在读取的文件 |
-| 无引用 active 文件超期回收 | 尚未启用，需先补齐引用、参数及迁移 |
-| Flow 按固定输入及业务入口使用文件 | 当前仍执行通用文件权限和 FileGrant 检查，不能只删检查后继续接收任意 ID |
+文件模块仅保存 File 和 FileReference。控制台不提供独立文件库，业务负责附件关系、访问入口和页面。
 
-底层存储、容量、接口和事务组合见[文件实现参考](../reference/files.md)；配置见[存储配置](../operations/configuration.md#4-同时配置本地与-s3)。本页不表示运行代码已完成调整。
+无引用回收默认关闭。启用前核对调用方及存量引用；完成时间未知的旧文件保持不回收。迁移不将旧授权推测为业务关系，升级条件见[迁移说明](../../backend/migrations/README.md)。
+
+底层存储、容量和事务组合见[文件实现参考](../reference/files.md)；配置见[存储配置](../operations/configuration.md#4-同时配置本地与-s3)。

@@ -419,7 +419,7 @@ def test_current_grants_pat_intersection_and_management_boundaries(client):
     assert assign(client, admin["id"], reader["id"]).status_code == 403
 
 
-def test_reset_revokes_sessions_but_preserves_pat_and_requires_change(client):
+def test_reset_revokes_all_credentials_and_requires_change(client):
     login(client)
     user = create_user(client)
     login(client, "alice")
@@ -428,17 +428,103 @@ def test_reset_revokes_sessions_but_preserves_pat_and_requires_change(client):
     )
     login(client, "alice", NEW_PASSWORD)
     personal = token(client, [])
+    old_cookie = client.cookies.get("keystone_session")
+    login(client, "alice", NEW_PASSWORD)
+    second = token(client, [])
     login(client)
+    operator = token(client, ["user:reset_password"])
     assert (
-        client.post(f"/api/v1/users/{user['id']}/password", json={"password": PASSWORD}).status_code
+        client.post(
+            f"/api/v1/users/{user['id']}/password",
+            json={"password": PASSWORD},
+            headers=bearer(operator["token"]),
+        ).status_code
         == 204
     )
-    assert client.get("/api/v1/auth/me", headers=bearer(personal["token"])).status_code == 403
+    logs = client.get(
+        "/api/v1/audit-logs",
+        params={"action": "identity.password.reset", "target_id": user["id"]},
+    ).json()
+    assert logs[0]["details"] == {
+        "sessions_revoked": 2,
+        "tokens_revoked": 2,
+        "credential_id": operator["id"],
+    }
+    for issued in (personal, second):
+        assert client.get("/api/v1/auth/me", headers=bearer(issued["token"])).status_code == 401
+    client.cookies.set("keystone_session", old_cookie, domain="testserver.local", path="/")
+    assert client.get("/api/v1/auth/me").status_code == 401
+    login(client, "alice")
+    assert client.get("/api/v1/auth/me").json()["user"]["password_change_required"] is True
+    client.post(
+        "/api/v1/auth/password", json={"current_password": PASSWORD, "password": NEW_PASSWORD}
+    )
+    assert client.get("/api/v1/auth/me", headers=bearer(personal["token"])).status_code == 401
+
+
+def test_self_password_change_preserves_pat(client):
+    login(client)
+    personal = token(client, ["user:read"])
+    assert (
+        client.post(
+            "/api/v1/auth/password", json={"current_password": PASSWORD, "password": NEW_PASSWORD}
+        ).status_code
+        == 204
+    )
+    assert client.get("/api/v1/auth/me").status_code == 401
+    assert client.get("/api/v1/users", headers=bearer(personal["token"])).status_code == 200
+
+
+def test_reset_audit_failure_rolls_back_password_and_all_credential_revocations(
+    client, monkeypatch
+):
+    login(client)
+    user = create_user(client)
     login(client, "alice")
     client.post(
         "/api/v1/auth/password", json={"current_password": PASSWORD, "password": NEW_PASSWORD}
     )
+    login(client, "alice", NEW_PASSWORD)
+    personal = token(client, [])
+    old_cookie = client.cookies.get("keystone_session")
+    login(client)
+    original = audit.record
+
+    async def fail_reset(*args, **values):
+        if args[1] == "identity.password.reset" and values.get("outcome", "success") == "success":
+            raise RuntimeError("reset audit failed")
+        return await original(*args, **values)
+
+    monkeypatch.setattr(audit, "record", fail_reset)
+    assert (
+        client.post(f"/api/v1/users/{user['id']}/password", json={"password": PASSWORD}).status_code
+        == 500
+    )
+    client.cookies.set("keystone_session", old_cookie, domain="testserver.local", path="/")
+    assert client.get("/api/v1/auth/me").status_code == 200
     assert client.get("/api/v1/auth/me", headers=bearer(personal["token"])).status_code == 200
+    login(client, "alice", NEW_PASSWORD)
+
+
+def test_global_audit_requires_builtin_admin_and_pat_scope(client):
+    login(client)
+    allowed = token(client, ["audit:read"])
+    limited = token(client, ["user:read"])
+    assert client.get("/api/v1/audit-logs", headers=bearer(allowed["token"])).status_code == 200
+    assert client.get("/api/v1/audit-logs", headers=bearer(limited["token"])).status_code == 403
+    user = create_user(client)
+    ordinary = role(client, "ordinary-all", list(PLATFORM_CATALOG.permissions))
+    assert assign(client, user["id"], ordinary["id"]).status_code == 204
+    login(client, "alice")
+    client.post(
+        "/api/v1/auth/password", json={"current_password": PASSWORD, "password": NEW_PASSWORD}
+    )
+    login(client, "alice", NEW_PASSWORD)
+    ordinary_pat = token(client, ["audit:read"])
+    for headers in ({}, bearer(ordinary_pat["token"])):
+        response = client.get("/api/v1/audit-logs", headers=headers)
+        assert response.status_code == 403
+        assert response.json()["code"] == "administrator_required"
 
 
 def test_audit_transaction_rollback_actor_and_deleted_target(client, monkeypatch):

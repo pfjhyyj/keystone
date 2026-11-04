@@ -77,23 +77,6 @@ class HistoryRetention:
             )
 
 
-class RoleDeletion:
-    def __init__(self, identity, files):
-        self.identity, self.files = identity, files
-
-    async def execute(self, identifier):
-        async with self.identity.context.access(
-            "role:delete",
-            identity_write=True,
-            action="identity.role.delete",
-            target="identity.role",
-            target_id=identifier,
-        ) as (session, auth):
-            role, permissions = await self.identity.prepare_role_deletion(session, auth, identifier)
-            await self.files.ensure_role_unused(session, identifier)
-            await self.identity.delete_role(session, auth, role, permissions)
-
-
 class FlowCosts:
     """Keep Flow visibility checks around the separately authorized model summary."""
 
@@ -129,7 +112,7 @@ class FlowDiagnostics:
                 )
             if section in {"all", "files"}:
                 references = await self.files.flow_diagnostics_in_transaction(
-                    session, auth, identifier, offset, limit
+                    session, identifier, offset, limit
                 )
                 candidates = [
                     ImageSource(
@@ -150,7 +133,6 @@ class FlowDiagnostics:
                     (file_id, key): invocation_id for file_id, invocation_id, key in confirmed
                 }
                 result.files = FlowFileDiagnostics(
-                    available=references.available,
                     truncated=references.truncated,
                     next_offset=references.next_offset,
                     items=[

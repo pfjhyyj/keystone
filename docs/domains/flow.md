@@ -49,7 +49,7 @@ sequenceDiagram
 
 ## 1. 定义与装配
 
-可信 Python 声明 FlowDefinition，通过 FlowPackage 显式装配。目标不提供独立通用 Flow 发起工具，由业务决定是否让用户选择模型。当前通用 HTTP/控制台入口仍存在，尚未迁移。
+可信 Python 声明 FlowDefinition，通过 FlowPackage 显式装配。由业务入口发起，业务决定是否让用户选择模型；平台仅提供运行查询与管理。
 
 ### FlowDefinition
 
@@ -199,19 +199,18 @@ sequenceDiagram
 
 | 当前 API（/api/v1） | 规则 |
 |---|---|
-| GET /flow-definitions；POST /flow-runs | flow:start＋定义权限；目标收敛至业务入口 |
 | GET /flow-runs、/{id} | flow:read，本人；flow:manage 扩大范围 |
 | POST /flow-runs/{id}/cancel | flow:cancel＋本人或 manage |
 | GET /flow-runs/{id}/steps | Run 可见；最多 32 关联流程/500 步骤，只含名称/位置/时间 |
 | GET /flow-runs/{id}/costs | Run＋模型记录权限；当前费用窗口最近 30 天 |
 | GET /flow-runs/{id}/diagnostics | section=all/budget/models/files，默认 50、最高 100，offset 分页 |
 
-诊断在短身份事务组合公开 Service，前后复查 Run；模型/文件先按各自 SQL 范围过滤再分页。无权限 available=false，未请求 null，返回 truncated/next_offset，不以 0 冒充不可见。
+诊断在短身份事务组合公开 Service，前后复查 Run；模型调用先按独立读取范围过滤，文件仅列当前 Run 的引用，再分页。模型调用不可见时返回 available=false。未请求的板块返回 null，列表通过 truncated/next_offset 分页。
 
 - 模型：read/read_all 独立判断，返回调用、操作、角色/节点/Agent、原 Step 位置及安全错误，不因 flow:manage 扩权。
-- 文件：当前需 inspect 及对象范围，仅 File ID/slot；同 Run 可见图片调用与原 Manifest 的产物键、摘要、大小、MIME 全部匹配才补 invocation_id，不按名称/时间猜测。
+- 文件：Run 可见后列出关联 File ID/slot，不授予内容读取权；同 Run 可见图片调用与原 Manifest 的产物键、摘要、大小、MIME 全部匹配才补 invocation_id，不按名称/时间猜测。
 - 预算：recorded/limits/counters，诊断整数为十进制字符串，前端 BigInt；费用独立。
 
 不返回检查点、私有 result/cost_context、供应商任务/下载地址、原文异常、秘密或本地路径。控制台各板块独立加载，失权清相应数据，迟到结果丢弃；仅活动 Run 自动轮询，终态缺步骤/费用可手动刷新。
 
-人工决定和采用版本由业务保存，批准与后续独立 Flow 可在同事务受理，不提供通用人工等待/唤醒。文件入口和通用发起工具的目标迁移尚未完成，当前授权不能直接删去。
+人工决定和采用版本由业务保存，批准与后续独立 Flow 可在同事务受理，不提供通用人工等待/唤醒。平台不提供通用发起入口；业务 Service 在已授权的事务中调用 start_in_transaction，业务页面自行查询输入和模型选项。

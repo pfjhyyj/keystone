@@ -45,7 +45,6 @@ class FlowDefinition:
     file_fields: tuple[str, ...] = ()
     output_file_fields: tuple[str, ...] = ()
     model_roles: tuple[ModelRole, ...] = ()
-    business_managed: bool = False
 
     timeout_seconds: int = 300
     limits: FlowLimits = field(default_factory=FlowLimits)
@@ -58,8 +57,6 @@ class FlowDefinition:
                 self.limits.model_dump() if isinstance(self.limits, FlowLimits) else self.limits
             ),
         )
-        if type(self.business_managed) is not bool:
-            raise ValueError("business_managed must be a boolean")
         for name in ("required_permissions", "file_fields", "output_file_fields", "model_roles"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if not self.revision.strip() or len(self.revision) > 64:
@@ -84,14 +81,6 @@ class FlowDefinition:
             raise ValueError("Duplicate or excessive model roles")
         if self.model_roles and "model:invoke" not in self.required_permissions:
             raise ValueError("Model roles require model:invoke")
-        operations = {role.operation for role in self.model_roles}
-        file_permissions = set()
-        if operations & {"image.understand", "image.generate", "image.edit"}:
-            file_permissions.add("file:content_read")
-        if operations & {"image.generate", "image.edit"}:
-            file_permissions.add("file:create")
-        if not file_permissions <= set(self.required_permissions):
-            raise ValueError("Image roles require explicit file permissions")
         compile_file_paths(self.input_schema(), self.file_fields)
         compile_file_paths(self.output_schema(), self.output_file_fields)
 
@@ -108,7 +97,6 @@ class FlowDefinition:
             "host_api_version": 1,
             "name": self.name,
             "description": self.description,
-            "business_managed": self.business_managed,
             "input_schema": self.input_model.model_json_schema(),
             "output_schema": self.output_schema(),
             "entrypoint": self.entrypoint,

@@ -21,7 +21,6 @@ import RowMore from '../../components/RowMore.vue'
 import ListPager from '../../components/ListPager.vue'
 import ChannelPicker from './components/ChannelPicker.vue'
 import UpstreamModelPicker from './components/UpstreamModelPicker.vue'
-import ModelProbe from './components/ModelProbe.vue'
 import ChannelBalance from './components/ChannelBalance.vue'
 import PricingDialog from './components/PricingDialog.vue'
 const pricingEntry = ref<ModelEntry | null>(null)
@@ -32,13 +31,10 @@ const options = ref<ModelOptions | null>(null),
   optionsError = ref('')
 const route = inject(routeLocationKey, undefined),
   router = inject(routerKey, undefined)
-const localTab = ref(can('model:manage') ? 'channels' : 'test')
+const localTab = ref('channels')
 const configurationTab = computed({
   get: () =>
-    [
-      ...(can('model:manage') ? ['channels', 'models'] : []),
-      ...(can('model:invoke') ? ['test'] : []),
-    ].includes(String(route?.query.tab))
+    ['channels', 'models'].includes(String(route?.query.tab))
       ? String(route?.query.tab)
       : localTab.value,
   set: (value: string) => {
@@ -52,11 +48,6 @@ watch(configurationTab, async (tab) => {
   await nextTick()
   if (tab === 'channels') channelTable.value?.doLayout()
   if (tab === 'models') modelTable.value?.doLayout()
-})
-
-watch([() => can('model:manage'), () => can('model:invoke')], ([manage, invoke]) => {
-  const available = [...(manage ? ['channels', 'models'] : []), ...(invoke ? ['test'] : [])]
-  if (!available.includes(configurationTab.value)) configurationTab.value = available[0] ?? ''
 })
 
 const form = ref<'channel' | 'entry' | null>(null),
@@ -282,7 +273,7 @@ onMounted(() => {
     <div v-show="form !== 'entry'" class="heading">
       <div>
         <h1>模型接入</h1>
-        <p>配置渠道、管理模型并测试调用。</p>
+        <p>配置渠道、模型和价格。</p>
       </div>
       <RouterLink v-if="can('model_invocation:read')" class="usage-entry" to="/model-usage"
         >查看用量与费用 →</RouterLink
@@ -568,9 +559,6 @@ onMounted(() => {
           />
         </section>
       </el-tab-pane>
-      <el-tab-pane v-if="can('model:invoke')" label="调用测试" name="test"
-        ><ModelProbe id="configuration-test"
-      /></el-tab-pane>
     </el-tabs>
     <AppDialog
       v-if="form"

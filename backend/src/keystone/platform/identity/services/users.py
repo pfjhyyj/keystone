@@ -137,7 +137,7 @@ class UserService:
             await manageable(session, auth, user)
             user.password_hash, user.password_change_required = hashed, True
             self.context.touch(user, auth)
-            counts = await revoke_user_credentials(session, identifier)
+            counts = await revoke_user_credentials(session, identifier, tokens=True)
             await self.context.log(session, auth, action, "identity.user", identifier, counts)
 
     async def revoke_credentials(self, identifier):

@@ -22,6 +22,7 @@ class File(Base):
             name="file_complete",
         ),
         Index("ix_files_status_updated", "status", "updated_at"),
+        Index("ix_files_status_completed", "status", "completed_at"),
     )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(255))
@@ -35,6 +36,7 @@ class File(Base):
     storage_fingerprint: Mapped[str] = mapped_column(String(64))
     object_key: Mapped[str] = mapped_column(String(64), unique=True)
     status: Mapped[str] = mapped_column(String(16))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_by: Mapped[UUID | None]

@@ -44,15 +44,13 @@ class FlowArtifactService:
             raise ServiceError(404, "flow_not_found", "流程不存在或不可访问")
         if execution:
             # Never widen a Run's frozen PAT scope using the caller's session auth.
-            auth = await authorize_execution(
+            await authorize_execution(
                 session,
                 run,
                 self.identity.flow_definitions,
                 execution_version=self.identity.execution_version(),
                 guard=self.identity.guard,
             )
-        auth.require("file:content_read")
-        return auth
 
     async def _candidate(self, session, run_id, key):
         owner, slot = artifact_location(run_id, key)
@@ -86,7 +84,7 @@ class FlowArtifactService:
 
         The caller holds identity and business-object locks and decides completeness,
         spec, distinctness and publication. SQL only: no byte scan, commit, reference
-        mutation or grants. Hold file locks in ID order until the caller commits.
+        mutation. Hold file locks in ID order until the caller commits.
         """
         if len(artifacts) > 100:
             raise ValueError("At most 100 artifact claims are supported")
@@ -94,12 +92,12 @@ class FlowArtifactService:
             (key, UUID(str(identifier)), artifact_location(run_id, key))
             for key, identifier in artifacts.items()
         ]
-        auth = await self._authorize(session, auth, run_id)
+        await self._authorize(session, auth, run_id)
         for key, identifier, (owner, slot) in sorted(claims, key=lambda item: (item[1], item[0])):
             if await self._candidate(session, run_id, key) != identifier:
                 raise ServiceError(409, "flow_invalid_artifact", "文件不属于本次运行的指定产物键")
             try:
-                await require_registered_file(session, auth, owner, slot, identifier)
+                await require_registered_file(session, owner, slot, identifier)
             except ServiceError as error:
                 if error.code == "file_reference_invalid":
                     raise ServiceError(

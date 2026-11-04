@@ -8,6 +8,21 @@ from keystone.bootstrap import create_app
 from keystone.core.config import Settings
 
 
+def test_platform_has_no_generic_file_library_model_call_or_flow_launcher():
+    app = create_app(Settings(config_file=None, database_url=None))
+    with TestClient(app) as browser:
+        for method, path in (
+            ("GET", "/api/v1/files"),
+            ("POST", "/api/v1/files"),
+            ("GET", "/api/v1/models"),
+            ("POST", "/api/v1/models/invoke"),
+            ("POST", "/api/v1/models/images/generate"),
+            ("GET", "/api/v1/flow-definitions"),
+            ("POST", "/api/v1/flow-runs"),
+        ):
+            assert browser.request(method, path).status_code in {404, 405}
+
+
 @pytest.mark.parametrize("second_path", ["/{identifier}", "/{other_id}", "/{other_id:str}"])
 def test_duplicate_nested_routes_fail_at_startup(second_path):
     app = create_app(Settings(config_file=None))

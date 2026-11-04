@@ -1,15 +1,13 @@
-"""Real database workspace persistence, discovery authorization and migration preservation."""
+"""Real database workspace persistence, discovery authorization and baseline constraints."""
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from threading import Event
 
 import httpx2
 import pytest
 from alembic import command
-from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 from test_files_dictionary import client as client
 from test_identity import bearer, token
@@ -155,17 +153,10 @@ def test_discovery_discards_results_after_workspace_key_change_or_revocation(
     assert "qwen-plus" not in response.text
 
 
-def test_workspace_migration_preserves_old_channels_credentials_and_safe_downgrade(
-    empty_database_url,
-):
+def test_workspace_baseline_defaults_and_constraints(empty_database_url):
     config = migration_config(Settings(config_file=None, database_url=empty_database_url))
     config.attributes["create_schema"] = True
-    revision = next(
-        r
-        for r in ScriptDirectory.from_config(config).walk_revisions()
-        if Path(r.path).name.endswith("_model_access_workspace.py")
-    )
-    command.upgrade(config, revision.down_revision)
+    command.upgrade(config, "0005")
     engine = create_engine(empty_database_url)
     try:
         with engine.begin() as connection:
@@ -175,7 +166,6 @@ def test_workspace_migration_preserves_old_channels_credentials_and_safe_downgra
                 VALUES ('00000000-0000-4000-8000-000000000099','legacy','aliyun_bailian',
                     'https://dashscope.aliyuncs.com/compatible-mode/v1','opaque-secret',true,'never')""")
             )
-        command.upgrade(config, revision.revision)
         with engine.begin() as connection:
             assert connection.execute(
                 text("SELECT workspace_id,api_key_encrypted FROM keystone.model_channels")
@@ -186,19 +176,5 @@ def test_workspace_migration_preserves_old_channels_credentials_and_safe_downgra
         for update in ["workspace_id='evil.invalid'", "provider='openrouter'"]:
             with pytest.raises(IntegrityError), engine.begin() as connection:
                 connection.execute(text("UPDATE keystone.model_channels SET " + update))
-        command.downgrade(config, revision.down_revision)
-        assert "workspace_id" not in {
-            c["name"] for c in inspect(engine).get_columns("model_channels", schema="keystone")
-        }
-        with engine.connect() as connection:
-            assert (
-                connection.scalar(text("SELECT api_key_encrypted FROM keystone.model_channels"))
-                == "opaque-secret"
-            )
-        command.upgrade(config, revision.revision)
-        with engine.connect() as connection:
-            assert (
-                connection.scalar(text("SELECT workspace_id FROM keystone.model_channels")) is None
-            )
     finally:
         engine.dispose()

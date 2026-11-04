@@ -5,6 +5,7 @@ import RolesView from '../views/roles/RolesView.vue'
 import AuditView from '../views/audit/AuditView.vue'
 import UserRolesDialog from '../views/users/components/UserRolesDialog.vue'
 import { identity } from '../stores/session'
+import { canNavigate, navigation } from '../router'
 import { authorize, deferred, fakeApi, role, user } from './support'
 
 describe('user administration', () => {
@@ -135,6 +136,32 @@ describe('user administration', () => {
 })
 
 describe('roles and audit', () => {
+  it('requires builtin administrator identity for audit navigation and requests', async () => {
+    authorize(['audit:read'])
+    identity.value = { ...identity.value!, is_administrator: false }
+    fakeApi(() => [])
+    const wrapper = mount(AuditView)
+    await flushPromises()
+    const audit = navigation.find((item) => item.path === '/audit')!
+    expect(canNavigate(audit)).toBe(false)
+    expect(globalThis.fetch).not.toHaveBeenCalled()
+    identity.value = { ...identity.value!, is_administrator: true }
+    await flushPromises()
+    expect(canNavigate(audit)).toBe(true)
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+    wrapper.unmount()
+  })
+  it('discards audit rows when administrator identity is revoked', async () => {
+    authorize(['audit:read'])
+    const late = deferred<unknown>()
+    fakeApi(() => late.promise)
+    const wrapper = mount(AuditView)
+    identity.value = { ...identity.value!, is_administrator: false }
+    late.resolve([{ id: 'private-audit', action: 'private-action' }])
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('private-action')
+    expect(wrapper.find('tbody tr').exists()).toBe(false)
+  })
   it.each(['default', 'since', 'until'])(
     'keeps the %s audit time range fixed across paging and refresh',
     async (boundary) => {

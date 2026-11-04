@@ -2,7 +2,7 @@
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { can, identity } from '../../../stores/session'
 import AppSelect from '../../../components/AppSelect.vue'
-import { uuidPattern } from '../../../api/files'
+import { uuidPattern } from '../../../api/client'
 import {
   dimensionFilters,
   usageApi,

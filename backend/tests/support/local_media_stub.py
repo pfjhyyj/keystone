@@ -26,7 +26,7 @@ definition = FlowDefinition(
     input_model=Source,
     output_model=Result,
     entrypoint="test.local_media.run",
-    required_permissions=("file:create", "file:content_read"),
+    required_permissions=("test_files.asset:create", "test_files.asset:content_read"),
     file_fields=("source_file_id",),
     output_file_fields=("file_id",),
     timeout_seconds=3600,
@@ -61,6 +61,9 @@ def register():
 
 def install():
     from keystone import composition
+    from support.business_catalog import install_catalog
+
+    install_catalog()
 
     composition.FLOW_PACKAGES = PACKAGE
     composition.execution_version.cache_clear()

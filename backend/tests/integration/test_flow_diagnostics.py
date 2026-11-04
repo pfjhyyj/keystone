@@ -9,8 +9,8 @@ from uuid import UUID, uuid4
 import pytest
 from PIL import Image
 from sqlalchemy import select
-from test_files_dictionary import add_grant, upload
 from test_files_dictionary import client as client
+from test_files_dictionary import upload
 from test_flow_budgets import accept
 from test_identity import (
     NEW_PASSWORD,
@@ -46,7 +46,12 @@ def seed(client):
     access = role(
         client,
         "diagnostics",
-        ["flow:read", "file:inspect", "file:content_read", "model_invocation:read"],
+        [
+            "flow:read",
+            "test_files.asset:inspect",
+            "test_files.asset:content_read",
+            "model_invocation:read",
+        ],
     )
     assign(client, alice["id"], access["id"])
     response, _ = accept(client)
@@ -86,13 +91,6 @@ def seed(client):
             ).model_dump(mode="json")
         )
         files.append(file_id)
-        if index % 2:
-            assert (
-                add_grant(
-                    client, file_id, "inspect", subject_type="user", user_id=alice["id"]
-                ).status_code
-                == 201
-            )
 
     async def insert(session):
         run = await session.get(FlowRun, run_id)
@@ -171,14 +169,14 @@ def test_permissions_filter_before_pagination_without_default_history_window(cli
     ):
         assert value not in first.text
     file_rows = []
-    for offset in (0, 1):
+    for offset in range(4):
         response = client.get(path, params={"section": "files", "limit": 1, "offset": offset})
         assert response.status_code == 200, response.text
         file_rows += response.json()["files"]["items"]
-    assert {row["file_id"] for row in file_rows} == {files[1], files[3]}
-    assert {row["invocation_id"] for row in file_rows} == {str(ids[1]), str(ids[3])}
+    assert {row["file_id"] for row in file_rows} == set(files)
+    assert {row["invocation_id"] for row in file_rows} == {None, str(ids[1]), str(ids[3])}
     # Inspect and retained reference do not confer content access.
-    assert client.get(f"/api/v1/files/{files[1]}/content").status_code == 404
+    assert client.get(f"/api/v1/_test/materials/{files[1]}/content").status_code == 404
     budget = client.get(path, params={"section": "budget"}).json()
     assert budget["models"] is None and budget["files"] is None
     assert budget["budget"]["recorded"] and budget["budget"]["counters"]["model_requests"] == "0"
@@ -189,7 +187,7 @@ def test_permissions_filter_before_pagination_without_default_history_window(cli
 
 def test_run_visibility_never_grants_other_resource_permissions(client):
     run_id, ids, _ = seed(client)
-    # A PAT can read its Run but cannot read invocation facts or file metadata.
+    # A PAT can read Run file IDs/slots without gaining model invocation facts.
     limited = bearer(token(client, ["flow:read"])["token"])
     response = client.get(f"/api/v1/flow-runs/{run_id}/diagnostics", headers=limited)
     assert response.status_code == 200, response.text
@@ -199,19 +197,14 @@ def test_run_visibility_never_grants_other_resource_permissions(client):
         "truncated": False,
         "next_offset": None,
     }
-    assert response.json()["files"] == {
-        "available": False,
-        "items": [],
-        "truncated": False,
-        "next_offset": None,
-    }
-    assert not any(str(identifier) in response.text for identifier in ids)
+    assert len(response.json()["files"]["items"]) == 4
+    assert all(item["invocation_id"] is None for item in response.json()["files"]["items"])
 
-    metadata_only = bearer(token(client, ["flow:read", "file:inspect"])["token"])
+    metadata_only = bearer(token(client, ["flow:read", "test_files.asset:inspect"])["token"])
     metadata = client.get(f"/api/v1/flow-runs/{run_id}/diagnostics", headers=metadata_only)
     assert metadata.status_code == 200, metadata.text
     assert metadata.json()["models"]["available"] is False
-    assert len(metadata.json()["files"]["items"]) == 2
+    assert len(metadata.json()["files"]["items"]) == 4
     assert all(item["invocation_id"] is None for item in metadata.json()["files"]["items"])
 
     # Loss of Run ownership is enforced even while file/model permissions remain.
@@ -259,12 +252,12 @@ def test_flow_manager_does_not_gain_read_all_model_scope(client):
         str(ids[0]),
         str(ids[2]),
     }
-    assert response.json()["files"]["available"] is False
     # The administrator's inspect exception does not widen model read_all scope.
     metadata_headers = bearer(
-        token(client, ["flow:read", "flow:manage", "model_invocation:read", "file:inspect"])[
-            "token"
-        ]
+        token(
+            client,
+            ["flow:read", "flow:manage", "model_invocation:read", "test_files.asset:inspect"],
+        )["token"]
     )
     metadata = client.get(f"/api/v1/flow-runs/{run_id}/diagnostics", headers=metadata_headers)
     assert metadata.status_code == 200, metadata.text

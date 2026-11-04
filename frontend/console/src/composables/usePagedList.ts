@@ -1,12 +1,15 @@
 // Request generation and disposal rules, using the console's 50-row pagination.
 import { computed, onScopeDispose, ref, shallowRef, watch } from 'vue'
 import { can } from '../stores/session'
-export function usePagedList<T>(permission: string, loader: (offset: number) => Promise<T[]>) {
+export function usePagedList<T>(
+  permission: string | (() => boolean),
+  loader: (offset: number) => Promise<T[]>,
+) {
   const rows = shallowRef<T[]>([]),
     page = ref(0),
     loading = ref(false),
     error = ref('')
-  const allowed = computed(() => can(permission))
+  const allowed = computed(() => (typeof permission === 'string' ? can(permission) : permission()))
   let generation = 0
   let disposed = false
   async function load(preserve = false) {

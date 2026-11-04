@@ -273,6 +273,10 @@ def install(monkeypatch=None):
     """Inject deterministic HTTP responses in tests, including isolated child processes."""
     from dataclasses import replace
 
+    from support.business_catalog import install_catalog
+
+    install_catalog(monkeypatch)
+
     from keystone.platform.model_access.adapters.channels import CHANNELS, OPENROUTER_BASE
     from keystone.platform.model_access.adapters.http import HttpClient
     from keystone.platform.model_access.adapters.inference.protocols import ChatCompletions

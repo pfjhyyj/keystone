@@ -2,7 +2,6 @@ import type { Permission } from '../../api/admin'
 
 const moduleNames = new Map([
   ['identity', '身份与访问'],
-  ['file', '文件管理'],
   ['dictionary', '业务字典'],
   ['model', '模型接入'],
   ['flow', 'Flow 流程'],

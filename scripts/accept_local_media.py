@@ -78,7 +78,10 @@ def peak_rss(pid):
 
 
 def exercise(root, database_url, channel):
+    from support.business_catalog import install_catalog
     from support.processes import stop_process
+
+    install_catalog()
 
     ffmpeg, node = shutil.which("ffmpeg"), shutil.which("node")
     if not ffmpeg or not node:
@@ -145,6 +148,7 @@ def exercise(root, database_url, channel):
     env = {key: value for key, value in os.environ.items() if not key.startswith("KEYSTONE_")}
     env.update(
         {
+            "PYTHONPATH": str(ROOT / "backend/tests"),
             "KEYSTONE_ENV": "test",
             "KEYSTONE_DATABASE_URL": database_url,
             "KEYSTONE_FILE_COORDINATION_ROOT": str(storage),
@@ -158,7 +162,9 @@ def exercise(root, database_url, channel):
 import os
 from pathlib import Path
 import uvicorn
-from keystone.bootstrap import create_app
+from support.business_catalog import install_catalog
+from support.business_api import create_app
+install_catalog()
 from keystone.core.config import Settings
 Path({str(pid_file)!r}).write_text(str(os.getpid()))
 uvicorn.run(create_app(Settings(config_file=None)), host='127.0.0.1', port={port},
@@ -216,14 +222,14 @@ uvicorn.run(create_app(Settings(config_file=None)), host='127.0.0.1', port={port
                     before, started = peak_rss(pid), time.monotonic()
                     with source.open("rb") as stream:
                         receipt = client.post(
-                            "/api/v1/files",
+                            "/api/v1/_test/materials",
                             params=params,
                             headers=headers,
                             content=stream,
                         )
                     receipt.raise_for_status()
                     identifier = receipt.json()["id"]
-                    url = f"/api/v1/files/{identifier}/content"
+                    url = f"/api/v1/_test/materials/{identifier}/content"
                     digest, size = hashlib.sha256(), 0
                     with client.stream("GET", url) as response:
                         response.raise_for_status()

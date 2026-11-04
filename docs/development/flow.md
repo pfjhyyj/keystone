@@ -1,10 +1,10 @@
 # 编写业务 Flow
 
-本文使用 examples/document_review 展示实际接入，契约与限制见 [Flow](../domains/flow.md)，后台设施见[任务执行](../execution.md)。模型和文件操作通过公开 Context/Service，不拼渠道协议。当前示例中的通用发起 API 尚未迁移，新业务由自己的业务入口受理。
+本文使用 examples/document_review 展示实际接入，契约与限制见 [Flow](../domains/flow.md)，后台设施见[任务执行](../execution.md)。模型和文件操作通过公开 Context/Service，不拼渠道协议。示例只展示定义与执行代码，业务自己提供授权和受理入口。
 
 ## 业务执行接入
 
-FlowDefinition.business_managed=True 强制业务 Service 通过 start_in_transaction 受理，通用 /flow-runs 拒绝直接发起；该标志来自可信定义，不能从请求覆盖。
+所有 Flow 都由业务 Service 通过 start_in_transaction 在身份事务内受理。调用方授权业务对象与精确文件 ID；平台不提供通用发起 API 或业务入口开关。
 
 | 装配入口 | 使用场景与约束 |
 |---|---|

@@ -157,7 +157,7 @@ EmbeddingRequest(texts, dimensions) 每次 1～16 非空文本，每条 8 KiB、
 
 ImageManifest format=1，保存 request_digest、operation、outputs；每项仅稳定 artifact_key、SHA-256、size_bytes、content_type，键由 invocation_id＋序号派生。最多两份、每份 8 MiB、总计 16 MiB，result_context 私有，不与 cost_context 混用。
 
-恢复先核原身份、角色、操作、固定目标和摘要；已保存 Manifest 则验证原文件，缺不可取回内容时失败；无调用才可登记发送。生成成功及 Manifest 先持久化，再逐份保存 File/Run 引用，最后返回小型 ImageResult。只有哈希不能取回丢失 Base64；文件已保存则按原稳定键复用。
+恢复先核原身份、角色、操作、固定目标和摘要；已保存 Manifest 则验证原文件，缺不可取回内容时失败；无调用才可登记发送。模型层先确认生成事实与 Manifest，并返回受控图片内容；Flow 再逐份保存 File/Run 引用，返回自身的轻量 ImageResult。只有哈希不能取回丢失 Base64；文件已保存则按原稳定键复用。
 
 ### 异步图片
 
@@ -193,9 +193,6 @@ b64_json（含匹配 MIME 的 data URI）验证后形成 Manifest。URL 回应�
 | PATCH /model-channels/{id}/name；/model-entries/{id}/name | manage，仅改名称 |
 | DELETE /model-channels/{id}；/model-entries/{id} | manage，未引用 204，否则 409 |
 | POST /model-channels/{id}/balance | manage，手动余额刷新 |
-| GET /models | invoke，可用模型目录，可按 operation/delivery 筛选 |
-| POST /models/invoke | invoke，文本 JSON/SSE（start/delta/done/error） |
-| POST /models/images/generate；/models/images/edit；/models/vision | 当前直接媒体组合，返回调用 ID 与 File ID/文本 |
 | GET /model-invocations、/{id}、/summary | read，本人；read_all 扩大范围 |
 | GET /model-invocations/statistics、/options | 同记录权限，统计与当前可见主体搜索 |
 | POST /model-invocations/{id}/cost | manage＋记录读取，补查已结束调用 |
@@ -204,7 +201,7 @@ b64_json（含匹配 MIME 的 data URI）验证后形成 Manifest。URL 回应�
 
 列表默认 50、最高 100。调用查询默认最近 30 天、最多 366 天，范围在 SQL 分页/聚合前应用，汇总同一快照。数值为十进制字符串，cost Numeric(38,18)。Run 诊断显式按 Run 查询，不套默认窗口。
 
-/console/models 当前有配置、余额和真实调用测试，/console/model-usage 为独立记录/费用页，不依赖配置或用户目录权限。测试只在明确点击发送时计费，不自动重试；停止接收仅中断等待，不证明取消/免费。媒体输入走 Files，生成/编辑另需 file:create，参考图需 content_read，理解无需 create（上传本地参考图除外）。当前图片代理等待 900 秒，外部代理须匹配。
+/console/models 提供渠道、模型、价格配置与余额查询；/console/model-usage 提供独立记录与费用页，不依赖配置或用户目录权限。业务通过 runtime.model_service(identity) 调用 ModelRuntime，自行授权输入并按需使用 Files 保存结果。模型模块不保存 File，不提供通用推理 HTTP 入口。
 
 统计支持时间、渠道/模型/用户、来源、Run/角色/节点/Agent/操作、调用和费用状态/来源/单位/错误。上海时区分桶，小时桶最多 31 天；筛选提交后固定，翻页沿用，相对范围手动刷新推进，自定义范围不变。URL 保留筛选、分页和详情，主体选项只来自可见调用，权限变化清空旧数据。
 

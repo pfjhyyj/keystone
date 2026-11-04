@@ -2,17 +2,19 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, asynccontextmanager, contextmanager
 from threading import Event
 from uuid import UUID
 
 import pytest
 from fastapi import Request
+from sqlalchemy import text
 from test_files_dictionary import client as client
 from test_files_dictionary import upload
+from test_identity import query
 
+from keystone.core.content_response import ContentResponse
 from keystone.core.errors import ServiceError
-from keystone.platform.files.controllers.streaming import ContentResponse
 from keystone.platform.files.services.files import FileService
 from keystone.platform.identity.controllers.dependencies import access_context
 
@@ -54,28 +56,29 @@ def test_http_read_waits_for_capacity_and_rechecks_access(
             pending = pool.submit(
                 client.request,
                 method,
-                f"/api/v1/files/{file['id']}/content",
+                f"/api/v1/_test/materials/{file['id']}/content",
                 headers={"Range": "bytes=2-5"},
             )
             assert entered.wait(5)
             assert not pending.done()
             if change == "revoke":
-                grants = client.get(f"/api/v1/files/{file['id']}/grants").json()
-                grant = next(item for item in grants if item["action"] == "content_read")
-                assert (
-                    client.delete(f"/api/v1/files/{file['id']}/grants/{grant['id']}").status_code
-                    == 204
+                query(
+                    client,
+                    lambda session: session.execute(
+                        text("DELETE FROM keystone.test_materials WHERE id=:id"),
+                        {"id": UUID(file["id"])},
+                    ),
                 )
             elif change == "disable":
                 assert (
                     client.patch(
-                        f"/api/v1/files/{file['id']}",
+                        f"/api/v1/_test/materials/{file['id']}",
                         json={"name": file["name"], "status": "disabled"},
                     ).status_code
                     == 200
                 )
             elif change == "delete":
-                assert client.delete(f"/api/v1/files/{file['id']}").status_code == 202
+                assert client.delete(f"/api/v1/_test/materials/{file['id']}").status_code == 202
         response = pending.result(timeout=5)
     if change:
         assert response.status_code == status
@@ -102,8 +105,16 @@ def test_disconnect_while_waiting_does_not_send_headers_or_leak_slots(client, mo
             pytest.fail("Headers sent after disconnect")
 
         service = FileService(access_context(request), runtime.storage)
-        context = service.open_content(identifier, wait_for_slot=True)
-        await ContentResponse(context, request)(request.scope, receive, send)
+
+        @asynccontextmanager
+        async def read():
+            async with (
+                service.read_transfer() as transfer,
+                transfer.open_content(identifier) as reader,
+            ):
+                yield reader
+
+        await ContentResponse(read(), request)(request.scope, receive, send)
         return {"closed": True}
 
     with ExitStack() as held:
@@ -121,7 +132,7 @@ def test_http_read_returns_busy_after_bounded_wait_without_leaking_slots(client)
     with ExitStack() as held:
         for _ in range(transfers.settings.file_transfer_slots):
             held.enter_context(transfers.slot())
-        response = client.get(f"/api/v1/files/{file['id']}/content")
+        response = client.get(f"/api/v1/_test/materials/{file['id']}/content")
         assert response.status_code == 503
         assert response.json()["code"] == "file_transfer_busy"
     with ExitStack() as held:

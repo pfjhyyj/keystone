@@ -40,7 +40,7 @@ artifact_definition = replace(
     tool_definition,
     key="test.resources_artifact",
     entrypoint="test.resources_artifact.run",
-    required_permissions=("file:create", "file:content_read"),
+    required_permissions=("test_files.asset:create", "test_files.asset:content_read"),
     output_file_fields=("files",),
     limits=FlowLimits(file_count=1, file_bytes=4, temporary_bytes=8, concurrent_operations=1),
 )

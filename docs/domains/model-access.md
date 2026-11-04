@@ -2,7 +2,7 @@
 
 模型接入管理渠道、模型映射、受控调用、用量、费用和恢复证据。业务 Service 授权业务对象，再组合模型与文件能力；模型返回结果，业务或 Flow 保存所需文件并登记业务结果，见[组合流程](files.md#18-业务服务组合模型与文件)。
 
-主要设计见本页；供应商、接口和底层恢复见[实现参考](../reference/model-access.md)，价格规则见[费用预估](../reference/model-pricing.md)。当前独立调用 API/测试页仍存在，目标入口收敛到实际业务，尚未迁移。
+主要设计见本页；供应商、接口和底层恢复见[实现参考](../reference/model-access.md)，价格规则见[费用预估](../reference/model-pricing.md)。调用由业务或 Flow 使用内部 Service 发起。
 
 ## 1. 范围与边界
 
@@ -208,7 +208,7 @@ sequenceDiagram
 
 ### 5.2 接口与权限
 
-当前 HTTP、控制台、查询限额和离线收尾命令集中在[实现参考](../reference/model-access.md#接口与控制台)。详细 Schema 见本地 /docs；通用调用入口尚未按业务目标收敛。
+当前 HTTP、控制台、查询限额和离线收尾命令集中在[实现参考](../reference/model-access.md#接口与控制台)。详细 Schema 见本地 /docs。
 
 ### 5.3 发送与故障规则
 
@@ -240,13 +240,13 @@ FlowModel 经 ModelRuntime.invoke_sdk 接入受控客户端，每个真实请求
 | text.structured | 本地严格校验的 JSON 对象 |
 | text.embed | 已验证维度的向量 |
 | image.understand | 文本，输入为已授权 File ID |
-| image.generate / image.edit | 受控图片内容；当前组合层保存后返回 File ID |
+| image.generate / image.edit | 受控图片内容与调用 ID；调用方决定保存 |
 
 有效能力取模型声明、已安装协议和 Flow 角色要求的交集。operations 非空、无重复、已知枚举，不按种数另设上限；数据库不重复枚举操作名。delivery 为 sync/async，旧选择缺失按 text.generate/sync 解释。
 
 ### 6.2 请求与结果边界
 
-只接受明确 DTO，不开放任意图片 URL、data URI 或本地路径。发送前验证 Run 范围、当前文件权限、实际格式及大小；结构化 Schema 有界、只解析本地引用。协议限制、图片取回及原任务恢复见[媒体实现](../reference/model-access.md#媒体与恢复)。
+只接受明确 DTO，不开放任意图片 URL、data URI 或本地路径。发送前验证执行范围、实际格式及大小；输入文件由调用业务授权，Flow 限定到固定输入与本 Run 产物；结构化 Schema 有界、只解析本地引用。协议限制、图片取回及原任务恢复见[媒体实现](../reference/model-access.md#媒体与恢复)。
 
 ### 6.3 外部事实与恢复
 
@@ -292,7 +292,7 @@ sequenceDiagram
 
 同次调用使用登记时完整价格快照，后续调价不改历史；缺计量不补零，价格不授予模型能力。预估不扣款、不覆盖实扣，也不改变 Flow 资源预算。配置、计量分区和计算格式见[估价契约](../reference/model-pricing.md)。
 
-## 10. 不变量与实现差异
+## 10. 不变量与当前范围
 
 1. 每次发送前唯一登记，恢复不换 ID 重发未知调用。
 2. 历史目标、凭据查询范围和价格快照不被当前映射重解释。
@@ -300,4 +300,4 @@ sequenceDiagram
 4. 撤权、取消和停用阻止新操作，已发生事实受限保存。
 5. 秘密、原始报文和大产物不进入公开视图或通用检查点。
 
-当前媒体组合层仍保存 Files、通用模型调用 API 和测试页面仍存在；目标改为业务或 Flow 组合生成与保存。视频生成尚未实现，图片/视频通用文件存储不代表已接入视频模型。迁移前保留现有文件权限检查。
+模型模块返回受控内容和调用事实；业务或 Flow 组合生成与文件保存。控制台提供模型配置与用量查询，不提供通用调用测试。视频生成尚未实现，通用文件存储不代表已接入视频模型。

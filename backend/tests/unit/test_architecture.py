@@ -19,6 +19,8 @@ LAYERS = ("controllers", "services", "models", "schemas")
 def test_platform_module_contract_and_dependencies(domain):
     root = ROOT / "platform" / domain
     for layer in LAYERS:
+        if not (root / layer).exists():
+            continue
         assert (root / layer / "__init__.py").is_file()
         assert any(f.name != "__init__.py" for f in (root / layer).glob("*.py"))
     for old in ("controller", "service", "models", "schemas", "routes"):

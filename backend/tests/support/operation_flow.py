@@ -3,12 +3,12 @@
 from uuid import UUID
 
 from keystone.core.schemas import Input
+from keystone.platform.flow.schemas.artifacts import ImageResult
 from keystone.platform.flow.schemas.definitions import FlowDefinition, ModelRole
 from keystone.platform.flow.schemas.packages import FlowPackage
 from keystone.platform.model_access.schemas.images import (
     ImageEditRequest,
     ImageGenerateRequest,
-    ImageResult,
     ImageTaskRequest,
 )
 
@@ -212,7 +212,7 @@ vision_definition = FlowDefinition(
     input_model=ImageQuestion,
     output_model=ImageAnswer,
     entrypoint="test.vision.run",
-    required_permissions=("model:invoke", "file:content_read"),
+    required_permissions=("model:invoke", "test_files.asset:content_read"),
     file_fields=("source_file_id",),
     model_roles=(ModelRole("analyze", "Analysis", "image.understand"),),
 )
@@ -230,7 +230,11 @@ image_definition = FlowDefinition(
     input_model=ImageGenerateRequest,
     output_model=ImageResult,
     entrypoint="test.image.run",
-    required_permissions=("model:invoke", "file:create", "file:content_read"),
+    required_permissions=(
+        "model:invoke",
+        "test_files.asset:create",
+        "test_files.asset:content_read",
+    ),
     output_file_fields=("files.*.file_id",),
     model_roles=(ModelRole("generate", "Generate", "image.generate"),),
 )
@@ -242,7 +246,11 @@ edit_definition = FlowDefinition(
     input_model=ImageEditRequest,
     output_model=ImageResult,
     entrypoint="test.image_edit.run",
-    required_permissions=("model:invoke", "file:create", "file:content_read"),
+    required_permissions=(
+        "model:invoke",
+        "test_files.asset:create",
+        "test_files.asset:content_read",
+    ),
     file_fields=("images.*.file_id",),
     output_file_fields=("files.*.file_id",),
     model_roles=(ModelRole("edit", "Edit", "image.edit"),),
@@ -257,7 +265,11 @@ task_definition = FlowDefinition(
     input_model=ImageTaskRequest,
     output_model=ImageResult,
     entrypoint="test.image_task.run",
-    required_permissions=("model:invoke", "file:create", "file:content_read"),
+    required_permissions=(
+        "model:invoke",
+        "test_files.asset:create",
+        "test_files.asset:content_read",
+    ),
     output_file_fields=("files.*.file_id",),
     model_roles=(ModelRole("generate", "Generate", "image.generate", delivery="async"),),
 )

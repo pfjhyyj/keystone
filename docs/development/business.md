@@ -296,22 +296,13 @@ Windows 将解释器路径替换为 `backend/.venv/Scripts/python.exe`。统一�
 
 Flow 只保存运行记录、权限和结果协调；业务结论、实体和采用动作仍归业务自己保存。详细边界见[Flow 开发](flow.md)和[Flow 领域](../domains/flow.md)。
 
-需要同步创建业务记录的 Flow 在可信定义上设置 `business_managed=True`。通用发起 API 会拒绝直接受理，业务 Service 在自己的身份事务中调用 `start_in_transaction`；它继续执行原有用户/PAT、文件、模型及幂等检查，不能由 HTTP 请求选择是否绕过业务入口。控制台目录提示从业务页面发起。
+业务 Service 在自己的身份事务中调用 `start_in_transaction`，一起保存业务受理记录和 Run。调用方授权业务对象并确定精确输入文件，Flow 负责原用户/PAT、契约、固定模型及幂等检查；平台不提供通用 Flow 发起 API。
 
 业务执行守卫和 Worker 服务绑定使用 composition 的显式 `EXECUTION_GUARD` / `WORKFLOW_BINDINGS`，契约与调用时机见[Flow 开发](flow.md#业务执行接入)。不必替换平台的 FlowService、ExecutionIdentity 或 Worker 主入口。
 
 ## 前端（可选）
 
-console 可直接承载业务页面，优先按现有 `views/<页面>/` 结构新增页面和路由并复用登录、权限与组件。业务确有界面或交付需求时也可使用独立前端工程。当前通用 Flow 页可在 `frontend/console/src/views/flows/forms.ts` 注册专用表单，未注册时使用 JSON。该页尚未迁移，新业务优先自己的入口：
-
-```ts
-import type { Component } from 'vue'
-import NotesInput from '../../businesses/notes/FlowInput.vue'
-
-export const flowForms: Readonly<Record<string, Component>> = {
-  'notes.note.review': NotesInput,
-}
-```
+console 可直接承载业务页面，优先按现有 `views/<页面>/` 结构新增页面和路由并复用登录、权限与组件。业务确有界面或交付需求时也可使用独立前端工程。业务页面使用自己的输入表单、对象查询和受理接口。平台 Flow 页面只监控运行；文件传输工具 `api/files.ts` 接受业务上传/下载路径，不提供全局文件库。
 
 集成到 console 的业务页面随现有前端构建和部署；选择独立前端时才单独构建、部署，通过同源 API 代理接入，并继续遵守后端 Cookie 会话、Origin、CSRF 和权限契约，详见[身份与访问控制](../domains/identity.md#7-最小实现约定)。不要为普通业务扩展复制一套 console 或预建共享组件包。
 
@@ -346,9 +337,11 @@ export const flowForms: Readonly<Record<string, Component>> = {
 5. composition 显式汇总绑定、计划及预算，由 queue_budgets 检查入口、输入和队列一致性。
 6. 验证稳定 ID、合并、重启、依赖故障与领域幂等；不从请求接受任意处理函数、导入路径或执行身份。
 
+API 的业务 Controller 在授权后通过注入的 Runtime 调用 `await runtime.tasks.enqueue(TASK, payload, execution_key=key)`；TASK 取自轻量 definitions。CLI 命令使用 build_runtime(settings) 装配相同客户端，在 finally 中 `await runtime.close()`，不启动 Worker。Service 不导入执行设施，普通函数的组合与任务投递放入口层。
+
 业务需要 FlowService 时由装配层注入 runtime.flow_service(identity)，自行装配须显式提供 execution_version 来源，不反向导入 composition/bootstrap。普通 Service 不导入执行 Context。
 
-本地文件经 FileService.transfer() 使用短期 materialize_file/upload_file，物化后另取上传作用域；等待 I/O 和清理后退出，路径/传输对象不进入检查点。完整接口见[文件参考](../reference/files.md)。
+新业务由装配层注入 runtime.managed_files(identity)，先授权对象再使用文件；保存后同事务登记业务关系、引用和审计。读取需排队时先进入 files.read_transfer()，再完成业务授权并读取。临时文件经 files.transfer() 使用 materialize_file/upload_file，物化后另取上传作用域；等待 I/O 和清理后退出，路径/传输对象不进入检查点。完整接口见[文件参考](../reference/files.md)。
 
 ### Flow 与业务操作
 

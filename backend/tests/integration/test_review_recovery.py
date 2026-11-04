@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 from support.flow_engine import flow_engine as flow_engine
-from test_files_dictionary import upload
+from test_files_dictionary import file_count, upload
 from test_flow import client as client
 from test_flow import configuration as configuration
 from test_flow import start, wait_run, worker
@@ -20,8 +20,9 @@ def test_completed_checkpoints_do_not_reset_budgets(client, tmp_path, budget):
     if budget == "deadline":
         runtime = client.app.state.runtime
         definition = runtime.flow_definitions["document.review"]
+        from support.flow_fixture.contracts import PACKAGE
+
         from keystone import composition
-        from keystone.examples.document_review.contracts import PACKAGE
 
         changed = replace(definition, timeout_seconds=3)
         runtime.flow_definitions = {definition.key: changed}
@@ -45,8 +46,8 @@ if BUDGET_KIND == 'total_tokens':
     limits = {'total_tokens': 30}  # Each checkpointed mock response reports 20.
 if BUDGET_KIND == 'deadline':
     limits = {'seconds': 3}
-    from keystone.examples.document_review.contracts import PACKAGE
-    changed = replace(workflow.definition, timeout_seconds=3)
+    from support.flow_fixture.contracts import PACKAGE
+    changed = replace(PACKAGE.definitions[0], timeout_seconds=3)
     composition.FLOW_PACKAGES = (replace(PACKAGE, definitions=(changed,)),)
     composition.execution_version.cache_clear()
 workflow.BUDGET = replace(workflow.BUDGET, **limits)
@@ -107,4 +108,4 @@ ModelRequestNode._append_response = staticmethod(crash_after_checkpoint)
     after = client.get(f"/api/v1/model-invocations?flow_run_id={run['id']}").json()
     assert {row["id"] for row in after} == {row["id"] for row in before}
     assert done["result"] is None
-    assert len(client.get("/api/v1/files").json()) == 1
+    assert file_count(client) == 1

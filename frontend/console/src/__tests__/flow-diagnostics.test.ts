@@ -48,7 +48,7 @@ const invocation = (id: string) => ({
 })
 const budget = { recorded: true, limits, counters }
 it('keeps an opened invocation through polling and clears it when authority changes', async () => {
-  authorize(['flow:read', 'model_invocation:read', 'file:inspect'])
+  authorize(['flow:read', 'model_invocation:read'])
   fakeApi(defaults)
   const wrapper = mount(FlowRunDiagnostics, {
     props,
@@ -62,7 +62,7 @@ it('keeps an opened invocation through polling and clears it when authority chan
   await wrapper.setProps({ refresh: 2 })
   await flushPromises()
   expect(wrapper.findComponent(InvocationDialog).props('id')).toBe(invocationId)
-  authorize(['flow:read', 'file:inspect'])
+  authorize(['flow:read'])
   await flushPromises()
   expect(wrapper.findComponent(InvocationDialog).exists()).toBe(false)
 })
@@ -78,7 +78,7 @@ function defaults(path: string) {
   }
 }
 it('isolates failed model diagnostics from budget and files and supports retry', async () => {
-  authorize(['flow:read', 'model_invocation:read', 'file:inspect'])
+  authorize(['flow:read', 'model_invocation:read'])
   let failed = true
   fakeApi((path) =>
     section(path) === 'models' && failed
@@ -99,7 +99,7 @@ it('isolates failed model diagnostics from budget and files and supports retry',
   expect(wrapper.text()).not.toContain('调用诊断暂不可用')
 })
 it('correlates exact workflow and step, agent, role and generated file source', async () => {
-  authorize(['flow:read', 'model_invocation:read', 'file:inspect'])
+  authorize(['flow:read', 'model_invocation:read'])
   fakeApi((path) =>
     section(path) === 'files'
       ? {
@@ -147,7 +147,7 @@ it('correlates exact workflow and step, agent, role and generated file source', 
   expect(wrapper.text()).toContain(`来源调用 ${invocationId}`)
 })
 it('paginates at the returned offset and rejects late pages after refresh', async () => {
-  authorize(['flow:read', 'model_invocation:read', 'file:inspect'])
+  authorize(['flow:read', 'model_invocation:read'])
   const oldPage = deferred<unknown>(),
     paths: string[] = []
   let refreshed = false
@@ -185,13 +185,12 @@ it('does not fetch unauthorized resource panels', async () => {
   })
   const wrapper = mount(FlowRunDiagnostics, { props })
   await flushPromises()
-  expect(paths).toHaveLength(1)
-  expect(section(paths[0]!)).toBe('budget')
+  expect(paths.map(section).sort()).toEqual(['budget', 'files'])
   expect(wrapper.text()).toContain('无查看模型调用权限')
-  expect(wrapper.text()).toContain('无查看文件元数据权限')
+  expect(wrapper.text()).toContain(fileId)
 })
 it('clears revoked panels and ignores their outstanding results', async () => {
-  authorize(['flow:read', 'model_invocation:read', 'file:inspect'])
+  authorize(['flow:read', 'model_invocation:read'])
   const oldPage = deferred<unknown>()
   fakeApi((path) => (section(path) === 'models' ? oldPage.promise : defaults(path)))
   const wrapper = mount(FlowRunDiagnostics, { props })
@@ -202,11 +201,11 @@ it('clears revoked panels and ignores their outstanding results', async () => {
   oldPage.resolve(defaults('/diagnostics?section=models'))
   await flushPromises()
   expect(wrapper.text()).not.toContain(invocationId)
-  expect(wrapper.text()).not.toContain(fileId)
+  expect(wrapper.text()).toContain(fileId)
   expect(wrapper.text()).toContain('无查看模型调用权限')
 })
 it('shows historical omissions explicitly and clears all data on Run access loss', async () => {
-  authorize(['flow:read', 'model_invocation:read', 'file:inspect'])
+  authorize(['flow:read', 'model_invocation:read'])
   let lost = false
   fakeApi((path) => {
     if (lost)

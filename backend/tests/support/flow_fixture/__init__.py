@@ -7,7 +7,9 @@ def register():
 
 def install():
     from keystone import composition
-    from keystone.examples.document_review.contracts import PACKAGE
+    from support.business_catalog import install_catalog
+    from support.flow_fixture.contracts import PACKAGE
 
+    install_catalog()
     composition.FLOW_PACKAGES = (PACKAGE,)
     composition.execution_version.cache_clear()

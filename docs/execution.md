@@ -57,7 +57,7 @@ sequenceDiagram
 
 不变量：提交成功以持久入队为准；只执行注册入口；不重复建设任务状态表；领域操作遵守原授权、事务和幂等。
 
-实现差异：DBOS 3.2.0 支持原生持久投递和指定队列计划；当前 enqueue_task 依赖初始化的 DBOS 上下文，普通 API/CLI 直接投递客户端尚待装配。现有维护计划使用薄 tick 处理参数、合并和迟到，忽略执行引用。
+API/CLI 使用 Runtime 装配的 TaskClient 直接持久投递，不启动 DBOS 执行器；Worker 内使用 enqueue_task。现有维护计划使用薄 tick 处理参数、合并和迟到，忽略执行引用。
 
 ## 1. 选择执行入口
 
@@ -100,7 +100,9 @@ async def enqueue_task(
     ...
 ```
 
-投递检查启用、输入、执行键和版本，使用原生队列。Workflow 层保持确定顺序，不在 Step 中拆分投递；合并返回已有执行引用。
+API/CLI 在完成业务授权后调用 `await runtime.tasks.enqueue(definition, payload, execution_key=key)`，只传可信代码中的 TaskDefinition，不导入任务执行模块。TaskClient 校验输入、执行键和当前制品版本，原生持久入队后返回 ExecutionRef；连接、取连接及单条 SQL 等待上限为 3 秒，由 Runtime.close 释放客户端连接。任务及队列仍须在 composition 显式注册。
+
+Worker 的 enqueue_task 还检查绑定是否启用。Workflow 层保持确定顺序，不在 Step 中拆分投递；合并返回已有执行引用。API/CLI 的功能启用和操作授权由业务入口检查，不提供接收任意任务名、执行版本或导入路径的公共投递接口。
 
 | 标识 | 含义 |
 |---|---|

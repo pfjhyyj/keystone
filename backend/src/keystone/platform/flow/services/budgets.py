@@ -123,7 +123,7 @@ class FlowBudgetService:
             "size_bytes": data.expected_size,
             "checksum_sha256": data.checksum_sha256,
         }
-        async with self.identity.access("file:create") as (session, _):
+        async with self.identity.access() as (session, _):
             await reserve_in_transaction(
                 session,
                 self.run_id,

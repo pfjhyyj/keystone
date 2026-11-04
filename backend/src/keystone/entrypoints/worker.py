@@ -175,11 +175,7 @@ async def run(settings: Settings, stop: asyncio.Event) -> None:
                 except Exception:
                     log.warning("worker_stop_heartbeat_failed")
         finally:
-            try:
-                if runtime.flow_engine:
-                    await runtime.flow_engine.close()
-            finally:
-                await runtime.database.close()
+            await runtime.close()
         log.info("worker_stopped")
 
 

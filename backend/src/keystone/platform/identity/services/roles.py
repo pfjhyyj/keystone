@@ -123,34 +123,38 @@ class RoleService:
             await self.context.log(session, auth, action, "identity.role", role.id, details)
             return await self.role_view(session, role)
 
-    async def prepare_role_deletion(self, session, auth, identifier):
-        """Identity checks inside the caller's exclusive identity transaction."""
-        role = await self.context.existing(session, Role, identifier)
-        if role.key == ADMIN_KEY:
-            raise ServiceError(409, "builtin_role", "内置管理员角色不可删除")
-        permissions = set(
-            await session.scalars(
-                select(RolePermission.permission_key).where(RolePermission.role_id == identifier)
+    async def delete(self, identifier):
+        async with self.context.access(
+            "role:delete",
+            identity_write=True,
+            action="identity.role.delete",
+            target="identity.role",
+            target_id=identifier,
+        ) as (session, auth):
+            role = await self.context.existing(session, Role, identifier)
+            if role.key == ADMIN_KEY:
+                raise ServiceError(409, "builtin_role", "内置管理员角色不可删除")
+            permissions = set(
+                await session.scalars(
+                    select(RolePermission.permission_key).where(
+                        RolePermission.role_id == identifier
+                    )
+                )
             )
-        )
-        auth.grantable(permissions & auth.declared_permissions)
-        if await session.scalar(
-            select(UserRole.user_id).where(UserRole.role_id == identifier).limit(1)
-        ):
-            raise ServiceError(409, "role_in_use", "请先解除角色分配")
-        return role, permissions
-
-    async def delete_role(self, session, auth, role, permissions):
-        """Called after all domain checks, using the same transaction and lock."""
-        await self.context.log(
-            session,
-            auth,
-            "identity.role.delete",
-            "identity.role",
-            role.id,
-            {"key": role.key, "permissions": sorted(permissions)},
-        )
-        await session.delete(role)
+            auth.grantable(permissions & auth.declared_permissions)
+            if await session.scalar(
+                select(UserRole.user_id).where(UserRole.role_id == identifier).limit(1)
+            ):
+                raise ServiceError(409, "role_in_use", "请先解除角色分配")
+            await self.context.log(
+                session,
+                auth,
+                "identity.role.delete",
+                "identity.role",
+                role.id,
+                {"key": role.key, "permissions": sorted(permissions)},
+            )
+            await session.delete(role)
 
     async def assign_role(self, user_id, role_id, assigned):
         action = "identity.role.assign"

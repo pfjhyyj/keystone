@@ -9,14 +9,14 @@ from sqlalchemy import delete, update
 from support.local_media_stub import definition
 from support.storage_support import s3_endpoint
 from test_files_dictionary import client as client
-from test_files_dictionary import upload
+from test_files_dictionary import reference_rows, upload
 from test_identity import bearer, create_user, query, token
 
 from keystone.core.errors import ServiceError
 from keystone.core.storage_config import StorageConfig
 from keystone.core.time import utcnow
 from keystone.platform.files.adapters.storage import StorageRegistry
-from keystone.platform.files.models import FileReference
+from keystone.platform.files.models import File, FileReference
 from keystone.platform.files.services.references import FileReferences
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.services.artifacts import FlowArtifactService
@@ -40,7 +40,7 @@ def artifacts(client, monkeypatch):
 
 def start(client, source, key="first", headers=None):
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": definition.key,
             "request_key": key,
@@ -90,10 +90,8 @@ def test_find_verified_id_missing_key_and_upload_replay_without_new_references(a
     assert put(client, run_id) == identifier
     assert client.portal.call(host._artifact, run_id, "report") == identifier
     assert client.portal.call(host._artifact, run_id, "other") is None
-    assert client.get(f"/api/v1/files/{source}/references").json() == [
-        {"owner": f"flow:{run_id}", "slot": "input"}
-    ]
-    assert client.get(f"/api/v1/files/{identifier}/references").json() == [
+    assert {"owner": f"flow:{run_id}", "slot": "input"} in reference_rows(client, source)
+    assert reference_rows(client, identifier) == [
         {"owner": f"flow:{run_id}", "slot": "artifact.report"}
     ]
 
@@ -115,7 +113,7 @@ def test_execution_cannot_query_another_run_even_with_the_same_actor(artifacts):
 def test_read_only_pat_needs_no_file_management_or_inspection_permission(artifacts):
     client, run_id, _ = artifacts
     identifier = put(client, run_id)
-    secret = token(client, ["flow:read", "file:content_read"])["token"]
+    secret = token(client, ["flow:read", "test_files.asset:content_read"])["token"]
     svc = service(client, run_id, Credential("pat", secret))
     assert client.portal.call(svc.find, run_id, "report") == identifier
     require(client, svc, run_id, {"report": identifier})
@@ -131,23 +129,20 @@ def test_run_visibility_and_file_permission_are_independent(artifacts):
             update(FlowRun).where(FlowRun.id == UUID(run_id)).values(actor_id=UUID(other["id"]))
         ),
     )
-    secret = token(client, ["flow:read", "file:content_read"])["token"]
+    secret = token(client, ["flow:read", "test_files.asset:content_read"])["token"]
     with pytest.raises(ServiceError) as rejected:
         client.portal.call(
             service(client, run_id, Credential("pat", secret)).find, run_id, "report"
         )
     assert rejected.value.code == "flow_not_found"
-    secret = token(client, ["flow:read", "flow:manage", "file:content_read"])["token"]
+    secret = token(client, ["flow:read", "flow:manage", "test_files.asset:content_read"])["token"]
     svc = service(client, run_id, Credential("pat", secret))
-    grants = client.get(f"/api/v1/files/{identifier}/grants").json()
-    grant = next(g for g in grants if g["action"] == "content_read")
-    assert client.delete(f"/api/v1/files/{identifier}/grants/{grant['id']}").status_code == 204
-    with pytest.raises(ServiceError) as rejected:
-        client.portal.call(svc.find, run_id, "report")
-    assert rejected.value.code == "file_not_found"
+    assert client.portal.call(svc.find, run_id, "report") == identifier
+    # A monitoring permission does not authorize an unrelated business download.
+    assert client.get(f"/api/v1/_test/materials/{identifier}/content").status_code == 404
 
 
-@pytest.mark.parametrize("permissions", [["flow:read"], ["file:content_read"]])
+@pytest.mark.parametrize("permissions", [["test_files.asset:content_read"]])
 def test_missing_functional_permissions_cannot_probe_even_a_missing_key(artifacts, permissions):
     client, run_id, _ = artifacts
     secret = token(client, permissions)["token"]
@@ -196,7 +191,7 @@ def test_historical_read_does_not_resume_a_terminal_or_old_execution(artifacts):
             .values(status="failed", finished_at=utcnow(), execution_version="0" * 64)
         ),
     )
-    secret = token(client, ["flow:read", "file:content_read"])["token"]
+    secret = token(client, ["flow:read", "test_files.asset:content_read"])["token"]
     assert (
         client.portal.call(
             service(client, run_id, Credential("pat", secret)).find, run_id, "report"
@@ -223,11 +218,11 @@ def test_find_never_treats_an_unusable_registered_file_as_absent(artifacts, chan
     rt = client.app.state.runtime
     path = rt.storage.get().root / "files" / UUID(identifier).hex
     if change == "disabled":
-        assert (
-            client.patch(
-                f"/api/v1/files/{identifier}", json={"name": "result.txt", "status": "disabled"}
-            ).status_code
-            == 200
+        query(
+            client,
+            lambda session: session.execute(
+                update(File).where(File.id == UUID(identifier)).values(status="disabled")
+            ),
         )
     elif change == "corrupt":
         path.write_bytes(b"broken")
@@ -287,10 +282,10 @@ def test_transaction_check_does_no_storage_io_and_never_commits_business_adoptio
     require(client, svc, run_id, {"report": identifier})
     with pytest.raises(RuntimeError, match="business failed"):
         require(client, svc, run_id, {"report": identifier}, adopt=True, rollback=True)
-    refs = client.get(f"/api/v1/files/{identifier}/references").json()
+    refs = reference_rows(client, identifier)
     assert refs == [{"owner": f"flow:{run_id}", "slot": "artifact.report"}]
     require(client, svc, run_id, {"report": identifier}, adopt=True)
-    assert {r["owner"] for r in client.get(f"/api/v1/files/{identifier}/references").json()} == {
+    assert {r["owner"] for r in reference_rows(client, identifier)} == {
         f"flow:{run_id}",
         "adoption:record",
     }
@@ -300,7 +295,6 @@ def test_transaction_check_does_no_storage_io_and_never_commits_business_adoptio
     "mutation,code",
     [
         ("reference", "flow_invalid_artifact"),
-        ("grant", "file_not_found"),
         ("cancel", "flow_cancelled"),
     ],
 )
@@ -308,7 +302,7 @@ def test_rechecks_after_io_without_holding_a_run_or_identity_transaction(
     artifacts, monkeypatch, mutation, code
 ):
     client, run_id, _ = artifacts
-    identifier = put(client, run_id)
+    put(client, run_id)
     source = client.app.state.runtime.storage.get()
     opened, release = Event(), Event()
     original = source.open_local
@@ -338,13 +332,6 @@ def test_rechecks_after_io_without_holding_a_run_or_identity_transaction(
                         )
                     ),
                 )
-            elif mutation == "grant":
-                grants = client.get(f"/api/v1/files/{identifier}/grants").json()
-                grant = next(g for g in grants if g["action"] == "content_read")
-                assert (
-                    client.delete(f"/api/v1/files/{identifier}/grants/{grant['id']}").status_code
-                    == 204
-                )
             else:
                 assert client.post(f"/api/v1/flow-runs/{run_id}/cancel").status_code == 200
         finally:
@@ -356,7 +343,9 @@ def test_rechecks_after_io_without_holding_a_run_or_identity_transaction(
 
 def test_transaction_entry_cannot_widen_a_revoked_execution_pat_using_session_auth(artifacts):
     client, _, source = artifacts
-    issued = token(client, ["flow:start", "file:create", "file:content_read"])
+    issued = token(
+        client, ["flow:start", "test_files.asset:create", "test_files.asset:content_read"]
+    )
     run_id = start(client, source, "pat", bearer(issued["token"]))
     identifier = put(client, run_id)
     assert client.delete(f"/api/v1/auth/tokens/{issued['id']}").status_code == 204
@@ -415,28 +404,19 @@ def test_maximum_key_and_shared_file_do_not_add_business_distinctness_rules(arti
     require(client, svc, run_id, {key: identifier, "alias": identifier})
 
 
-@pytest.mark.parametrize("change", ["disabled", "revoked"])
-def test_transaction_rechecks_current_file_access_before_adoption(artifacts, change):
+def test_transaction_rechecks_current_file_access_before_adoption(artifacts):
     client, run_id, _ = artifacts
     identifier = put(client, run_id)
-    if change == "disabled":
-        assert (
-            client.patch(
-                f"/api/v1/files/{identifier}", json={"name": "result.txt", "status": "disabled"}
-            ).status_code
-            == 200
-        )
-    else:
-        for grant in client.get(f"/api/v1/files/{identifier}/grants").json():
-            if grant["action"] == "content_read":
-                assert (
-                    client.delete(f"/api/v1/files/{identifier}/grants/{grant['id']}").status_code
-                    == 204
-                )
+    query(
+        client,
+        lambda session: session.execute(
+            update(File).where(File.id == UUID(identifier)).values(status="disabled")
+        ),
+    )
     with pytest.raises(ServiceError) as rejected:
         require(client, service(client, run_id), run_id, {"report": identifier}, adopt=True)
-    assert rejected.value.code == ("file_unavailable" if change == "disabled" else "file_not_found")
-    assert client.get(f"/api/v1/files/{identifier}/references").json() == [
+    assert rejected.value.code == "file_unavailable"
+    assert reference_rows(client, identifier) == [
         {"owner": f"flow:{run_id}", "slot": "artifact.report"}
     ]
 

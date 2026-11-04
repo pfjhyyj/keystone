@@ -5,7 +5,6 @@ from fastapi import APIRouter, Request, Response
 from keystone.core.http import Page
 from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.schemas.operations import Delivery, Operation
 from keystone.platform.model_access.schemas.pricing import PricingEdit, PricingPreview
 from keystone.platform.model_access.services.entries import ModelEntryService
 from keystone.platform.model_access.services.pricing import PricingService
@@ -56,15 +55,3 @@ async def rename_entry(identifier: UUID, data: schemas.NameEdit, request: Reques
 async def delete_entry(identifier: UUID, request: Request):
     await _service(request).delete(identifier)
     return Response(status_code=204)
-
-
-@router.get("/models")
-async def catalog(
-    request: Request,
-    page: Page,
-    operation: Operation = "text.generate",
-    delivery: Delivery = "sync",
-):
-    return await _service(request).catalog(
-        page.offset, page.limit, operation=operation, delivery=delivery
-    )

@@ -8,11 +8,14 @@ import { FakeXHR, FakeWorker, installTransferFakes } from './transfer-support'
 
 beforeEach(() => {
   installTransferFakes()
-  authorize(['file:create', 'file:content_read'])
+  authorize(['notes.attachment:write', 'notes.attachment:read'])
 })
 const file = () => new File(['hello'], 'report.txt', { type: 'text/plain' })
 async function start(signal?: AbortSignal, progress = vi.fn()) {
-  const pending = uploadFile(file(), 'stable-key', 'local', { signal, onProgress: progress })
+  const pending = uploadFile('/notes/attachments', file(), 'stable-key', 'local', {
+    signal,
+    onProgress: progress,
+  })
   FakeWorker.last.onmessage?.({ data: { loaded: 5 } })
   FakeWorker.last.onmessage?.({ data: { checksum: 'a'.repeat(64) } })
   await flushPromises()
@@ -38,7 +41,9 @@ it('hashes off-thread, uploads the native File with progress, CSRF and no short 
 })
 it.each(['caller', 'session'])('stops hashing immediately on %s cancellation', async (kind) => {
   const controller = new AbortController()
-  const pending = uploadFile(file(), 'stable', 'local', { signal: controller.signal })
+  const pending = uploadFile('/notes/attachments', file(), 'stable', 'local', {
+    signal: controller.signal,
+  })
   const result = pending.catch((error) => error)
   if (kind === 'caller') controller.abort()
   else clearSession()
@@ -121,10 +126,10 @@ it('hands downloads to the browser without buffering a Blob and preserves filena
   const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
     this: HTMLAnchorElement,
   ) {
-    expect(this.getAttribute('href')).toBe('/api/v1/files/id/content')
+    expect(this.getAttribute('href')).toBe('/api/v1/notes/attachments/id/content')
     expect(this.download).toBe('报告.mp4')
   })
-  await downloadFile('id', '报告.mp4')
+  await downloadFile('/notes/attachments/id/content', '报告.mp4')
   expect(click).toHaveBeenCalledOnce()
   expect(cancel).toHaveBeenCalledOnce()
   expect(document.querySelector('a')).toBeNull()
@@ -136,13 +141,13 @@ it('supports empty-file downloads and retains download authorization errors', as
       ? new Response(null, { status: 200 })
       : new Response(null, { status: 416, headers: { 'Content-Range': 'bytes */0' } }),
   )
-  await downloadFile('empty', 'empty.txt')
+  await downloadFile('/notes/attachments/empty/content', 'empty.txt')
   expect(click).toHaveBeenCalledOnce()
   fakeApi(
     () =>
       new Response('{"code":"file_not_found","detail":"文件不存在或不可访问"}', { status: 404 }),
   )
-  await expect(downloadFile('id', 'name')).rejects.toMatchObject({
+  await expect(downloadFile('/notes/attachments/id/content', 'name')).rejects.toMatchObject({
     status: 404,
     code: 'file_not_found',
   })
@@ -152,7 +157,7 @@ it('does not start a native download after a session switch during preflight', a
   const late = deferred<unknown>()
   fakeApi(() => late.promise)
   const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
-  const pending = downloadFile('id', 'name').catch((error) => error.code)
+  const pending = downloadFile('/notes/attachments/id/content', 'name').catch((error) => error.code)
   clearSession()
   late.resolve(new Response('x', { status: 206 }))
   expect(await pending).toBe('identity_changed')

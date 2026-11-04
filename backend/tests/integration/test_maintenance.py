@@ -13,6 +13,9 @@ from test_flow import configuration as configuration
 from test_flow import start, wait_run, worker
 from test_identity import query
 
+from keystone.bootstrap import build_runtime
+from keystone.core.asyncio import run
+from keystone.core.execution.contracts import NoInput, TaskDefinition
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.files.models import File
 from keystone.platform.files.tasks import workflows as files_jobs
@@ -76,7 +79,7 @@ def test_schedules_survive_restart_without_duplicate_cleanup(client, tmp_path):
         }
         # Create work after startup, so a real cron tick must discover it.
         identifier = upload(client, key="scheduled-delete").json()["id"]
-        assert client.delete(f"/api/v1/files/{identifier}").status_code == 202
+        assert client.delete(f"/api/v1/_test/materials/{identifier}").status_code == 202
         wait_for(
             client,
             process,
@@ -202,7 +205,7 @@ main()
 
 def test_interrupted_cleanup_recovers_same_execution_after_worker_restart(client, tmp_path):
     identifier = upload(client, key="interrupted-delete").json()["id"]
-    assert client.delete(f"/api/v1/files/{identifier}").status_code == 202
+    assert client.delete(f"/api/v1/_test/materials/{identifier}").status_code == 202
     code = """
 import asyncio
 from keystone.platform.files.tasks import workflows as jobs
@@ -368,30 +371,44 @@ main()
         }
 
 
-def test_independent_task_delivery_reuses_completed_execution_key(client, tmp_path):
+def test_api_and_cli_persist_tasks_without_worker_and_reuse_completed_keys(client, tmp_path):
+    definition = TaskDefinition(
+        "test.independent", "keystone.test.independent", NoInput, "keystone-system"
+    )
+
+    @client.app.post("/test/task")
+    async def submit(payload: dict):
+        ref = await client.app.state.runtime.tasks.enqueue(
+            definition, payload, execution_key="independent-api"
+        )
+        return {"id": ref.workflow_id}
+
+    async def cli_submit():
+        runtime = build_runtime(client.app.state.runtime.settings)
+        try:
+            return await runtime.tasks.enqueue(definition, {}, execution_key="independent-cli")
+        finally:
+            await runtime.close()
+
+    assert client.post("/test/task", json={}).json() == {"id": "independent-api"}
+    assert run(cli_submit()).workflow_id == "independent-cli"
+    assert {row.status for row in executions(client, definition.entrypoint)} == {"ENQUEUED"}
+    assert (
+        query(client, lambda session: session.scalar(select(func.count()).select_from(FlowRun)))
+        == 0
+    )
     code = """
 from dbos import DBOS
-from keystone.core.execution.contracts import NoInput, TaskBinding, TaskDefinition
-from keystone.core.execution.dispatch import enqueue_task
-from keystone.platform.files.tasks.definitions import CLEANUP
 import keystone.entrypoints.worker as worker
 
-definition = TaskDefinition('test.independent', 'keystone.test.independent', NoInput, CLEANUP.queue)
-@DBOS.workflow(name=definition.entrypoint)
+@DBOS.workflow(name='keystone.test.independent')
 async def independent(payload):
     print('independent_task_executed', flush=True)
-binding = TaskBinding(definition, independent)
 original = worker.register_maintenance
 def register(runtime, health):
     queues, installers = original(runtime, health)
-    async def probe():
-        for key in ('independent-first', 'independent-first', 'independent-second'):
-            ref = await enqueue_task(binding, {}, execution_key=key)
-            assert ref.workflow_id == key
-            handle = await DBOS.retrieve_workflow_async(ref.workflow_id)
-            await handle.get_result()
-        print('independent_delivery_checked', flush=True)
-    return queues, [*installers, probe]
+    queues['keystone-system'] = (2, 2)
+    return queues, installers
 worker.register_maintenance = register
 worker.main()
 """
@@ -400,12 +417,14 @@ worker.main()
             client,
             process,
             log,
-            lambda: "independent_delivery_checked" in log.read_text(encoding="utf8"),
+            lambda: len(executions(client, definition.entrypoint, status="SUCCESS")) == 2,
         )
-        rows = executions(client, "keystone.test.independent")
-        assert {row.workflow_id for row in rows} == {"independent-first", "independent-second"}
-        assert all(row.status == "SUCCESS" for row in rows)
         assert log.read_text(encoding="utf8").count("independent_task_executed") == 2
+    assert client.post("/test/task", json={}).json() == {"id": "independent-api"}
+    assert run(cli_submit()).workflow_id == "independent-cli"
+    rows = executions(client, definition.entrypoint)
+    assert {row.workflow_id for row in rows} == {"independent-api", "independent-cli"}
+    assert all(row.status == "SUCCESS" for row in rows)
 
 
 def test_flow_scan_attempts_advance_fairly_across_scheduled_passes(client, tmp_path):

@@ -50,7 +50,7 @@ def accept(client, monkeypatch, provider, *, edit=False, headers=None):
         ]
         inputs["images"] = [{"file_id": file} for file in files]
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": definition.key,
             "request_key": "relay",
@@ -238,7 +238,7 @@ def test_image_billing_conflicts_preserve_successful_delivery(
     monkeypatch.setattr(HttpClient, "transport", HttpClient.transport)
     install(request_log, header=case != "header")
     response = client.post(
-        "/api/v1/models/images/generate", json={"model_key": "chat", "prompt": "A blue square"}
+        "/api/v1/_test/generate-image", json={"model_key": "chat", "prompt": "A blue square"}
     )
     assert response.status_code == 200, response.text
     identifier = response.json()["invocation_id"]
@@ -323,7 +323,14 @@ def test_cancel_or_revoke_during_result_download_preserves_call_without_publishi
 
     pat = (
         token(
-            client, ["flow:start", "flow:read", "model:invoke", "file:create", "file:content_read"]
+            client,
+            [
+                "flow:start",
+                "flow:read",
+                "model:invoke",
+                "test_files.asset:create",
+                "test_files.asset:content_read",
+            ],
         )
         if revoke
         else None

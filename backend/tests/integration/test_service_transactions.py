@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select, text, update
+from support.flow_fixture.contracts import PACKAGE
 from support.flow_packages import install_package
 from support.model_stub import install as install_models
 from test_business_integration import ACTION, WRITE, install
@@ -17,13 +18,10 @@ from test_model_access import channel, entry
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.examples.document_review.contracts import PACKAGE
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.services import writer as audit
-from keystone.platform.files.models import File, FileGrant, FileReference
-from keystone.platform.files.schemas import Grant
+from keystone.platform.files.models import File, FileReference
 from keystone.platform.files.services.files import FileService
-from keystone.platform.files.services.grants import FileGrantService
 from keystone.platform.files.services.references import FileReferences
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.schemas import Start
@@ -35,10 +33,10 @@ from keystone.platform.model_access.models import ModelInvocation
 pytestmark = pytest.mark.postgres
 PERMISSIONS = [
     WRITE,
-    "file:inspect",
-    "file:manage",
-    "file:create",
-    "file:content_read",
+    "test_files.asset:inspect",
+    "test_files.asset:manage",
+    "test_files.asset:create",
+    "test_files.asset:content_read",
     "flow:start",
     "flow:read",
     "flow:cancel",
@@ -105,19 +103,13 @@ async def save(browser, identity, identifier, recipient, key, *, after_write=Non
             if (old.file_id, old.recipient_id) != (identifier, recipient):
                 raise ServiceError(409, "idempotency_conflict", "Test request changed")
             return await flows.get_in_transaction(session, auth, old.run_id)
-        metadata = await files.metadata_in_transaction(session, auth, identifier)
+        metadata = await files.metadata_in_transaction(session, identifier)
         assert (
             metadata["id"] == identifier
             and not {"path", "object_key", "storage_fingerprint"} & metadata.keys()
         )
         run = await flows.start_in_transaction(session, auth, start_body(identifier, key))
-        # Existing public grant/reference operations share this session and auth.
-        await FileGrantService(identity).grant_in_transaction(
-            session,
-            auth,
-            identifier,
-            Grant(subject_type="user", user_id=recipient, action="inspect"),
-        )
+        # Business references share this session and authorization.
         await FileReferences(session, auth, "test_notes").replace(key, "attachment", [identifier])
         await session.execute(
             text("""INSERT INTO keystone.test_notes_transactions
@@ -196,7 +188,6 @@ def facts(browser):
                     )
                 ).all()
             ),
-            list((await session.execute(select(FileGrant.id).order_by(FileGrant.id))).scalars()),
             list(
                 (
                     await session.execute(
@@ -209,7 +200,6 @@ def facts(browser):
                                     "flow.start",
                                     "flow.cancel",
                                     "file.reference",
-                                    "file.grant",
                                 )
                             ),
                         )
@@ -222,7 +212,7 @@ def facts(browser):
     return query(browser, read)
 
 
-def test_composed_save_rolls_back_audit_failure_and_missing_management_scope(case, monkeypatch):
+def test_composed_save_rolls_back_audit_failure_and_missing_business_scope(case, monkeypatch):
     browser, identifier, recipient = case
     full = context(browser, token(browser, PERMISSIONS)["token"])
     before = facts(browser)
@@ -238,9 +228,7 @@ def test_composed_save_rolls_back_audit_failure_and_missing_management_scope(cas
         browser.portal.call(save, browser, full, identifier, recipient, str(uuid4()))
     assert facts(browser) == before
     monkeypatch.setattr(audit, "record", record)
-    limited = context(
-        browser, token(browser, [p for p in PERMISSIONS if p != "file:manage"])["token"]
-    )
+    limited = context(browser, token(browser, [p for p in PERMISSIONS if p != WRITE])["token"])
     with pytest.raises(ServiceError) as denied:
         browser.portal.call(save, browser, limited, identifier, recipient, str(uuid4()))
     assert denied.value.status == 403 and facts(browser) == before
@@ -365,7 +353,7 @@ def test_transaction_reads_preserve_object_actor_and_current_role_scope(case):
     viewer = role(
         browser,
         "transaction-viewer",
-        [WRITE, "file:inspect", "file:manage", "flow:read", "flow:cancel"],
+        [WRITE, "test_files.asset:inspect", "test_files.asset:manage", "flow:read", "flow:cancel"],
     )
     assign(browser, str(recipient), viewer["id"])
     login(browser, "alice")
@@ -378,23 +366,39 @@ def test_transaction_reads_preserve_object_actor_and_current_role_scope(case):
     login(browser, "alice", NEW_PASSWORD)
     identity = context(
         browser,
-        token(browser, [WRITE, "file:inspect", "file:manage", "flow:read", "flow:cancel"])["token"],
+        token(
+            browser,
+            [
+                WRITE,
+                "test_files.asset:inspect",
+                "test_files.asset:manage",
+                "flow:read",
+                "flow:cancel",
+            ],
+        )["token"],
     )
     rt = browser.app.state.runtime
 
     async def inspect(*, manage=False, flow_action=None):
-        async with identity.access() as (session, auth):
+        async with identity.access(WRITE) as (session, auth):
             if flow_action:
                 flows = rt.flow_service(identity)
                 return await getattr(flows, flow_action)(session, auth, UUID(str(run["id"])))
+            owner = await session.scalar(
+                text("""SELECT actor_id FROM keystone.test_notes_transactions
+                WHERE file_id=:file AND (actor_id=:actor OR recipient_id=:actor)"""),
+                {"file": identifier, "actor": auth.user.id},
+            )
+            if owner is None or (manage and owner != auth.user.id):
+                raise ServiceError(404, "note_not_found", "Test business record is unavailable")
             return await FileService(identity, rt.storage).metadata_in_transaction(
-                session, auth, identifier, manage=manage, lock=True
+                session, identifier, lock=True
             )
 
     assert browser.portal.call(inspect)["id"] == identifier
     with pytest.raises(ServiceError) as denied:
         browser.portal.call(partial(inspect, manage=True))
-    assert denied.value.code == "file_not_found"
+    assert denied.value.code == "note_not_found"
     for action in ("get_in_transaction", "cancel_in_transaction"):
         with pytest.raises(ServiceError) as denied:
             browser.portal.call(partial(inspect, flow_action=action))
@@ -446,7 +450,7 @@ def test_composed_reads_and_cancel_refresh_previously_loaded_provider_rows(case)
             read = await flows.get_in_transaction(session, auth, second["id"])
             cancelled = await flows.cancel_in_transaction(session, auth, third["id"])
             metadata = await FileService(identity, rt.storage).metadata_in_transaction(
-                session, auth, identifier
+                session, identifier
             )
             assert (
                 replay["status"],

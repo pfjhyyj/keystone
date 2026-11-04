@@ -63,8 +63,6 @@ User、Role 保留 created_at/by、updated_at/by；关联表只保留 created_at
 
 管理员创建或重置用户时提供初始密码并线下安全交付，用户首次登录须改密。初始化命令由首位管理员自行设置密码，无需再改一次。
 
-实现差异：当前 reset_password 只撤销会话，尚未实现重置时撤销 PAT。
-
 ### 3.3 登录与首次改密时序
 
 密码在写事务外验证，提交前复查用户状态和原哈希，防止与密码重置竞争时错误签发会话。
@@ -137,7 +135,7 @@ sequenceDiagram
 
 业务对象检查失败或成功审计写入失败，整个事务回滚。外部 I/O 结束后开始新操作须重新授权；撤权不能收回已发送请求或已交付内容，已发生事实由所属领域受限收尾。
 
-### 3.5 管理员重置密码时序（目标设计）
+### 3.5 管理员重置密码时序
 
 ```mermaid
 sequenceDiagram
@@ -196,9 +194,7 @@ sequenceDiagram
 
 #### 角色与文件授权的迁移边界
 
-文件目标模型移除 FileGrant，迁移后角色删除不再检查该关系；业务自己的角色引用仍按实际约束处理。
-
-当前 FileGrant.role_id 外键仍阻止角色删除。RoleDeletion 在同一身份事务中组合 Identity 与 Files 的公开 Service，预检查提供明确错误，外键保护完整性；迁移前不级联撤销授权。文件目标与当前实现见[文件设计](files.md)。
+角色删除由 Identity 自己完成，不依赖 Files。业务自己的角色引用按实际外键约束处理。
 
 ### 3.7 PAT 签发与撤销时序
 
@@ -233,7 +229,7 @@ PAT 只能由本人有效会话签发、列出或撤销，权限不得超过当�
 
 Authorization.require() 直接检查有效权限集合，角色关系是唯一授权来源。普通角色不能通过角色管理或账号控制给自己扩权，不另建策略库、权限版本或广播缓存。
 
-当前 Files 的内置管理员 inspect/manage 例外由[文件授权](files.md#22-文件授权-filegrant)定义，不扩展成其他领域的统一绕过。
+业务明确自己的对象访问规则，不统一增加管理员绕过。
 
 ### 4.2 审计规则
 
@@ -247,7 +243,7 @@ Authorization.require() 直接检查有效权限集合，角色关系是唯一�
 |---|---|
 | User | 只停用，不删除 |
 | 内置 admin | 不编辑、不删除 |
-| 普通 Role | 仍有任何用户分配或当前 FileGrant 时拒绝删除，包括停用用户；自身 RolePermission 同事务删除 |
+| 普通 Role | 仍有任何用户分配时拒绝删除，包括停用用户；自身 RolePermission 同事务删除 |
 | 会话、PAT | 到期或撤销后按保留期清理；任何保留 Run 引用的 PAT 均不得删除 |
 | 历史审计 | 独立保留，不随对象删除 |
 
@@ -340,6 +336,6 @@ AccessContext.access() 默认使用 PostgreSQL 事务级共享身份锁；身份
 
 ### 代码组织
 
-Auth/User/Role/Token Service 共用 AccessContext；密码与凭据适配在 adapters/security.py。authorization.py 统一读取角色和权限，subjects.py 的 require_subjects 在调用方事务内检查用户/角色存在性，其他领域不查询 Identity ORM。
+Auth/User/Role/Token Service 共用 AccessContext；密码与凭据适配在 adapters/security.py。authorization.py 统一读取角色和权限，其他领域通过 Identity Service 协作。
 
 Authorization.role_ids 来自同次角色联表查询，包含空权限角色，不跨事务缓存。用户/角色列表先分页，再按当前页 ID 批量读取关联，避免逐行查询。通用分层见[架构规范](../development/business.md#模块分层与代码规范)。

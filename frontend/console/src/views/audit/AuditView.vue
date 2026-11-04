@@ -4,6 +4,7 @@ import { adminApi, type AuditLog } from '../../api/admin'
 import { usePagedList } from '../../composables/usePagedList'
 import AppDialog from '../../components/AppDialog.vue'
 import ListPager from '../../components/ListPager.vue'
+import { canReadAudit } from '../../stores/session'
 const filters = reactive({
   action: '',
   actor_type: '',
@@ -21,7 +22,7 @@ const applied = ref<Record<string, string>>({
   }),
   validation = ref(''),
   selected = ref<AuditLog | null>(null)
-const { rows, page, loading, error, reload, search } = usePagedList('audit:read', (offset) =>
+const { rows, page, loading, error, reload, search } = usePagedList(canReadAudit, (offset) =>
   adminApi.audit(offset, applied.value),
 )
 const actors: Record<string, string> = { user: '用户', system: '系统', anonymous: '匿名' }

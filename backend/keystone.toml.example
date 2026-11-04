@@ -28,6 +28,8 @@ file_temp_bytes = 68719476736
 # Per-filesystem free-space floor, shared by API and all Workers (1 GiB).
 file_min_free_bytes = 1073741824
 file_upload_timeout_seconds = 3600
+# 核对全部调用方和存量引用后才设置；默认不自动回收无引用 active 文件。
+# file_unreferenced_grace_seconds = 86400
 
 # No identity inventory is required. Start extra Workers with distinct fixed identities.
 # The default worker_id is "keystone-worker"; override KEYSTONE_WORKER_ID per extra process.

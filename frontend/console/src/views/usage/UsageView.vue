@@ -19,7 +19,7 @@ import {
   type Dimension,
   type UsageStatistics,
 } from '../../api/modelUsage'
-import { uuidPattern } from '../../api/files'
+import { uuidPattern } from '../../api/client'
 import { shanghaiInput, shanghaiDate, statisticsRange } from './time'
 import AppSelect from '../../components/AppSelect.vue'
 import InvocationDialog from '../models/components/InvocationDialog.vue'

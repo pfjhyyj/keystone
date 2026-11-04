@@ -5,6 +5,7 @@ import asyncio
 import pytest
 from sqlalchemy import select
 from test_files_dictionary import client as client
+from test_files_dictionary import stored_file
 from test_flow_budgets import accept
 from test_identity import query
 from test_processes import python, ready, stopped, tree
@@ -58,7 +59,7 @@ def test_artifact_count_bytes_replay_and_conflict_stop_before_storage_write(clie
     assert len(query(client, lambda s: s.scalars(select(File))).all()) == 1
     budget = query(client, lambda s: s.get(FlowRunBudget, ctx.run_id))
     assert budget.counters["file_count"] == 1 and budget.counters["file_bytes"] == 4
-    assert client.get(f"/api/v1/files/{identifier}").status_code == 200
+    assert stored_file(client, identifier)["status"] == "active"
 
 
 def test_nested_same_task_reuses_capacity_but_child_task_cannot_inherit_it(client, monkeypatch):

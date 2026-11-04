@@ -12,7 +12,7 @@ from sqlalchemy import select, text, update
 from support.flow_engine import flow_engine as flow_engine
 from support.processes import stop_process
 from test_files_dictionary import client as client
-from test_files_dictionary import upload
+from test_files_dictionary import file_count, reference_rows, stored_file, stored_files, upload
 from test_identity import assign, bearer, create_user, login, query, role, token
 from test_model_access import channel, entry
 
@@ -34,10 +34,9 @@ def configuration(client, monkeypatch):
 
     install(monkeypatch)
     runtime = client.app.state.runtime
-    from support.flow_fixture.contracts import definition
+    from support.flow_fixture.contracts import PACKAGE, definition
 
     from keystone import composition
-    from keystone.examples.document_review.contracts import PACKAGE
 
     monkeypatch.setattr(composition, "FLOW_PACKAGES", (PACKAGE,))
     composition.execution_version.cache_clear()
@@ -47,7 +46,7 @@ def configuration(client, monkeypatch):
 
 def start(client, file_id, key="review", **overrides):
     return client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": "document.review",
             "request_key": key,
@@ -115,6 +114,10 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
             if field in {"access_key", "secret_key"}:
                 value = getattr(source, field).get_secret_value()
             env[f"KEYSTONE_FILE_STORAGES__{key.upper()}__{field.upper()}"] = str(value)
+    if settings.file_unreferenced_grace_seconds is not None:
+        env["KEYSTONE_FILE_UNREFERENCED_GRACE_SECONDS"] = str(
+            settings.file_unreferenced_grace_seconds
+        )
     log = tmp_path / f"worker-{time.time_ns()}.log"
     with log.open("w", encoding="utf8") as output:
         process = subprocess.Popen(
@@ -167,7 +170,17 @@ def test_real_worker_harness_model_and_report(client, tmp_path, flow_engine):
         done = wait_run(client, row["id"], process, log)
         assert done["status"] == "succeeded", (done, log.read_text(encoding="utf8"))
         assert done["result"]["verdict"] == "reviewed"
-        content = client.get(f"/api/v1/files/{done['result']['report_file_id']}/content")
+        from support.business_api import save_review_report
+
+        from keystone.platform.identity.schemas.credentials import Credential
+        from keystone.platform.identity.services.access import AccessContext
+
+        rt = client.app.state.runtime
+        identity = AccessContext(
+            rt.database, rt.settings, Credential("session", client.cookies["keystone_session"])
+        )
+        client.portal.call(save_review_report, identity, rt, UUID(row["id"]))
+        content = client.get(f"/api/v1/_test/materials/{done['result']['report_file_id']}/content")
         assert content.status_code == 200 and "模拟" in content.text
         history = client.get(f"/api/v1/flow-runs/{row['id']}/steps").json()
         assert history["available"] and all(
@@ -189,7 +202,7 @@ def test_real_worker_harness_model_and_report(client, tmp_path, flow_engine):
         ),
     ).all()
     assert {r.slot for r in refs} == {"input", "artifact.report", "output"}
-    assert client.delete(f"/api/v1/files/{file_id}").status_code == 409
+    assert client.delete(f"/api/v1/_test/materials/{file_id}").status_code == 409
 
 
 def test_example_acceptance_and_budget_in_real_worker(client, tmp_path, flow_engine):
@@ -238,7 +251,7 @@ main()
             assert len(calls) == count and all(call["status"] == "succeeded" for call in calls)
             assert len({call["id"] for call in calls}) == count
             assert len({call["flow_context"]["agent_call_id"] for call in calls}) == 1
-            assert len(client.get("/api/v1/files").json()) == (2 if status == "succeeded" else 1)
+            assert file_count(client) == (2 if status == "succeeded" else 1)
             if status == "succeeded":
                 assert done["result"]["source_file_id"] == file_id
                 assert done["result"]["characters"] == len("Review this source.")
@@ -257,10 +270,10 @@ def test_start_and_input_reference_audits_share_request_id(client, credential_ki
             [
                 "flow:start",
                 "flow:read",
-                "file:create",
-                "file:inspect",
-                "file:content_read",
-                "file:manage",
+                "test_files.asset:create",
+                "test_files.asset:inspect",
+                "test_files.asset:content_read",
+                "test_files.asset:manage",
                 "model:invoke",
             ],
         )
@@ -275,7 +288,11 @@ def test_start_and_input_reference_audits_share_request_id(client, credential_ki
             lambda session: session.scalars(
                 select(AuditLog).where(
                     ((AuditLog.action == "flow.start") & (AuditLog.target_id == run["id"]))
-                    | ((AuditLog.action == "file.reference") & (AuditLog.target_id == file_id))
+                    | (
+                        (AuditLog.action == "file.reference")
+                        & (AuditLog.target_id == file_id)
+                        & (AuditLog.correlation_id == response.headers["X-Request-ID"])
+                    )
                 )
             ),
         ).all()
@@ -335,19 +352,19 @@ def test_worker_crash_recovery_never_repeats_paid_request(client, tmp_path, poin
         permissions = [
             "flow:start",
             "flow:read",
-            "file:content_read",
-            "file:create",
+            "test_files.asset:content_read",
+            "test_files.asset:create",
             "model:invoke",
         ]
-        incomplete = token(client, permissions)
+        incomplete = token(client, [p for p in permissions if p != "model:invoke"])
         assert (
             client.post(
-                "/api/v1/flow-runs", json=body, headers=bearer(incomplete["token"])
+                "/api/v1/_test/review", json=body, headers=bearer(incomplete["token"])
             ).status_code
             == 403
         )
-        allowed = token(client, permissions + ["file:inspect", "file:manage"])
-        response = client.post("/api/v1/flow-runs", json=body, headers=bearer(allowed["token"]))
+        allowed = token(client, permissions)
+        response = client.post("/api/v1/_test/review", json=body, headers=bearer(allowed["token"]))
         assert response.status_code == 202, response.text
         run = response.json()
     else:
@@ -394,7 +411,7 @@ host._upload = crash
     assert {c["id"] for c in after} == {c["id"] for c in before}
     assert after[0]["status"] == ("unknown" if point == "registered" else "succeeded")
     if point == "artifact":
-        assert len(client.get("/api/v1/files").json()) == 2
+        assert file_count(client) == 2
 
 
 def test_pat_revocation_blocks_execution_but_new_session_can_cancel(client, tmp_path, flow_engine):
@@ -406,9 +423,9 @@ def test_pat_revocation_blocks_execution_but_new_session_can_cancel(client, tmp_
         "input": {"source_file_id": file_id},
         "model_bindings": {"review": "chat"},
     }
-    row = client.post("/api/v1/flow-runs", json=body, headers=bearer(p["token"])).json()
+    row = client.post("/api/v1/_test/review", json=body, headers=bearer(p["token"])).json()
     assert row["personal_access_token_id"] == p["id"]
-    assert client.post("/api/v1/flow-runs", json=body).status_code == 409
+    assert client.post("/api/v1/_test/review", json=body).status_code == 409
     client.delete("/api/v1/auth/tokens/" + p["id"])
     with worker(client, tmp_path) as (process, log):
         done = wait_run(client, row["id"], process, log)
@@ -441,7 +458,7 @@ def test_cross_user_scope_and_independent_cancel_and_cost_permissions(client):
     login(client, "viewer")
     assert client.get(f"/api/v1/flow-runs/{row['id']}").status_code == 200
     assert client.get(f"/api/v1/flow-runs/{row['id']}/costs").status_code == 403
-    assert client.get(f"/api/v1/files/{file_id}/content").status_code == 403
+    assert client.get(f"/api/v1/_test/materials/{file_id}/content").status_code == 403
     assert client.post(f"/api/v1/flow-runs/{row['id']}/cancel").status_code == 200
     assert "flow:start" not in client.get("/api/v1/auth/me").json()["permissions"]
 
@@ -468,7 +485,7 @@ def test_original_output_contract_and_retention_after_revocation(client):
     file_id = upload(client).json()["id"]
     pat = token(client, list(client.get("/api/v1/auth/me").json()["permissions"]))
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         headers=bearer(pat["token"]),
         json={
             "definition_key": "document.review",
@@ -479,7 +496,9 @@ def test_original_output_contract_and_retention_after_revocation(client):
     )
     row = response.json()
     client.delete("/api/v1/auth/tokens/" + pat["id"])
-    client.patch("/api/v1/files/" + file_id, json={"name": "disabled.txt", "status": "disabled"})
+    client.patch(
+        "/api/v1/_test/materials/" + file_id, json={"name": "disabled.txt", "status": "disabled"}
+    )
 
     class Finished:
         async def state(self, identifier):
@@ -514,7 +533,7 @@ def test_coordinator_replay_rechecks_identity_and_cancel_intent(client, change):
     file_id = upload(client).json()["id"]
     pat = token(client, list(client.get("/api/v1/auth/me").json()["permissions"]))
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         headers=bearer(pat["token"]),
         json={
             "definition_key": "document.review",
@@ -559,7 +578,7 @@ def test_replayed_submission_denial_preserves_concurrent_engine_completion(clien
     file_id = upload(client).json()["id"]
     pat = token(client, list(client.get("/api/v1/auth/me").json()["permissions"]))
     row = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         headers=bearer(pat["token"]),
         json={
             "definition_key": "document.review",
@@ -759,7 +778,15 @@ def test_start_audit_failure_rolls_back_run_and_references(client, monkeypatch):
     client.raise_server_exceptions = False
     assert start(client, file_id).status_code == 500
     assert client.get("/api/v1/flow-runs").json() == []
-    assert query(client, lambda s: s.scalars(select(FileReference))).all() == []
+    assert (
+        query(
+            client,
+            lambda s: s.scalars(
+                select(FileReference).where(FileReference.owner.startswith("flow:"))
+            ),
+        ).all()
+        == []
+    )
 
 
 def test_cancel_during_model_send_preserves_inflight_receipt(client, tmp_path, flow_engine):
@@ -856,7 +883,7 @@ def test_execution_context_preserves_transaction_errors_and_audit(client):
 
     async def conflict():
         async with context.access(
-            "file:create", action="file.reference", target="file", target_id=file_id
+            "test_files.asset:create", action="file.reference", target="file", target_id=file_id
         ) as (session, _):
             session.add(
                 FileReference(owner=f"flow:{row['id']}", slot="input", file_id=UUID(file_id))
@@ -924,11 +951,8 @@ def test_flow_binary_files_limits_and_idempotent_retention(client, monkeypatch):
         return identifier
 
     identifier = client.portal.call(exercise)
-    assert (
-        client.get(f"/api/v1/files/{identifier}").json()["content_type"]
-        == "application/octet-stream"
-    )
-    refs = client.get(f"/api/v1/files/{identifier}/references").json()
+    assert stored_file(client, identifier)["content_type"] == "application/octet-stream"
+    refs = reference_rows(client, identifier)
     assert refs == [{"owner": f"flow:{run_id}", "slot": "artifact.binary"}]
 
 
@@ -963,12 +987,12 @@ def test_upload_completion_retains_file_after_flow_cancel(client, monkeypatch):
     with pytest.raises(ServiceError) as error:
         client.portal.call(upload_report)
     assert error.value.code == "flow_cancelled"
-    file = next(r for r in client.get("/api/v1/files").json() if r["name"] == "cancelled.txt")
+    file = next(r for r in stored_files(client) if r["name"] == "cancelled.txt")
     assert file["status"] == "active"
-    assert client.get(f"/api/v1/files/{file['id']}/references").json() == [
+    assert reference_rows(client, file["id"]) == [
         {"owner": f"flow:{run_id}", "slot": "artifact.report"}
     ]
-    assert client.delete(f"/api/v1/files/{file['id']}").status_code == 409
+    assert client.delete(f"/api/v1/_test/materials/{file['id']}").status_code == 404
 
 
 def test_worker_single_instance_and_orderly_stop(client, tmp_path, flow_engine):

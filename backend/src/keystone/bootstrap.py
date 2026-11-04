@@ -1,4 +1,3 @@
-import asyncio
 from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -15,6 +14,7 @@ from keystone.composition import (
 )
 from keystone.core.config import Settings
 from keystone.core.database import Database
+from keystone.core.execution.dispatch import TaskClient
 from keystone.core.http import install_errors, validate_http_routes
 from keystone.core.migrations import expected_heads
 from keystone.core.worker_health import worker_status
@@ -23,8 +23,7 @@ from keystone.model_registry import load_models
 from keystone.platform.audit.controllers import router as audit_router
 from keystone.platform.dictionary.controllers import router as dictionary_router
 from keystone.platform.files.adapters.storage import StorageRegistry
-from keystone.platform.files.controllers import router as files_router
-from keystone.platform.files.services.grants import FileGrantService
+from keystone.platform.files.services.files import FileService
 from keystone.platform.files.services.references import FileReferenceService
 from keystone.platform.flow.controllers import router as flow_router
 from keystone.platform.flow.schemas.definitions import FlowDefinition
@@ -36,7 +35,7 @@ from keystone.platform.identity.services.login_limits import LoginLimiter
 from keystone.platform.model_access.adapters.clients import ModelClients
 from keystone.platform.model_access.controllers import router as models_router
 from keystone.platform.model_access.services.invocations import InvocationService
-from keystone.use_cases import FlowCosts, FlowDiagnostics, RoleDeletion
+from keystone.use_cases import FlowCosts, FlowDiagnostics
 
 
 @dataclass
@@ -54,6 +53,27 @@ class Runtime:
     worker_lease: object | None = None
     execution_guard: Callable | None = None
     history_offset: int = 0
+    tasks: TaskClient | None = None
+
+    async def close(self):
+        try:
+            if self.tasks is not None:
+                await self.tasks.close()
+        finally:
+            try:
+                if self.flow_engine is not None:
+                    await self.flow_engine.close()
+            finally:
+                await self.database.close()
+
+    def managed_files(self, identity):
+        return FileService(identity, self.storage)
+
+    def model_service(self, identity):
+        from keystone.platform.model_access.services.entries import ModelEntryService
+        from keystone.platform.model_access.services.runtime import ModelRuntime
+
+        return ModelRuntime(ModelEntryService(identity, self.models))
 
     def history_retention(self):
         return composition.build_history_retention(self)
@@ -75,13 +95,15 @@ class Runtime:
                 application_version=self.execution_version(),
             ),
             {
-                name: partial(probe, self.database)
-                for name, probe in (("files", files), ("flow", flow), ("model_costs", costs))
+                "files": partial(
+                    files,
+                    self.database,
+                    unreferenced_grace_seconds=self.settings.file_unreferenced_grace_seconds,
+                ),
+                "flow": partial(flow, self.database),
+                "model_costs": partial(costs, self.database),
             },
         )
-
-    def role_deletion(self, identity):
-        return RoleDeletion(identity, FileGrantService(identity.context))
 
     def flow_costs(self, identity):
         return FlowCosts(self.flow_service(identity), InvocationService(identity, self.models))
@@ -137,6 +159,7 @@ def build_runtime(settings: Settings) -> Runtime:
         from keystone.platform.flow.adapters.dbos import Engine
 
         runtime.flow_engine = Engine(settings)
+        runtime.tasks = TaskClient(settings, application_version=runtime.execution_version)
     return runtime
 
 
@@ -150,13 +173,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.runtime = runtime
         app.state.passwords = Passwords()
         app.state.login_limiter = LoginLimiter()
-        app.state.upload_slots = asyncio.Semaphore(settings.file_transfer_slots)
         try:
             yield
         finally:
-            if runtime.flow_engine:
-                await runtime.flow_engine.close()
-            await runtime.database.close()
+            await runtime.close()
 
     app = FastAPI(title="Keystone", version=__version__, lifespan=lifespan)
     install_errors(app)
@@ -179,7 +199,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(identity_router)
     app.include_router(audit_router)
-    app.include_router(files_router)
     app.include_router(dictionary_router)
     app.include_router(models_router)
     app.include_router(flow_router)

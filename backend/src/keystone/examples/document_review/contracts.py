@@ -75,13 +75,7 @@ definition = FlowDefinition(
     output_model=ReviewOutput,
     entrypoint="keystone.document.review",
     # Recovery may reuse the report through existing file inspection/management checks.
-    required_permissions=(
-        "file:content_read",
-        "file:create",
-        "file:inspect",
-        "file:manage",
-        "model:invoke",
-    ),
+    required_permissions=("model:invoke",),
     file_fields=("source_file_id",),
     output_file_fields=("report_file_id",),
     model_roles=(ModelRole("review", "审查"),),

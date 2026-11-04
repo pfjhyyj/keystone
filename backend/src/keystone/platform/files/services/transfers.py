@@ -34,9 +34,17 @@ class FileTransferService:
             self._busy = False
 
     @asynccontextmanager
+    async def open_content(self, identifier, *, max_bytes=None):
+        with self._operation():
+            async with self._files.open_content(
+                identifier, _transfer_slot=self._number, max_bytes=max_bytes
+            ) as reader:
+                yield reader
+
+    @asynccontextmanager
     async def workspace(self, max_bytes):
         with self._operation():
-            async with self._files.identity.access("file:create"):
+            async with self._files.identity.access():
                 pass
             async with self._files.transfers.temporary(max_bytes, _slot=self._number) as path:
                 yield path
@@ -66,8 +74,8 @@ class FileTransferService:
         name,
         content_type,
         request_key,
-        owner,
-        slot,
+        owner=None,
+        slot=None,
         storage_key=None,
         admission=None,
     ):
@@ -76,7 +84,7 @@ class FileTransferService:
             transfers = self._files.transfers
             async with opened(Path(path).open, "rb") as source:
                 size = await blocking(source.seek, 0, 2)
-                await self._files.prepare_upload(size, storage_key)
+                self._files.prepare_upload(size, storage_key)
                 if size > transfers.limit:
                     raise ServiceError(413, "file_temporary_limit", "文件超过临时空间配额")
                 await blocking(source.seek, 0)

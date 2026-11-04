@@ -232,7 +232,7 @@ function submit() {
           >展示名<el-input v-model="form.display_name" required maxlength="128"
         /></label>
         <template v-if="mode === 'create' || mode === 'password'"
-          ><p>用户首次登录必须修改密码。重置密码会撤销登录会话，个人令牌保持独立。</p>
+          ><p>用户首次登录必须修改密码。重置密码会撤销该用户全部登录会话和个人令牌。</p>
           <label
             >初始密码<el-input
               v-model="form.password"

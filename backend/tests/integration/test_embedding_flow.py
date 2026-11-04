@@ -36,10 +36,10 @@ def start(client, *, headers=None):
         "input": {"texts": ["scene", "action"], "dimensions": 3},
         "model_bindings": {"embed": "embed"},
     }
-    response = client.post("/api/v1/flow-runs", json=body, headers=headers)
+    response = client.post("/api/v1/_test/review", json=body, headers=headers)
     assert response.status_code == 202, response.text
     assert (
-        client.post("/api/v1/flow-runs", json=body, headers=headers).json()["id"]
+        client.post("/api/v1/_test/review", json=body, headers=headers).json()["id"]
         == response.json()["id"]
     )
     return response.json()

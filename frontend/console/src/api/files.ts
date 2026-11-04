@@ -1,4 +1,4 @@
-import { ApiError, failure, headers, request, sessionWork } from './client'
+import { ApiError, failure, headers, sessionWork } from './client'
 import { hashFile } from '../services/upload/hash'
 
 export interface UploadProgress {
@@ -15,6 +15,7 @@ interface TransferOptions {
   onProgress?: (progress: UploadProgress) => void
 }
 export async function uploadFile(
+  path: string,
   file: File,
   requestKey: string,
   storageKey?: string,
@@ -42,7 +43,7 @@ export async function uploadFile(
         checksum_sha256: checksum,
       })
       if (storageKey) params.set('storage_key', storageKey)
-      xhr.open('POST', `/api/v1/files?${params}`)
+      xhr.open('POST', `/api/v1${path}?${params}`)
       xhr.timeout = 0 // The server owns the upload deadline, including its final copy.
       xhr.withCredentials = true
       Object.entries({ ...headers(), 'Content-Type': 'application/octet-stream' }).forEach(
@@ -117,9 +118,9 @@ export async function uploadFile(
   }
 }
 
-export async function downloadFile(id: string, name: string, signal?: AbortSignal) {
+export async function downloadFile(path: string, name: string, signal?: AbortSignal) {
   const work = sessionWork(signal, 65000)
-  const url = `/api/v1/files/${encodeURIComponent(id)}/content`
+  const url = `/api/v1${path}`
   let response: Response | undefined
   try {
     // Check access without accumulating the file in JS memory. Native GET reauthorizes.
@@ -161,46 +162,3 @@ export async function downloadFile(id: string, name: string, signal?: AbortSigna
     work.close()
   }
 }
-export interface StoredFile {
-  id: string
-  name: string
-  owner_id: string
-  status: string
-  content_type: string
-  storage_key: string
-  size_bytes: number | null
-  created_at: string
-  updated_at: string
-  deleted_at: string | null
-}
-export interface FileGrant {
-  id: string
-  subject_type: 'user' | 'role' | 'authenticated'
-  user_id: string | null
-  role_id: string | null
-  action: 'inspect' | 'content_read' | 'manage'
-  created_at: string
-  created_by: string | null
-}
-export interface FileReference {
-  owner: string
-  slot: string
-}
-export const fileApi = {
-  list: (offset: number) => request<StoredFile[]>(`/files?offset=${offset}&limit=50`),
-  grants: (id: string, offset: number) =>
-    request<FileGrant[]>(`/files/${id}/grants?offset=${offset}&limit=50`),
-  references: (id: string, offset: number) =>
-    request<FileReference[]>(`/files/${id}/references?offset=${offset}&limit=50`),
-}
-export const fileStatus: Record<string, string> = {
-  uploading: '上传中',
-  active: '可用',
-  disabled: '已停用',
-  failed: '上传失败',
-  deleting: '正在删除',
-  deleted: '已删除',
-}
-export const grantActions = { inspect: '查看信息', content_read: '读取内容', manage: '管理与授权' }
-export const uuidPattern =
-  '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'

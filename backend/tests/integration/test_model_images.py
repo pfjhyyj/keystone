@@ -9,7 +9,7 @@ from sqlalchemy import select
 from support.flow_packages import assert_correlated, install_package
 from support.operation_flow import PACKAGE, edit_definition, image_definition
 from test_files_dictionary import client as client
-from test_files_dictionary import upload
+from test_files_dictionary import stored_content, upload
 from test_flow import wait_run, worker
 from test_identity import query
 from test_model_access import channel, entry
@@ -35,7 +35,7 @@ def accept(client, monkeypatch, *, edit=False, n=1, headers=None):
         assert uploaded.status_code == 201, uploaded.text
         inputs["images"] = [{"file_id": uploaded.json()["id"]}]
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={
             "definition_key": definition.key,
             "request_key": "images",
@@ -136,11 +136,8 @@ def test_image_generation_and_edit_produce_controlled_files(client, monkeypatch,
         file["file_id"] for file in outputs
     }
     for item in outputs:
-        content = client.get(f"/api/v1/files/{item['file_id']}/content")
-        assert content.status_code == 200 and content.headers["content-type"].startswith(
-            "image/png"
-        )
-        Image.open(BytesIO(content.content)).verify()
+        content = stored_content(client, item["file_id"])
+        Image.open(BytesIO(content)).verify()
     public = client.get(f"/api/v1/model-invocations/{calls[0].id}").json()
     assert public["operation"] == calls[0].operation and "result_context" not in public
 
@@ -188,7 +185,10 @@ def test_inflight_image_receipt_survives_cancel_or_pat_revocation_without_publis
 
     from test_identity import bearer, token
 
-    pat = token(client, ["flow:start", "model:invoke", "file:create", "file:content_read"])
+    pat = token(
+        client,
+        ["flow:start", "model:invoke", "test_files.asset:create", "test_files.asset:content_read"],
+    )
     run_id = accept(client, monkeypatch, headers=bearer(pat["token"]))
     request_log = tmp_path / "inflight.jsonl"
     script = "import asyncio\n" + code(request_log).replace(

@@ -8,18 +8,9 @@ import {
   type VueWrapper,
 } from '@vue/test-utils'
 import ModelManager from '../views/models/ModelsView.vue'
-import ModelProbe from '../views/models/components/ModelProbe.vue'
-import UpstreamModelPicker from '../views/models/components/UpstreamModelPicker.vue'
-import ModelPicker from '../components/models/ModelPicker.vue'
 import FlowManager from '../views/flows/FlowsView.vue'
 import FlowRunDialog from '../views/flows/components/FlowRunDialog.vue'
-import FlowStartDialog from '../views/flows/components/FlowStartDialog.vue'
-import * as transport from '../api/client'
-import { identity } from '../stores/session'
 import { authorize, deferred, fakeApi, chooseSelect, selectControl } from './support'
-vi.mock('../views/flows/forms', async () => ({
-  flowForms: { 'document.review': (await import('./fixtures/ReviewInput.vue')).default },
-}))
 
 const id = '11111111-1111-4111-8111-111111111111',
   channelId = '22222222-2222-4222-8222-222222222222'
@@ -63,14 +54,6 @@ const flow = {
   cancel_requested_at: null,
   error_code: null,
 }
-const definition = {
-  revision: '1',
-  model_roles: [],
-  key: 'custom.flow',
-  name: '自定义流程',
-  description: '',
-  input_schema: { type: 'object' },
-}
 const button = (wrapper: VueWrapper, label: string) =>
   wrapper.findAll('button').find((node) => node.text() === label)!
 beforeEach(() => {
@@ -80,23 +63,6 @@ afterEach(() => {
   delete (config.global.stubs as Record<string, unknown>).RouterLink
   vi.useRealTimers()
   vi.restoreAllMocks()
-})
-
-it('applies session invalidation to errors carried inside a successful HTTP stream', async () => {
-  authorize(['model:invoke'])
-  fakeApi(
-    () =>
-      new Response(
-        'data: {"type":"error","http_status":401,"code":"authentication_required","detail":"请重新登录"}\n\n',
-        { headers: { 'Content-Type': 'text/event-stream' } },
-      ),
-  )
-  const event = vi.fn()
-  await expect(
-    transport.invokeModel({}, event, new AbortController().signal),
-  ).rejects.toMatchObject({ status: 401 })
-  expect(identity.value).toBeNull()
-  expect(event).not.toHaveBeenCalled()
 })
 
 it('keeps history readers out of configuration and invocation APIs', async () => {
@@ -437,27 +403,6 @@ it.each([true, false])(
     expect(wrapper.text()).not.toContain('上游未返回账户余额')
   },
 )
-it('discards a stale channel model list and preserves an unavailable current model', async () => {
-  authorize(['model:manage'])
-  const pending = deferred<unknown>()
-  fakeApi((path) =>
-    path.includes('/first/') ? pending.promise : { items: [{ id: 'second-model' }] },
-  )
-  const wrapper = mount(UpstreamModelPicker, {
-    props: { channelId: 'first', disabled: false, modelValue: 'deepseek-flash' },
-  })
-  await flushPromises()
-  await wrapper.setProps({ channelId: 'second' })
-  await flushPromises()
-  pending.resolve({ items: [{ id: 'first-model' }] })
-  await flushPromises()
-  const control = selectControl(wrapper, '上游模型')
-  expect(control.text()).toContain('second-model')
-  expect(control.text()).not.toContain('first-model')
-  expect(wrapper.text()).toContain('当前渠道返回的列表不包含此模型')
-  expect(control.props('modelValue')).toBe('deepseek-flash')
-  wrapper.unmount()
-})
 it.each(['渠道', '模型'])('renames %s from the list using only the display name', async (kind) => {
   authorize(['model:manage'])
   const writes: { path: string; body: unknown }[] = []
@@ -533,84 +478,12 @@ it.each(['渠道', '模型'])(
     expect(deletes).toHaveLength(2)
   },
 )
-it('paginates the model catalog while retaining selection', async () => {
-  authorize(['model:invoke'])
-  const paths: string[] = []
-  fakeApi((path) => {
-    paths.push(path)
-    return { items: Array.from({ length: 50 }, (_, i) => ({ key: `model${i}` })) }
-  })
-  const wrapper = mount(ModelPicker, { props: { modelValue: 'chosen-off-page' } })
-  await flushPromises()
-  await button(wrapper, '下一页').trigger('click')
-  await flushPromises()
-  expect(paths[1]).toContain('offset=50')
-  expect(selectControl(wrapper).text()).toContain('chosen-off-page')
-})
-it('stops receiving without resending and aborts on disposal', async () => {
-  authorize(['model:invoke'])
-  fakeApi(() => ({ items: [{ key: 'chat' }] }))
-  let signal: AbortSignal | undefined
-  const spy = vi
-    .spyOn(transport, 'invokeModel')
-    .mockImplementation(async (_body, _event, incoming) => {
-      signal = incoming
-      await new Promise((_done, reject) =>
-        incoming.addEventListener('abort', () => reject(new Error('aborted'))),
-      )
-    })
-  const completed = vi.fn()
-  const wrapper = mount(ModelProbe, { props: { onCompleted: completed } })
-  await flushPromises()
-  await chooseSelect(wrapper, 'chat')
-  await wrapper.get('textarea').setValue('hello')
-  await wrapper.get('form').trigger('submit')
-  await wrapper.get('form').trigger('submit')
-  expect(spy).toHaveBeenCalledTimes(1)
-  await button(wrapper, '停止接收').trigger('click')
-  await flushPromises()
-  expect(signal?.aborted).toBe(true)
-  expect(wrapper.text()).toContain('上游可能已经执行')
-  await wrapper.get('form').trigger('submit')
-  wrapper.unmount()
-  await flushPromises()
-  expect(signal?.aborted).toBe(true)
-  expect(completed).toHaveBeenCalledTimes(1)
-})
-it('requires a model and message before submitting a real request', async () => {
-  authorize(['model:invoke'])
-  fakeApi(() => ({ items: [] }))
-  const spy = vi.spyOn(transport, 'invokeModel')
-  const wrapper = mount(ModelProbe)
-  await flushPromises()
-  await wrapper.get('form').trigger('submit')
-  expect(spy).not.toHaveBeenCalled()
-  expect(button(wrapper, '发送真实请求').attributes('disabled')).toBeDefined()
-})
-it('labels live calls and sends only after an explicit submission', async () => {
-  authorize(['model:invoke'])
-  fakeApi(() => ({ items: [{ key: 'chat' }] }))
-  const spy = vi.spyOn(transport, 'invokeModel').mockResolvedValue(undefined)
-  const wrapper = mount(ModelProbe)
-  await flushPromises()
-  expect(wrapper.text()).toContain('可能产生真实费用')
-  expect(wrapper.find('section').attributes('aria-label')).toBe('真实调用')
-  expect(wrapper.text()).not.toContain('流式响应')
-  expect(spy).not.toHaveBeenCalled()
-  await chooseSelect(wrapper, 'chat')
-  await wrapper.get('textarea').setValue('hello')
-  expect(button(wrapper, '发送真实请求').attributes('disabled')).toBeUndefined()
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(spy).toHaveBeenCalledTimes(1)
-  expect(spy.mock.calls[0]![0]).toMatchObject({ model_key: 'chat', stream: false })
-})
 it('uses the official address and no fake upstream model when configuring live mode', async () => {
   authorize(['model:manage'])
   fakeApi((path) => (path === '/model-access/options' ? { providers: ['openrouter'] } : []))
   const wrapper = mount(ModelManager)
   await flushPromises()
-  expect(wrapper.text()).toContain('配置渠道、管理模型并测试调用')
+  expect(wrapper.text()).toContain('配置渠道、模型和价格')
   await button(wrapper, '新建渠道').trigger('click')
   await flushPromises()
   expect(selectControl(wrapper, '服务商').text()).not.toContain('DeepSeek')
@@ -627,50 +500,6 @@ it('uses the official address and no fake upstream model when configuring live m
       .findAll('input')
       .some((input) => (input.element as HTMLInputElement).value === 'mock-chat'),
   ).toBe(false)
-})
-it('keeps a Flow request key after failure and dialog reopen; a new request changes it', async () => {
-  authorize(['flow:start'])
-  const bodies: { request_key: string }[] = []
-  fakeApi((_path, init) => {
-    if (init.method === 'POST') {
-      bodies.push(JSON.parse(String(init.body)))
-      return new Response(JSON.stringify({ detail: '暂不可用' }), { status: 503 })
-    }
-    return []
-  })
-  const wrapper = mount(FlowStartDialog, {
-    props: { open: true, definitions: [definition], idempotencyDays: 7 },
-  })
-  await flushPromises()
-  await wrapper.get('textarea').setValue('{"count":2}')
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  await wrapper.setProps({ open: false })
-  await wrapper.setProps({ open: true })
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(bodies[0]!.request_key).toBe(bodies[1]!.request_key)
-  await button(wrapper, '准备新的运行').trigger('click')
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(bodies[2]!.request_key).not.toBe(bodies[1]!.request_key)
-})
-it('rejects non-object Flow JSON without sending', async () => {
-  authorize(['flow:start'])
-  const paths: string[] = []
-  fakeApi((path) => {
-    paths.push(path)
-    return []
-  })
-  const wrapper = mount(FlowStartDialog, {
-    props: { open: true, definitions: [definition], idempotencyDays: 7 },
-  })
-  await flushPromises()
-  await wrapper.get('textarea').setValue('[]')
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(paths).toEqual([])
-  expect(wrapper.text()).toContain('JSON 对象')
 })
 it('keeps run state when steps fail and never fetches unauthorized costs', async () => {
   authorize(['flow:read'])
@@ -755,205 +584,6 @@ it('does not fetch start catalogs, files or models for a Flow reader', async () 
   await flushPromises()
   expect(paths).toEqual(['/flow-runs?offset=0&limit=50'])
   expect(wrapper.text()).not.toContain('发起流程')
-})
-it('distinguishes catalog loading and failure, retries and opens the selected Flow definition', async () => {
-  authorize(['flow:start', 'flow:read'])
-  const pending = deferred<unknown>()
-  let attempts = 0
-  const paths: string[] = []
-  fakeApi((path) => {
-    paths.push(path)
-    if (path === '/flow-definitions') {
-      attempts++
-      return attempts === 1
-        ? pending.promise
-        : {
-            idempotency_days: 7,
-            items: [
-              definition,
-              { ...definition, key: 'custom.other', name: '第二个流程', description: '批量处理' },
-            ],
-          }
-    }
-    return []
-  })
-  const wrapper = mount(FlowManager, {
-    global: { stubs: { RouterLink: RouterLinkStub } },
-  })
-  await flushPromises()
-  expect(wrapper.text()).toContain('正在加载流程目录')
-  expect(wrapper.text()).not.toContain('尚未启用')
-  pending.resolve(new Response(JSON.stringify({ detail: '流程目录暂不可用' }), { status: 503 }))
-  await flushPromises()
-  expect(wrapper.text()).toContain('流程目录暂不可用')
-  await button(wrapper, '刷新流程目录').trigger('click')
-  await flushPromises()
-  expect(wrapper.getComponent(RouterLinkStub).props('to')).toBe('/platform')
-  await wrapper.get('input[placeholder="搜索名称、标识或说明"]').setValue(' 批量处理 ')
-  expect(wrapper.text()).toContain('显示 1 / 2 个流程')
-  await button(wrapper, '发起流程').trigger('click')
-  await flushPromises()
-  expect(selectControl(wrapper, '流程').props('modelValue')).toBe('custom.other')
-  await wrapper.get('button[aria-label="关闭对话框"]').trigger('click')
-  await chooseSelect(wrapper, 'failed', '运行状态')
-  const runs = wrapper.get('section[aria-label="运行记录"]')
-  await runs.get('form').trigger('submit')
-  await flushPromises()
-  expect(paths.at(-1)).toContain('status=failed')
-  await button(wrapper, '重置筛选').trigger('click')
-  await flushPromises()
-  expect(paths.at(-1)).not.toContain('status=')
-})
-it('retains a composed Flow input across reopen and clears it when switching definitions', async () => {
-  authorize(['flow:start', 'file:inspect', 'model:invoke'])
-  const bodies: { definition_key: string; request_key: string; input: Record<string, unknown> }[] =
-    []
-  fakeApi((path, init) => {
-    if (init.method === 'POST') {
-      bodies.push(JSON.parse(String(init.body)))
-      return new Response(JSON.stringify({ detail: '暂不可用' }), { status: 503 })
-    }
-    return path.startsWith('/models') ? { items: [{ key: 'chat' }] } : []
-  })
-  const wrapper = mount(FlowStartDialog, {
-    props: {
-      open: true,
-      definitions: [
-        {
-          ...definition,
-          key: 'document.review',
-          model_roles: [{ key: 'review', label: '审查', operation: 'text.generate' }],
-        },
-        definition,
-      ],
-      idempotencyDays: 7,
-    },
-  })
-  await flushPromises()
-  await wrapper.get('input[placeholder="已知文件 UUID"]').setValue(id)
-  await chooseSelect(wrapper, 'chat', '审查模型')
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  await wrapper.setProps({ open: false })
-  await wrapper.setProps({ open: true })
-  await flushPromises()
-  expect(
-    (wrapper.get('input[placeholder="已知文件 UUID"]').element as HTMLInputElement).value,
-  ).toBe(id)
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(bodies[1]).toEqual(bodies[0])
-  expect(bodies[0]!.input).toEqual({ source_file_id: id })
-  await chooseSelect(wrapper, definition.key, '流程')
-  await wrapper.get('textarea').setValue('{"count":2}')
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(bodies[2]!.input).toEqual({ count: 2 })
-  expect(bodies[2]!.request_key).not.toBe(bodies[1]!.request_key)
-})
-
-it('requires every model role and preserves bindings on unknown response', async () => {
-  authorize(['flow:start', 'model:invoke'])
-  const bodies: {
-    request_key: string
-    input: object
-    model_bindings: object
-    definition_revision: string
-  }[] = []
-  fakeApi((path, init) => {
-    if (init.method === 'POST') {
-      bodies.push(JSON.parse(String(init.body)))
-      return new Response(JSON.stringify({ detail: '暂不可用' }), { status: 503 })
-    }
-    return path.startsWith('/models') ? { items: [{ key: 'chat' }] } : []
-  })
-  const wrapper = mount(FlowStartDialog, {
-    props: {
-      open: true,
-      idempotencyDays: 7,
-      definitions: [
-        {
-          ...definition,
-          model_roles: [
-            { key: 'analyze', label: '分析', operation: 'text.generate' },
-            { key: 'review', label: '复核', operation: 'text.generate' },
-          ],
-        },
-      ],
-    },
-  })
-  await flushPromises()
-  expect(
-    wrapper.findAllComponents(ModelPicker).map((picker) => picker.props('modelValue')),
-  ).toEqual(['', ''])
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(bodies).toHaveLength(0)
-  expect(wrapper.text()).toContain('请为每个角色选择模型')
-  await chooseSelect(wrapper, 'chat', '分析模型')
-  await chooseSelect(wrapper, 'chat', '复核模型')
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(bodies[0]).toEqual(bodies[1])
-  expect(bodies[0]!.input).toEqual({})
-  expect(bodies[0]!.model_bindings).toEqual({ analyze: 'chat', review: 'chat' })
-  expect(bodies[0]!.definition_revision).toBe('1')
-  await wrapper.setProps({
-    definitions: wrapper.props('definitions').map((item) => ({
-      ...item,
-      model_roles: item.model_roles.map((role) => ({ ...role })),
-    })),
-  })
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(bodies[2]).toEqual(bodies[1])
-  await wrapper.setProps({
-    definitions: [
-      {
-        ...definition,
-        revision: '2',
-        model_roles: [
-          { key: 'analyze', label: '分析', operation: 'text.generate' },
-          { key: 'review', label: '复核', operation: 'text.generate' },
-        ],
-      },
-    ],
-  })
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(bodies[3]!.request_key).not.toBe(bodies[2]!.request_key)
-  expect(bodies[3]!.definition_revision).toBe('2')
-  await wrapper.setProps({
-    definitions: [
-      {
-        ...definition,
-        revision: '3',
-        model_roles: [{ key: 'review', label: '复核', operation: 'text.generate' }],
-      },
-    ],
-  })
-  await wrapper.get('form').trigger('submit')
-  await flushPromises()
-  expect(bodies[4]!.model_bindings).toEqual({ review: 'chat' })
-})
-
-it('filters model choices by role operation and reloads when the operation changes', async () => {
-  authorize(['model:invoke'])
-  const paths: string[] = []
-  fakeApi((path) => {
-    paths.push(path)
-    return { items: [{ key: path.includes('text.structured') ? 'structured' : 'vision' }] }
-  })
-  const wrapper = mount(ModelPicker, { props: { modelValue: '', operation: 'text.structured' } })
-  await flushPromises()
-  expect(paths.at(-1)).toContain('operation=text.structured')
-  expect(wrapper.text()).toContain('structured')
-  await wrapper.setProps({ operation: 'image.understand' })
-  await flushPromises()
-  expect(paths.at(-1)).toContain('operation=image.understand')
-  expect(wrapper.text()).toContain('vision')
 })
 
 it('keeps balance details open and replaces only the refreshed channel snapshot', async () => {

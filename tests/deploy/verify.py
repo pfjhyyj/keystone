@@ -108,12 +108,17 @@ class Deployment:
         for service in BACKEND_SERVICES:
             lines += [f"  {service}:", f"    image: {images['backend']}"]
             if service in {"api", "worker"}:
-                entrypoint = "api" if service == "api" else "worker"
                 script = (
                     "import sys; sys.path.insert(0, '/test-support'); "
                     "from support.model_stub import install; install(); "
                     "from support.flow_fixture import install; install(); "
-                    f"from keystone.entrypoints.{entrypoint} import main; main()"
+                    + (
+                        "import keystone.entrypoints.api as api; "
+                        "from support.business_api import create_app; "
+                        "api.create_app = create_app; api.main()"
+                        if service == "api"
+                        else "from keystone.entrypoints.worker import main; main()"
+                    )
                 )
                 lines += [
                     "    command: " + json.dumps(["python", "-c", script]),
@@ -395,7 +400,7 @@ def exercise(source, restored, checks):
         file = request(
             client,
             "POST",
-            "/files",
+            "/_test/materials",
             201,
             params={"name": "source.txt", "expected_size": len(SOURCE)},
             content=SOURCE,
@@ -408,7 +413,11 @@ def exercise(source, restored, checks):
             json={
                 "key": "reader",
                 "name": "Reader",
-                "permissions": ["file:inspect", "file:content_read", "dictionary:read"],
+                "permissions": [
+                    "test_files.asset:inspect",
+                    "test_files.asset:content_read",
+                    "dictionary:read",
+                ],
             },
         )
         user = request(
@@ -425,14 +434,6 @@ def exercise(source, restored, checks):
             204,
             json={"assigned": True},
         )
-        for action in ("inspect", "content_read"):
-            request(
-                client,
-                "POST",
-                f"/files/{file['id']}/grants",
-                201,
-                json={"subject_type": "role", "role_id": role["id"], "action": action},
-            )
         dictionary = request(
             client,
             "POST",
@@ -474,7 +475,7 @@ def exercise(source, restored, checks):
             )
             request(client, "POST", f"/model-channels/{channel['id']}/balance")
             response = client.post(
-                "/api/v1/models/invoke",
+                "/api/v1/_test/generate-text",
                 json={
                     "model_key": provider,
                     "stream": provider == "openrouter",
@@ -499,10 +500,11 @@ def exercise(source, restored, checks):
             "input": {"source_file_id": file["id"]},
             "model_bindings": {"review": "openrouter"},
         }
-        run = request(client, "POST", "/flow-runs", 202, json=payload)
+        run = request(client, "POST", "/_test/review", 202, json=payload)
         completed = source.finish(client, run["id"])
+        request(client, "POST", f"/_test/review/{run['id']}/report")
         report = completed["result"]["report_file_id"]
-        report_bytes = client.get(f"/api/v1/files/{report}/content").content
+        report_bytes = client.get(f"/api/v1/_test/materials/{report}/content").content
         assert report_bytes
         steps = request(client, "GET", f"/flow-runs/{run['id']}/steps")
         assert steps["available"] and steps["items"]
@@ -510,7 +512,7 @@ def exercise(source, restored, checks):
         invocations = request(client, "GET", "/model-invocations")
         assert len(invocations) == 5
         channels = request(client, "GET", "/model-channels")
-        refs = request(client, "GET", f"/files/{file['id']}/references")
+        refs = request(client, "GET", f"/flow-runs/{run['id']}/diagnostics?section=files")
         assert refs
         # Change the test reader's initial password before backing up its session/roles.
         with source.client() as reader:
@@ -523,11 +525,11 @@ def exercise(source, restored, checks):
                 json={"current_password": PASSWORD, "password": PASSWORD + "-changed"},
             )
             login(reader, "reader", PASSWORD + "-changed")
-            assert reader.get(f"/api/v1/files/{file['id']}/content").content == SOURCE
+            assert reader.get(f"/api/v1/_test/materials/{file['id']}/content").status_code == 404
             assert reader.get("/api/v1/users").status_code == 403
         source.compose("stop", "worker")
         pending_payload = {**payload, "request_key": "pending-before-backup"}
-        pending = request(client, "POST", "/flow-runs", 202, json=pending_payload)
+        pending = request(client, "POST", "/_test/review", 202, json=pending_payload)
         assert pending["status"] == "pending"
         passed("real DBOS/Harness completion and durable pending Flow")
 
@@ -596,19 +598,21 @@ def exercise(source, restored, checks):
             recovered.cookies.update(client.cookies)
             me = request(recovered, "GET", "/auth/me")
             recovered.headers["X-CSRF-Token"] = me["csrf_token"]
-            assert recovered.get(f"/api/v1/files/{file['id']}/content").status_code == 503
+            assert recovered.get(f"/api/v1/_test/materials/{file['id']}/content").status_code == 503
             restored.compose("stop", "console", "api")
             restored.archive_files(backup, restore=True)
             passed("database-only restore refuses file reads with an unrelated storage fingerprint")
             restored.up()
-            assert recovered.get(f"/api/v1/files/{file['id']}/content").content == SOURCE
-            assert recovered.get(f"/api/v1/files/{report}/content").content == report_bytes
+            assert recovered.get(f"/api/v1/_test/materials/{file['id']}/content").content == SOURCE
+            assert (
+                recovered.get(f"/api/v1/_test/materials/{report}/content").content == report_bytes
+            )
             assert request(recovered, "GET", f"/flow-runs/{run['id']}") == completed
             assert request(recovered, "GET", f"/flow-runs/{run['id']}/steps") == steps
             assert request(recovered, "GET", f"/flow-runs/{run['id']}/costs") == costs
-            assert request(recovered, "POST", "/flow-runs", 202, json=payload)["id"] == run["id"]
+            assert request(recovered, "POST", "/_test/review", 202, json=payload)["id"] == run["id"]
             assert (
-                request(recovered, "POST", "/flow-runs", 202, json=pending_payload)["id"]
+                request(recovered, "POST", "/_test/review", 202, json=pending_payload)["id"]
                 == pending["id"]
             )
             restored.finish(recovered, pending["id"])
@@ -627,13 +631,15 @@ def exercise(source, restored, checks):
             )
             with restored.client() as reader:
                 login(reader, "reader", PASSWORD + "-changed")
-                assert reader.get(f"/api/v1/files/{file['id']}/content").content == SOURCE
+                assert (
+                    reader.get(f"/api/v1/_test/materials/{file['id']}/content").status_code == 404
+                )
                 assert reader.get("/api/v1/users").status_code == 403
             # Prove restored UID/permissions allow subsequent writes as well as reads.
             request(
                 recovered,
                 "POST",
-                "/files",
+                "/_test/materials",
                 201,
                 params={"name": "after-restore.txt", "expected_size": 3},
                 content=b"new",
@@ -648,7 +654,9 @@ def exercise(source, restored, checks):
             )
             restored.compose("down")  # Cold recreation with retained volumes, same images.
             restored.up()
-            assert recovered.get(f"/api/v1/files/{report}/content").content == report_bytes
+            assert (
+                recovered.get(f"/api/v1/_test/materials/{report}/content").content == report_bytes
+            )
             assert len(request(recovered, "GET", "/model-invocations")) == 7
             passed("down/up preserves both volumes and does not replay completed model calls")
 

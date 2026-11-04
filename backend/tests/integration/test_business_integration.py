@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
+from support.business_api import create_app
 from support.flow_packages import package_for_definitions
 from test_files_dictionary import client as client
 from test_identity import (
@@ -24,7 +25,6 @@ from test_identity import (
 )
 
 from keystone import composition
-from keystone.bootstrap import create_app
 from keystone.core.asyncio import new_event_loop
 from keystone.core.catalog import Catalog
 from keystone.core.config import Settings
@@ -108,15 +108,18 @@ def test_flow_permissions_must_be_in_application_catalog(monkeypatch):
         build_runtime(Settings(config_file=None))
 
 
-def test_all_flow_definitions_are_validated_and_directory_is_frozen():
+def test_all_flow_definitions_are_validated_and_directory_is_frozen(monkeypatch):
+    from support.business_catalog import install_catalog
+
+    install_catalog(monkeypatch)
     from support.flow_fixture.contracts import definition
 
-    from keystone.composition import PLATFORM_CATALOG
+    from keystone.composition import build_catalog
     from keystone.platform.flow.schemas.definitions import build_definitions
 
     with pytest.raises(ValueError, match="duplicate"):
         build_definitions(
-            (definition, replace(definition, name="Duplicate")), PLATFORM_CATALOG.permissions
+            (definition, replace(definition, name="Duplicate")), build_catalog().permissions
         )
     with pytest.raises(ValueError, match="undeclared"):
         build_definitions(
@@ -124,90 +127,11 @@ def test_all_flow_definitions_are_validated_and_directory_is_frozen():
                 definition,
                 replace(definition, key="second", required_permissions=(READ, "model:invoke")),
             ),
-            PLATFORM_CATALOG.permissions,
+            build_catalog().permissions,
         )
-    directory = build_definitions((definition,), PLATFORM_CATALOG.permissions)
+    directory = build_definitions((definition,), build_catalog().permissions)
     with pytest.raises(TypeError):
         directory[definition.key] = replace(definition, name="Changed")
-
-
-@pytest.mark.postgres
-def test_flow_directory_isolation_in_api_execution_and_reconciliation(monkeypatch, request):
-    from support.flow_fixture import contracts
-
-    from keystone.core.schemas import Input
-    from keystone.platform.flow.services.identity import ExecutionIdentity
-    from keystone.platform.flow.tasks.workflows import reconcile_one
-
-    class EmptyInput(Input):
-        pass
-
-    first_definition = replace(
-        contracts.definition,
-        input_model=EmptyInput,
-        file_fields=(),
-        model_roles=(),
-        required_permissions=(READ,),
-    )
-    second_definition = replace(
-        first_definition, name="Second application", required_permissions=(WRITE,)
-    )
-    install(monkeypatch)
-    monkeypatch.setattr(
-        composition, "FLOW_PACKAGES", (package_for_definitions((first_definition,)),)
-    )
-    first = request.getfixturevalue("client")
-    first_runtime = first.app.state.runtime
-    login(first)
-    read_pat = bearer(token(first, ["flow:start", "flow:read", READ])["token"])
-    write_pat = bearer(token(first, ["flow:start", "flow:read", WRITE])["token"])
-    monkeypatch.setattr(
-        composition, "FLOW_PACKAGES", (package_for_definitions((second_definition,)),)
-    )
-    settings = first_runtime.settings.model_copy()
-    with TestClient(
-        create_app(settings), backend_options={"loop_factory": new_event_loop}
-    ) as second:
-        for app, allowed, denied, expected in (
-            (first, read_pat, write_pat, first_definition),
-            (second, write_pat, read_pat, second_definition),
-        ):
-            visible = app.get("/api/v1/flow-definitions", headers=allowed)
-            assert visible.status_code == 200
-            assert visible.json()["items"] == [
-                expected.view()
-                | {
-                    "required_permissions": list(expected.required_permissions),
-                    "file_fields": [],
-                    "output_file_fields": list(expected.output_file_fields),
-                }
-            ]
-            assert app.get("/api/v1/flow-definitions", headers=denied).json()["items"] == []
-            payload = {"definition_key": expected.key, "request_key": expected.name, "input": {}}
-            assert app.post("/api/v1/flow-runs", headers=denied, json=payload).status_code == 403
-            response = app.post("/api/v1/flow-runs", headers=allowed, json=payload)
-            assert response.status_code == 202, response.text
-            run_id = response.json()["id"]
-
-            async def execute(app=app, run_id=run_id, expected=expected):
-                runtime = app.app.state.runtime
-                async with ExecutionIdentity(runtime, run_id).access():
-                    pass
-
-                class Engine:
-                    async def state(self, identifier):
-                        return None
-
-                    async def enqueue(self, run, definition):
-                        assert definition is expected
-                        assert str(run.id) == run_id
-                        self.enqueued = True
-
-                engine = Engine()
-                await reconcile_one(runtime, engine, UUID(run_id))
-                assert engine.enqueued
-
-            app.portal.call(execute)
 
 
 @pytest.mark.postgres
@@ -249,7 +173,7 @@ def test_flow_normalized_input_size_limit(monkeypatch, request, extra_bytes):
     padding = "界" * (remaining // 3) + "x" * (remaining % 3)
     data = {}
     payload = {"definition_key": contracts.definition.key, "request_key": "size", "input": data}
-    response = client.post("/api/v1/flow-runs", json=payload)
+    response = client.post("/api/v1/_test/review", json=payload)
     if extra_bytes:
         assert response.status_code == 422, response.text
         assert response.json()["code"] == "flow_value_too_large"
@@ -263,11 +187,11 @@ def test_flow_normalized_input_size_limit(monkeypatch, request, extra_bytes):
 
         query(client, verify)
         payload["input"] = {"text": "small"}
-        response = client.post("/api/v1/flow-runs", json=payload)
+        response = client.post("/api/v1/_test/review", json=payload)
     assert response.status_code == 202, response.text
     if not extra_bytes:
         assert len(small_json(response.json()["input"])) == 65536
-    assert client.post("/api/v1/flow-runs", json=payload).json()["id"] == response.json()["id"]
+    assert client.post("/api/v1/_test/review", json=payload).json()["id"] == response.json()["id"]
 
 
 @pytest.mark.postgres
@@ -308,7 +232,7 @@ def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, 
         "request_key": "invalid-files",
         "input": {"fileIds": identifiers},
     }
-    response = client.post("/api/v1/flow-runs", json=payload)
+    response = client.post("/api/v1/_test/review", json=payload)
     assert response.status_code == 422, response.text
     assert response.json()["code"] == "flow_invalid_input"
 
@@ -322,7 +246,7 @@ def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, 
     query(client, verify)
     # The rejected request has not occupied its idempotency key.
     payload["input"] = {"fileIds": []}
-    retry = client.post("/api/v1/flow-runs", json=payload)
+    retry = client.post("/api/v1/_test/review", json=payload)
     assert retry.status_code == 202, retry.text
     assert retry.json()["input"] == {"files": []}
 
@@ -374,12 +298,14 @@ def test_flow_reconciliation_uses_serialized_output_contract(
     runtime = client.app.state.runtime
     login(client)
     response = client.post(
-        "/api/v1/flow-runs",
+        "/api/v1/_test/review",
         json={"definition_key": contracts.definition.key, "request_key": "output", "input": {}},
     )
     assert response.status_code == 202, response.text
     run = response.json()
-    advertised = client.get("/api/v1/flow-definitions").json()["items"][0]["output_schema"]
+    advertised = next(iter(client.app.state.runtime.flow_definitions.values())).snapshot(
+        package_key="test", model_bindings={}
+    )["output_schema"]
     assert advertised == run["definition_snapshot"]["output_schema"]
 
     class Engine:
@@ -407,6 +333,12 @@ def test_business_model_joins_shared_migration_metadata(client):
     from keystone.core.migrations import migration_config
     from keystone.model_registry import load_models
 
+    query(
+        client,
+        lambda session: session.execute(
+            text("DROP TABLE keystone.test_submissions, keystone.test_materials")
+        ),
+    )
     metadata = load_models()
 
     # A separate mapper registry keeps this test-only entity out of other test fixtures.
@@ -459,7 +391,7 @@ if EXTRA_BUSINESS_MODEL:
 metadata = load_models()
 expected = {
     'users', 'roles', 'user_roles', 'role_permissions', 'login_sessions',
-    'personal_access_tokens', 'audit_logs', 'files', 'file_grants', 'file_references',
+    'personal_access_tokens', 'audit_logs', 'files', 'file_references',
     'dictionaries', 'dictionary_items', 'model_channels', 'model_entries',
     'model_invocations', 'flow_runs',
 }
