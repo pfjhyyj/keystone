@@ -12,6 +12,7 @@ from time import monotonic
 from uuid import uuid4
 
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.event import listen
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
@@ -339,6 +340,11 @@ class ModelRuntime:
         budget = AsyncExitStack()
         dispatch_scope = None
 
+        def committed(_session):
+            nonlocal registered
+            # Commit establishes ownership before session cleanup, which can fail.
+            registered = True
+
         async def before_send():
             nonlocal registered, dispatch_scope
             send_deadline = asyncio.get_running_loop().time() + 55
@@ -440,6 +446,10 @@ class ModelRuntime:
                                 "model_result_unavailable",
                                 "已有调用记录但没有可恢复结果，禁止重复发送",
                             )
+                        # Only this successful INSERT owns the attempt. Drain the
+                        # short commit before propagating cancellation to cleanup.
+                        listen(session.sync_session, "after_commit", committed, once=True)
+                        await settle(session.commit())
                 if delay == 0:
                     break
                 remaining = send_deadline - asyncio.get_running_loop().time()
@@ -447,8 +457,6 @@ class ModelRuntime:
                     raise ServiceError(429, "model_dispatch_delayed", "模型共享冷却尚未到期")
                 await asyncio.sleep(min(delay, 1))
                 await permit()
-            # Commit completed: only now does this executor own the right to send.
-            registered = True
             await permit()
             return secret
 
