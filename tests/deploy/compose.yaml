@@ -3,6 +3,8 @@ name: keystone-package-verification
 
 x-backend: &backend
   image: ${KEYSTONE_BACKEND_IMAGE:-keystone-backend:local}
+  # These isolated containers share one physical host, including after recreation.
+  hostname: keystone-verification
   build:
     context: ../../backend
   environment: &backend-environment

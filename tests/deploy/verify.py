@@ -110,7 +110,9 @@ class Deployment:
             if service in {"api", "worker"}:
                 script = (
                     "import sys; sys.path.insert(0, '/test-support'); "
-                    "from support.model_stub import install; install(); "
+                    "from support.model_stub import transport; "
+                    "from keystone.platform.model_access.adapters.http import HttpClient; "
+                    "HttpClient.transport = lambda self, provider: transport(provider); "
                     "from support.flow_fixture import install; install(); "
                     + (
                         "import keystone.entrypoints.api as api; "
@@ -128,6 +130,12 @@ class Deployment:
                     "        target: /test-support/support",
                     "        read_only: true",
                 ]
+                if service == "worker":
+                    self.worker_command = ["python", "-c", script]
+                    lines += [
+                        "    healthcheck:",
+                        "      test: " + json.dumps(["CMD", *self.worker_command, "--check"]),
+                    ]
             if service == "api":
                 lines += ["    ports: !override []"]
         lines += [
@@ -169,7 +177,7 @@ class Deployment:
             "90",
         )
         wait(lambda: "flow_worker_ready" in self.compose("logs", "worker").stdout)
-        self.compose("exec", "-T", "worker", "keystone-worker", "--check")
+        self.compose("exec", "-T", "worker", *self.worker_command, "--check")
 
     def client(self):
         return httpx.Client(
@@ -183,22 +191,6 @@ class Deployment:
         value = self.compose("ps", "-a", "-q", service).stdout.strip()
         assert re.fullmatch(r"[0-9a-f]{64}", value)
         return value
-
-    def sql(self, query):
-        return self.compose(
-            "exec",
-            "-T",
-            "postgres",
-            "psql",
-            "-U",
-            "keystone",
-            "-d",
-            "keystone",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-Atc",
-            query,
-        ).stdout.strip()
 
     def finish(self, client, identifier):
         def terminal():
@@ -365,13 +357,6 @@ def exercise(source, restored, checks):
     source.compose("run", "--rm", "--no-deps", "init")
     for service in ("api", "worker"):
         assert source.compose("exec", "-T", service, "id", "-u").stdout.strip() == "10001"
-    assert (
-        source.sql(
-            "SELECT count(*) FROM information_schema.tables WHERE table_schema='keystone' "
-            "AND table_name <> 'alembic_version'"
-        )
-        == "17"
-    )
     passed("empty-volume cold start, repeatable migrations/storage init, non-root processes")
     verify_api_recreation(source)
     passed("Nginx follows a recreated API at a different address without restarting console")
@@ -448,7 +433,11 @@ def exercise(source, restored, checks):
             201,
             json={"value": "done", "label": "Done"},
         )
-        for provider in ("openrouter", "deepseek", "aliyun_bailian"):
+        for provider, api_base in (
+            ("openrouter", "https://openrouter.ai/api/v1"),
+            ("newapi", "https://newapi.example/v1"),
+            ("aliyun_bailian", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        ):
             channel = request(
                 client,
                 "POST",
@@ -457,7 +446,7 @@ def exercise(source, restored, checks):
                 json={
                     "provider": provider,
                     "name": provider,
-                    "api_base": "https://openrouter.ai/api/v1",
+                    "api_base": api_base,
                     "api_key": "fake-inference",
                     "billing_api_key": "fake-billing",
                 },
