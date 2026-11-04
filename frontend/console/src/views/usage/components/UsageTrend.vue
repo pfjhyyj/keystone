@@ -90,7 +90,7 @@ const width = (point: UsagePoint) =>
         /></AppSelect>
       </div>
     </div>
-    <p>按上海时间汇总。点击柱形查看对应时段明细；费用仅包含已知金额。</p>
+    <p>点击柱形查看该时段明细。费用仅含已知金额。</p>
     <template v-if="points.length"
       ><div class="chart-shell">
         <div class="trend-scale" aria-hidden="true">

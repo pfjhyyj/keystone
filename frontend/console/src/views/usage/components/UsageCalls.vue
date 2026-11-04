@@ -29,7 +29,6 @@ defineEmits<{
 </script>
 <template>
   <section aria-label="调用明细">
-    <h2>调用明细</h2>
     <p v-if="loading" role="status">正在加载调用记录…</p>
     <div class="table-scroll">
       <el-table :data="rows" :fit="true" native-scrollbar stripe class="data-table">

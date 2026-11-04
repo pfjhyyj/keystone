@@ -165,7 +165,7 @@ async function save() {
             required
         /></label>
         <el-checkbox v-if="editing" class="check-option" v-model="active">启用选项</el-checkbox>
-        <p>稳定值创建后不可修改；选项只停用，不删除。排序相同时按 ID 排列。</p>
+        <p>稳定值创建后不可修改，选项只停用不删除。</p>
         <el-button :disabled="busy" native-type="submit" type="primary">保存选项</el-button>
       </form>
     </AppDialog>

@@ -90,10 +90,7 @@ onMounted(loadCatalog)
 <template>
   <section aria-label="角色管理">
     <div class="heading">
-      <div>
-        <h1>角色管理</h1>
-        <p>创建角色，按模块配置功能权限，再将角色分配给用户。</p>
-      </div>
+      <h1>角色管理</h1>
       <el-button
         v-if="can('role:create')"
         :disabled="busy || catalogLoading || !!catalogError"

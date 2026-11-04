@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onScopeDispose, ref } from 'vue'
-import { Connection, Cpu, Files, Monitor, Refresh } from '@element-plus/icons-vue'
+import { Refresh } from '@element-plus/icons-vue'
 import { getHealth, getReadiness, getWorkerStatus } from '../../api/system'
 import type { Health, Readiness, WorkerStatus } from '../../api/system'
 const health = ref<Health | null>(null),
@@ -34,26 +34,24 @@ const labels: Record<string, string> = {
 const cards = computed(() => [
   {
     label: '接口服务',
-    icon: Monitor,
     value: health.value ? '在线' : '无法确认',
     good: !!health.value,
     note: health.value ? `Keystone API · ${health.value.version}` : '等待接口响应',
   },
   {
     label: 'Worker 服务',
-    icon: Cpu,
     value: workerLabels[worker.value?.status ?? 'unknown'],
     good: worker.value?.status === 'ready',
     note:
       worker.value?.expected_workers !== undefined
-        ? `${worker.value.ready_workers ?? 0} / ${worker.value.expected_workers} 个进程就绪；共享维护另行检查`
-        : '独立心跳检查，超过 30 秒未上报视为离线',
+        ? `${worker.value.ready_workers ?? 0} / ${worker.value.expected_workers} 个进程就绪`
+        : '30 秒无心跳视为离线',
   },
   ...(
     [
-      { key: 'database', label: '数据库连接', icon: Connection },
-      { key: 'schema', label: '数据库版本', icon: Cpu },
-      { key: 'storage', label: '文件存储', icon: Files },
+      { key: 'database', label: '数据库连接' },
+      { key: 'schema', label: '数据库版本' },
+      { key: 'storage', label: '文件存储' },
     ] as const
   ).map((item) => ({
     ...item,
@@ -61,10 +59,10 @@ const cards = computed(() => [
     good: ready.value?.checks[item.key] === 'ok',
     note:
       item.key === 'schema'
-        ? '业务迁移版本检查'
+        ? '迁移版本'
         : item.key === 'storage'
-          ? '默认存储源与协调卷检查'
-          : 'PostgreSQL 连接检查',
+          ? '默认存储源'
+          : 'PostgreSQL',
   })),
 ])
 async function refresh() {
@@ -90,22 +88,19 @@ onScopeDispose(() => {
 <template>
   <section class="overview-page" aria-label="平台状态">
     <div class="heading">
-      <div>
-        <h1>平台状态</h1>
-        <p>查看服务连接、存储依赖与运行配置。</p>
-      </div>
-      <el-button :icon="Refresh" :loading="busy" @click="refresh">刷新状态</el-button>
+      <h1>平台状态</h1>
+      <el-button :icon="Refresh" :loading="busy" @click="refresh">刷新</el-button>
     </div>
-    <div class="status-grid" aria-live="polite">
-      <el-card v-for="card in cards" :key="card.label" shadow="never" class="status-card"
-        ><div class="status-card-header">
-          <span>{{ card.label }}</span
-          ><el-icon><component :is="card.icon" /></el-icon>
-        </div>
-        <div class="status-value" :class="{ 'is-warning': !card.good }">{{ card.value }}</div>
-        <p>{{ card.note }}</p></el-card
-      >
-    </div>
+    <ul class="status-list" aria-live="polite">
+      <li v-for="card in cards" :key="card.label" class="status-row">
+        <span class="state-dot" :class="{ 'is-warning': !card.good }" aria-hidden="true" />
+        <span class="status-name">{{ card.label }}</span>
+        <strong class="status-value" :class="{ 'is-warning': !card.good }">{{
+          card.value
+        }}</strong>
+        <small>{{ card.note }}</small>
+      </li>
+    </ul>
     <el-card v-if="worker?.instances?.length" shadow="never" class="overview-detail">
       <template #header><h2>Worker 实例</h2></template>
       <el-table :data="worker.instances" row-key="worker_id">
@@ -185,10 +180,7 @@ onScopeDispose(() => {
           checked
         }}</el-descriptions-item></el-descriptions
       >
-      <div class="overview-note">
-        <el-tag disable-transitions type="info" effect="plain">就绪检查</el-tag>
-        <p>状态每 5 秒刷新；Worker 心跳独立于 API 就绪检查。模型渠道配置可在模型接入页查看。</p>
-      </div></el-card
+</el-card
     >
   </section>
 </template>

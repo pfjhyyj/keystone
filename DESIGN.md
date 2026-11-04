@@ -2,16 +2,16 @@
 name: Keystone Console
 description: 中文企业管理控制中心，优先呈现待处理事项、可信状态与可追踪费用。
 colors:
-  primary: "#246a56"
-  primary-hover: "#2f7b62"
-  primary-active: "#1e5d49"
-  primary-soft: "#eaf1ee"
-  primary-border: "#d4e3de"
+  primary: "#8b6f47"
+  primary-hover: "#9d7e56"
+  primary-active: "#74603c"
+  primary-soft: "#f3ede3"
+  primary-border: "#e7daca"
   graphite: "#232b36"
   nav-hover: "#303b49"
-  nav-selected: "#35463f"
+  nav-selected: "#3d3830"
   nav-text: "#d1d8e2"
-  nav-selected-text: "#edf7f1"
+  nav-selected-text: "#ffffff"
   workspace: "#f7f8fa"
   surface: "#ffffff"
   text: "#263445"
@@ -27,8 +27,8 @@ colors:
   success-hover: "#367f5c"
   success-soft: "#eef6f0"
   success-border: "#d8e9df"
-  warning: "#8b5f18"
-  warning-hover: "#96691e"
+  warning: "#a35a1f"
+  warning-hover: "#ae6629"
   danger: "#b13943"
   danger-hover: "#bd4650"
   info: "#5e6b7e"
@@ -36,8 +36,8 @@ colors:
 typography:
   headline:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans CJK SC', 'Microsoft YaHei', 'PingFang SC', Arial, sans-serif"
-    fontSize: "24px"
-    fontWeight: 650
+    fontSize: "20px"
+    fontWeight: 600
     lineHeight: 1.45
   title:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans CJK SC', 'Microsoft YaHei', 'PingFang SC', Arial, sans-serif"
@@ -130,13 +130,11 @@ components:
 
 ## Overview
 
-**Creative North Star: "管理控制中心"**
-
-以管理员的处理顺序组织界面：先识别值得关注的状态，再定位资源、调用或运行，最后在权限范围内执行操作。石墨侧栏提供稳定定位，冷白工作区承载紧凑的中文信息，青绿强调当前选择与主要动作。
+以管理员的处理顺序组织界面：先识别值得关注的状态，再定位资源、调用或运行，最后在权限范围内执行操作。石墨侧栏提供稳定定位，冷白工作区承载紧凑的中文信息，赭石色强调当前选择与主要动作。主色取自拱顶石（keystone）的石材色。
 
 界面依靠文字层级、细分隔线和克制的状态色建立秩序。费用、Token、身份与运行状态必须能逐项核对；未知、未报告和无权限都需要明确文案。页面保留真实业务约束，示例数据不能被呈现成生产事实。
 
-**Key Characteristics:**
+要点：
 
 - 石墨导航与冷白工作区，白色工作面板。
 - 中文系统无衬线字体、紧凑表格、等宽数字。
@@ -147,16 +145,16 @@ components:
 
 ## Colors
 
-主色是沉稳青绿，配合石墨导航、冷灰边界和白色工作面。
+主色是赭石棕，配合石墨导航、冷灰边界和白色工作面。
 
 ### Primary
 
-- **管理青绿**（primary）：主要提交、文本链接、输入焦点与交互选择。悬停和按下使用现有 primary-hover、primary-active 变体，不自行换成另一种强调色。
-- **浅青绿**（primary-soft、primary-border）：次要按钮交互与轻量强调背景、边界。
+- **赭石**（primary）：主要提交、文本链接、输入焦点与交互选择。悬停和按下使用现有 primary-hover、primary-active 变体，不自行换成另一种强调色。
+- **浅赭石**（primary-soft、primary-border）：次要按钮交互与轻量强调背景、边界。
 
 ### Neutral
 
-- **石墨**（graphite）：固定侧栏；nav-hover 与 nav-selected 区分悬停、当前页，当前页同时使用文字加粗和标记。
+- **石墨**（graphite）：固定侧栏；nav-hover 与 nav-selected 区分悬停、当前页，当前页用选中背景和文字加粗表示，不再加圆点标记。
 - **冷白与工作白**（workspace、surface）：分别用于画布与主要工作面；白色面板以 panel-border 分离。
 - **墨色文字**（text、heading）：正文与页标题；regular 用于字段内容。
 - **可读灰**（muted）：说明、表头、辅助数据；placeholder 保留字段占位的区分。不得用更浅装饰灰替换正文说明。
@@ -165,11 +163,11 @@ components:
 ### Semantic
 
 - **确认绿**（success）：成功、启用等已确认状态。
-- **待处理赭色**（warning）：运行中、待处理、未知等需进一步判断的状态。
+- **待处理橙褐**（warning）：运行中、待处理、未知等需进一步判断的状态。色相比主色更偏橙、更饱和，保证两者不混淆，白底对比度不低于 4.5:1。
 - **错误红**（danger）：失败、拒绝、错误与危险确认。
 - **中性状态灰**（info）：停用或其他中性状态。状态标签必须带可读文本。语义按钮的悬停使用 success-hover、warning-hover、danger-hover、info-hover，保持白字可读性；不回退到组件库默认浅色悬停。
 
-**The Evidence Rule.** 颜色表达已有事实；查询失败显示无法确认，未知费用与未报告用量不能显示为零，权限不足不能显示为空结果。
+颜色只表达已有事实；查询失败显示无法确认，未知费用与未报告用量不能显示为零，权限不足不能显示为空结果。
 
 ## Typography
 
@@ -184,7 +182,7 @@ components:
 - **Label / Small:** 表格正文（13px）、表头和辅助信息（12px）；避免让所有信息同等加粗。
 - **Metric:** 已知金额与详情费用（28px / 600），Token 事实值（18px / 600）。不增加装饰性大号数字。
 
-**The Readable Detail Rule.** 长业务标识可在表格截断并保留完整标题提示；详情与原始字段允许换行，不靠缩小字体隐藏内容。
+长业务标识可在表格截断并保留完整标题提示；详情与原始字段允许换行，不靠缩小字体隐藏内容。
 
 ## Layout
 
@@ -204,7 +202,7 @@ components:
 
 行操作浮层沿用 Element Plus 的轻阴影（`0px 0px 12px #0000001f`）；不要把浮层阴影复制到所有面板。控件状态沿用现有短过渡，移动导航使用（0.2s）位移；`prefers-reduced-motion: reduce` 时全局关闭过渡与动画，不增加持续装饰运动。
 
-**The Flat Workspace Rule.** 常驻内容用边界与间距分层；阴影服务临时浮层，不能成为每个工作区块的默认外观。
+常驻内容用边界与间距分层；阴影服务临时浮层，不能成为每个工作区块的默认外观。
 
 ## Shapes
 
@@ -214,11 +212,11 @@ components:
 
 ### Buttons and inputs
 
-标准按钮高度、内边距与圆角见 frontmatter；主提交使用青绿底白字，次要操作白底细边界，行内操作使用紧凑文本按钮。保留 Element Plus 的 hover、active、disabled、loading；按钮和链接键盘焦点有青绿（2px）轮廓与（3px）偏移。输入使用白底、细轮廓，焦点切换到主色；错误靠文本与错误色共同表达。字段标签始终可见，提示不能替代标签。
+标准按钮高度、内边距与圆角见 frontmatter；主提交使用赭石底白字，次要操作白底细边界，行内操作使用紧凑文本按钮。保留 Element Plus 的 hover、active、disabled、loading；按钮和链接键盘焦点有主色（2px）轮廓与（3px）偏移。输入使用白底、细轮廓，焦点切换到主色；错误靠文本与错误色共同表达。字段标签始终可见，提示不能替代标签。
 
 ### Navigation
 
-侧栏以“工作台 / 运行与消费 / 资源 / 访问与审计”分组。只呈现当前账户可访问入口，空分组消失。当前页同时具有选中背景、文字强调与 `aria-current`；折叠导航保留可访问名称与标题提示。Keystone 字标与 K 标记来自文字和 CSS，不引入推测的服务商 logo。
+侧栏以“工作台 / 运行与消费 / 资源 / 访问与审计”分组。只呈现当前账户可访问入口，空分组消失。当前页具有选中背景、文字加粗与 `aria-current`；折叠导航保留可访问名称与标题提示。字标为系统衬线体大写 K 加小写 keystone，由文字和 CSS 实现，不引入推测的服务商 logo。品牌名只在侧栏出现一次，顶栏、侧栏底部和页脚不重复。
 
 ### Status and applied filters
 
@@ -230,7 +228,7 @@ components:
 
 ### Usage trend
 
-趋势用青绿柱形表示调用数或指定原单位的已知费用，配套最大值／半量值／零值数量级及中间时间刻度。上海时间范围与未知费用数量保持明确；柱形可以点击或键盘 Enter／Space 下钻。在（600px）以下隐藏中间刻度，保留两端时间。图表只统计真实已有数据，不添加费用预测。
+趋势用主色柱形表示调用数或指定原单位的已知费用，配套最大值／半量值／零值数量级及中间时间刻度。上海时间范围与未知费用数量保持明确；柱形可以点击或键盘 Enter／Space 下钻。在（600px）以下隐藏中间刻度，保留两端时间。图表只统计真实已有数据，不添加费用预测。
 
 ### Full-page model editor
 
@@ -243,6 +241,13 @@ components:
 ### Role assignment
 
 角色分配抽屉逐项显示名称、权限数量、当前分配状态与不可授予原因。点击“分配角色”或“解除角色”立即保存，不增加误导性的统一保存按钮。操作请求中禁用重复交互，权限与自身会话变化继续约束界面。
+
+## Copy
+
+- 页标题下默认不加说明句。只有影响操作结果的约束（不可修改、只停用不删除、会撤销会话等）才写，并放在对应表单或对话框里。
+- 不把实现细节写进界面，例如排序规则、字段类型、内部检查方式。
+- 同一事实在一屏内只说一次；Tab 名称不再重复为区块标题。
+- 短句优先，少用分号连写多个事实。
 
 ## Do's and Don'ts
 

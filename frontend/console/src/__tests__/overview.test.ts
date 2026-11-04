@@ -92,7 +92,7 @@ it('polls Worker readiness and heartbeat independently and stops polling after l
   const wrapper = mount(OverviewView)
   await flushPromises()
   const card = () =>
-    wrapper.findAll('.status-card').find((item) => item.text().includes('Worker 服务'))!
+    wrapper.findAll('.status-row').find((item) => item.text().includes('Worker 服务'))!
   expect(card().text()).toContain('未就绪')
   expect(wrapper.text()).toContain('在线')
   expect(wrapper.get('time').attributes('datetime')).toBe(worker.last_heartbeat_at)
@@ -125,7 +125,7 @@ it('does not report offline when the Worker status query fails', async () => {
   })
   const wrapper = mount(OverviewView)
   await flushPromises()
-  const card = wrapper.findAll('.status-card').find((item) => item.text().includes('Worker 服务'))!
+  const card = wrapper.findAll('.status-row').find((item) => item.text().includes('Worker 服务'))!
   expect(card.text()).toContain('无法确认')
   expect(wrapper.text()).toContain('在线')
   expect(wrapper.text()).toContain('无法读取')

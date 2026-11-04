@@ -8,17 +8,17 @@
   --el-font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans CJK SC', 'Microsoft YaHei',
     'PingFang SC', Arial, sans-serif;
-  --el-color-primary: #246a56;
-  --el-color-primary-light-3: #2f7b62;
-  --el-color-primary-light-5: #93baad;
-  --el-color-primary-light-7: #bed5cd;
-  --el-color-primary-light-8: #d4e3de;
-  --el-color-primary-light-9: #eaf1ee;
-  --el-color-primary-dark-2: #1e5d49;
+  --el-color-primary: #8b6f47;
+  --el-color-primary-light-3: #9d7e56;
+  --el-color-primary-light-5: #c4a989;
+  --el-color-primary-light-7: #dac9b3;
+  --el-color-primary-light-8: #e7daca;
+  --el-color-primary-light-9: #f3ede3;
+  --el-color-primary-dark-2: #74603c;
   --el-color-success: #2f7655;
   --el-color-success-light-3: #367f5c;
-  --el-color-warning: #8b5f18;
-  --el-color-warning-light-3: #96691e;
+  --el-color-warning: #a35a1f;
+  --el-color-warning-light-3: #ae6629;
   --el-color-danger: #b13943;
   --el-color-danger-light-3: #bd4650;
   --el-color-info: #5e6b7e;
@@ -41,11 +41,11 @@ body {
   margin: 0;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
-  caret-color: #246a56;
+  caret-color: #8b6f47;
 }
 ::selection {
-  background: #d4e9e0;
-  color: #1c4839;
+  background: #e7daca;
+  color: #4a3d2a;
 }
 * {
   scrollbar-width: thin;
@@ -78,8 +78,8 @@ p {
 }
 h1 {
   color: #1d2b3c;
-  font-size: 24px;
-  font-weight: 650;
+  font-size: 20px;
+  font-weight: 600;
   line-height: 1.45;
 }
 h2 {
@@ -130,29 +130,22 @@ code {
   flex-shrink: 0;
 }
 .brand-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 30px;
-  height: 32px;
   flex-shrink: 0;
-  border-radius: 6px;
-  color: #fff;
-  background: #26745b;
-  font-weight: 750;
-  font-size: 20px;
+  color: #f5f7fa;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-weight: 400;
+  font-size: 26px;
+  line-height: 1;
+  letter-spacing: 0;
 }
 .brand-name {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.6px;
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: #e8ecf1;
 }
 .brand-name small {
-  display: block;
-  font-weight: 400;
-  font-size: 12px;
-  letter-spacing: 0.3px;
-  margin-top: 1px;
-  color: #b4becc;
+  display: none;
 }
 .sidebar nav {
   flex: 1;
@@ -189,26 +182,15 @@ code {
   color: #fff;
 }
 .nav-link[aria-current='page'] {
-  background: #35463f;
-  color: #edf7f1;
+  background: #3d3830;
+  color: #fff;
   font-weight: 600;
 }
 .nav-active-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #8fc5ac;
-  margin-left: auto;
+  display: none;
 }
 .sidebar-footer {
-  padding: 18px 24px;
-  border-top: 1px solid #3b4553;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  color: #b4becc;
-  white-space: nowrap;
-  font-size: 12px;
+  display: none;
 }
 .main-shell {
   min-width: 0;
@@ -232,7 +214,7 @@ code {
   justify-content: center;
 }
 .is-collapsed .sidebar-footer {
-  padding: 20px 28px;
+  display: none;
 }
 .is-restricted {
   --sidebar-width: 0px;
@@ -257,14 +239,11 @@ code {
   min-width: 0;
 }
 .header-product {
-  font-size: 12px;
-  color: #617084;
-  letter-spacing: 0.3px;
-  padding-right: 8px;
+  display: none;
 }
 .user-menu .el-avatar {
-  background: #eaf3ee;
-  color: #26745b;
+  background: #f3ede3;
+  color: #8b6f47;
   font-size: 13px;
   font-weight: 650;
 }
@@ -311,10 +290,7 @@ code {
   flex-shrink: 0;
 }
 .app-footer {
-  text-align: center;
-  padding: 24px 0 4px;
-  color: #617084;
-  font-size: 12px;
+  display: none;
 }
 .initial-loading,
 .page-loading {
@@ -401,8 +377,8 @@ input[type='file']::file-selector-button {
   font: inherit;
   border: 0;
   border-radius: 3px;
-  color: #26745b;
-  background: #eaf3ee;
+  color: #8b6f47;
+  background: #f3ede3;
   padding: 4px 8px;
   margin-right: 8px;
   cursor: pointer;
@@ -742,8 +718,8 @@ dd {
   margin: 8px 0 28px;
 }
 .profile-summary .el-avatar {
-  background: #eaf3ee;
-  color: #26745b;
+  background: #f3ede3;
+  color: #8b6f47;
   font-size: 24px;
 }
 .profile-summary p {
@@ -766,34 +742,31 @@ dd {
 .token-secret .el-textarea {
   margin: 12px 0;
 }
-.status-grid {
+.status-list {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+  background: #fff;
+  border: 1px solid #e4e8ed;
+  border-radius: 8px;
+}
+.status-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 18px;
-  margin-bottom: 22px;
-}
-.status-card .el-card__body {
-  padding: 22px;
-}
-.status-card-header {
-  display: flex;
-  justify-content: space-between;
+  grid-template-columns: 6px 140px 90px minmax(0, 1fr);
   align-items: center;
-  color: #7c8798;
+  gap: 12px;
+  padding: 12px 18px;
   font-size: 13px;
 }
-.status-card-header .el-icon {
-  font-size: 19px;
-  color: #8eaa9f;
+.status-row + .status-row {
+  border-top: 1px solid #edf0f4;
 }
 .status-value {
-  font-size: 25px;
-  font-weight: 650;
-  color: #26745b;
-  margin: 18px 0 8px;
+  font-weight: 600;
+  color: #2f7655;
 }
 .status-value.is-warning {
-  color: #b8782d;
+  color: #a35a1f;
 }
 .overview-detail .el-card__header {
   padding: 16px 22px;
@@ -859,7 +832,7 @@ dd {
   border-radius: 10px;
 }
 .login-welcome {
-  color: #26745b;
+  color: #8b6f47;
   font-size: 13px;
   margin-bottom: 10px;
 }
@@ -886,10 +859,12 @@ dd {
 }
 .login-mobile-brand {
   display: block;
-  color: #246a56;
-  font-size: 20px;
-  font-weight: 700;
+  color: #8b6f47;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 22px;
+  font-weight: 400;
   margin-bottom: 32px;
+  letter-spacing: 0;
 }
 .muted {
   color: #617084;
@@ -950,12 +925,12 @@ dd {
 .state-dot {
   width: 6px;
   height: 6px;
-  background: #34835e;
+  background: #2f7655;
   border-radius: 50%;
   flex-shrink: 0;
 }
 .state-dot.is-warning {
-  background: #b47a24;
+  background: #a35a1f;
 }
 .dashboard-columns {
   display: grid;
@@ -1355,9 +1330,6 @@ dd {
   .workspace {
     padding: 18px;
   }
-  .status-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .header-product {
     display: none;
   }
@@ -1461,15 +1433,6 @@ dd {
   }
   .token-fields {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .status-grid {
-    gap: 12px;
-  }
-  .status-card .el-card__body {
-    padding: 16px;
-  }
-  .status-value {
-    font-size: 21px;
   }
   .login-page {
     display: block;

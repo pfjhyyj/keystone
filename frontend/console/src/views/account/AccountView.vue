@@ -112,10 +112,7 @@ onBeforeUnmount(clearForms)
 <template>
   <section v-if="identity" class="account-page" aria-label="账户">
     <div class="heading">
-      <div>
-        <h1>个人中心</h1>
-        <p>管理你的账户安全与个人 API 令牌。</p>
-      </div>
+      <h1>个人中心</h1>
       <el-tag disable-transitions effect="plain">{{
         identity.is_administrator ? '内置管理员' : '平台账户'
       }}</el-tag>

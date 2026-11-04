@@ -393,15 +393,12 @@ onScopeDispose(() => {
 <template>
   <section aria-label="用量与费用">
     <div class="heading">
-      <div>
-        <h1>用量与费用</h1>
-        <p>查看预估费用与调用结果。预估不代表上游实扣，计量不完整的调用单独统计。</p>
-      </div>
+      <h1>用量与费用</h1>
     </div>
     <template v-if="allowed">
       <p class="usage-scope">
         {{ can('model_invocation:read_all') ? '可见全部用户及系统调用' : '仅显示本人调用' }} ·
-        默认近 30 天，最长 366 天。
+        默认近 30 天，最长 366 天。统一按上海时间（UTC+8）。
       </p>
       <el-button
         class="usage-filter-toggle"
@@ -562,7 +559,7 @@ onScopeDispose(() => {
                   value="day"
                   label="天" /><el-option value="month" label="月" /></AppSelect
             ></label>
-            <span>统一按上海时间（UTC+8）；按小时统计最长 31 天。</span>
+            <span>按小时统计最长 31 天。</span>
           </div>
         </details>
         <p v-if="missingLabels">
@@ -581,7 +578,7 @@ onScopeDispose(() => {
             :disabled="statsLoading || callsLoading"
             @click="refresh()"
             >刷新统计</el-button
-          ><span>筛选、分页与钻取条件保存在当前链接中。</span>
+          ><span>筛选条件保存在当前链接中。</span>
         </div>
       </form>
       <div class="applied-filters" aria-label="已应用筛选">

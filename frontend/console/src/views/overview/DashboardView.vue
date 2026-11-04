@@ -145,10 +145,7 @@ onScopeDispose(() => {
 <template>
   <section class="dashboard-page" aria-label="管理总览">
     <div class="heading">
-      <div>
-        <h1>管理总览</h1>
-        <p>检查平台运行，定位需要处理的事项。</p>
-      </div>
+      <h1>管理总览</h1>
       <el-button :icon="Refresh" :loading="statusBusy || usageBusy" @click="refresh"
         >刷新</el-button
       >

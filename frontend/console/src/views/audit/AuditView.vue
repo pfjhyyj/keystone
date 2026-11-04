@@ -77,10 +77,7 @@ function reset() {
 <template>
   <section aria-label="操作审计">
     <div class="heading">
-      <div>
-        <h1>操作审计</h1>
-        <p>默认最近 30 天，单次最多查询 366 天。日志只读，目标 ID 可以是字符串。</p>
-      </div>
+      <h1>操作审计</h1>
     </div>
     <form class="module-form" @submit.prevent="apply">
       <label
@@ -132,7 +129,7 @@ function reset() {
     </form>
     <p>
       当前查询范围：{{ new Date(applied.since!).toLocaleString() }} —
-      {{ new Date(applied.until!).toLocaleString() }}。点击“查询审计”可更新默认时间范围。
+      {{ new Date(applied.until!).toLocaleString() }}
     </p>
     <el-alert v-if="validation || error" role="alert" type="error" show-icon :closable="false">{{
       validation || error

@@ -61,10 +61,7 @@ function changePage(value: number) {
 <template>
   <section aria-label="字典管理">
     <div class="heading">
-      <div>
-        <h1>业务字典</h1>
-        <p>维护业务选项。只停用、不删除，历史记录仍可显示。</p>
-      </div>
+      <h1>业务字典</h1>
       <div class="row-actions">
         <el-button
           v-if="can('dictionary:manage')"
@@ -179,7 +176,7 @@ function changePage(value: number) {
         ><label>字典名称<el-input v-model="name" required maxlength="128" /></label
         ><label>字典说明<el-input v-model="description" maxlength="1000" type="textarea" /></label>
         <el-checkbox v-if="editing" class="check-option" v-model="active">启用字典</el-checkbox>
-        <p>标识创建后不可修改。停用字典会阻止其所有选项用于新选择，不改动选项自身的启用状态。</p>
+        <p>标识创建后不可修改。停用字典会阻止其所有选项用于新选择，但不改动选项自身的启用状态。</p>
         <el-button :disabled="busy" native-type="submit" type="primary">保存字典</el-button>
       </form>
     </AppDialog>

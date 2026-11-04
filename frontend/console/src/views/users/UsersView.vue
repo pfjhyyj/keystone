@@ -84,10 +84,7 @@ function submit() {
 <template>
   <section aria-label="用户管理">
     <div class="heading">
-      <div>
-        <h1>用户管理</h1>
-        <p>管理账户、角色与凭据。用户停用后保留历史记录。</p>
-      </div>
+      <h1>用户管理</h1>
       <el-button
         v-if="can('user:create')"
         :disabled="busy"

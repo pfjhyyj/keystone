@@ -199,7 +199,7 @@ onBeforeUnmount(() => {
     >
       <RouterLink class="brand" to="/" aria-label="Keystone 首页"
         ><span class="brand-mark">K</span
-        ><span class="brand-name">keystone<small>控制台</small></span></RouterLink
+        ><span class="brand-name">keystone</span></RouterLink
       >
       <nav aria-label="平台模块">
         <section v-for="menu in menus" :key="menu.title" class="nav-group">
@@ -214,13 +214,10 @@ onBeforeUnmount(() => {
             :title="collapsed ? item.label : undefined"
             ><el-icon><component :is="icons[item.path as keyof typeof icons] ?? Grid" /></el-icon
             ><span class="nav-label">{{ item.label }}</span
-            ><span v-if="route.path === item.path" class="nav-active-dot"
-          /></RouterLink>
+          ></RouterLink>
         </section>
       </nav>
-      <div class="sidebar-footer">
-        <el-icon><Setting /></el-icon><span class="nav-label">Keystone Platform</span>
-      </div>
+
     </aside>
     <div class="main-shell" :inert="mobileOpen">
       <header class="app-header">
@@ -248,7 +245,6 @@ onBeforeUnmount(() => {
           >
         </div>
         <div class="header-trailing">
-          <span class="header-product">Keystone Console</span>
           <el-dropdown trigger="click" @command="command"
             ><el-button text class="user-menu" :disabled="logoutBusy" aria-label="账户菜单"
               ><el-avatar :size="28">{{ identity.user.display_name.slice(0, 1) }}</el-avatar
@@ -285,7 +281,7 @@ onBeforeUnmount(() => {
           ><div class="page-view">
             <component :is="Component" :key="`${route.path}:${sessionVersion}`" /></div
         ></RouterView>
-        <footer class="app-footer">Keystone · 统一控制台</footer>
+
       </main>
     </div>
   </div>

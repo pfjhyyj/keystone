@@ -26,7 +26,6 @@ async function login() {
       <div>
         <span class="login-kicker">PLATFORM CONSOLE</span>
         <h2>统一的控制台</h2>
-        <p>在一个入口管理用户、平台资源与 AI 流程。</p>
       </div>
       <small>Keystone Platform</small>
     </section>
