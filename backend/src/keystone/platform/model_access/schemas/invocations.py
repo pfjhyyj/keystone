@@ -14,9 +14,21 @@ class Message(Input):
     content: str = Field(min_length=1, max_length=32000)
 
 
+class ReasoningOptions(Input):
+    mode: Literal["off", "on"]
+    effort: Literal["high"] | None = None
+
+    @model_validator(mode="after")
+    def coherent(self):
+        if self.mode == "off" and self.effort is not None:
+            raise ValueError("Disabled reasoning cannot specify effort")
+        return self
+
+
 class TextRequest(Input):
     messages: list[Message] = Field(min_length=1, max_length=32)
     max_tokens: int = Field(default=1024, ge=1, le=4096)
+    reasoning: ReasoningOptions | None = None
 
     @model_validator(mode="after")
     def bounded_input(self):

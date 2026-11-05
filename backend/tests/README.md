@@ -33,7 +33,7 @@ cd backend
 ## 组织与断言
 
 - 同一规则的输入矩阵放 unit；真实授权、事务、锁或失败窗口留在 integration。相同字段的纯校验不重复启动数据库/Worker。
-- 图片中转的供应商/编辑/响应格式矩阵在 unit 验证 SDK 报文；Worker 保留代表性完整链路和各持久化失败窗口。费用凭据冲突通过真实媒体 API/SQL 核对；预算准入、异步任务查询/下载重试及结果证据校验通过真实授权/SQL/SDK Service 验证，不为这些规则重复启动 Worker。Flow 的 DBOS 初始化仅用于执行器和历史检查，发送中取消用明确屏障同步。
+- 图片中转的供应商/编辑/响应格式矩阵在 unit 验证 SDK 报文；Worker 保留代表性完整链路和各持久化失败窗口。费用凭据冲突通过真实媒体 API/SQL 核对；协议准入、异步任务查询/下载重试及结果证据校验通过真实授权/SQL/SDK Service 验证，不为这些规则重复启动 Worker。Flow 的 DBOS 初始化仅用于执行器和历史检查，发送中取消用明确屏障同步。
 - 合并相同装配和数据构造，保留每个独立保证的断言。共享辅助函数放 support，unit 不导入 integration。
 - `support.flow_packages` 提供轻量快照、install_package 和关联断言。安装后立即清理制品缓存，测试间由全局夹具再次清理；契约模块导入不加载执行器。
 - `support.flow_engine.flow_engine` 显式初始化测试 DBOS Schema 与历史客户端；复用 Flow 配置的执行器测试须请求该夹具，普通授权/事务用例不依赖它。结构化输出的供应商报文矩阵在真实 SDK 单元测试中核对，Worker 用例覆盖代表性路由和自定义 API 地址；执行前撤销模型能力在真实身份与 SQL Service 层验证。

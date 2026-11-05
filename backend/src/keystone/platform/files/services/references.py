@@ -3,7 +3,7 @@
 import hashlib
 from uuid import UUID
 
-from sqlalchemy import delete, select, text, tuple_
+from sqlalchemy import delete, func, select, text, tuple_
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
@@ -20,6 +20,33 @@ async def require_unreferenced(session, identifier):
         select(FileReference.file_id).where(FileReference.file_id == identifier).limit(1)
     ):
         raise ServiceError(409, "file_referenced", "文件仍被业务引用，不能删除")
+
+
+async def registered_file_ids_many(session, owner, slots):
+    """Exact bounded slots; two matches per slot suffice to detect ambiguity."""
+    keys = set(slots)
+    if len(keys) > 100:
+        raise ValueError("At most 100 slots are supported")
+    matches = (
+        select(
+            FileReference.slot,
+            FileReference.file_id,
+            func.row_number()
+            .over(partition_by=FileReference.slot, order_by=FileReference.file_id)
+            .label("position"),
+        )
+        .where(FileReference.owner == owner, FileReference.slot.in_(keys))
+        .subquery()
+    )
+    rows = await session.execute(
+        select(matches.c.slot, matches.c.file_id)
+        .where(matches.c.position <= 2)
+        .order_by(matches.c.slot, matches.c.file_id)
+    )
+    result = {key: [] for key in keys}
+    for slot, identifier in rows:
+        result[slot].append(identifier)
+    return {key: tuple(values) for key, values in result.items()}
 
 
 async def registered_file_ids(session, owner, slot):

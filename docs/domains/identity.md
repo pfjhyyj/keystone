@@ -192,7 +192,7 @@ sequenceDiagram
 
 只增删变化关系；重复分配、解除或保存不重写创建信息，也不生成重复变更审计。
 
-#### 角色与文件授权的迁移边界
+#### 角色引用
 
 角色删除由 Identity 自己完成，不依赖 Files。业务自己的角色引用按实际外键约束处理。
 
@@ -222,6 +222,36 @@ sequenceDiagram
 PAT 只能由本人有效会话签发、列出或撤销，权限不得超过当前范围；原范围和期限不原地修改，需要时重签。重复撤销保留首次时间，不影响其他凭据。签发与重置、停用使用同一身份锁串行化。
 
 签发响应丢失后无法找回明文；用户可查看元数据、撤销未使用令牌再签发。签发重试会创建新记录。
+
+### 3.8 公开主体查询
+
+业务共享、负责人和执行账号展示需要读取指定用户/角色的公开字段，不应导入 Identity ORM。用户名称展示使用 user_labels_in_transaction；users_in_transaction 批量返回指定用户的 ID、显示名称和启用状态，role_in_transaction 返回指定角色的 ID、key。业务根据查询结果处理主体缺失，外键保证引用完整性。
+
+调用方直接向 Identity Service 传入 session 和有限主体 ID，不要求先查业务数据库。ID 可来自本次请求，也可来自已有业务记录；调用方负责本次用例授权和查询范围。纯展示直接返回公开数据；保存关联时在同一身份事务中检查查询结果与业务规则，再保存关联和成功审计。
+
+```mermaid
+sequenceDiagram
+    participant B as 业务 Service
+    participant A as AccessContext
+    participant I as Identity 主体查询
+    participant D as PostgreSQL
+    B->>A: 开始本次业务权限事务
+    A->>D: 取得身份共享锁，检查当前凭据和权限
+    A-->>B: 返回 session 与 auth
+    B->>B: 检查业务权限，确定查询范围
+    B->>I: 在同一 session 查询有限主体 ID
+    I->>D: 查询存在性及公开字段
+    I-->>B: 返回 ID、名称、状态等白名单 DTO
+    alt 保存业务关联
+        B->>D: 检查查询结果，保存关联与成功审计，提交
+    else 仅展示
+        B-->>B: 使用公开数据展示
+    end
+```
+
+内部主体查询由调用业务完成授权并限定 ID 范围，不另要求用户或角色管理列表的读取权限；返回字段限定为公开身份信息。关联主体的存在性与操作者的操作资格分别验证；停用主体可用于已有记录的展示，是否允许新关联由具体业务决定。
+
+纯展示使用有限 ID，无需逐行加锁。新关联在现有身份共享锁和业务事务中完成，角色删除持身份排他锁，外键保留最终约束。
 
 ## 4. 权限与审计
 
@@ -336,6 +366,8 @@ AccessContext.access() 默认使用 PostgreSQL 事务级共享身份锁；身份
 
 ### 代码组织
 
-Auth/User/Role/Token Service 共用 AccessContext；密码与凭据适配在 adapters/security.py。authorization.py 统一读取角色和权限，其他领域通过 Identity Service 协作。
+Auth/User/Role/Token Service 共用 AccessContext，它在 SQLAlchemy 标准事务上统一执行身份锁、认证、权限检查和失败审计。密码与凭据适配在 adapters/security.py。authorization.py 统一读取角色和权限，其他领域通过 Identity Service 协作。
+
+各模块复用同一身份访问实现；上下文按请求或执行创建，用户和凭据状态随该上下文隔离。
 
 Authorization.role_ids 来自同次角色联表查询，包含空权限角色，不跨事务缓存。用户/角色列表先分页，再按当前页 ID 批量读取关联，避免逐行查询。通用分层见[架构规范](../development/business.md#模块分层与代码规范)。

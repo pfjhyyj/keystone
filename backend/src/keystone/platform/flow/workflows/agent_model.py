@@ -36,7 +36,16 @@ class FlowModel(Model):
         runtime, selected, invocation_id = await ctx._model(
             self.deps["model_role"], operation=operation
         )
-        settings = runtime.sdk_settings(selected, settings)
+        from pydantic import ValidationError
+
+        from keystone.platform.model_access.schemas.invocations import ReasoningOptions
+
+        try:
+            raw = settings.pop("keystone_reasoning", None)
+            reasoning = ReasoningOptions.model_validate(raw) if raw is not None else None
+        except ValidationError:
+            raise ServiceError(422, "model_invalid_request", "思考设置无效") from None
+        settings = runtime.sdk_settings(selected, settings, reasoning=reasoning)
 
         async def request(sdk):
             model = OpenAIChatModel(
@@ -54,6 +63,7 @@ class FlowModel(Model):
                 agent_call_id=UUID(self.deps["agent_call_id"]),
             ),
             sdk_request=request,
+            reasoning=reasoning,
             worker_identity=host._runtime().worker_identity,
         )
 

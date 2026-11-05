@@ -37,6 +37,44 @@ def io_error(error):
     return invalid()
 
 
+def clear_scratch(path, coordination_root):
+    """Remove only a fixed, unowned transfer slot inside its verified namespace."""
+    root = Path(coordination_root).resolve()
+    parent = root / ".transfers"
+    if (
+        path.parent.resolve() != parent.resolve()
+        or not parent.resolve().is_relative_to(root)
+        or not re.fullmatch(r"(?:[0-9]|[12][0-9]|3[01])", path.name)
+        or path.is_symlink()
+        or path.is_junction()
+        or not path.resolve().is_relative_to(parent.resolve())
+    ):
+        raise invalid()
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def scratch_size(path):
+    if path.is_symlink() or path.is_junction():
+        raise invalid()
+    if not path.exists():
+        return 0
+    if path.is_file():
+        return path.stat().st_size
+    total = 0
+    for item in path.rglob("*"):
+        if item.is_symlink() or item.is_junction():
+            raise invalid()
+        try:
+            if item.is_file():
+                total += item.stat().st_size
+        except FileNotFoundError:
+            continue  # Native writers may replace intermediate files.
+    return total
+
+
 def filesystem(path):
     return str(Path(path).stat().st_dev)
 
@@ -161,7 +199,7 @@ class Capacity:
                     raise
                 continue
             try:
-                path.unlink(missing_ok=True)
+                clear_scratch(path, self.coordination.root)
             finally:
                 slot.__exit__(None, None, None)
 
@@ -264,7 +302,7 @@ class Reservation:
         with self.capacity.locked():
             if self.closed:
                 raise invalid()
-            if path.exists() and path.stat().st_size > limit:
+            if scratch_size(path) > limit:
                 raise ServiceError(413, "file_temporary_limit", "文件超过临时空间配额")
             # External tools own their writes, so keep their full promise charged.
             self.capacity.check(self.roots, self.capacity.live(), floor_only=True)

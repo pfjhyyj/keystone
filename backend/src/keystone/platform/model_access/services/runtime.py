@@ -78,11 +78,18 @@ class ModelRuntime:
     async def invoke(self, data, *, invocation_id=None, selection=None):
         return await completed(self.events(data, invocation_id=invocation_id, selection=selection))
 
-    def sdk_settings(self, selection, settings):
-        return self.clients.inference.sdk_settings(selection, settings)
+    def sdk_settings(self, selection, settings, *, reasoning=None):
+        return self.clients.inference.sdk_settings(selection, settings, reasoning=reasoning)
 
     async def invoke_sdk(
-        self, *, selection, invocation_id, sdk_request, flow_context=None, worker_identity=None
+        self,
+        *,
+        selection,
+        invocation_id,
+        sdk_request,
+        flow_context=None,
+        worker_identity=None,
+        reasoning=None,
     ):
         """Trusted internal request, with a fixed target and stable ID; no public Invoke payload."""
         if invocation_id is None or not callable(sdk_request):
@@ -94,6 +101,7 @@ class ModelRuntime:
                 flow_context=flow_context,
                 sdk_request=sdk_request,
                 worker_identity=worker_identity,
+                reasoning=reasoning,
             )
         )
         return result["content"]
@@ -237,6 +245,7 @@ class ModelRuntime:
             sdk_request=send,
             flow_context=context,
             worker_identity=worker_identity,
+            reasoning=data.reasoning,
         )
 
     async def invoke_text(self, data, *, selection, invocation_id, context, worker_identity):
@@ -281,6 +290,7 @@ class ModelRuntime:
         flow_context=None,
         sdk_request=None,
         worker_identity=None,
+        reasoning=None,
     ):
         identifier = invocation_id or uuid4()
         started = monotonic()
@@ -536,6 +546,7 @@ class ModelRuntime:
                     identifier,
                     data=data,
                     sdk_request=sdk_request,
+                    reasoning=reasoning,
                 )
             ) as events:
                 async for event in events:

@@ -74,10 +74,30 @@ class InferenceClient:
         self.check_target(provider, selected.api_base, target[1])
         return target
 
-    def validate_request(self, request, provider, selected):
+    def validate_request(self, request, provider, selected, *, reasoning=None):
         target = self.request_target(provider, selected)
         protocol = self.protocol(selected, provider=provider)
         with adapter_errors():
+            if selected.operation in {"text.generate", "text.structured", "image.understand"}:
+                import json
+
+                from keystone.platform.model_access.schemas.errors import AdapterError
+
+                controls = protocol.reasoning_settings(
+                    selected.operation, selected.provider_model, reasoning
+                )
+                payload = json.loads(request.content)
+                for key in {"enable_thinking", "reasoning_effort", "thinking_budget", "reasoning"}:
+                    if key in controls:
+                        if (
+                            type(payload.get(key)) is not type(controls[key])
+                            or payload.get(key) != controls[key]
+                        ):
+                            raise AdapterError(
+                                422, "model_invalid_request", "思考设置与实际请求不一致"
+                            )
+                    elif key in payload:
+                        raise AdapterError(422, "model_invalid_request", "请求包含未批准的思考参数")
             if hasattr(protocol, "validate_request"):
                 return protocol.validate_request(request, selected, target)
             return validate_request(
@@ -96,7 +116,17 @@ class InferenceClient:
         )
 
     @asynccontextmanager
-    async def connect(self, provider, selected, observation, before_send, on_receipt, identifier):
+    async def connect(
+        self,
+        provider,
+        selected,
+        observation,
+        before_send,
+        on_receipt,
+        identifier,
+        *,
+        reasoning=None,
+    ):
         from .pricing import profile_for
 
         base, _, _ = self.request_target(provider, selected)
@@ -114,7 +144,9 @@ class InferenceClient:
                 before_send,
                 observation,
                 on_receipt,
-                lambda request: self.validate_request(request, provider, selected),
+                lambda request: self.validate_request(
+                    request, provider, selected, reasoning=reasoning
+                ),
                 identifier,
                 authorize=self.adapter(provider, selected.api_base).authorize,
                 max_request_bytes=maximum,
@@ -147,10 +179,17 @@ class InferenceClient:
         *,
         data=None,
         sdk_request=None,
+        reasoning=None,
     ):
         protocol = self.protocol(selected, provider=provider)
         async with self.connect(
-            provider, selected, observation, before_send, on_receipt, identifier
+            provider,
+            selected,
+            observation,
+            before_send,
+            on_receipt,
+            identifier,
+            reasoning=data.reasoning if data is not None else reasoning,
         ) as sdk:
             # Trusted SDK callbacks still pass through the same physical send boundary.
             if sdk_request is not None:
@@ -244,9 +283,11 @@ class InferenceClient:
         with adapter_errors():
             return await self.protocol(selected).invoke(sdk, selected, data)
 
-    def sdk_settings(self, selected, settings):
+    def sdk_settings(self, selected, settings, *, reasoning=None):
         with adapter_errors():
-            return self.protocol(selected).sdk_settings(selected.operation, settings)
+            return self.protocol(selected).sdk_settings(
+                selected.operation, settings, model=selected.provider_model, reasoning=reasoning
+            )
 
     def task_protocol(self, selected):
         protocol = self.protocol(selected)

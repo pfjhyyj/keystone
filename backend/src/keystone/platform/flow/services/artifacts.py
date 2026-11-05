@@ -6,7 +6,11 @@ from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
 from keystone.platform.files.services.files import FileService
-from keystone.platform.files.services.references import registered_file_ids, require_registered_file
+from keystone.platform.files.services.references import (
+    registered_file_ids,
+    registered_file_ids_many,
+    require_registered_file,
+)
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.services.identity import ExecutionIdentity, authorize_execution
 from keystone.platform.flow.services.runs import scope
@@ -60,24 +64,32 @@ class FlowArtifactService:
         return identifiers[0] if identifiers else None
 
     async def find(self, run_id, key, *, max_bytes=None):
-        """Return a verified file ID or None only when no artifact is registered.
+        return (await self.find_many(run_id, [key], max_bytes=max_bytes))[key]
 
-        Current Run/file authorization and local integrity (or bounded S3 reads)
-        come from the existing services. No DB transaction remains open during I/O.
-        """
-        artifact_location(run_id, key)
+    async def find_many(self, run_id, keys, *, max_bytes=None):
+        """Batch the existing exact lookup; content and reference checks stay unchanged."""
+        keys = list(dict.fromkeys(keys))
+        if len(keys) > 100:
+            raise ValueError("At most 100 artifact keys are supported")
+        locations = {key: artifact_location(run_id, key) for key in keys}
+        if not keys:
+            return {}
         async with self.identity.access() as (session, auth):
             await self._authorize(session, auth, run_id)
-            identifier = await self._candidate(session, run_id, key)
-        if identifier is None:
-            return None
-        async with FileService(self.identity, self.storage).open_content(
-            identifier, max_bytes=max_bytes
-        ):
-            # A reference may have changed while hashing/opening. Recheck before receipt.
+            rows = await registered_file_ids_many(
+                session, f"flow:{UUID(str(run_id))}", [slot for _, slot in locations.values()]
+            )
+        if any(len(values) > 1 for values in rows.values()):
+            raise ServiceError(409, "flow_artifact_ambiguous", "运行产物键对应多个文件")
+        found = {key: rows[slot][0] for key, (_, slot) in locations.items() if rows[slot]}
+        files = FileService(self.identity, self.storage)
+        for identifier in sorted(set(found.values())):
+            async with files.open_content(identifier, max_bytes=max_bytes):
+                pass
+        if found:
             async with self.identity.access() as (session, auth):
-                await self.require_in_transaction(session, auth, run_id, {key: identifier})
-        return str(identifier)
+                await self.require_in_transaction(session, auth, run_id, found)
+        return {key: str(found[key]) if key in found else None for key in keys}
 
     async def require_in_transaction(self, session, auth, run_id, artifacts):
         """Check exact key->ID claims in the caller's authorized business transaction.

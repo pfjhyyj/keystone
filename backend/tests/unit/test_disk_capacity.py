@@ -183,22 +183,22 @@ async def test_crash_recovery_reclaims_only_dead_scratch_and_preserves_live_owne
     body = """
 async def run():
     async with storage.transfers.temporary(10) as path:
-        path.write_bytes(b'dead')
+        (path / 'output').write_bytes(b'dead')
         os._exit(71)
 asyncio.run(run())
 """
     async with storage.transfers.workspace(10) as live:
-        live.path.write_bytes(b"live")
+        (live.path / "output").write_bytes(b"live")
         identifier = live.capacity.identifier
         result = await asyncio.to_thread(child, tmp_path, body)
         assert result.returncode == 71, result.stderr
         # The live workspace's monitor may already have reclaimed the dead owner.
         # Assert the eventual state, without requiring a particular scheduling order.
         with storage.transfers.capacity.reserve([(tmp_path / "files", 0)]):
-            assert live.path.read_bytes() == b"live"
+            assert (live.path / "output").read_bytes() == b"live"
             assert not (tmp_path / ".transfers/1").exists()
             assert (tmp_path / f".capacity/{identifier}.json").is_file()
-        assert live.path.read_bytes() == b"live"
+        assert (live.path / "output").read_bytes() == b"live"
     clean(tmp_path)
 
 
@@ -290,7 +290,7 @@ async def test_external_writer_is_cancelled_and_cleaned_when_capacity_changes(
     state = free_space(monkeypatch, 100)
     with pytest.raises(ServiceError) as rejected:
         async with storage.transfers.temporary(10) as path:
-            path.write_bytes(b"x" * (11 if failure == "oversize" else 1))
+            (path / "output").write_bytes(b"x" * (11 if failure == "oversize" else 1))
             if failure == "space":
                 state.free = 0
             await asyncio.sleep(2)
@@ -309,7 +309,8 @@ async def test_fast_external_writer_is_checked_before_workspace_exit(
     state = free_space(monkeypatch, 100)
     with pytest.raises(ServiceError) as rejected:
         async with storage.transfers.temporary(10) as path:
-            path.write_bytes(b"x" * (11 if failure == "oversize" else 1))
+            (path / "first").write_bytes(b"x" * (6 if failure == "oversize" else 1))
+            (path / "second").write_bytes(b"x" * (5 if failure == "oversize" else 0))
             if failure == "space":
                 state.free = 0
             # No await: finish before the periodic monitor can run.

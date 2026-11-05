@@ -2,7 +2,6 @@
 
 import asyncio
 from contextlib import ExitStack
-from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -199,9 +198,19 @@ def test_new_reference_cannot_race_accepted_retirement(client, monkeypatch):
     assert not any(owner == "other:new" for owner, _, _ in facts(client)[1])
 
 
-def test_local_origin_rejects_remote_sources_and_replaced_content(client, monkeypatch):
+def test_local_file_excludes_deletion_and_rejects_remote_or_replaced_content(client, monkeypatch):
     identifier = UUID(upload(client).json()["id"])
     service = file_service(client)
+
+    async def inspect_local():
+        async with service.local_file(identifier) as local:
+            assert local.size_bytes == 5
+            with pytest.raises(ServiceError) as busy:
+                with service.storage.lease(identifier):
+                    pytest.fail("Protected file acquired an exclusive deletion lock")
+            assert busy.value.code == "file_busy"
+            return local.path
+
     with monkeypatch.context() as scope:
         scope.setattr(
             service.storage,
@@ -209,10 +218,12 @@ def test_local_origin_rejects_remote_sources_and_replaced_content(client, monkey
             lambda *_: SimpleNamespace(config=SimpleNamespace(driver="s3"), root=None),
         )
         with pytest.raises(ServiceError) as rejected:
-            client.portal.call(service.local_origin, identifier)
+            client.portal.call(inspect_local)
         assert rejected.value.code == "local_file_required"
-    path = Path(client.portal.call(service.local_origin, identifier)["path"])
+    path = client.portal.call(inspect_local)
+    with service.storage.lease(identifier):
+        assert path.read_bytes() == b"hello"
     path.write_bytes(b"other")
     with pytest.raises(ServiceError) as replaced:
-        client.portal.call(service.local_origin, identifier)
+        client.portal.call(inspect_local)
     assert replaced.value.status == 503

@@ -237,7 +237,7 @@ onScopeDispose(() => {
       </el-alert>
       <el-tabs v-model="detailTab"
         ><el-tab-pane label="执行与结果" name="execution" /><el-tab-pane
-          label="预算与关联"
+          label="关联记录"
           name="diagnostics" /><el-tab-pane label="调用费用" name="costs"
       /></el-tabs>
       <section v-show="detailTab === 'execution'">

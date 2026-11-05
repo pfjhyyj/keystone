@@ -25,7 +25,7 @@ keystone.toml 的 file_storages 显式声明源，file_default_storage 仅影响
 | transfer | 本地物化、临时工作区和保存；owner/slot 可省略，业务引用随后同事务登记 |
 | read_transfer | 有界等待读取容量，再由业务授权对象，调用 transfer.open_content(file_id) |
 
-普通读取由业务授权一次即可；需要等待容量时，先进入 read_transfer，再授权并解析 ID，避免排队前的授权被当作开始读取时的授权。Service 不返回 HTTP Response，业务 Controller 可复用 ContentResponse 处理 Range/HEAD。local_origin 仍只供可信本地集成，不能进入普通 HTTP 响应。
+普通读取由业务授权一次即可；需要等待容量时，先进入 read_transfer，再授权并解析 ID，避免排队前的授权被当作开始读取时的授权。Service 不返回 HTTP Response，业务 Controller 可复用 ContentResponse 处理 Range/HEAD。local_file 只供可信本地集成，不能进入普通 HTTP 响应。
 
 业务在文件保存后复查当前保存资格，同事务更新自己的关系、FileReferences 和成功审计。FileReferences.replace/release 仅维护调用方已授权的精确关系，不检查 FileGrant，不把引用当作读取权。保存失败不撤销文件事实，已知原请求使用原键重试。
 
@@ -58,6 +58,8 @@ FileReferences(session, auth, namespace).replace/release 在已授权业务事�
 | 事务接口 | 职责 |
 |---|---|
 | metadata_in_transaction(session, file_id, lock=False) | 安全元数据，按需锁行，不返回物理定位 |
+| metadata_many_in_transaction(session, file_ids) | 最多 100 个 ID 的公开元数据，不加行锁 |
+| request_delete_in_transaction(session, auth, file_id) | 无引用且状态允许时受理 deleting，与业务事务一起提交 |
 | edit_in_transaction(session, auth, file_id, data) | 对已授权文件改名或启停，与审计同事务 |
 | release_in_transaction(session, auth, references) | 只移除精确 owner/slot/file_id；重复不重复审计 |
 | registered_file_ids(session, owner, slot) | 精确槽位的已登记 ID |
@@ -87,11 +89,11 @@ S3 的迟到 PUT 不能靠本地锁排除。重试只写同一校验内容；del
 
 FileService.transfer() 返回作用域内有效的 FileTransferService。materialize_file 校验技术可用状态和完整性，退出清临时副本；upload_file 从固定打开句柄确定大小/摘要，保存原键与引用。同一作用域只允许一个活动操作，物化后复制上传须另取作用域。退出前等待全部 I/O，路径、句柄不进检查点。
 
-可信宿主可传 TransferScope(owner, max_temporary_bytes)。workspace 提供受限临时 Path，upload_file 的可选 admission(data) 在句柄校验后、正文发送前执行；不向 HTTP 开放任意 owner/额度。
+可信宿主可传 TransferScope(owner, max_temporary_bytes)。workspace 提供受限临时目录 Path，单文件在目录内选择路径，upload_file 的可选 admission(data) 在句柄校验后、正文发送前执行；不向 HTTP 开放任意 owner/额度。
 
 容量账本 v2 在 OS 所有者记录 scope/scope_bytes/scope_limit，全局锁下汇总 live 承诺并取最严格上限。顺序刷盘不提前释放完整临时承诺；正式副本受物理容量管理，不重复计临时额度。所有预留统一使用 v2，无 scope 时 scope/scope_limit 为 null、scope_bytes 为 0；崩溃只以 OS 锁释放回收，损坏 live 记录拒绝，不靠 PID/时间推断。超 scope 返回 file_scope_limit。
 
-local_origin(file_id) 仅供可信本地业务，只接受 filesystem；业务须完成对象和本地目录准入授权。核验后返回实际路径、大小和校验和，返回前复查；无通用 HTTP 路由。
+local_file(file_id) 接受已获业务授权的本地文件，作用域内返回 LocalFile(path, size_bytes, checksum_sha256)。共享文件锁保持到作用域退出，与清理 Worker 的排他锁互斥；本地完整性检查复用现有读取槽位。业务负责用户操作或维护资格，路径只在作用域内供可信代码使用。
 
 ## Run 文件诊断
 

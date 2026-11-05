@@ -27,7 +27,7 @@ File 不排他归属某个业务，不增加 blog_id 或强制业务类型；同
 
 ### 1.2 业务授权与文件操作契约
 
-业务 Service 从已授权对象的记录取得实际 file_id，再调用内部 Files 能力。客户端知道 ID、是上传者或存在 FileReference，都不直接获得读取权。对象访问与共享由业务表达。
+业务 Service 完成本次操作授权并限定精确 file_id，再调用内部 Files 能力；ID 可来自已授权对象的记录或本次已核验的请求。客户端知道 ID、是上传者或存在 FileReference，都不直接获得读取权。对象访问与共享由业务表达。
 
 装配层通过 runtime.managed_files(identity) 注入内部 FileService；业务入口负责功能与对象授权。平台不提供通用文件 HTTP 路由或文件权限目录。
 
@@ -203,6 +203,30 @@ sequenceDiagram
 
 业务删除、解除本对象精确引用及成功审计一起提交或回滚。物理回收另行执行，失败不撤销已提交的业务删除。
 
+#### 显式清理文件内容
+
+业务明确要求释放文件内容时，在当前已授权业务事务中解除获准移除的精确引用，再调用 request_delete_in_transaction(session, auth, file_id)。Files 锁定文件并检查状态、剩余引用，满足条件时记录 deleting 与删除受理审计。
+
+```mermaid
+sequenceDiagram
+    participant B as 业务 Service
+    participant F as Files
+    participant D as PostgreSQL
+    participant W as 现有清理 Worker
+    B->>D: 开始身份事务，检查业务权限与对象状态
+    B->>F: 解除业务批准移除的精确引用
+    B->>F: 受理指定文件删除
+    F->>D: 锁定 File，检查状态与剩余引用
+    F->>D: 写 deleting 和受理审计
+    B->>D: 保存业务变更与成功审计，一起提交
+    W->>D: 读取已提交的 deleting
+    W->>W: 按 1.4 在事务外删除内容并确认结果
+```
+
+业务变更、引用解除、删除受理及成功审计一起提交或回滚。仍有其他引用时拒绝删除；引用变更和删除受理使用同一 File 行锁。涉及多个文件时按 File ID 顺序锁定完整受影响集合，沿用外层身份、Run 和业务对象的锁序。
+
+入口处理已完成的 active/disabled 文件及已有删除受理状态；上传中的文件继续走原有上传清理流程。返回成功表示删除已受理，物理删除由现有 Worker 按 1.4 完成；受理接口不自行提交或执行存储 I/O。
+
 ### 1.7 引用审计与统计口径
 
 FileReference 表示当前保留关系，AuditLog 表示历史变更。引用以 `(owner, slot, file_id)` 唯一，owner/slot 由可信代码限定，不是访问策略或独占归属。
@@ -245,6 +269,81 @@ sequenceDiagram
 小图片可有界交接字节，大图片或视频使用受控流/临时文件；大正文、句柄和签名 URL 不进入公开结果或检查点。图片、视频共用保存与引用流程，但视频模型生成尚未接入，S3 现有 64 MiB 上限不因此放大。
 
 模型成功、文件保存和业务提交是不同事实。存储失败不能触发无证据重新生成：仍持有原结果时可用稳定产物键重试保存；崩溃后仅复用已保存文件或供应商支持的原结果取回能力。不可恢复时明确失败，不建设通用永久结果缓存。
+
+### 1.9 批量元数据读取
+
+业务列表通过 metadata_many_in_transaction(session, file_ids) 一次读取有限文件 ID 的公开元数据，沿用现有单项查询的字段。调用方负责本次查询授权和 ID 范围；ID 可来自请求或业务记录，不要求先查询业务数据库。
+
+```mermaid
+sequenceDiagram
+    participant B as 业务 Service
+    participant F as Files
+    participant D as PostgreSQL
+    B->>B: 检查本次查询权限，确定有限文件 ID
+    B->>F: 传入现有 session 和文件 ID
+    F->>D: 一次查询公开元数据
+    D-->>F: 返回文件信息
+    F-->>B: 返回普通数据
+```
+
+批量读取复用调用方事务，不另行提交、不加行锁、不读取存储内容，返回值不包含 ORM、存储路径或凭据。下载、修改和删除在各自操作边界授权，元数据查询结果不授予这些权限。
+
+### 1.10 统一临时工作区
+
+workspace(max_bytes) 统一返回受管临时目录，Files 和 Flow 使用同一契约。单文件处理在目录内选择一个文件路径，多文件处理在同一目录内组织文件；max_bytes 限制本工作区内全部临时文件的总大小。
+
+```python
+async with ctx.workspace(max_bytes=maximum) as directory:
+    output = directory / "output.mp4"
+    # 在目录内生成一个或多个文件，需要保留的结果在退出前上传。
+```
+
+```mermaid
+sequenceDiagram
+    participant B as 业务或 Flow
+    participant F as Files 工作区
+    participant P as 受管原生处理
+    B->>F: 申请 workspace(max_bytes)
+    F->>F: 取得现有槽位，核验并清理该槽残留，预留容量
+    F-->>B: 返回受管临时目录
+    B->>P: 在目录内处理文件
+    F->>F: 期间监测目录总大小和存储可用性
+    P-->>B: 处理结束
+    B->>F: 退出作用域
+    F->>F: 等待原生处理停止，最终检查并清理整个目录
+    F->>F: 释放容量和槽位
+```
+
+工作区复用现有槽位、磁盘预留、取消等待和失主残留回收规则。周期监测加退出前检查属于软限制，允许发现前短时超写；超限或扫描失败时停止所属处理，等待原生 I/O 和进程结束后清理。目录内的路径保持在受管范围内，拒绝符号链接和目录链接，临时路径不进入检查点或公开响应。
+
+上传暂存和原片落地共用同一工作区生命周期。materialize_file 仍返回已经校验的文件路径，内部使用工作区目录中的文件；上传继续保留原有大小、摘要及目标盘容量检查。业务负责目录中的内容、文件名和处理命令。
+
+### 1.11 作用域式本地文件使用
+
+local_file(file_id) 为已授权的本地文件提供作用域，返回作用域内有效的路径、大小和摘要。业务先确定本次操作资格与精确文件 ID；用户操作沿用身份授权，系统维护按所属业务已批准的维护事实授权。
+
+```python
+async with files.local_file(file_id) as local:
+    # 使用 local.path；业务按用途核对 local.size_bytes 和 local.checksum_sha256。
+    ...
+```
+
+```mermaid
+sequenceDiagram
+    participant B as 业务或 Flow
+    participant F as Files
+    participant S as 本地存储
+    B->>B: 完成本次业务授权，确定精确文件 ID
+    B->>F: 进入 local_file(file_id)
+    F->>F: 取得现有共享文件锁，检查当前文件状态
+    F->>S: 核验本地卷身份、大小和摘要，打开文件
+    F-->>B: 返回作用域内有效的本地文件信息
+    B->>B: 执行已批准操作
+    B->>F: 退出作用域
+    F->>F: 等待 I/O 结束，关闭句柄并释放锁
+```
+
+作用域内的共享文件锁与现有清理 Worker 的排他文件锁互斥，保护本地内容免于受管物理删除。Files 负责技术状态与完整性，业务负责具体用途、关联关系、外部对象版本和操作审计；外部 I/O 不持数据库长事务。普通下载继续使用原读取契约。
 
 ## 2. 领域模型
 

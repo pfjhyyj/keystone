@@ -18,7 +18,7 @@ async def test_flushed_scratch_still_consumes_scope_until_workspace_closes(tmp_p
     storage = registry(tmp_path)
     transfers = scoped(storage)
     async with transfers.workspace(4) as workspace:
-        with workspace.path.open("wb") as stream:
+        with (workspace.path / "output").open("wb") as stream:
             workspace.capacity.write(stream, b"done")
         assert sum(workspace.capacity.amounts.values()) == 0
         with pytest.raises(ServiceError) as error:
@@ -64,20 +64,20 @@ async def test_dead_scoped_process_releases_only_its_own_promise_and_scratch(tmp
 async def run():
     transfer = storage.transfers.scoped(TransferScope(owner='flow:test', max_temporary_bytes=4))
     async with transfer.workspace(4) as workspace:
-        workspace.path.write_bytes(b'dead')
+        (workspace.path / "output").write_bytes(b'dead')
         os._exit(71)
 asyncio.run(run())
 """
     result = await asyncio.to_thread(child, tmp_path, body)
     assert result.returncode == 71, result.stderr
     async with scoped(storage).workspace(4) as workspace:
-        assert not workspace.path.exists()
-        workspace.path.write_bytes(b"live")
+        assert workspace.path.is_dir() and not list(workspace.path.iterdir())
+        (workspace.path / "output").write_bytes(b"live")
         result = await asyncio.to_thread(
             child, tmp_path, body.replace("workspace(4)", "workspace(1)")
         )
         assert result.returncode != 71, "A live scope promise must not be reclaimed"
-        assert workspace.path.read_bytes() == b"live"
+        assert (workspace.path / "output").read_bytes() == b"live"
     clean(tmp_path)
 
 

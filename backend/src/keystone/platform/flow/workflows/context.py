@@ -168,7 +168,13 @@ async def _run_process(run_id, arguments, *, permissions=(), **options):
                 item[0] == UUID(str(run_id))
                 and item[1] is asyncio.current_task()
                 and item[4]
-                and target.resolve() == item[2].resolve()
+                and target.resolve() != item[2].resolve()
+                and target.resolve().is_relative_to(item[2].resolve())
+                and not any(
+                    parent.is_symlink() or parent.is_junction()
+                    for parent in target.parents
+                    if parent != item[2] and parent.is_relative_to(item[2])
+                )
                 and maximum <= item[3]
                 for item in _workspaces.get()
             )
@@ -279,6 +285,16 @@ class FlowContext:
         return UUID(
             await _upload_file(self.run_id, key, path, name=name, content_type=content_type)
         )
+
+    async def artifacts(self, keys, *, max_bytes=None):
+        values = await _resources(self.run_id).artifacts(keys, max_bytes=max_bytes)
+        return {key: UUID(value) if value else None for key, value in values.items()}
+
+    @asynccontextmanager
+    async def local_file(self, identifier):
+        async with _execution_scope(self.run_id):
+            async with _resources(self.run_id).local_file(identifier) as local:
+                yield local
 
     async def artifact(self, key, *, max_bytes=None):
         result = await _artifact(self.run_id, key, max_bytes=max_bytes)

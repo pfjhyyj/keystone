@@ -76,16 +76,16 @@ class Engine:
         )
 
     async def enqueue(self, run):
-        await self.client.enqueue_async(
-            {
-                "workflow_name": run.definition_snapshot["entrypoint"],
-                "queue_name": QUEUE,
-                "workflow_id": workflow_id(run.id),
-                "app_version": run.execution_version,
-                "workflow_timeout": run.definition_snapshot["timeout_seconds"],
-            },
-            str(run.id),
-        )
+        options = {
+            "workflow_name": run.definition_snapshot["entrypoint"],
+            "queue_name": run.definition_snapshot.get("queue", QUEUE),
+            "workflow_id": workflow_id(run.id),
+            "app_version": run.execution_version,
+        }
+        timeout = run.definition_snapshot["timeout_seconds"]
+        if timeout is not None:
+            options["workflow_timeout"] = timeout
+        await self.client.enqueue_async(options, str(run.id))
 
     async def state(self, identifier):
         rows = await self.client.list_workflows_async(

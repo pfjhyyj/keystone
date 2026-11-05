@@ -174,7 +174,7 @@ async def main():
         file_transfer_slots=1)
     storage = StorageRegistry(settings)
     async with storage.transfers.temporary(10) as path:
-        path.write_bytes(b'partial')
+        (path / 'output').write_bytes(b'partial')
         os._exit(71)
 run(main())
 """
@@ -187,7 +187,7 @@ run(main())
     )
     assert result.returncode == 71, result.stderr
     async with storage.transfers.temporary(10) as path:
-        assert not path.exists()
+        assert path.is_dir() and not list(path.iterdir())
     assert not list((tmp_path / ".transfers").iterdir())
 
 

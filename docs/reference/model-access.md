@@ -11,7 +11,7 @@
 | OpenRouter | 固定 https://openrouter.ai/api/v1；文本、向量、结构化、识图、同步图片 |
 | NewAPI | 默认 https://newapiai.com/v1，可配置 HTTPS 站点及路径前缀；通用兼容文本/向量，媒体按验证站点 |
 | Yunwu / Openlux | https://yunwu.ai/v1、https://api.openlux.ai/v1；同步 GPT Image，Openlux 另有原生 Kling 图片 |
-| 百炼 | 固定 https://dashscope.aliyuncs.com/compatible-mode/v1；北京按量付费，统一 enable_thinking=false，仅思考模型不适用 |
+| 百炼 | 固定 https://dashscope.aliyuncs.com/compatible-mode/v1；北京按量付费，未指定 reasoning 时保持 enable_thinking=false；显式设置按型号与操作校验，见[请求级思考](../domains/model-access.md#64-请求级思考控制) |
 | 方舟 | 固定 https://ark.cn-beijing.volces.com/api/v3；北京按量付费，接受 Model ID 或 ep-* 接入点；尚无向量/图片生成/视频 |
 
 百炼支持标准 /embeddings，模型须支持指定维度及 float 输出。两家云渠道保存真实用量和请求 ID，单次实扣 unavailable，不从公开价格或月账单摊分。

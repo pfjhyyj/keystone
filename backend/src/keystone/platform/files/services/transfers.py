@@ -57,7 +57,7 @@ class FileTransferService:
                 identifier, _transfer_slot=self._number, max_bytes=transfers.limit
             ) as reader:
                 async with transfers.workspace(reader.size, _slot=self._number) as workspace:
-                    path = workspace.path
+                    path = workspace.path / "input"
                     digest = hashlib.sha256()
                     async with opened(path.open, "xb") as target:
                         async for chunk in reader.chunks():

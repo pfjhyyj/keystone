@@ -34,11 +34,13 @@ class FlowService:
         *,
         execution_version: Callable[[], str],
         package_owners=None,
+        queues=("keystone-flows",),
     ):
         self.identity = identity
         self.flow_definitions = definitions
         self.execution_version = execution_version
         self.package_owners = dict(package_owners or {})
+        self.queues = frozenset(queues)
 
     async def start_in_transaction(self, session, auth, data):
         """Trusted caller holds AccessContext.access() and commits business facts together.
@@ -84,6 +86,8 @@ class FlowService:
             raise ServiceError(409, "flow_revision_conflict", "流程契约版本已改变，请刷新目录")
         for permission in definition.required_permissions:
             auth.require(permission)
+        if definition.queue not in self.queues:
+            raise ServiceError(409, "flow_queue_unavailable", "流程队列未配置")
         try:
             inputs = definition.input_model.model_validate(data.input).model_dump(
                 mode="json", by_alias=False
@@ -143,6 +147,14 @@ class FlowService:
     async def detail(self, identifier):
         async with self.identity.access("flow:read") as (session, auth):
             return await self.get_in_transaction(session, auth, identifier)
+
+    async def statuses_in_transaction(self, session, identifiers):
+        """Status only for a bounded set of Run IDs authorized by the owning caller."""
+        ids = set(identifiers) - {None}
+        if len(ids) > 100:
+            raise ValueError("At most 100 run statuses are supported")
+        rows = await session.execute(select(FlowRun.id, FlowRun.status).where(FlowRun.id.in_(ids)))
+        return dict(rows.all())
 
     async def get_in_transaction(self, session, auth, identifier):
         """Current Run view under the existing read/actor scope, without another transaction."""

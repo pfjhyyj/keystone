@@ -4,6 +4,7 @@ Only exact public model IDs are listed. Endpoint aliases and unlisted models req
 an administrator override; absence is deliberately not a zero price.
 """
 
+from copy import deepcopy
 from decimal import Decimal
 
 from keystone.platform.model_access.schemas.pricing import OperationPricing
@@ -24,6 +25,7 @@ ARK_SOURCE = {
 }
 ALI_CACHE_SOURCE = {
     **SOURCE,
+    "version": "2026-11-05.1",
     "label": "百炼北京实时推理原价及隐式缓存命中价；不含显式缓存、免费额度或限时折扣",
 }
 
@@ -178,6 +180,18 @@ def _prefix_leaves(node, prefix):
 
 
 _prefix_leaves(ALI_CHAT_RULES["qwen-plus"]["root"]["else"], "thinking_")
+# A thinking request that reports zero reasoning uses the non-thinking output tariff.
+# Missing reasoning usage remains unknown, rather than assuming the request took effect.
+_qwen_price = ALI_CHAT_RULES["qwen-plus"]["root"]
+_no_reasoning = deepcopy(_qwen_price["then"])
+_prefix_leaves(_no_reasoning, "no_reasoning_")
+_qwen_price["else"] = {
+    "kind": "branch",
+    "when": {"field": "usage.reasoning_tokens", "op": "gt", "value": 0},
+    "then": _qwen_price["else"],
+    "else": _no_reasoning,
+}
+
 
 # Published aliases/snapshots with the same prices; no substring or date inference.
 for alias, target in {

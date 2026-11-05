@@ -280,7 +280,8 @@ def test_managed_local_transfer_can_save_without_premature_business_references(n
         async with service.identity.access(WRITE):
             pass
         with service.files.transfer() as transfer:
-            async with transfer.workspace(4) as path:
+            async with transfer.workspace(4) as directory:
+                path = directory / "output"
                 path.write_bytes(b"data")
                 with service.files.transfer() as writer:
                     stored = await writer.upload_file(

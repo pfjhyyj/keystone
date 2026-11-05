@@ -1,6 +1,7 @@
 """Authorized resources for one Run; handles and local paths never become checkpoints."""
 
 import hashlib
+from contextlib import asynccontextmanager
 from copy import deepcopy
 from uuid import UUID
 
@@ -83,6 +84,18 @@ class FlowResourceService:
         return await FlowArtifactService(self.identity, self.storage).find(
             self.identity.run_id, key, max_bytes=max_bytes
         )
+
+    async def artifacts(self, keys, *, max_bytes=None):
+        return await FlowArtifactService(self.identity, self.storage).find_many(
+            self.identity.run_id, keys, max_bytes=max_bytes
+        )
+
+    @asynccontextmanager
+    async def local_file(self, identifier):
+        await self.require_file(identifier)
+        async with self.files.local_file(UUID(str(identifier))) as local:
+            await self.require_file(identifier)
+            yield local
 
     async def upload_file(self, key, path, *, name, content_type, transfer, storage_key=None):
         owner, slot = artifact_location(self.identity.run_id, key)

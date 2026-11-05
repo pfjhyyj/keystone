@@ -373,3 +373,22 @@ def test_file_schema_references_fail_closed_without_external_resolution():
     with pytest.raises(ServiceError) as error:
         read_snapshot(snapshot)
     assert error.value.code == "flow_snapshot_unavailable"
+
+
+async def test_flow_queue_and_optional_timeout_reach_native_engine():
+    from unittest.mock import AsyncMock
+
+    selected = replace(definition, queue="documents", timeout_seconds=None)
+    from keystone.platform.flow.schemas.snapshots import read_snapshot
+
+    snapshot = read_snapshot(snapshot_for(selected))
+    engine = Engine.__new__(Engine)
+    engine.client = SimpleNamespace(enqueue_async=AsyncMock())
+    identifier = uuid4()
+    await engine.enqueue(
+        SimpleNamespace(id=identifier, execution_version="test", definition_snapshot=snapshot)
+    )
+    options = engine.client.enqueue_async.call_args.args[0]
+    assert options["queue_name"] == "documents"
+    assert "workflow_timeout" not in options
+    assert snapshot["timeout_seconds"] is None

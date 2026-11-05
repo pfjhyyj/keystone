@@ -53,6 +53,23 @@ async def resolve(session, key, identifier):
     return {**item_view(row), "dictionary_is_active": parent.is_active}
 
 
+async def describe_items_in_transaction(session, keys, identifiers):
+    """Read current items in caller-authorized dictionary scopes, including disabled."""
+    keys, ids = set(keys), {UUID(str(value)) for value in identifiers}
+    if len(keys) > 32 or len(ids) > 500:
+        raise ValueError("Dictionary lookup range is too large")
+    rows = await session.execute(
+        select(DictionaryItem, Dictionary)
+        .join(Dictionary, DictionaryItem.dictionary_id == Dictionary.id)
+        .where(Dictionary.key.in_(keys), DictionaryItem.id.in_(ids))
+        .order_by(Dictionary.key, DictionaryItem.id)
+    )
+    return [
+        {**item_view(item), "dictionary_key": parent.key, "dictionary_is_active": parent.is_active}
+        for item, parent in rows
+    ]
+
+
 async def validate_selection(session, key, identifier, *, previous_id=None):
     """previous_id must come from the locked business row, never the request payload."""
     parent = await locked_dictionary(session, key=key)

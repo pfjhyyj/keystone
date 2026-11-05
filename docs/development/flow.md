@@ -131,7 +131,7 @@ Workflow 使用普通 Python 组合 DBOS Step，不登记实际用量统计或�
 
 工具和业务 Service 在每次新副作用前授权，发布时复核对象版本和原任务归属。模型输入/响应、工具返回 DTO、单文件和每个工作区仍须有界；文件引用与产物采用稳定键，不依赖额度记账实现幂等。
 
-ctx.workspace(max_bytes=...) 提供显式大小限制的临时工作区，ctx.run_process(output=..., output_limit=...) 只允许当前 Task 管理的工作区。进程保持超时和输出上限，取消后等待子进程和原生 I/O 完成再清理。并发由实际资源和执行队列控制，不使用每 Run 操作许可。
+ctx.workspace(max_bytes=...) 返回统一临时目录，单文件使用 directory / "output" 等目录内路径。ctx.run_process(output=..., output_limit=...) 只允许当前 Task 活跃工作区内的文件路径。进程保持超时和输出上限，取消后等待子进程和原生 I/O 完成再清理。并发由实际资源和执行队列控制，不使用每 Run 操作许可。
 
 Agent 示例保留单次输出参数、输出修正次数和流程超时；显式禁用 SDK 默认累计请求次数限制。工具仅读取已授权文件与有界片段，不返回任意路径或原始异常。
 
@@ -150,3 +150,5 @@ inspect_document 返回摘要，read_document 仅接受本次输入，按 Unicod
 ## 运行诊断
 
 控制台独立加载运行步骤、关联模型调用、文件用途及费用。失去运行或资源权限后清空对应详情，迟到结果不覆盖当前代次；接口与授权见 Flow 领域文档。
+
+FlowDefinition.queue 默认 keystone-flows；额外队列在 composition.FLOW_QUEUES 中用现有 QueueDefinition 声明。队列名固定到 Run 快照，API 与 Worker 使用同一声明。timeout_seconds=None 表示不设整体超时，单次操作超时和取消规则仍生效。

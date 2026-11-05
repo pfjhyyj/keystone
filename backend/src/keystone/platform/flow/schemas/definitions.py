@@ -45,14 +45,23 @@ class FlowDefinition:
     output_file_fields: tuple[str, ...] = ()
     model_roles: tuple[ModelRole, ...] = ()
 
-    timeout_seconds: int = 300
+    timeout_seconds: int | None = 300
+    queue: str = "keystone-flows"
 
     def __post_init__(self):
+        if (
+            not isinstance(self.queue, str)
+            or not self.queue.strip()
+            or self.queue != self.queue.strip()
+        ):
+            raise ValueError("Invalid Flow queue")
         for name in ("required_permissions", "file_fields", "output_file_fields", "model_roles"):
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if not self.revision.strip() or len(self.revision) > 64:
             raise ValueError("Invalid Flow revision")
-        if type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 86400:
+        if self.timeout_seconds is not None and (
+            type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 86400
+        ):
             raise ValueError("Flow timeout must be between 1 and 86400 seconds")
         for model in (self.input_model, self.output_model):
             if (
@@ -99,6 +108,7 @@ class FlowDefinition:
                 for r in self.model_roles
             ],
             "timeout_seconds": self.timeout_seconds,
+            "queue": self.queue,
         }
 
     def snapshot(self, *, package_key, model_bindings):
@@ -110,6 +120,7 @@ class FlowDefinition:
             "entrypoint": self.entrypoint,
             "required_permissions": list(self.required_permissions),
             "timeout_seconds": self.timeout_seconds,
+            "queue": self.queue,
             "input_schema": self.input_schema(),
             "output_schema": self.output_schema(),
             "file_fields": list(self.file_fields),

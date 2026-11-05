@@ -78,7 +78,18 @@ class ChatCompletions:
     def request_target(self, selected):
         return selected.api_base, "/chat/completions", "model"
 
-    def sdk_settings(self, operation, settings):
+    def reasoning_settings(self, operation, model, reasoning):
+        if reasoning is not None:
+            raise AdapterError(422, "model_invalid_request", "该模型协议不支持显式思考设置")
+        return {}
+
+    def sdk_settings(self, operation, settings, *, model=None, reasoning=None):
+        controls = self.reasoning_settings(operation, model, reasoning)
+        if controls:
+            settings = {
+                **settings,
+                "extra_body": {**(settings.get("extra_body") or {}), **controls},
+            }
         if operation != "text.structured" or not self.require_parameters:
             return settings
         extra = settings.get("extra_body") or {}
@@ -108,7 +119,9 @@ class ChatCompletions:
                 },
             }
         if args is not None:
-            args = self.sdk_settings(selected.operation, args)
+            args = self.sdk_settings(
+                selected.operation, args, model=selected.provider_model, reasoning=data.reasoning
+            )
         if getattr(data, "stream", False):
             complete = False
             stream = await sdk.chat.completions.create(
@@ -149,6 +162,8 @@ class ChatCompletions:
             **self.sdk_settings(
                 selected.operation,
                 dict(model=selected.provider_model, messages=messages, max_tokens=data.max_tokens),
+                model=selected.provider_model,
+                reasoning=data.reasoning,
             )
         )
         if not response.choices or response.choices[0].finish_reason is None:

@@ -24,7 +24,8 @@ class Snapshot(Input):
     revision: str = Field(min_length=1, max_length=64)
     entrypoint: str = Field(min_length=1)
     required_permissions: list[str]
-    timeout_seconds: int = Field(strict=True, ge=1, le=86400)
+    timeout_seconds: int | None = Field(strict=True, ge=1, le=86400)
+    queue: str = Field(default="keystone-flows", min_length=1)
     input_schema: dict
     output_schema: dict
     file_fields: list[str]
@@ -81,6 +82,7 @@ def matches_definition(snapshot, definition):
             snapshot["entrypoint"] == definition.entrypoint,
             snapshot["required_permissions"] == list(definition.required_permissions),
             snapshot["timeout_seconds"] == definition.timeout_seconds,
+            snapshot["queue"] == definition.queue,
             snapshot["input_schema"] == definition.input_schema(),
             snapshot["output_schema"] == definition.output_schema(),
             snapshot["file_fields"] == list(definition.file_fields),

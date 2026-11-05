@@ -31,7 +31,8 @@ def test_process_file_output_requires_current_task_managed_workspace(client, mon
                 python(f"open({str(denied)!r},'w').write('bad')"), output=denied, output_limit=4
             )
         assert error.value.code == "flow_process_output_denied" and not denied.exists()
-        async with ctx.workspace(max_bytes=4) as output:
+        async with ctx.workspace(max_bytes=4) as directory:
+            output = directory / "output"
 
             async def child():
                 return await ctx.run_process(python("pass"), output=output, output_limit=4)
@@ -63,7 +64,8 @@ def test_cancellation_drains_process_before_releasing_workspace(client, monkeypa
     paths = []
 
     async def exercise():
-        async with ctx.workspace(max_bytes=4) as path:
+        async with ctx.workspace(max_bytes=4) as directory:
+            path = directory / "output"
             paths.append(path)
             path.write_bytes(b"held")
             await ctx.run_process(argv)

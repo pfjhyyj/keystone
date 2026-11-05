@@ -2,7 +2,30 @@
 
 from sqlalchemy import String, cast, or_, select
 
-from keystone.platform.identity.models import User
+from keystone.platform.identity.models import Role, User
+
+
+async def users_in_transaction(session, identifiers):
+    """Public identity fields for a bounded, caller-authorized set of users."""
+    ids = set(identifiers)
+    if len(ids) > 100:
+        raise ValueError("At most 100 users are supported")
+    rows = await session.execute(
+        select(User.id, User.display_name, User.username, User.is_active)
+        .where(User.id.in_(ids))
+        .order_by(User.id)
+    )
+    return [
+        {"id": row.id, "label": row.display_name or row.username, "is_active": row.is_active}
+        for row in rows
+    ]
+
+
+async def role_in_transaction(session, identifier):
+    """Public role identity in the caller's authorized transaction."""
+    row = await session.execute(select(Role.id, Role.key).where(Role.id == identifier))
+    role = row.first()
+    return {"id": role.id, "key": role.key} if role else None
 
 
 async def user_labels_in_transaction(session, visible_ids, *, q="", offset=0, limit=100):

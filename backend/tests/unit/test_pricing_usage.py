@@ -237,10 +237,20 @@ def test_thinking_and_request_variants_cannot_silently_inherit_the_wrong_price()
         "prompt_tokens": 1000,
         "completion_tokens": 200,
         "prompt_tokens_details": {"cached_tokens": 0},
+        "completion_tokens_details": {"reasoning_tokens": 100},
     }
     assert Decimal(
         calculate(usage, price.rule, profile="chat.v2", context={"enable_thinking": 1})[0].amount
     ) == Decimal("0.0024")
+    usage["completion_tokens_details"]["reasoning_tokens"] = 0
+    assert Decimal(
+        calculate(usage, price.rule, profile="chat.v2", context={"enable_thinking": 1})[0].amount
+    ) == Decimal("0.0012")
+    del usage["completion_tokens_details"]
+    assert (
+        calculate(usage, price.rule, profile="chat.v2", context={"enable_thinking": 1})[0].status
+        == "partial"
+    )
     assert calculate(usage, price.rule, profile="chat.v2")[0].status == "partial"
     assert reference(target, context={"cache_mode": "explicit"}) is None
     ark = binding("volcengine", "doubao-seed-2-1-pro-260915")

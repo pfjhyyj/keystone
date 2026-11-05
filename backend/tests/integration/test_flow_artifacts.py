@@ -90,6 +90,14 @@ def test_find_verified_id_missing_key_and_upload_replay_without_new_references(a
     assert put(client, run_id) == identifier
     assert client.portal.call(host._artifact, run_id, "report") == identifier
     assert client.portal.call(host._artifact, run_id, "other") is None
+    assert client.portal.call(service(client, run_id).find_many, run_id, ["report", "other"]) == {
+        "report": identifier,
+        "other": None,
+    }
+    assert client.portal.call(host.flow_context(run_id).artifacts, ["report", "other"]) == {
+        "report": UUID(identifier),
+        "other": None,
+    }
     assert {"owner": f"flow:{run_id}", "slot": "input"} in reference_rows(client, source)
     assert reference_rows(client, identifier) == [
         {"owner": f"flow:{run_id}", "slot": "artifact.report"}

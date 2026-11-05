@@ -52,7 +52,7 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 | `file_upload_timeout_seconds` | `KEYSTONE_FILE_UPLOAD_TIMEOUT_SECONDS` | 默认 3600 秒，范围 1–86400；包含 API 槽位排队、上传接收与确认的总期限 |
 | `file_unreferenced_grace_seconds` | `KEYSTONE_FILE_UNREFERENCED_GRACE_SECONDS` | 默认未设置、不回收无引用 active 文件；显式设为 1–31536000 秒前，须核对调用方及存量引用；completed_at 未知的文件始终跳过 |
 | `flow_worker_concurrency` | `KEYSTONE_FLOW_WORKER_CONCURRENCY` | 默认 2，范围 1–16；单 Worker 的持久队列并发 |
-| `flow_global_concurrency` | `KEYSTONE_FLOW_GLOBAL_CONCURRENCY` | 默认 4，范围 1–64；全部 Worker 的 Flow 总并发，不小于单进程预算 |
+| `flow_global_concurrency` | `KEYSTONE_FLOW_GLOBAL_CONCURRENCY` | 默认 4，范围 1–64；全部 Worker 的默认 Flow 队列并发，不小于单进程并发 |
 | `worker_id` | `KEYSTONE_WORKER_ID` | 默认 `keystone-worker`；每个 Worker 单独指定合法固定身份，重启保留；探针使用同一身份，未退役名额由数据库限制为 4 |
 | `worker_shutdown_seconds` | `KEYSTONE_WORKER_SHUTDOWN_SECONDS` | 默认 10，范围 1–600；停止领取后的有界等待，超时未完成执行仍需原身份恢复；进程管理器终止宽限期须另留收尾时间 |
 | `model_cost_concurrency` | `KEYSTONE_MODEL_COST_CONCURRENCY` | 默认 2，范围 1–8；覆盖 API 手动补查和全部 Worker 的查费总预算 |
@@ -83,7 +83,7 @@ Yunwu/Openlux 同步图片的调用、参考图和下载限制由协议代码声
 
 数据库保存连接、模型映射和启停，协议及查费方式由代码决定，见[分层边界](../reference/model-access.md#代码与接口边界)。渠道地址、模型和凭据见[渠道说明](../reference/model-access.md#渠道与模型列表)及[云账户账务](../reference/model-access.md#云账户账务)。视频尚未支持，model_inference_concurrency 只约束物理发送，不代表远端任务数量。
 
-队列预算、共享模型预算及文件/协调配置进入公共声明校验；固定身份和成员数量不进入共享摘要。新身份经锁保护和兼容性校验后加入，不要求完整本地清单。修改共享执行参数仍先停止旧进程再统一发布，不能由新成员覆盖共享队列/计划。历史故障身份与公共配置冲突时需按部署流程核对，不能清理锁、删除登记或随机换身份绕过。模型发送和查费容量已共享。发送间隔与 429 持久冷却按真实站点/Token 共享，范围与语义见[Flow 运行约束](../domains/flow.md#6-累计预算与资源)；固定并发、间隔和冷却并不提供完整供应商 RPM/TPM 或精确 Token 配额。
+队列预算、共享模型预算及文件/协调配置进入公共声明校验；固定身份和成员数量不进入共享摘要。新身份经锁保护和兼容性校验后加入，不要求完整本地清单。修改共享执行参数仍先停止旧进程再统一发布，不能由新成员覆盖共享队列/计划。历史故障身份与公共配置冲突时需按部署流程核对，不能清理锁、删除登记或随机换身份绕过。模型发送和查费容量已共享。发送间隔与 429 持久冷却按真实站点/Token 共享，范围与语义见[Flow 运行约束](../domains/flow.md#6-执行统计与单次操作限制)；固定并发、间隔和冷却并不提供完整供应商 RPM/TPM 或精确 Token 配额。
 
 发送间隔默认 0，不额外降低原吞吐。重复 Channel 使用同一 Token 不能绕过节奏，换 Worker 或重启不会清空数据库中的 blocked_until；不要删除范围行来解除冷却。冷却只延迟首次物理发送，不重发已登记生成。原生图片任务 GET 同样遵守节奏；CDN 下载不使用渠道凭据，不计入该 Token 的发送间隔。发送等待超出当前有界窗口返回 model_dispatch_delayed，尚未登记新调用；取消和撤权会终止等待并释放许可。
 

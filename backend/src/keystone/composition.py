@@ -33,9 +33,23 @@ PLATFORM_CATALOG = combine_catalogs(
 # Import each business's lightweight CATALOG here and add (namespace, CATALOG).
 BUSINESS_CATALOGS: tuple[tuple[str, Catalog], ...] = ()
 FLOW_PACKAGES = ()
+FLOW_QUEUES: tuple[QueueDefinition, ...] = ()
 # Explicit trusted factories; API never imports business execution modules.
 EXECUTION_GUARD = None
 WORKFLOW_BINDINGS = ()
+
+
+def flow_queues(settings):
+    definitions = (
+        QueueDefinition(
+            "keystone-flows", settings.flow_worker_concurrency, settings.flow_global_concurrency
+        ),
+        *FLOW_QUEUES,
+    )
+    result = {queue.name: queue for queue in definitions}
+    if len(result) != len(definitions):
+        raise ValueError("Duplicate Flow queue")
+    return result
 
 
 @lru_cache
@@ -121,6 +135,12 @@ def register_maintenance(runtime, health):
         other_entrypoints=(
             definition.entrypoint for definition in runtime.flow_definitions.values()
         ),
+    )
+    queues.update(
+        {
+            name: (queue.worker_concurrency, queue.global_concurrency)
+            for name, queue in flow_queues(runtime.settings).items()
+        }
     )
     return queues, installers
 

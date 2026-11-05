@@ -1,6 +1,6 @@
 """Bounded local transfer workspace, shared by API and Worker on one host.
 
-Each permanent OS-locked slot owns one scratch file. A crashed process releases
+Each permanent OS-locked slot owns one scratch directory. A crashed process releases
 its lock; the next holder removes its residue before reuse. No user paths enter
 this namespace. Each slot gets an equal part of the configured disk budget.
 """
@@ -13,7 +13,7 @@ from pathlib import Path
 from threading import Event
 
 from keystone.core.errors import ServiceError
-from keystone.platform.files.adapters.capacity import Capacity, Reservation
+from keystone.platform.files.adapters.capacity import Capacity, Reservation, clear_scratch
 from keystone.platform.files.adapters.storage import blocking, opened
 
 CHUNK_BYTES = 256 * 1024
@@ -167,7 +167,7 @@ class Transfers:
                 if not directory.resolve().is_relative_to(root):
                     raise ServiceError(503, "storage_unavailable", "临时存储路径无效")
                 directory.mkdir(exist_ok=True)
-                path.unlink(missing_ok=True)
+                clear_scratch(path, root)
 
             await blocking(prepare)
             targets = [(path.parent, size)]
@@ -184,15 +184,16 @@ class Transfers:
             async with opened(reserve) as allocation:
                 workspace = Workspace(path, allocation)
                 try:
+                    await blocking(path.mkdir)
                     async with monitor(workspace, size):
                         yield workspace
                 finally:
-                    await blocking(path.unlink, True)
+                    await blocking(clear_scratch, path, root)
 
     @asynccontextmanager
     async def stage(self, chunks, size, checksum=None, *, _slot=None, destination=None):
         async with self.workspace(size, _slot=_slot, destination=destination) as workspace:
-            path, allocation = workspace.path, workspace.capacity
+            path, allocation = workspace.path / "upload", workspace.capacity
             actual, digest = 0, hashlib.sha256()
             async with opened(path.open, "xb") as stream:
                 async for chunk in chunks:

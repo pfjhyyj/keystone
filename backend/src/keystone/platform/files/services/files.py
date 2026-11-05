@@ -1,8 +1,9 @@
 import asyncio
 import hashlib
 import json
-from contextlib import asynccontextmanager, contextmanager, nullcontext
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Event
 from uuid import uuid4
 
@@ -45,6 +46,13 @@ class ContentReader:
                 raise ServiceError(503, "file_corrupt", "文件内容不完整")
             remaining -= len(chunk)
             yield chunk
+
+
+@dataclass(frozen=True)
+class LocalFile:
+    path: Path
+    size_bytes: int
+    checksum_sha256: str
 
 
 class FileService:
@@ -177,6 +185,28 @@ class FileService:
         )
         policy.available(file)
         return view(file)
+
+    async def metadata_many_in_transaction(self, session, identifiers):
+        """Read public metadata for a bounded set authorized by the caller."""
+        ids = set(identifiers)
+        if len(ids) > 100:
+            raise ValueError("At most 100 files are supported")
+        rows = await session.scalars(select(File).where(File.id.in_(ids)).order_by(File.id))
+        return [view(row) for row in rows]
+
+    async def request_delete_in_transaction(self, session, auth, identifier):
+        """Accept deletion atomically with the caller's authorized business changes."""
+        from keystone.platform.files.services.references import require_unreferenced
+
+        file = await policy.locked(session, identifier)
+        if file.status not in {"active", "disabled", "deleting", "deleted"}:
+            raise ServiceError(409, "file_unavailable", "文件尚未完成上传或核验")
+        if file.status in {"active", "disabled"}:
+            await require_unreferenced(session, identifier)
+            file.status = "deleting"
+            self.identity.touch(file, auth)
+            await self.identity.log(session, auth, "file.delete.request", "file", identifier)
+        return {"id": file.id}
 
     async def upload(self, data, content):
         return await self._upload_content(data, content)
@@ -446,29 +476,32 @@ class FileService:
                     policy.available(await session.get(File, identifier), content=True)
                 yield ContentReader(*metadata, stream)
 
-    async def local_origin(self, identifier):
-        """Explicit local integration only; ordinary metadata never includes a path.
-
-        The caller authorizes this exact File ID; technical state is rechecked after I/O.
-        Only a locally mounted filesystem source can resolve a location. Deployment
-        admission belongs to the caller; this service has no cloud/business roles.
-        """
-        async with self.identity.access() as (session, auth):
-            file = await session.get(File, identifier)
-            policy.available(file, content=True)
-            source = self.storage.get(file.storage_key)
-            if source.config.driver != "filesystem" or source.root is None:
-                raise ServiceError(409, "local_file_required", "文件不在本地受管存储中")
-            path = source.root / file.object_key
-            location = file.storage_key, file.object_key, file.storage_fingerprint
-        async with self.open_content(identifier) as reader:
-            async with self.identity.access() as (session, auth):
+    @asynccontextmanager
+    async def local_file(self, identifier):
+        """Borrow an exact caller-authorized local file; managed deletion is excluded."""
+        with self.storage.lease(identifier, shared=True):
+            async with self.identity.database.transaction() as session:
                 file = await session.get(File, identifier)
                 policy.available(file, content=True)
-                if (file.storage_key, file.object_key, file.storage_fingerprint) != location:
-                    raise ServiceError(409, "file_changed", "文件定位已变化，请重新查询")
-                return {
-                    "path": str(path.absolute()),
-                    "size_bytes": reader.size,
-                    "checksum_sha256": reader.checksum,
-                }
+                source = self.storage.get(file.storage_key)
+                if source.config.driver != "filesystem" or source.root is None:
+                    raise ServiceError(409, "local_file_required", "文件不在本地受管存储中")
+                fingerprint, key = file.storage_fingerprint, file.object_key
+                size, checksum = file.size_bytes, file.checksum_sha256
+            cancelled = Event()
+            async with AsyncExitStack() as stack:
+                async with self.transfers.read_slot(timeout=0):
+                    await stack.enter_async_context(
+                        opened(
+                            source.open_local,
+                            fingerprint,
+                            key,
+                            size,
+                            checksum,
+                            cancelled,
+                            on_cancel=cancelled.set,
+                        )
+                    )
+                async with self.identity.database.transaction() as session:
+                    policy.available(await session.get(File, identifier), content=True)
+                yield LocalFile(source.root / key, size, checksum)

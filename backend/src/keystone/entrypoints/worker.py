@@ -86,10 +86,6 @@ async def run_executor(runtime, stop, *, ready, health):
 
             register_workflows(runtime)
             await stack.enter_async_context(flow_worker.prepare(runtime, lease=lease))
-            queues[flow_worker.QUEUE] = (
-                runtime.settings.flow_worker_concurrency,
-                runtime.settings.flow_global_concurrency,
-            )
             if stop.is_set():
                 return
             await stack.enter_async_context(

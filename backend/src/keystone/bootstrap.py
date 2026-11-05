@@ -121,6 +121,7 @@ class Runtime:
             self.flow_definitions,
             execution_version=self.execution_version,
             package_owners=self.flow_packages,
+            queues=composition.flow_queues(self.settings),
         )
 
     async def readiness(self) -> dict:
@@ -140,6 +141,10 @@ def build_runtime(settings: Settings) -> Runtime:
         raise ValueError("Business execution hooks must be explicit callables")
     catalog = build_catalog()
     definitions = build_flow_definitions(catalog)
+    if {definition.queue for definition in definitions.values()} - composition.flow_queues(
+        settings
+    ).keys():
+        raise ValueError("Flow queue is not configured")
     execution_version()
     load_models()
     heads = expected_heads(settings)

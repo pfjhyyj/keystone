@@ -61,9 +61,12 @@ sequenceDiagram
 | required_permissions | 显式功能权限；当前模型/文件权限按所用能力声明 |
 | file_fields/output_file_fields | 输入/输出文件路径 |
 | model_roles | 最多 16 个独立模型用途 |
-| timeout_seconds | 1～86400，默认 300，恢复不重置截止 |
+| timeout_seconds | None 或 1～86400；默认 300，None 表示不设置整体超时，恢复沿用现有引擎语义 |
+| queue | 已配置的队列名，默认 keystone-flows |
 
 ModelRole 含 key、label、operation、delivery；key 为 `[a-z][a-z0-9_]{0,63}`，label trim 后 1～128。所有角色必须绑定，不自动默认/回退，多个角色可用同一模型。操作与交付见[模型接入](model-access.md#6-模型操作与产物)。
+
+队列及其并发沿用现有 QueueDefinition 和 composition 装配。受理时检查队列已配置并将名称固定到 Run 快照，之后按该名称投递；未配置的名称报错。
 
 ### FlowPackage
 
@@ -84,7 +87,7 @@ composition.FLOW_PACKAGES 显式装配；API 只读轻量契约，Worker 导入�
 | error_code/observed_at/finished_at | 安全错误、最近观察、终态时间 |
 | created_at/updated_at | 受理/投影时间 |
 
-只有 succeeded 保存 result；成功表示输出契约和引用通过，不代表业务批准。format=3 快照保存包/宿主版本、权限、期限、Schema、文件路径、角色与绑定。绑定固定 Entry、Channel、provider/model/base、operation/delivery，无秘密；公开只投影白名单及角色→模型 key。
+只有 succeeded 保存 result；成功表示输出契约和引用通过，不代表业务批准。Run 快照保存包/宿主版本、权限、超时、队列、Schema、文件路径、角色与绑定。绑定固定 Entry、Channel、provider/model/base、operation/delivery，无秘密；公开只投影白名单及角色→模型 key。
 
 ## 3. 受理与幂等
 
@@ -98,9 +101,10 @@ composition.FLOW_PACKAGES 显式装配；API 只读轻量契约，Worker 导入�
 |---|---|
 | start_in_transaction(session, auth, data) | 受理及幂等回执 |
 | get_in_transaction(session, auth, run_id) | 当前授权下读取，刷新当前行，不使用旧缓存 |
+| statuses_in_transaction(session, run_ids) | 关联 Run 的有界批量状态读取，返回 {run_id: status}，供已授权业务展示 |
 | cancel_in_transaction(session, auth, run_id) | 记录取消意图和审计，重复不重记 |
 
-由上层持 AccessContext 身份事务，入口不提交、不开新事务、不访问执行引擎。业务权限不替代 flow:read/cancel 和本人/管理范围。回执丢失以原键原请求重试，业务已有 Run ID 按自身对象权限查询；业务唯一约束仍负责跨用户幂等。
+由上层持 AccessContext 身份事务，入口不提交、不开新事务、不访问执行引擎。完整 Run 读取及取消仍要求 flow:read/cancel 和本人/管理范围。回执丢失以原键原请求重试；业务唯一约束仍负责跨用户幂等。
 
 ## 4. 文件路径与引用
 
@@ -112,6 +116,10 @@ composition.FLOW_PACKAGES 显式装配；API 只读轻量契约，Worker 导入�
 
 引用槽位为 flow:<run_id>/input、artifact.<稳定键>、output。结果只接受本 Run 已登记有效文件，输入可作为输出；引用与结果原子保存。引用不授权，文件 I/O 仍检查执行身份、范围和完整性。
 
+### 批量产物读取
+
+FlowArtifactService.find_many(run_id, keys) 批量返回产物键到 File ID 的映射，复用现有单项查询的授权、文件完整性和引用复核。未登记的键返回 None；已登记但文件异常时明确报错。输入键集合有界，单项 find 内部复用批量实现。
+
 ## 5. FlowContext 与 Agent
 
 flow_context(run_id) 在 Step 内重建短期能力，不进入检查点、不暴露 Runtime/Session/SDK。
@@ -119,10 +127,12 @@ flow_context(run_id) 在 Step 内重建短期能力，不进入检查点、不�
 | 接口 | 用途 |
 |---|---|
 | inputs()/check(permissions=...) | 原输入副本、当前授权检查 |
-| execution_scope(permissions=...) | 操作许可、监控及退出清理 |
+| execution_scope(permissions=...) | 操作期间的授权监控及退出清理 |
 | read_file(file_id, max_bytes=...)/materialize_file(file_id) | 有界内容或临时路径 |
 | upload(...)/upload_file(...) | 稳定键保存产物及引用 |
-| artifact(key, max_bytes=...)/workspace(max_bytes=...) | 原产物核验、临时工作区 |
+| artifact(key, max_bytes=...)/artifacts(keys, max_bytes=...) | 单项/批量核验原产物 |
+| workspace(max_bytes=...) | 统一目录工作区，见[文件契约](files.md#110-统一临时工作区) |
+| local_file(file_id) | 作用域内使用本 Run 的已授权本地文件 |
 | run_process(argv, **bounded_options) | 受限进程，输出仅当前 Task 的活跃托管空间 |
 | invoke_text/structured/vision/embedding | 匹配角色的明确 DTO |
 | invoke_image/edit_image | 当前生成/编辑组合，返回 File 引用 |
@@ -131,6 +141,8 @@ flow_context(run_id) 在 Step 内重建短期能力，不进入检查点、不�
 Context 不隐式创建 Workflow/Step。稳定调用 ID 由 Run、workflow_id/step_id 派生，同 Step 不能换角色取得新身份；每个 Agent 请求分别登记，同 Agent 调用共享 agent_call_id。deps 只存小型可序列化标识。
 
 每次外部操作复查原身份/PAT、Run、取消、角色及固定目标。已发送响应可有界收尾，取消/撤权不开始新发送或产物发布。接口用法见[Flow 开发](../development/flow.md)。
+
+execution_guard(session, auth, run_id, definition_key, input) 在原身份和权限校验通过后检查当前业务资格；业务可拒绝执行或报告临时不可用，执行权限始终取原用户当前权限与原 PAT 范围的交集。
 
 ## 6. 执行统计与单次操作限制
 
@@ -177,7 +189,7 @@ sequenceDiagram
 
 费用记录不能替代结果正文。检查点不保证第三方 exactly-once；恢复使用原制品、身份、契约及稳定 ID，不能换 Run 绕过未知结果。
 
-只接受完整的 format=3 当前快照，固定原模型选择、输入输出 Schema 和执行身份；损坏或不支持的格式返回 flow_snapshot_unavailable。新制品不能冒充旧执行版本接管检查点。
+只接受当前制品支持的完整快照，固定原模型选择、输入输出 Schema 和执行身份；损坏或不支持的格式返回 flow_snapshot_unavailable。新制品不能冒充旧执行版本接管检查点。
 
 ## 8. API、授权与诊断
 
