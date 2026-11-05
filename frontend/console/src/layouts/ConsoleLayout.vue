@@ -198,8 +198,7 @@ onBeforeUnmount(() => {
       aria-label="控制台导航"
     >
       <RouterLink class="brand" to="/" aria-label="Keystone 首页"
-        ><span class="brand-mark">K</span
-        ><span class="brand-name">keystone</span></RouterLink
+        ><span class="brand-mark">K</span><span class="brand-name">keystone</span></RouterLink
       >
       <nav aria-label="平台模块">
         <section v-for="menu in menus" :key="menu.title" class="nav-group">
@@ -213,11 +212,10 @@ onBeforeUnmount(() => {
             :aria-current="route.path === item.path ? 'page' : undefined"
             :title="collapsed ? item.label : undefined"
             ><el-icon><component :is="icons[item.path as keyof typeof icons] ?? Grid" /></el-icon
-            ><span class="nav-label">{{ item.label }}</span
-          ></RouterLink>
+            ><span class="nav-label">{{ item.label }}</span></RouterLink
+          >
         </section>
       </nav>
-
     </aside>
     <div class="main-shell" :inert="mobileOpen">
       <header class="app-header">
@@ -281,7 +279,6 @@ onBeforeUnmount(() => {
           ><div class="page-view">
             <component :is="Component" :key="`${route.path}:${sessionVersion}`" /></div
         ></RouterView>
-
       </main>
     </div>
   </div>

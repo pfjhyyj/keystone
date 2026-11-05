@@ -8,7 +8,7 @@
 |---|---|
 | 进程、领域与依赖方向 | [整体架构](docs/architecture.md) |
 | Task、队列、计划与 Worker | [任务执行](docs/execution.md) |
-| FlowDefinition/Package、角色、快照、文件路径、Context、预算与恢复 | [Flow](docs/domains/flow.md)、[接入示例](docs/development/flow.md) |
+| FlowDefinition/Package、角色、快照、文件路径、Context、执行上限与恢复 | [Flow](docs/domains/flow.md)、[接入示例](docs/development/flow.md) |
 | 模型操作、费用与原任务恢复 | [模型接入](docs/domains/model-access.md) |
 | 新业务、权限、审计、迁移 | [模块扩展](docs/development/business.md) |
 | 文件及其他领域 | [文档索引](docs/README.md) |

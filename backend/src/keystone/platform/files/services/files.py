@@ -69,19 +69,12 @@ class FileService:
         policy.available(file, content=True)
         return view(file)
 
-    def __init__(self, identity: AccessContext, storage, *, transfer_scope=None):
+    def __init__(self, identity: AccessContext, storage):
         self.identity, self.storage = identity, storage
-        self._transfer_scope, self._transfers = transfer_scope, None
 
     @property
     def transfers(self):
-        if self._transfers is None:
-            self._transfers = (
-                self.storage.transfers
-                if self._transfer_scope is None
-                else self.storage.transfers.scoped(self._transfer_scope)
-            )
-        return self._transfers
+        return self.storage.transfers
 
     @contextmanager
     def transfer(self):

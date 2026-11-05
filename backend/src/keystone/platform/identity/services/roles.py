@@ -91,6 +91,8 @@ class RoleService:
                         "permissions": sorted(data.permissions),
                     },
                 }
+                if details["before"] == details["after"]:
+                    return await self.role_view(session, role)
                 role.name, role.description = data.name, data.description
                 self.context.touch(role, auth)
                 await session.execute(

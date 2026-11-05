@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
 from datetime import timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -245,7 +245,8 @@ def test_dictionary_stable_keys_history_and_audit_rollback(client, monkeypatch):
         client.get(f"/api/v1/dictionaries/by-key/source/items/{item['id']}").json()["label"]
         == "推荐"
     )
-    assert client.get(f"/api/v1/dictionaries/by-key/wrong/items/{item['id']}").status_code == 422
+    assert client.get(f"/api/v1/dictionaries/by-key/wrong/items/{item['id']}").status_code == 404
+    assert client.get(f"/api/v1/dictionaries/by-key/source/items/{uuid4()}").status_code == 422
     client.patch(path + f"/items/{item['id']}", json={"label": "停用项", "is_active": False})
     edit_parent(True)
     assert client.get("/api/v1/dictionaries/by-key/source/options").json() == []

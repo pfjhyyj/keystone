@@ -613,7 +613,8 @@ onMounted(() => {
                   placeholder="例如 llm-xxxxxxxx"
               /></label>
               <p>
-                用已保存的推理 API Key 查询模型列表。留空使用北京区共享域名，填写后改用该业务空间的北京区专属域名，不改变模型调用地址。
+                用已保存的推理 API Key
+                查询模型列表。留空使用北京区共享域名，填写后改用该业务空间的北京区专属域名，不改变模型调用地址。
               </p>
             </template>
             <label
@@ -653,7 +654,8 @@ onMounted(() => {
             /></label>
             <template v-if="cloudBilling">
               <p>
-                余额和月账单使用独立的云账务 AccessKey，推理 API Key 无法查询。留空保留已有凭据，替换时同时填写 ID 和 Secret。
+                余额和月账单使用独立的云账务 AccessKey，推理 API Key
+                无法查询。留空保留已有凭据，替换时同时填写 ID 和 Secret。
               </p>
               <label
                 >账务 AccessKey ID<el-input
@@ -690,7 +692,8 @@ onMounted(() => {
                   :disabled="clearBilling"
               /></label>
               <p>
-                只授予余额和账单查询权限。STS 凭据到期后须重新填写完整凭据；账户余额包含该云账户下其他云产品。
+                只授予余额和账单查询权限。STS
+                凭据到期后须重新填写完整凭据；账户余额包含该云账户下其他云产品。
               </p>
             </template>
             <el-checkbox
@@ -707,7 +710,9 @@ onMounted(() => {
                 maxlength="128"
                 :disabled="!!editingChannel?.upstream_account_ref"
             /></label>
-            <p>密钥保存后不回显，编辑时留空保留原值。已确定的账户标识不能更换，换账户须新建渠道。</p>
+            <p>
+              密钥保存后不回显，编辑时留空保留原值。已确定的账户标识不能更换，换账户须新建渠道。
+            </p>
           </template>
           <template v-else
             ><fieldset class="form-section">
@@ -747,7 +752,8 @@ onMounted(() => {
           </template>
           <el-checkbox class="check-option" v-model="active">启用配置</el-checkbox>
           <p>
-            显示名称可修改，服务商和模型 key 创建后固定。未被引用的配置可删除，有调用记录或流程引用时只能停用。
+            显示名称可修改，服务商和模型 key
+            创建后固定。未被引用的配置可删除，有调用记录或流程引用时只能停用。
           </p>
           <div v-if="form === 'channel'" class="form-actions">
             <el-button :disabled="busy" native-type="submit" type="primary">保存渠道</el-button>

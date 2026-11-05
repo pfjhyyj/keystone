@@ -19,18 +19,22 @@ watch(
       metric.value = units[0] ?? 'calls'
   },
 )
+// A bucket without this unit is zero only when every call in it has a known cost.
 function value(point: UsagePoint) {
-  return metric.value === 'calls'
-    ? point.calls
-    : Number(point.costs.find((cost) => cost.unit === metric.value)?.amount ?? '0')
+  if (metric.value === 'calls') return point.calls
+  const cost = point.costs.find((cost) => cost.unit === metric.value)
+  if (cost) return Number(cost.amount)
+  return point.unknown_cost_calls ? null : 0
 }
+const known = (point: UsagePoint) => value(point) ?? 0
 function label(point: UsagePoint) {
   if (metric.value === 'calls') return `${point.calls} 次调用`
   const cost = point.costs.find((cost) => cost.unit === metric.value)
-  return cost ? `${money(cost.amount)} ${cost.unit}` : '该单位无已知费用'
+  if (cost) return `${money(cost.amount)} ${cost.unit}`
+  return point.unknown_cost_calls ? '费用未知' : `0 ${metric.value}`
 }
-const maximum = computed(() => Math.max(...props.points.map(value), 1e-12))
-const scaleMaximum = computed(() => Math.max(...props.points.map(value), 0))
+const maximum = computed(() => Math.max(...props.points.map(known), 1e-12))
+const scaleMaximum = computed(() => Math.max(...props.points.map(known), 0))
 const magnitude = (value: number) =>
   !value
     ? '0'
@@ -90,7 +94,7 @@ const width = (point: UsagePoint) =>
         /></AppSelect>
       </div>
     </div>
-    <p>点击柱形查看该时段明细。费用仅含已知金额。</p>
+    <p>点击柱形查看该时段明细。费用仅含已知金额，虚线表示该时段费用未知。</p>
     <template v-if="points.length"
       ><div class="chart-shell">
         <div class="trend-scale" aria-hidden="true">
@@ -130,10 +134,23 @@ const width = (point: UsagePoint) =>
               {{ point.label }}：{{ label(point) }}；{{ point.unknown_cost_calls }} 次费用未知
             </title>
             <rect
+              v-if="value(point) === null"
               :x="x(point)"
-              :y="170 - Math.max(3, (value(point) / maximum) * 140)"
+              y="30"
               :width="width(point)"
-              :height="Math.max(3, (value(point) / maximum) * 140)"
+              height="140"
+              rx="2"
+              fill="none"
+              stroke="currentColor"
+              stroke-dasharray="4 3"
+              opacity=".5"
+            />
+            <rect
+              v-else
+              :x="x(point)"
+              :y="170 - Math.max(3, (known(point) / maximum) * 140)"
+              :width="width(point)"
+              :height="Math.max(3, (known(point) / maximum) * 140)"
               rx="2"
               fill="currentColor"
             />

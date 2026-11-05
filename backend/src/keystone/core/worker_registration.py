@@ -7,20 +7,15 @@ from sqlalchemy import select, text
 from keystone.core.advisory import lock_key, session_lease
 from keystone.core.errors import ServiceError
 from keystone.core.models import WorkerRegistration
-from keystone.core.worker_identity import DEPLOYMENT_LOCK
 
 MAX_WORKERS = 4
 
 
 @asynccontextmanager
 async def identity_lease(database, storage, worker_id, *, transaction_timeout=None):
-    with (
-        storage.lease("keystone-flow-worker", shared=True),
-        storage.lease("worker:" + worker_id),
-    ):
+    with storage.lease("worker:" + worker_id):
         async with session_lease(
             database,
-            shared_keys=[DEPLOYMENT_LOCK],
             keys=[lock_key("worker-instance:" + worker_id)],
             transaction_timeout=transaction_timeout,
         ) as lease:

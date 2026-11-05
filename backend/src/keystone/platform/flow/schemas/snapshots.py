@@ -24,8 +24,8 @@ class Snapshot(Input):
     revision: str = Field(min_length=1, max_length=64)
     entrypoint: str = Field(min_length=1)
     required_permissions: list[str]
-    timeout_seconds: int | None = Field(strict=True, ge=1, le=86400)
-    queue: str = Field(default="keystone-flows", min_length=1)
+    timeout_seconds: int = Field(strict=True, ge=1, le=86400)
+    queue: str = Field(min_length=1)
     input_schema: dict
     output_schema: dict
     file_fields: list[str]

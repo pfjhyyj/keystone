@@ -51,16 +51,9 @@ class SessionLease:
 
 
 @asynccontextmanager
-async def session_lease(
-    database, *, keys=(), shared_keys=(), capacities=(), transaction_timeout=None
-):
+async def session_lease(database, *, keys=(), capacities=(), transaction_timeout=None):
     async with database.engine.connect() as connection:
         try:
-            for key in shared_keys:
-                if not await connection.scalar(
-                    text("SELECT pg_try_advisory_lock_shared(:key)"), {"key": key}
-                ):
-                    raise ServiceError(409, "model_refresh_busy", "系统正在离线维护，请稍后重试")
             for key in keys:
                 if not await connection.scalar(
                     text("SELECT pg_try_advisory_lock(:key)"), {"key": key}

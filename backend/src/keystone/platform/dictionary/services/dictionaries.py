@@ -48,6 +48,8 @@ async def resolve(session, key, identifier):
         .where(Dictionary.key == key, DictionaryItem.id == identifier)
     )
     if row is None:
+        if await session.scalar(select(Dictionary.id).where(Dictionary.key == key)) is None:
+            raise ServiceError(404, "dictionary_not_found", "字典不存在")
         raise ServiceError(422, "dictionary_item_mismatch", "选项不存在或不属于指定字典")
     parent = await session.get(Dictionary, row.dictionary_id)
     return {**item_view(row), "dictionary_is_active": parent.is_active}

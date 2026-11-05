@@ -45,7 +45,7 @@ class FlowDefinition:
     output_file_fields: tuple[str, ...] = ()
     model_roles: tuple[ModelRole, ...] = ()
 
-    timeout_seconds: int | None = 300
+    timeout_seconds: int = 3600
     queue: str = "keystone-flows"
 
     def __post_init__(self):
@@ -59,9 +59,7 @@ class FlowDefinition:
             object.__setattr__(self, name, tuple(getattr(self, name)))
         if not self.revision.strip() or len(self.revision) > 64:
             raise ValueError("Invalid Flow revision")
-        if self.timeout_seconds is not None and (
-            type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 86400
-        ):
+        if type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 86400:
             raise ValueError("Flow timeout must be between 1 and 86400 seconds")
         for model in (self.input_model, self.output_model):
             if (

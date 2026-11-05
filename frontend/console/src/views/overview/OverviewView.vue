@@ -57,12 +57,7 @@ const cards = computed(() => [
     ...item,
     value: labels[ready.value?.checks[item.key] ?? ''] ?? '无法确认',
     good: ready.value?.checks[item.key] === 'ok',
-    note:
-      item.key === 'schema'
-        ? '迁移版本'
-        : item.key === 'storage'
-          ? '默认存储源'
-          : 'PostgreSQL',
+    note: item.key === 'schema' ? '迁移版本' : item.key === 'storage' ? '默认存储源' : 'PostgreSQL',
   })),
 ])
 async function refresh() {
@@ -95,9 +90,7 @@ onScopeDispose(() => {
       <li v-for="card in cards" :key="card.label" class="status-row">
         <span class="state-dot" :class="{ 'is-warning': !card.good }" aria-hidden="true" />
         <span class="status-name">{{ card.label }}</span>
-        <strong class="status-value" :class="{ 'is-warning': !card.good }">{{
-          card.value
-        }}</strong>
+        <strong class="status-value" :class="{ 'is-warning': !card.good }">{{ card.value }}</strong>
         <small>{{ card.note }}</small>
       </li>
     </ul>
@@ -180,7 +173,6 @@ onScopeDispose(() => {
           checked
         }}</el-descriptions-item></el-descriptions
       >
-</el-card
-    >
+    </el-card>
   </section>
 </template>

@@ -235,9 +235,13 @@ class SendTransport(httpx2.AsyncBaseTransport):
         self.observation.request_bytes = len(content)
         self.validate(request)
         if self.observation.pricing_profile is not None:
-            self.observation.pricing_context = request_context(
-                request, self.observation.pricing_profile
-            )
+            # Pricing evidence is best effort; freeze_pricing records None as pricing_invalid.
+            try:
+                self.observation.pricing_context = request_context(
+                    request, self.observation.pricing_profile
+                )
+            except Exception:
+                self.observation.pricing_context = None
         self.observation.phase = "admission"
         secret = await self.before_send()
         # Authorization and committed registration precede the only physical send.

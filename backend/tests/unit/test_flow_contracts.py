@@ -36,6 +36,7 @@ def test_invalid_flow_declarations_fail_during_assembly():
         ({"timeout_seconds": 0}, "timeout"),
         ({"timeout_seconds": 86401}, "timeout"),
         ({"timeout_seconds": True}, "timeout"),
+        ({"timeout_seconds": None}, "timeout"),
         ({"file_fields": ("missing",)}, "file paths"),
         ({"output_file_fields": ("missing",)}, "file paths"),
         ({"file_fields": ("source_file_id", "source_file_id")}, "file paths"),
@@ -375,10 +376,10 @@ def test_file_schema_references_fail_closed_without_external_resolution():
     assert error.value.code == "flow_snapshot_unavailable"
 
 
-async def test_flow_queue_and_optional_timeout_reach_native_engine():
+async def test_flow_queue_and_timeout_reach_native_engine():
     from unittest.mock import AsyncMock
 
-    selected = replace(definition, queue="documents", timeout_seconds=None)
+    selected = replace(definition, queue="documents", timeout_seconds=7200)
     from keystone.platform.flow.schemas.snapshots import read_snapshot
 
     snapshot = read_snapshot(snapshot_for(selected))
@@ -390,5 +391,4 @@ async def test_flow_queue_and_optional_timeout_reach_native_engine():
     )
     options = engine.client.enqueue_async.call_args.args[0]
     assert options["queue_name"] == "documents"
-    assert "workflow_timeout" not in options
-    assert snapshot["timeout_seconds"] is None
+    assert options["workflow_timeout"] == 7200

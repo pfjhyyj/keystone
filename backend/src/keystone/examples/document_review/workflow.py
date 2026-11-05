@@ -176,7 +176,7 @@ async def review(run_id, source):
             "source": source,
         },
         model_settings={"max_tokens": MAX_OUTPUT_TOKENS},
-        usage_limits=UsageLimits(request_limit=None),
+        usage_limits=UsageLimits(request_limit=100),
     )
     return output.output.model_dump(mode="json")
 

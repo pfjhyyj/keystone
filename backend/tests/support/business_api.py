@@ -215,14 +215,12 @@ def create_app(settings):
         with rt.storage.lease(identifier):
             async with identity.access(PREFIX + "manage") as (session, auth):
                 await material(session, auth, identifier)
-                accepted = await FileReferenceService(identity).retire_in_transaction(
-                    session,
-                    references={(f"test_files:{identifier}", "material", identifier)},
-                    artifacts={identifier},
-                    owner_id=auth.user.id,
+                await FileReferenceService(identity).release_in_transaction(
+                    session, auth, {(f"test_files:{identifier}", "material", identifier)}
                 )
-                if not accepted:
-                    raise ServiceError(409, "file_referenced", "测试素材仍被使用")
+                await rt.managed_files(identity).request_delete_in_transaction(
+                    session, auth, identifier
+                )
                 await session.execute(
                     text("UPDATE keystone.test_materials SET retired=true WHERE id=:id"),
                     {"id": identifier},

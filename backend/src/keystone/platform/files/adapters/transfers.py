@@ -88,18 +88,10 @@ async def monitor(workspace, limit):
 
 
 class Transfers:
-    def __init__(self, coordination, settings, *, scope=None):
+    def __init__(self, coordination, settings):
         self.coordination = coordination
         self.settings = settings
         self.capacity = Capacity(coordination, settings)
-        self.scope = scope
-
-    def scoped(self, scope):
-        from keystone.platform.files.schemas.transfers import TransferScope
-
-        return Transfers(
-            self.coordination, self.settings, scope=TransferScope.model_validate(scope.model_dump())
-        )
 
     @property
     def limit(self):
@@ -174,14 +166,7 @@ class Transfers:
             if destination is not None:
                 targets.append((destination, size))
 
-            def reserve():
-                if self.scope is None:
-                    return self.capacity.reserve(targets, slot=number)
-                return self.capacity.reserve(
-                    targets, slot=number, scope=self.scope, scope_bytes=size
-                )
-
-            async with opened(reserve) as allocation:
+            async with opened(lambda: self.capacity.reserve(targets, slot=number)) as allocation:
                 workspace = Workspace(path, allocation)
                 try:
                     await blocking(path.mkdir)

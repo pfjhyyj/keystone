@@ -126,7 +126,7 @@ class Capacity:
             amounts, floor, slot = record["amounts"], record["floor"], record["slot"]
             if (
                 type(record["version"]) is not int
-                or record["version"] != 2
+                or record["version"] != 3
                 or not isinstance(amounts, dict)
                 or not 1 <= len(amounts) <= 3
                 or any(
@@ -139,19 +139,6 @@ class Capacity:
                 or not 0 <= floor <= 1024**4
                 or (slot is not None and (type(slot) is not int or not 0 <= slot < 32))
             ):
-                raise ValueError()
-            if record["scope"] is not None:
-                from keystone.platform.files.schemas.transfers import TransferScope
-
-                scope = TransferScope(
-                    owner=record["scope"], max_temporary_bytes=record["scope_limit"]
-                )
-                if (
-                    type(record["scope_bytes"]) is not int
-                    or not 0 <= record["scope_bytes"] <= scope.max_temporary_bytes
-                ):
-                    raise ValueError()
-            elif record["scope_limit"] is not None or record["scope_bytes"] != 0:
                 raise ValueError()
             return record
         except (OSError, ValueError, KeyError, TypeError):
@@ -221,14 +208,8 @@ class Capacity:
             if shutil.disk_usage(root).free < floor + remaining + (extra or {}).get(device, 0):
                 raise full()
 
-    def reserve(self, targets, *, slot=None, scope=None, scope_bytes=0):
+    def reserve(self, targets, *, slot=None):
         """Reserve every future copy before receiving/writing its first byte."""
-        if scope is not None:
-            from keystone.platform.files.schemas.transfers import TransferScope
-
-            scope = TransferScope.model_validate(scope.model_dump())
-            if type(scope_bytes) is not int or scope_bytes < 0:
-                raise ValueError("Invalid scoped byte promise")
         roots, amounts = {}, {}
         # Even a direct write to another disk needs writable coordination space
         # for its ledger. Its metadata must respect that disk's floor as well.
@@ -244,18 +225,11 @@ class Capacity:
             amounts[device] = amounts.get(device, 0) + size
         with self.locked():
             records = self.live()
-            if scope is not None:
-                related = [r for r in records.values() if r["scope"] == scope.owner]
-                maximum = min([scope.max_temporary_bytes] + [r["scope_limit"] for r in related])
-                if sum(r["scope_bytes"] for r in related) + scope_bytes > maximum:
-                    raise ServiceError(413, "file_scope_limit", "本次执行的临时空间额度已耗尽")
             self.check(roots, records, amounts)
             identifier = uuid4().hex
             directory = self.directory()
             owner = (directory / f"{identifier}.lease").open("x+b")
-            reservation = Reservation(
-                self, identifier, owner, roots, amounts, slot, scope, scope_bytes
-            )
+            reservation = Reservation(self, identifier, owner, roots, amounts, slot)
             try:
                 portalocker.lock(owner, portalocker.LOCK_EX | portalocker.LOCK_NB)
                 reservation.save()
@@ -267,25 +241,19 @@ class Capacity:
 
 
 class Reservation:
-    def __init__(
-        self, capacity, identifier, owner, roots, amounts, slot, scope=None, scope_bytes=0
-    ):
+    def __init__(self, capacity, identifier, owner, roots, amounts, slot):
         self.capacity, self.identifier, self.owner = capacity, identifier, owner
         self.roots, self.amounts, self.slot = roots, amounts, slot
         self.closed = False
-        self.scope, self.scope_bytes = scope, scope_bytes
 
     def save(self):
         directory = self.capacity.directory()
         path = directory / f"{self.identifier}.tmp"
         record = {
-            "version": 2,
+            "version": 3,
             "amounts": self.amounts,
             "floor": self.capacity.settings.file_min_free_bytes,
             "slot": self.slot,
-            "scope": self.scope.owner if self.scope else None,
-            "scope_bytes": self.scope_bytes,
-            "scope_limit": self.scope.max_temporary_bytes if self.scope else None,
         }
         with path.open("wb") as stream:
             stream.write(json.dumps(record).encode())

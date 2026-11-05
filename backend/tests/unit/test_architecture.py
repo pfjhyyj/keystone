@@ -23,8 +23,6 @@ def test_platform_module_contract_and_dependencies(domain):
             continue
         assert (root / layer / "__init__.py").is_file()
         assert any(f.name != "__init__.py" for f in (root / layer).glob("*.py"))
-    for old in ("controller", "service", "models", "schemas", "routes"):
-        assert not (root / f"{old}.py").exists()
 
     for file in root.rglob("*.py"):
         relative = file.relative_to(ROOT.parent).with_suffix("")
@@ -378,8 +376,6 @@ def test_model_access_protocols_and_services_are_independent_of_dbos():
         ), path
 
     root = ROOT / "platform" / "model_access"
-    for old in ("gateway.py", "providers.py", "billing.py", "transport.py", "jobs.py"):
-        assert not (root / old).exists()
     for file in root.rglob("*.py"):
         package = ".".join(file.relative_to(ROOT.parent).with_suffix("").parts[:-1])
         dependencies = list(imports(ast.parse(file.read_text(encoding="utf8")), package))

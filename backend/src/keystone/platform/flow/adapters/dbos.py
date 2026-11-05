@@ -16,7 +16,6 @@ ERRORS = {
     "execution_version_unavailable",
     "flow_invalid_output",
     "flow_process_output_denied",
-    "file_scope_limit",
     "flow_timeout",
     "process_timeout",
     "process_output_limit",
@@ -78,13 +77,11 @@ class Engine:
     async def enqueue(self, run):
         options = {
             "workflow_name": run.definition_snapshot["entrypoint"],
-            "queue_name": run.definition_snapshot.get("queue", QUEUE),
+            "queue_name": run.definition_snapshot["queue"],
             "workflow_id": workflow_id(run.id),
             "app_version": run.execution_version,
+            "workflow_timeout": run.definition_snapshot["timeout_seconds"],
         }
-        timeout = run.definition_snapshot["timeout_seconds"]
-        if timeout is not None:
-            options["workflow_timeout"] = timeout
         await self.client.enqueue_async(options, str(run.id))
 
     async def state(self, identifier):

@@ -173,7 +173,7 @@ def test_flow_baseline_roundtrip_preserves_current_snapshot(migration_environmen
             'current-request','current-digest','{}','failed',now())"""),
             {"key": definition.key, "snapshot": json.dumps(snapshot)},
         )
-        tables = ("flow_runs",)
+        tables = ("users", "flow_runs")
         before = {
             table: connection.execute(text(f"SELECT * FROM keystone.{table}")).mappings().all()
             for table in tables

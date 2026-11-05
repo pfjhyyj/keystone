@@ -53,7 +53,7 @@ FileService.content 默认最多 64 MiB，显式 max_bytes 必须非负；内部
 
 FileReferences(session, auth, namespace).replace/release 在已授权业务事务内使用可信 owner/slot，仅增删变化项。新增/更换要求 active，内容资格由业务确认；保留旧引用和解除自身引用不重新要求内容权。文件管理权不能解除他人业务引用。单 slot 最多 100 文件，owner 最多 160 字符、slot 最多 100。
 
-同 owner/slot 事务互斥，File 按 ID 排序锁定，与删除受理协调。锁序为身份/业务或 Run → 模型/预算 → File；调用方成功审计和引用一并提交。
+同 owner/slot 事务互斥，File 按 ID 排序锁定，与删除受理协调。锁序为身份/业务或 Run → 模型 → File；调用方成功审计和引用一并提交。
 
 | 事务接口 | 职责 |
 |---|---|
@@ -68,10 +68,6 @@ FileReferences(session, auth, namespace).replace/release 在已授权业务事�
 这些入口不提交、不开新事务。业务先授权对象并限定清单；Flow 另外限定 Run 和固定文件范围。
 
 upload_referenced 在上传完成事务内登记固定 owner/slot，不暴露 ORM 或完成回调。受限终态同步仅保留该 Run 原登记的 active/disabled 文件，不增授权；Run 引用当前保留到清理，尚无自动 Run 清理。
-
-可信系统维护可用 claims_in_transaction 有界读取已授权 owner 的引用，validate_retirement_scope 校验清单，再通过 retire_in_transaction 同事务释放精确引用并受理派生产物删除。调用方须证明期限已到、执行结束、清单归属，持业务锁及全部待删产物的排他 OS 租约直至提交。
-
-该入口按 ID 锁定并核对归属和引用；外部引用、归属不符或清单未实际引用的 active/disabled 产物使整组返回 False，不部分释放。输入仅解除引用，deleting/deleted 可幂等核对。使用 system 审计，仅供显式装配的维护任务，不连接任意用户请求；平台不定义业务保留天数或扫描业务表。
 
 ## 清理与 S3 残留
 
@@ -89,9 +85,9 @@ S3 的迟到 PUT 不能靠本地锁排除。重试只写同一校验内容；del
 
 FileService.transfer() 返回作用域内有效的 FileTransferService。materialize_file 校验技术可用状态和完整性，退出清临时副本；upload_file 从固定打开句柄确定大小/摘要，保存原键与引用。同一作用域只允许一个活动操作，物化后复制上传须另取作用域。退出前等待全部 I/O，路径、句柄不进检查点。
 
-可信宿主可传 TransferScope(owner, max_temporary_bytes)。workspace 提供受限临时目录 Path，单文件在目录内选择路径，upload_file 的可选 admission(data) 在句柄校验后、正文发送前执行；不向 HTTP 开放任意 owner/额度。
+workspace 提供受限临时目录 Path，单文件在目录内选择路径；上限只由调用方的 max_bytes 与全局临时空间配置决定，不向 HTTP 开放。
 
-容量账本 v2 在 OS 所有者记录 scope/scope_bytes/scope_limit，全局锁下汇总 live 承诺并取最严格上限。顺序刷盘不提前释放完整临时承诺；正式副本受物理容量管理，不重复计临时额度。所有预留统一使用 v2，无 scope 时 scope/scope_limit 为 null、scope_bytes 为 0；崩溃只以 OS 锁释放回收，损坏 live 记录拒绝，不靠 PID/时间推断。超 scope 返回 file_scope_limit。
+容量账本 v3 在 OS 所有者记录 amounts/floor/slot，全局锁下汇总 live 承诺。顺序刷盘不提前释放完整临时承诺；正式副本受物理容量管理，不重复计临时额度。崩溃只以 OS 锁释放回收，损坏 live 记录拒绝，不靠 PID/时间推断。
 
 local_file(file_id) 接受已获业务授权的本地文件，作用域内返回 LocalFile(path, size_bytes, checksum_sha256)。共享文件锁保持到作用域退出，与清理 Worker 的排他锁互斥；本地完整性检查复用现有读取槽位。业务负责用户操作或维护资格，路径只在作用域内供可信代码使用。
 

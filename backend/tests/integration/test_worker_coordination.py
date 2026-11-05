@@ -1,22 +1,19 @@
-"""Shared Worker capacity, deployment barriers and connection ownership."""
+"""Shared Worker capacity and connection ownership."""
 
 import asyncio
 from contextlib import asynccontextmanager
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import text
 from support.flow_engine import flow_engine as flow_engine
 from test_files_dictionary import client as client
 from test_flow import configuration as configuration
 from test_flow import worker
-from test_identity import query, token
+from test_identity import token
 from test_maintenance import wait_for
 from test_model_access import internal_service
 
-from keystone.core.advisory import session_lease
 from keystone.core.errors import ServiceError
-from keystone.core.models import WorkerHeartbeat
-from keystone.core.worker_identity import DEPLOYMENT_LOCK
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.model_access.schemas import Invoke
 from keystone.platform.model_access.services.runtime import ModelRuntime
@@ -117,20 +114,6 @@ main()
             lambda: client.get("/api/v1/worker/status").json()["status"] == "ready",
         )
         assert "queue_limits_prepared" in log.read_text(encoding="utf8")
-
-
-def test_offline_deployment_barrier_rejects_starting_worker(client, tmp_path):
-    runtime = client.app.state.runtime
-    barrier = session_lease(runtime.database, keys=[DEPLOYMENT_LOCK])
-    client.portal.call(barrier.__aenter__)
-    try:
-        with worker(client, tmp_path) as (process, log):
-            assert process.wait(timeout=30) == 1
-            assert "model_refresh_busy" in log.read_text(encoding="utf8")
-        rows = query(client, lambda s: s.scalars(select(WorkerHeartbeat))).all()
-        assert not rows
-    finally:
-        client.portal.call(barrier.__aexit__, None, None, None)
 
 
 def test_balance_cannot_commit_after_its_scope_connection_is_lost(client, monkeypatch):

@@ -8,10 +8,6 @@ from uuid import UUID
 
 from pydantic import SecretStr
 
-from keystone.core.advisory import lock_key
-
-DEPLOYMENT_LOCK = lock_key("keystone-worker-deployment")
-
 
 @dataclass(frozen=True)
 class WorkerIdentity:

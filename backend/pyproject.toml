@@ -56,4 +56,7 @@ known-first-party = ["keystone"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "--strict-markers"
+# The slowest integration case takes about 40s; a hung test dumps stacks and exits its worker.
+faulthandler_timeout = 120
+faulthandler_exit_on_timeout = true
 markers = ["postgres: requires a dedicated Keystone test PostgreSQL database"]

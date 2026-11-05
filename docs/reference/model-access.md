@@ -116,7 +116,7 @@ Yunwu 页最多 256 KiB，NewAPI 最近日志 4 MiB，公开口径 1 MiB；拒�
 
 ## 发送与协调
 
-每次物理 POST 前复查原身份/PAT、model:invoke、固定模型/渠道启用和当前秘密；唯一登记与 Flow 预算、发送资格同事务提交，之后才鉴权发送。SDK/transport retries=0，不自动跳转，trust_env=False。公开请求不能提供内部调用 ID、身份、固定目标或 Flow 上下文。
+每次物理 POST 前复查原身份/PAT、model:invoke、固定模型/渠道启用和当前秘密；唯一登记与发送资格同事务提交，之后才鉴权发送。SDK/transport retries=0，不自动跳转，trust_env=False。公开请求不能提供内部调用 ID、身份、固定目标或 Flow 上下文。
 
 NewAPI 自定义 api_base 为完整 HTTPS 前缀，拒绝内嵌凭据、查询、片段、路径穿越。使用系统 DNS，不做公网 IP 预判或固定解析，支持内网/Fake-IP；OpenRouter 仅固定 origin 及已实现路径。
 
@@ -151,7 +151,7 @@ ModelDispatchScope 保存 next_send_at、blocked_until、updated_at，站点/Tok
 | 普通媒体报文 | 12 MiB |
 | Yunwu/Openlux multipart | 32 MiB＋128 KiB |
 
-EmbeddingRequest(texts, dimensions) 每次 1～16 非空文本，每条 8 KiB、合计 32 KiB，维度 1～4096，float 输出。OpenRouter/NewAPI/DashScope 装配 /embeddings，验证模型、序号、数量、维度、有限非零向量。请求/结果不存调用账本，Flow 大结果须另存文件或业务索引；输入 token 缺失阻止后续相关发送，不预留输出 token，不增加向量库。
+EmbeddingRequest(texts, dimensions) 每次 1～16 非空文本，每条 8 KiB、合计 32 KiB，维度 1～4096，float 输出。OpenRouter/NewAPI/DashScope 装配 /embeddings，验证模型、序号、数量、维度、有限非零向量。请求/结果不存调用账本，Flow 大结果须另存文件或业务索引；不预留输出 token，不增加向量库。
 
 ### 产物证据
 
@@ -222,7 +222,7 @@ keystone recover-model-calls --confirm-api-stopped
 | 位置/接口 | 职责 |
 |---|---|
 | adapters/channels.py：CHANNELS、protocol/supports | 显式组合能力，无数据库/网络 |
-| adapters/inference/ 协议 validate_request | 校验实际报文与固定目标，返回 ModelRequestBudget |
+| adapters/inference/ 协议 validate_request | 校验实际报文与固定目标，不一致时拒绝发送 |
 | 文本/图片/原生任务协议 | 明确 DTO＋短期配置＋受控传输 → 类型结果/事件/回执 |
 | adapters/billing/：binding/receipt/lookup/page/balance | 原范围、回执、费用、分页、余额；仅支持的实现提供 |
 | inference/client、transport、errors；billing/registry | SDK 生命周期、发送观察、宿主错误转换 |

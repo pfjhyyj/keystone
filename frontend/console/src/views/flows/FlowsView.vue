@@ -31,9 +31,7 @@ onScopeDispose(() => clearInterval(timer))
       <h1>Flow 运行</h1>
     </div>
     <section v-if="can('flow:read')" aria-label="运行记录">
-      <p>
-        {{ can('flow:manage') ? '可见全部运行' : '仅显示本人运行' }} · 未完成的运行每 3 秒刷新
-      </p>
+      <p>{{ can('flow:manage') ? '可见全部运行' : '仅显示本人运行' }} · 未完成的运行每 3 秒刷新</p>
       <form class="module-form" @submit.prevent="filter()">
         <div class="form-field">
           <span class="form-label">运行状态</span

@@ -61,7 +61,7 @@ sequenceDiagram
 | required_permissions | 显式功能权限；当前模型/文件权限按所用能力声明 |
 | file_fields/output_file_fields | 输入/输出文件路径 |
 | model_roles | 最多 16 个独立模型用途 |
-| timeout_seconds | None 或 1～86400；默认 300，None 表示不设置整体超时，恢复沿用现有引擎语义 |
+| timeout_seconds | 1～86400，默认 3600；整体超时始终存在，恢复沿用现有引擎语义 |
 | queue | 已配置的队列名，默认 keystone-flows |
 
 ModelRole 含 key、label、operation、delivery；key 为 `[a-z][a-z0-9_]{0,63}`，label trim 后 1～128。所有角色必须绑定，不自动默认/回退，多个角色可用同一模型。操作与交付见[模型接入](model-access.md#6-模型操作与产物)。
@@ -91,7 +91,7 @@ composition.FLOW_PACKAGES 显式装配；API 只读轻量契约，Worker 导入�
 
 ## 3. 受理与幂等
 
-当前 POST /api/v1/flow-runs 接收 definition_key、request_key、input，可选 definition_revision/model_bindings。选择在 input 外，不接受内部 Selection、调用 ID 或限额。
+平台不提供通用发起 HTTP 路由。业务入口在自身事务内调用 start_in_transaction，data 含 definition_key、request_key、input，可选 definition_revision/model_bindings。选择在 input 外，不接受内部 Selection、调用 ID 或限额。
 
 一个事务完成当前授权、查重、规范化、模型绑定、输入引用和审计。查重先于当前定义/模型解析；同键同请求返回原 Run，不同输入、角色、显式版本或原 PAT 冲突。规范输入、完整请求和快照各检查 64 KiB，历史按原摘要先查重。
 
@@ -148,7 +148,7 @@ execution_guard(session, auth, run_id, definition_key, input) 在原身份和权
 
 Flow 不维护累计模型次数、token、工具调用、循环次数或文件总量配额，也不获取每 Run 操作许可。模型调用和 token/费用统计查询 ModelInvocation，按 Run、节点、角色和 Agent 聚合；上游未报告的用量保持未知。步骤、工具执行和重试查询 DBOS 历史，业务可记录带 run_id 的结构化阶段日志，不保存正文或凭据。
 
-每次请求仍校验协议、目标、输入大小和输出参数；文件保留单文件限制与引用幂等，workspace(max_bytes=...) 保留明确的单次工作区上限，原生进程保留超时、stdout/stderr 和输出文件上限。模型、媒体及后台队列继续按实际资源控制并发。取消须等待 I/O、进程和文件清理完成。调用登记、未知结果保护与统计不依赖预算账本。
+每次请求仍校验协议、目标、输入大小和输出参数；Flow 整体超时和 Agent 单次 run 的 request_limit 是有界的执行上限（不是费用预算），示例默认 100 次请求。文件保留单文件限制与引用幂等，workspace(max_bytes=...) 保留明确的单次工作区上限，原生进程保留超时、stdout/stderr 和输出文件上限。模型、媒体及后台队列继续按实际资源控制并发。取消须等待 I/O、进程和文件清理完成。调用登记、未知结果保护与统计不依赖预算账本。
 
 ## 7. 取消与恢复
 

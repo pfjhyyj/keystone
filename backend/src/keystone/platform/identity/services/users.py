@@ -80,6 +80,8 @@ class UserService:
             user = await self.context.existing(session, User, identifier)
             await manageable(session, auth, user)
             before = user.display_name
+            if before == data.display_name:
+                return user_view(user)
             user.display_name = data.display_name
             self.context.touch(user, auth)
             await self.context.log(

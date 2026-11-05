@@ -77,7 +77,6 @@ class FileTransferService:
         owner=None,
         slot=None,
         storage_key=None,
-        admission=None,
     ):
         """Trusted local source and reference keys; retain the existing upload transaction."""
         with self._operation():
@@ -112,8 +111,6 @@ class FileTransferService:
                     checksum_sha256=digest,
                     request_key=request_key,
                 )
-                if admission is not None:
-                    await admission(data)
                 return await self._files.upload_stream(
                     data,
                     chunks(),
