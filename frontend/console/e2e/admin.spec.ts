@@ -184,8 +184,10 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await page.getByRole('link', { name: '操作审计', exact: true }).click()
   await page.getByLabel('操作代码', { exact: true }).fill('identity.credentials.revoke')
   await page.getByRole('button', { name: '查询审计' }).click()
-  await expect(page.locator('tbody tr')).toHaveCount(1)
-  await expect(page.locator('tbody')).toContainText('成功')
+  // The date-range picker teleports calendar tables to <body>; scope to the audit table.
+  const audit = page.getByRole('region', { name: '操作审计', exact: true }).locator('tbody')
+  await expect(audit.locator('tr')).toHaveCount(1)
+  await expect(audit).toContainText('成功')
   await page.getByRole('button', { name: '查看详情' }).click()
   await expect(page.getByRole('dialog')).toContainText('tokens_revoked')
   await page.getByRole('dialog').getByRole('button', { name: '关闭对话框' }).click()
