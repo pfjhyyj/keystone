@@ -118,7 +118,6 @@ def create_app(settings):
     @asynccontextmanager
     async def lifespan(app):
         async with original_lifespan(app):
-            app.state.upload_slots = asyncio.Semaphore(settings.file_transfer_slots)
             await _setup(app.state.runtime.database)
             yield
 
@@ -144,8 +143,7 @@ def create_app(settings):
         target = request.app.state.runtime.managed_files(identity)
         try:
             async with asyncio.timeout(identity.settings.file_upload_timeout_seconds):
-                async with request.app.state.upload_slots:
-                    stored = await target.upload_body(data, request.stream())
+                stored = await target.upload_body(data, request.stream())
         except TimeoutError:
             raise ServiceError(408, "upload_timeout", "上传超时，请重试") from None
         inspect = await adopt(identity, stored["id"])

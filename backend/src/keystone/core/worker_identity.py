@@ -31,8 +31,6 @@ def config_digest(settings):
         "file_storages",
         "file_default_storage",
         "file_max_bytes",
-        "file_transfer_slots",
-        "file_temp_bytes",
         "file_min_free_bytes",
         "file_upload_timeout_seconds",
         "file_unreferenced_grace_seconds",

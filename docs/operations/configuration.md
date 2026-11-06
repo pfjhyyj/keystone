@@ -46,10 +46,8 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 | `file_coordination_root` | `KEYSTONE_FILE_COORDINATION_ROOT` | 本地共享协调目录，示例为 `../.data/files` |
 | `file_default_storage` | `KEYSTONE_FILE_DEFAULT_STORAGE` | `local`，必须指向已配置源 |
 | `file_max_bytes` | `KEYSTONE_FILE_MAX_BYTES` | 默认 16 MiB；本地可配置到 1 TiB，同时受临时配额和代理限制；S3 保留 64 MiB 上限 |
-| `file_transfer_slots` | `KEYSTONE_FILE_TRANSFER_SLOTS` | 默认 4，范围 1–32；API/Worker 共用本地传输与临时文件槽位 |
-| `file_temp_bytes` | `KEYSTONE_FILE_TEMP_BYTES` | 默认 64 GiB；每槽临时文件上限为总额除以槽数，同时不能超过 file_max_bytes |
 | `file_min_free_bytes` | `KEYSTONE_FILE_MIN_FREE_BYTES` | 默认 1 GiB，范围 0–1 TiB；协调卷、临时卷及本地正式存储各自保留的最低可用空间 |
-| `file_upload_timeout_seconds` | `KEYSTONE_FILE_UPLOAD_TIMEOUT_SECONDS` | 默认 3600 秒，范围 1–86400；包含 API 槽位排队、上传接收与确认的总期限 |
+| `file_upload_timeout_seconds` | `KEYSTONE_FILE_UPLOAD_TIMEOUT_SECONDS` | 默认 3600 秒，范围 1–86400；包含上传接收、写入与确认的总期限 |
 | `file_unreferenced_grace_seconds` | `KEYSTONE_FILE_UNREFERENCED_GRACE_SECONDS` | 默认未设置、不回收无引用 active 文件；显式设为 1–31536000 秒前，须核对调用方及存量引用；completed_at 未知的文件始终跳过 |
 | `flow_worker_concurrency` | `KEYSTONE_FLOW_WORKER_CONCURRENCY` | 默认 2，范围 1–16；单 Worker 的持久队列并发 |
 | `flow_global_concurrency` | `KEYSTONE_FLOW_GLOBAL_CONCURRENCY` | 默认 4，范围 1–64；全部 Worker 的默认 Flow 队列并发，不小于单进程并发 |
@@ -67,11 +65,13 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 
 后端镜像默认监听 `0.0.0.0:8000`，配置在运行时挂载，真实 `keystone.toml` 不进入构建上下文，详见[打包与发布](deployment.md)。
 
-本地媒体可从 `file_max_bytes = 17179869184`（16 GiB）、4 个槽位、64 GiB 临时预算开始配置。这个预算限制 `.transfers` 工作副本，不包含正式文件容量；流式上传在读取正文前同时预留临时副本和正式副本，同盘累计、异盘分别检查，并为协调卷保留最低可用空间。预留由共享本地目录中的 OS 锁协调，不按 PID 或超时猜测进程存活；已写入并刷新的顺序写入会扣减预留，外部工具写入则在上下文结束前保留完整预留，并监测空间和产物大小。进程崩溃后的预留及临时残留仅在对应锁已释放时回收。
+本地媒体可显式设置 `file_max_bytes = 17179869184`（16 GiB）。每个工作区由调用方传 `max_bytes`；没有文件数量槽位或临时目录合计额度。流式上传在读取正文前预留临时与正式副本，保留原片路径时不额外复制，保存已有工作区产物只预留正式副本；同盘累计、异盘分别检查。顺序刷盘扣减未写承诺，外部工具保守预留到作用域退出，并监测目录大小与磁盘低水位。
 
-临时副本在整个上下文中占槽，处理期间再上传文件会占第二个槽，因此应按业务并发留出余量。普通上传和 Worker 默认满载返回 `503 file_transfer_busy`；HTTP 文件内容读取最多等待 3 秒，取得槽位后重新校验当前身份、文件状态及授权，客户端断开会取消等待。空间不足或系统报告磁盘/配额已满返回 `507 file_capacity_full`，容量账本不可用返回 `503 file_capacity_unavailable`，容量锁等待超过 5 秒返回 `503 file_capacity_busy`；每槽配额不足返回 `413 file_temporary_limit`。预留只协调本平台进程，不能阻止其他程序占用磁盘，也不为远端 S3 容量作保证。
+空间不足或系统 ENOSPC/配额不足立即返回 `507 file_capacity_full`，不排队、不自动重试；账本损坏返回 `503 file_capacity_unavailable`，账本短锁等待超过 5 秒返回 `503 file_capacity_busy`，幂等步骤可有限重试。单次目录超限返回 `413 file_temporary_limit`。普通读取不申请容量额度，磁盘余量不足不阻止已有文件读取。
 
-API/Worker 必须保持相同协调目录、槽位数、临时预算、磁盘保底和大小限制；升级或调整配置前停止全部旧进程，不允许不支持容量预留的旧进程混跑。不要手动清理 `.capacity`、`.locks` 或受管 `files`。字节可放 filesystem/NAS，协调目录仍须是同宿主可靠本地卷。默认 Nginx API 正文上限为 16 MiB。接入大文件业务时，给实际上传/内容路由单独设置正文上限、传输期限及 `proxy_request_buffering off` / `proxy_buffering off`，与后端限制一致；不放大全部 JSON API 的上限。上限是配置边界，实际 NAS 吞吐及容量须部署时实测。
+升级时删除 TOML 和环境变量中的 `file_transfer_slots`/`KEYSTONE_FILE_TRANSFER_SLOTS`、`file_temp_bytes`/`KEYSTONE_FILE_TEMP_BYTES`，保留这些参数会明确报错。停止旧 API/Worker 后统一升级；账本 v4 使用随机所有者目录，旧固定目录只在其 OS 锁空闲后回收，活动旧记录拒绝新预留。不要手动删除未知账本或锁。
+
+API/Worker 必须保持相同协调目录、磁盘保底和大小限制；升级或调整配置前停止全部旧进程，不允许不支持容量预留的旧进程混跑。不要手动清理 `.capacity`、`.locks` 或受管 `files`。字节可放 filesystem/NAS，协调目录仍须是同宿主可靠本地卷。默认 Nginx API 正文上限为 16 MiB。接入大文件业务时，给实际上传/内容路由单独设置正文上限、传输期限及 `proxy_request_buffering off` / `proxy_buffering off`，与后端限制一致；不放大全部 JSON API 的上限。上限是配置边界，实际 NAS 吞吐及容量须部署时实测。
 
 ## 3. 配置变更
 

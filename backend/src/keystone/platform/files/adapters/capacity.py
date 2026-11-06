@@ -38,13 +38,13 @@ def io_error(error):
 
 
 def clear_scratch(path, coordination_root):
-    """Remove only a fixed, unowned transfer slot inside its verified namespace."""
+    """Remove only an owner-locked scratch directory inside its verified namespace."""
     root = Path(coordination_root).resolve()
     parent = root / ".transfers"
     if (
         path.parent.resolve() != parent.resolve()
         or not parent.resolve().is_relative_to(root)
-        or not re.fullmatch(r"(?:[0-9]|[12][0-9]|3[01])", path.name)
+        or not re.fullmatch(r"[0-9a-f]{32}|(?:[0-9]|[12][0-9]|3[01])", path.name)
         or path.is_symlink()
         or path.is_junction()
         or not path.resolve().is_relative_to(parent.resolve())
@@ -123,10 +123,10 @@ class Capacity:
             if len(raw) > 8192:
                 raise ValueError()
             record = json.loads(raw)
-            amounts, floor, slot = record["amounts"], record["floor"], record["slot"]
+            amounts, floor = record["amounts"], record["floor"]
             if (
                 type(record["version"]) is not int
-                or record["version"] != 3
+                or record["version"] != 4
                 or not isinstance(amounts, dict)
                 or not 1 <= len(amounts) <= 3
                 or any(
@@ -137,7 +137,7 @@ class Capacity:
                 )
                 or type(floor) is not int
                 or not 0 <= floor <= 1024**4
-                or (slot is not None and (type(slot) is not int or not 0 <= slot < 32))
+                or type(record["workspace"]) is not bool
             ):
                 raise ValueError()
             return record
@@ -145,7 +145,7 @@ class Capacity:
             raise invalid() from None
 
     def live(self):
-        """Called under the global lock; reclaim only owners whose OS lock is free."""
+        """Under the ledger lock, reclaim only owners whose OS lock is free."""
         directory = self.directory()
         self.reclaim_scratch()
         records = {}
@@ -160,8 +160,10 @@ class Capacity:
                 except portalocker.exceptions.LockException:
                     records[identifier] = self.read(metadata)
                     continue
-                # Scratch reclamation uses its own slot lock, independent of this
-                # metadata: interrupted cleanup or a lost record must not leak bytes.
+                # The owner ID also identifies scratch, even after partial metadata publication.
+                clear_scratch(
+                    self.coordination.root / ".transfers" / identifier, self.coordination.root
+                )
                 metadata.unlink(missing_ok=True)
                 (directory / f"{identifier}.tmp").unlink(missing_ok=True)
             path.unlink()
@@ -169,26 +171,34 @@ class Capacity:
 
     def reclaim_scratch(self):
         directory = self.coordination.root / ".transfers"
-        if not directory.resolve().is_relative_to(self.coordination.root):
+        if (
+            directory.is_symlink()
+            or directory.is_junction()
+            or not directory.resolve().is_relative_to(self.coordination.root)
+        ):
             raise invalid()
         if not directory.exists():
             return
         for path in directory.iterdir():
-            # Slots 0..31 are the entire managed scratch namespace, including
-            # leftovers from an earlier configuration with more transfer slots.
-            if not re.fullmatch(r"(?:[0-9]|[12][0-9]|3[01])", path.name):
-                continue
-            slot = self.coordination.lease(f"transfer:{path.name}")
-            try:
-                slot.__enter__()
-            except ServiceError as error:
-                if error.code != "file_busy":
-                    raise
-                continue
-            try:
+            if re.fullmatch(r"[0-9a-f]{32}", path.name):
+                owner = self.directory() / f"{path.name}.lease"
+                if owner.exists():
+                    continue  # live() checks this exact owner before reclaiming its directory.
+                # Creation and owner publication both occur under the same ledger lock.
                 clear_scratch(path, self.coordination.root)
-            finally:
-                slot.__exit__(None, None, None)
+            elif re.fullmatch(r"(?:[0-9]|[12][0-9]|3[01])", path.name):
+                # Offline upgrade: legacy scratch is reclaimed only under its original lock.
+                lease = self.coordination.lease(f"transfer:{path.name}")
+                try:
+                    lease.__enter__()
+                except ServiceError as error:
+                    if error.code != "file_busy":
+                        raise
+                    raise invalid() from None  # Never mix active legacy transfers with new writers.
+                try:
+                    clear_scratch(path, self.coordination.root)
+                finally:
+                    lease.__exit__(None, None, None)
 
     def check(self, roots, records, extra=None, *, floor_only=False):
         for root, device in roots.items():
@@ -208,7 +218,7 @@ class Capacity:
             if shutil.disk_usage(root).free < floor + remaining + (extra or {}).get(device, 0):
                 raise full()
 
-    def reserve(self, targets, *, slot=None):
+    def reserve(self, targets, *, workspace=False):
         """Reserve every future copy before receiving/writing its first byte."""
         roots, amounts = {}, {}
         # Even a direct write to another disk needs writable coordination space
@@ -229,7 +239,7 @@ class Capacity:
             identifier = uuid4().hex
             directory = self.directory()
             owner = (directory / f"{identifier}.lease").open("x+b")
-            reservation = Reservation(self, identifier, owner, roots, amounts, slot)
+            reservation = Reservation(self, identifier, owner, roots, amounts, workspace)
             try:
                 portalocker.lock(owner, portalocker.LOCK_EX | portalocker.LOCK_NB)
                 reservation.save()
@@ -241,25 +251,38 @@ class Capacity:
 
 
 class Reservation:
-    def __init__(self, capacity, identifier, owner, roots, amounts, slot):
+    def __init__(self, capacity, identifier, owner, roots, amounts, workspace):
         self.capacity, self.identifier, self.owner = capacity, identifier, owner
-        self.roots, self.amounts, self.slot = roots, amounts, slot
+        self.roots, self.amounts, self.workspace = roots, amounts, workspace
         self.closed = False
 
     def save(self):
         directory = self.capacity.directory()
         path = directory / f"{self.identifier}.tmp"
         record = {
-            "version": 3,
+            "version": 4,
             "amounts": self.amounts,
             "floor": self.capacity.settings.file_min_free_bytes,
-            "slot": self.slot,
+            "workspace": self.workspace,
         }
         with path.open("wb") as stream:
             stream.write(json.dumps(record).encode())
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(path, directory / f"{self.identifier}.json")
+        deadline = time.monotonic() + 1
+        while True:
+            try:
+                os.replace(path, directory / f"{self.identifier}.json")
+                break
+            except PermissionError as error:
+                # Windows scanners can briefly open the previous metadata without delete sharing.
+                # Replacing these same bytes is safe; keep the conservative old claim meanwhile.
+                if (
+                    getattr(error, "winerror", None) not in {5, 32, 33}
+                    or time.monotonic() >= deadline
+                ):
+                    raise
+                time.sleep(0.01)
 
     def remove(self):
         directory = self.capacity.directory()
@@ -297,10 +320,25 @@ class Reservation:
     def close(self):
         if self.closed:
             return
-        with self.capacity.locked():
+        try:
+            if self.workspace:
+                clear_scratch(
+                    self.capacity.coordination.root / ".transfers" / self.identifier,
+                    self.capacity.coordination.root,
+                )
+        except BaseException:
+            # Retain discoverable metadata/scratch for a later owner-locked cleanup.
             self.owner.close()
             self.closed = True
-            self.remove()
+            raise
+        try:
+            with self.capacity.locked():
+                self.owner.close()
+                self.closed = True
+                self.remove()
+        finally:
+            self.owner.close()
+            self.closed = True
 
     def __enter__(self):
         return self

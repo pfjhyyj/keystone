@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.event import listen
 
 from keystone.core.errors import ServiceError
+from keystone.core.retries import retry_operation
 from keystone.core.time import utcnow
 from keystone.platform.model_access.adapters.billing.contracts import Receipt
 from keystone.platform.model_access.adapters.inference.errors import classify_error
@@ -368,8 +369,20 @@ class ModelRuntime:
                     original.api_base, credential_secret
                 )
                 dispatch_scope = credential_scope
-            permit = await permits.enter_async_context(
-                self.clients.coordination.inference(credential_scope)
+
+            async def acquire_permit():
+                # A rejected admission has no invocation registration or physical send.
+                async with self.identity.access("model:invoke"):
+                    pass
+                return await permits.enter_async_context(
+                    self.clients.coordination.inference(credential_scope)
+                )
+
+            permit = await retry_operation(
+                acquire_permit,
+                retry_if=lambda error: (
+                    isinstance(error, ServiceError) and error.code == "model_capacity_busy"
+                ),
             )
             while True:
                 async with self.identity.access("model:invoke") as (session, auth):

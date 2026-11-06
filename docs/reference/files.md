@@ -23,9 +23,9 @@ keystone.toml 的 file_storages 显式声明源，file_default_storage 仅影响
 | metadata_in_transaction | 在调用方已授权的事务中取得安全元数据，可按需锁行；不提交事务 |
 | content / open_content | 有界字节或流读取，检查可用状态、存储身份与完整性 |
 | transfer | 本地物化、临时工作区和保存；owner/slot 可省略，业务引用随后同事务登记 |
-| read_transfer | 有界等待读取容量，再由业务授权对象，调用 transfer.open_content(file_id) |
+| read_transfer | 不取数量许可的异步操作作用域；业务授权后调用 transfer.open_content(file_id) |
 
-普通读取由业务授权一次即可；需要等待容量时，先进入 read_transfer，再授权并解析 ID，避免排队前的授权被当作开始读取时的授权。Service 不返回 HTTP Response，业务 Controller 可复用 ContentResponse 处理 Range/HEAD。local_file 只供可信本地集成，不能进入普通 HTTP 响应。
+普通读取由业务授权一次即可；read_transfer 不再等待文件名额，授权和精确 ID 解析位于实际读取前。Service 不返回 HTTP Response，业务 Controller 可复用 ContentResponse 处理 Range/HEAD。local_file 只供可信本地集成，不能进入普通 HTTP 响应。
 
 业务在文件保存后复查当前保存资格，同事务更新自己的关系、FileReferences 和成功审计。FileReferences.replace/release 仅维护调用方已授权的精确关系，不检查 FileGrant，不把引用当作读取权。保存失败不撤销文件事实，已知原请求使用原键重试。
 
@@ -35,7 +35,7 @@ keystone.toml 的 file_storages 显式声明源，file_default_storage 仅影响
 
 本地正文按 256 KiB 块写受限临时文件、增量校验，通过后才登记/重试 File，再写正式对象并确认 active。中断清理临时文件，正式写入失败保留原 File/键；崩溃残留由取得同一 OS 槽锁的下次操作清理，不开放半文件或分片续传。
 
-流式上传预留临时与正式副本容量，内存上传在正式写入前预留；磁盘低水位、临时总额、文件上限和传输槽位同时生效。具体参数见[配置](../operations/configuration.md#2-应用参数)。S3 仍为 64 MiB 内存上限、30 秒存储超时，不随本地扩容改变。
+流式上传预留临时与正式副本容量，内存上传在正式写入前预留；磁盘低水位、物理预留和单文件/工作区上限同时生效，不设置文件数量和临时合计额度。具体参数见[配置](../operations/configuration.md#2-应用参数)。S3 仍为 64 MiB 内存上限、30 秒存储超时，不随本地扩容改变。
 
 上传登记 uploading，开始审计记用户，已受理写入的完成事实记 system；完成时写 completed_at。响应前复查身份，业务再复查保存资格并登记关系。原键重试核对原用户、请求摘要和原存储，不自动改变业务授权。
 
@@ -85,11 +85,11 @@ S3 的迟到 PUT 不能靠本地锁排除。重试只写同一校验内容；del
 
 FileService.transfer() 返回作用域内有效的 FileTransferService。materialize_file 校验技术可用状态和完整性，退出清临时副本；upload_file 从固定打开句柄确定大小/摘要，保存原键与引用。同一作用域只允许一个活动操作，物化后复制上传须另取作用域。退出前等待全部 I/O，路径、句柄不进检查点。
 
-workspace 提供受限临时目录 Path，单文件在目录内选择路径；上限只由调用方的 max_bytes 与全局临时空间配置决定，不向 HTTP 开放。
+workspace 提供受限临时目录 Path，单文件在目录内选择路径；上限由调用方的 max_bytes 决定，范围 0～2 TiB，不向 HTTP 开放。
 
-容量账本 v3 在 OS 所有者记录 amounts/floor/slot，全局锁下汇总 live 承诺。顺序刷盘不提前释放完整临时承诺；正式副本受物理容量管理，不重复计临时额度。崩溃只以 OS 锁释放回收，损坏 live 记录拒绝，不靠 PID/时间推断。
+容量账本 v4 在 OS 所有者记录 amounts/floor/workspace，全局短锁下汇总各文件系统未写承诺。随机所有者 ID 同时标识临时目录；顺序刷盘扣减未写承诺，外部工具保持保守预留至作用域退出。崩溃只以 OS 锁释放回收，损坏 live 记录拒绝，不靠 PID/时间推断。
 
-local_file(file_id) 接受已获业务授权的本地文件，作用域内返回 LocalFile(path, size_bytes, checksum_sha256)。共享文件锁保持到作用域退出，与清理 Worker 的排他锁互斥；本地完整性检查复用现有读取槽位。业务负责用户操作或维护资格，路径只在作用域内供可信代码使用。
+local_file(file_id) 接受已获业务授权的本地文件，作用域内返回 LocalFile(path, size_bytes, checksum_sha256)。共享文件锁保持到作用域退出，与清理 Worker 的排他锁互斥；本地完整性检查不申请文件数量许可。业务负责用户操作或维护资格，路径只在作用域内供可信代码使用。
 
 ## Run 文件诊断
 

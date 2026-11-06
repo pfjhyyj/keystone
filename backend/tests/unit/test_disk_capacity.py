@@ -196,7 +196,7 @@ asyncio.run(run())
         # Assert the eventual state, without requiring a particular scheduling order.
         with storage.transfers.capacity.reserve([(tmp_path / "files", 0)]):
             assert (live.path / "output").read_bytes() == b"live"
-            assert not (tmp_path / ".transfers/1").exists()
+            assert list((tmp_path / ".transfers").iterdir()) == [live.path]
             assert (tmp_path / f".capacity/{identifier}.json").is_file()
         assert (live.path / "output").read_bytes() == b"live"
     clean(tmp_path)
@@ -269,8 +269,8 @@ async def test_space_loss_during_upload_stops_writing_and_releases_everything(
         records = list((tmp_path / ".capacity").glob("*.json"))
         assert len(records) == 1
         record = json.loads(records[0].read_text())
-        assert record["version"] == 3
-        assert set(record) == {"version", "amounts", "floor", "slot"}
+        assert record["version"] == 4
+        assert set(record) == {"version", "amounts", "floor", "workspace"}
         assert list(record["amounts"].values()) == [3]
         state.free = 1
         yield b"b"
@@ -441,16 +441,17 @@ def test_orphan_scratch_is_reclaimed_without_readable_metadata(tmp_path, record)
     clean(tmp_path)
 
 
-def test_scratch_with_slot_owner_but_no_record_is_preserved(tmp_path):
+def test_active_legacy_scratch_refuses_new_writers_and_is_not_removed(tmp_path):
     storage = registry(tmp_path)
     capacity = storage.transfers.capacity
     scratch = tmp_path / ".transfers/0"
     scratch.parent.mkdir()
-    with storage.transfers.slot() as number:
-        assert number == 0
-        scratch.write_bytes(b"new owner before claim publication")
-        with capacity.reserve([(tmp_path / "files", 0)]):
-            assert scratch.read_bytes() == b"new owner before claim publication"
+    with storage.coordination.lease("transfer:0"):
+        scratch.write_bytes(b"legacy live owner")
+        with pytest.raises(ServiceError) as rejected:
+            capacity.reserve([(tmp_path / "files", 0)])
+        assert rejected.value.code == "file_capacity_unavailable"
+        assert scratch.read_bytes() == b"legacy live owner"
     with capacity.reserve([(tmp_path / "files", 0)]):
         assert not scratch.exists()
     clean(tmp_path)

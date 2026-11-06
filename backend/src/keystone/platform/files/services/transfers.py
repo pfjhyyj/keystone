@@ -1,4 +1,4 @@
-"""Scoped file operations; workspace, capacity and slot tokens stay inside Files."""
+"""Scoped file operations; workspace and capacity handles stay inside Files."""
 
 import hashlib
 from contextlib import asynccontextmanager, contextmanager
@@ -7,15 +7,15 @@ from threading import Event
 
 from keystone.core.errors import ServiceError
 from keystone.platform.files.adapters.storage import blocking, opened
-from keystone.platform.files.adapters.transfers import CHUNK_BYTES, checksum
+from keystone.platform.files.adapters.transfers import StagedUpload, checksum
 from keystone.platform.files.schemas import Upload
 
 
 class FileTransferService:
     """Created by FileService.transfer(); never persist or reuse outside that scope."""
 
-    def __init__(self, files, number):
-        self._files, self._number = files, number
+    def __init__(self, files):
+        self._files = files
         self._active, self._busy = True, False
 
     def close(self):
@@ -26,7 +26,7 @@ class FileTransferService:
         if not self._active:
             raise RuntimeError("File transfer scope is closed")
         if self._busy:
-            raise ServiceError(409, "file_busy", "同一传输作用域已有文件操作")
+            raise ServiceError(409, "file_scope_busy", "同一传输作用域已有文件操作")
         self._busy = True
         try:
             yield
@@ -36,9 +36,7 @@ class FileTransferService:
     @asynccontextmanager
     async def open_content(self, identifier, *, max_bytes=None):
         with self._operation():
-            async with self._files.open_content(
-                identifier, _transfer_slot=self._number, max_bytes=max_bytes
-            ) as reader:
+            async with self._files.open_content(identifier, max_bytes=max_bytes) as reader:
                 yield reader
 
     @asynccontextmanager
@@ -46,7 +44,7 @@ class FileTransferService:
         with self._operation():
             async with self._files.identity.access():
                 pass
-            async with self._files.transfers.temporary(max_bytes, _slot=self._number) as path:
+            async with self._files.transfers.temporary(max_bytes) as path:
                 yield path
 
     @asynccontextmanager
@@ -54,9 +52,9 @@ class FileTransferService:
         with self._operation():
             transfers = self._files.transfers
             async with self._files.open_content(
-                identifier, _transfer_slot=self._number, max_bytes=transfers.limit
+                identifier, max_bytes=self._files.identity.settings.file_max_bytes
             ) as reader:
-                async with transfers.workspace(reader.size, _slot=self._number) as workspace:
+                async with transfers.workspace(reader.size) as workspace:
                     path = workspace.path / "input"
                     digest = hashlib.sha256()
                     async with opened(path.open, "xb") as target:
@@ -80,12 +78,9 @@ class FileTransferService:
     ):
         """Trusted local source and reference keys; retain the existing upload transaction."""
         with self._operation():
-            transfers = self._files.transfers
             async with opened(Path(path).open, "rb") as source:
                 size = await blocking(source.seek, 0, 2)
                 self._files.prepare_upload(size, storage_key)
-                if size > transfers.limit:
-                    raise ServiceError(413, "file_temporary_limit", "文件超过临时空间配额")
                 await blocking(source.seek, 0)
 
                 cancelled = Event()
@@ -99,10 +94,6 @@ class FileTransferService:
                     ) from None
                 await blocking(source.seek, 0)
 
-                async def chunks():
-                    while chunk := await blocking(source.read, CHUNK_BYTES):
-                        yield chunk
-
                 data = Upload(
                     storage_key=storage_key,
                     name=name,
@@ -111,10 +102,17 @@ class FileTransferService:
                     checksum_sha256=digest,
                     request_key=request_key,
                 )
-                return await self._files.upload_stream(
-                    data,
-                    chunks(),
-                    owner=owner,
-                    slot=slot,
-                    _transfer_slot=self._number,
+                data = await self._files._resolved_upload(data)
+                if self._files.storage.get(data.storage_key).config.driver != "filesystem":
+                    raise ServiceError(
+                        422, "local_storage_required", "本地文件保存需要本地文件存储"
+                    )
+                if (owner is None) != (slot is None) or (
+                    owner is not None
+                    and (not owner or len(owner) > 160 or not slot or len(slot) > 100)
+                ):
+                    raise ValueError("Invalid reference key")
+                content = StagedUpload(Path(path), size, digest, cancelled=cancelled, stream=source)
+                return await self._files._upload_content(
+                    data, content, reference=(owner, slot) if owner is not None else None
                 )

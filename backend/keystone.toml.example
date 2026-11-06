@@ -22,9 +22,6 @@ file_default_storage = "local"
 # Default remains 16 MiB; local media deployments may set 17179869184 (16 GiB).
 # Match the file route's Nginx limit. S3 keeps its existing 64 MiB limit in 0A.
 file_max_bytes = 16777216
-file_transfer_slots = 4
-# Shared API/Worker scratch budget: each slot gets an equal share (here 16 GiB).
-file_temp_bytes = 68719476736
 # Per-filesystem free-space floor, shared by API and all Workers (1 GiB).
 file_min_free_bytes = 1073741824
 file_upload_timeout_seconds = 3600

@@ -122,7 +122,7 @@ backend/.venv/bin/python scripts/check.py --scope frontend
 
 依赖为 Controller/执行适配 → Service → 本模块 Model/Adapter，各层可用轻量 Schema。每持久实体一文件、显式导出，不遍历 ORM 自动投影。纯计算任务可直接组合函数，不强制新增领域 Service。
 
-Model Access 的 inference/billing 分别管理调用/账务协议，Service 不直接依赖 OpenAI/httpx2。Adapter 的 core 技术协调及 flow/adapters/dbos.py 的 DBOSClient 是明确例外，不放开其他执行器/领域导入。
+Model Access 的 inference/billing 分别管理调用/账务协议，Service 不直接依赖 OpenAI/httpx2。Adapter 的 core 技术协调及 flow/adapters/dbos.py 的 DBOSClient 与公开 error 类型检查是明确例外，不放开其他执行器/领域导入。
 
 ## 脚手架参数与目录
 

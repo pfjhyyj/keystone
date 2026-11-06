@@ -1,7 +1,7 @@
 import asyncio
 import hashlib
 import json
-from contextlib import AsyncExitStack, asynccontextmanager, contextmanager, nullcontext
+from contextlib import AsyncExitStack, asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event
@@ -78,23 +78,18 @@ class FileService:
 
     @contextmanager
     def transfer(self):
-        """Acquire before a caller's execution scope; release after all I/O and cleanup."""
-        with self.transfers.slot() as number:
-            transfer = FileTransferService(self, number)
-            try:
-                yield transfer
-            finally:
-                transfer.close()
+        """A local operation scope; no global file-count permit is acquired."""
+        transfer = FileTransferService(self)
+        try:
+            yield transfer
+        finally:
+            transfer.close()
 
     @asynccontextmanager
-    async def read_transfer(self, *, timeout=3):
-        """Reserve read capacity before the calling business's final object authorization."""
-        async with self.transfers.read_slot(timeout=timeout) as number:
-            transfer = FileTransferService(self, number)
-            try:
-                yield transfer
-            finally:
-                transfer.close()
+    async def read_transfer(self):
+        """Authorize in the caller before opening content; there is no capacity queue."""
+        with self.transfer() as transfer:
+            yield transfer
 
     def options(self):
         return {
@@ -129,6 +124,13 @@ class FileService:
         return data.model_copy(update={"storage_key": storage_key})
 
     async def upload_body(self, data, chunks):
+        try:
+            async with asyncio.timeout(self.identity.settings.file_upload_timeout_seconds):
+                return await self._upload_body(data, chunks)
+        except TimeoutError:
+            raise ServiceError(408, "upload_timeout", "上传超时，请重试") from None
+
+    async def _upload_body(self, data, chunks):
         data = await self._resolved_upload(data)
         if self.storage.get(data.storage_key).config.driver == "filesystem":
             return await self._stage_upload(data, chunks)
@@ -140,7 +142,7 @@ class FileService:
             content.extend(chunk)
         return await self.upload(data, bytes(content))
 
-    async def upload_stream(self, data, chunks, *, owner=None, slot=None, _transfer_slot=None):
+    async def upload_stream(self, data, chunks, *, owner=None, slot=None):
         """Local-only streaming; ordinary upload remains available to bounded callers."""
         data = await self._resolved_upload(data)
         if self.storage.get(data.storage_key).config.driver != "filesystem":
@@ -150,16 +152,13 @@ class FileService:
         ):
             raise ValueError("Invalid reference key")
         reference = (owner, slot) if owner is not None else None
-        return await self._stage_upload(
-            data, chunks, reference=reference, transfer_slot=_transfer_slot
-        )
+        return await self._stage_upload(data, chunks, reference=reference)
 
-    async def _stage_upload(self, data, chunks, *, reference=None, transfer_slot=None):
+    async def _stage_upload(self, data, chunks, *, reference=None):
         async with self.transfers.stage(
             chunks,
             data.expected_size,
             data.checksum_sha256,
-            _slot=transfer_slot,
             destination=self.storage.get(data.storage_key).root / "files",
         ) as staged:
             return await self._upload_content(data, staged, reference=reference)
@@ -436,38 +435,36 @@ class FileService:
             return file.name, content
 
     @asynccontextmanager
-    async def open_content(self, identifier, *, _transfer_slot=None, max_bytes=None):
+    async def open_content(self, identifier, *, max_bytes=None):
         """Bounded content reader; concurrent reclamation may interrupt it."""
-        slot = self.transfers.read_slot(timeout=0) if _transfer_slot is None else nullcontext()
-        async with slot:
+        async with self.identity.access() as (session, auth):
+            file = await session.get(File, identifier)
+            policy.available(file, content=True)
+            source = self.storage.get(file.storage_key)
+            metadata = file.name, file.content_type, file.size_bytes, file.checksum_sha256
+            fingerprint, key = file.storage_fingerprint, file.object_key
+            if max_bytes is not None and file.size_bytes > max_bytes:
+                raise ServiceError(413, "file_too_large", "文件超过读取上限")
+
+        cancelled = Event()
+
+        def acquire():
+            if source.config.driver == "filesystem":
+                return source.open_local(fingerprint, key, metadata[2], metadata[3], cancelled)
+            # S3 reads use a bounded in-memory buffer.
+            from io import BytesIO
+
+            if metadata[2] > 64 * 1024 * 1024:
+                raise ServiceError(413, "file_too_large", "此存储源保留 64 MiB 读取限制")
+            body = source.read(fingerprint, key, metadata[2])
+            if hashlib.sha256(body).hexdigest() != metadata[3]:
+                raise ServiceError(503, "file_corrupt", "文件内容校验失败")
+            return BytesIO(body)
+
+        async with opened(acquire, on_cancel=cancelled.set) as stream:
             async with self.identity.access() as (session, auth):
-                file = await session.get(File, identifier)
-                policy.available(file, content=True)
-                source = self.storage.get(file.storage_key)
-                metadata = file.name, file.content_type, file.size_bytes, file.checksum_sha256
-                fingerprint, key = file.storage_fingerprint, file.object_key
-                if max_bytes is not None and file.size_bytes > max_bytes:
-                    raise ServiceError(413, "file_too_large", "文件超过读取上限")
-
-            cancelled = Event()
-
-            def acquire():
-                if source.config.driver == "filesystem":
-                    return source.open_local(fingerprint, key, metadata[2], metadata[3], cancelled)
-                # S3 reads use a bounded in-memory buffer.
-                from io import BytesIO
-
-                if metadata[2] > 64 * 1024 * 1024:
-                    raise ServiceError(413, "file_too_large", "此存储源保留 64 MiB 读取限制")
-                body = source.read(fingerprint, key, metadata[2])
-                if hashlib.sha256(body).hexdigest() != metadata[3]:
-                    raise ServiceError(503, "file_corrupt", "文件内容校验失败")
-                return BytesIO(body)
-
-            async with opened(acquire, on_cancel=cancelled.set) as stream:
-                async with self.identity.access() as (session, auth):
-                    policy.available(await session.get(File, identifier), content=True)
-                yield ContentReader(*metadata, stream)
+                policy.available(await session.get(File, identifier), content=True)
+            yield ContentReader(*metadata, stream)
 
     @asynccontextmanager
     async def local_file(self, identifier):
@@ -483,18 +480,17 @@ class FileService:
                 size, checksum = file.size_bytes, file.checksum_sha256
             cancelled = Event()
             async with AsyncExitStack() as stack:
-                async with self.transfers.read_slot(timeout=0):
-                    await stack.enter_async_context(
-                        opened(
-                            source.open_local,
-                            fingerprint,
-                            key,
-                            size,
-                            checksum,
-                            cancelled,
-                            on_cancel=cancelled.set,
-                        )
+                await stack.enter_async_context(
+                    opened(
+                        source.open_local,
+                        fingerprint,
+                        key,
+                        size,
+                        checksum,
+                        cancelled,
+                        on_cancel=cancelled.set,
                     )
+                )
                 async with self.identity.database.transaction() as session:
                     policy.available(await session.get(File, identifier), content=True)
                 yield LocalFile(source.root / key, size, checksum)

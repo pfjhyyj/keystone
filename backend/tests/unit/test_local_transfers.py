@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 import tracemalloc
-from contextlib import ExitStack
+from contextlib import AsyncExitStack
 from threading import Event
 
 import pytest
@@ -51,17 +51,8 @@ async def test_large_stream_has_bounded_python_memory(tmp_path):
     assert not list((tmp_path / ".transfers").iterdir())
 
 
-async def test_capacity_quota_disconnect_checksum_and_reuse(tmp_path):
-    storage = registry(tmp_path, file_transfer_slots=1, file_max_bytes=10, file_temp_bytes=5)
-    other = StorageRegistry(storage.transfers.settings)
-    with storage.transfers.slot():
-        with pytest.raises(ServiceError, match="已满"):
-            with other.transfers.slot():
-                pytest.fail("Slot was acquired twice")
-    with pytest.raises(ServiceError) as rejected:
-        async with storage.transfers.temporary(6):
-            pytest.fail("Quota was ignored")
-    assert rejected.value.code == "file_temporary_limit"
+async def test_disconnect_checksum_and_reuse(tmp_path):
+    storage = registry(tmp_path, file_max_bytes=10)
 
     async def disconnected():
         yield b"hi"
@@ -88,7 +79,7 @@ async def test_capacity_quota_disconnect_checksum_and_reuse(tmp_path):
         assert staged.path.read_bytes() == b"hi"
 
 
-async def test_cancel_releases_scratch_and_slot(tmp_path):
+async def test_cancel_releases_scratch_and_reservation(tmp_path):
     storage = registry(tmp_path)
     entered = asyncio.Event()
 
@@ -107,32 +98,17 @@ async def test_cancel_releases_scratch_and_slot(tmp_path):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert not list((tmp_path / ".transfers").iterdir())
-    with ExitStack() as stack:
-        for _ in range(storage.transfers.settings.file_transfer_slots):
-            stack.enter_context(storage.transfers.slot())
 
 
-async def test_read_slot_wait_is_bounded_and_cancellable(tmp_path):
-    storage = registry(tmp_path, file_transfer_slots=1)
-    with storage.transfers.slot():
-        with pytest.raises(ServiceError) as busy:
-            async with storage.transfers.read_slot(timeout=0.05):
-                pytest.fail("Read exceeded the shared capacity")
-        assert busy.value.code == "file_transfer_busy"
-        entered = asyncio.Event()
-
-        async def waiting():
-            entered.set()
-            async with storage.transfers.read_slot(timeout=3):
-                pytest.fail("Cancelled reader acquired a slot")
-
-        task = asyncio.create_task(waiting())
-        await entered.wait()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-    with storage.transfers.slot():
-        pass
+async def test_nested_workspaces_have_no_count_or_equal_share_limit(tmp_path):
+    storage = registry(tmp_path, file_max_bytes=1)
+    async with AsyncExitStack() as stack:
+        paths = [await stack.enter_async_context(storage.transfers.temporary(2)) for _ in range(8)]
+        assert len(set(paths)) == 8
+        for path in paths:
+            (path / "output").write_bytes(b"hi")
+    assert not list((tmp_path / ".transfers").iterdir())
+    assert not list((tmp_path / ".capacity").iterdir())
 
 
 async def test_cancel_during_open_waits_and_closes_handle(tmp_path):
@@ -161,8 +137,8 @@ async def test_cancel_during_open_waits_and_closes_handle(tmp_path):
     assert handles[0].closed
 
 
-async def test_process_crash_residue_reclaimed_under_slot_lock(tmp_path):
-    storage = registry(tmp_path, file_transfer_slots=1)
+async def test_process_crash_residue_reclaimed_under_owner_lock(tmp_path):
+    storage = registry(tmp_path)
     code = f"""
 import os
 from pathlib import Path
@@ -170,8 +146,7 @@ from keystone.core.asyncio import run
 from keystone.core.config import Settings
 from keystone.platform.files.adapters.storage import StorageRegistry
 async def main():
-    settings = Settings(config_file=None, file_coordination_root=Path({str(tmp_path)!r}),
-        file_transfer_slots=1)
+    settings = Settings(config_file=None, file_coordination_root=Path({str(tmp_path)!r}))
     storage = StorageRegistry(settings)
     async with storage.transfers.temporary(10) as path:
         (path / 'output').write_bytes(b'partial')

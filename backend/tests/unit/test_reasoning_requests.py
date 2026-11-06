@@ -44,6 +44,7 @@ async def test_reasoning_reaches_wire_and_usage_is_not_added_twice(operation):
         assert registrations == [True]
         assert body["enable_thinking"] is True and body["reasoning_effort"] == "high"
         assert body["max_tokens"] == 1024
+        assert request.extensions["timeout"]["read"] == 120
         return httpx2.Response(
             200,
             json={

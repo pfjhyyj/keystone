@@ -3,61 +3,12 @@
 import asyncio
 
 from dbos import DBOSClient
+from dbos import error as dbos_error
 
 from keystone.core.errors import ServiceError
+from keystone.platform.flow.schemas.errors import ERRORS as ERRORS
 
 QUEUE = "keystone-flows"
-ERRORS = {
-    "flow_snapshot_unavailable",
-    "flow_file_scope_denied",
-    "flow_model_role_unavailable",
-    "execution_not_authorized",
-    "flow_cancelled",
-    "execution_version_unavailable",
-    "flow_invalid_output",
-    "flow_process_output_denied",
-    "flow_timeout",
-    "process_timeout",
-    "process_output_limit",
-    "process_file_limit",
-    "process_unavailable",
-    "model_result_unavailable",
-    "model_not_found",
-    "model_disabled",
-    "model_configuration_changed",
-    "model_operation_unavailable",
-    "model_invalid_output",
-    "model_invalid_image",
-    "model_task_failed",
-    "model_task_timeout",
-    "model_dispatch_delayed",
-    "model_task_query_rejected",
-    "model_result_source_denied",
-    "model_result_download_unavailable",
-    "model_target_changed",
-    "model_input_too_large",
-    "model_response_too_large",
-    "model_stream_incomplete",
-    "model_interrupted",
-    "model_capacity_busy",
-    "model_worker_unavailable",
-    "worker_deployment_conflict",
-    "model_timeout",
-    "model_response_unknown",
-    "model_provider_unavailable",
-    "model_target_not_allowed",
-    "model_credential_unavailable",
-    "model_insufficient_credits",
-    "model_authentication_failed",
-    "model_access_denied",
-    "model_invalid_request",
-    "upstream_model_not_found",
-    "model_rate_limited",
-    "model_upstream_error",
-    "flow_input_too_large",
-    "flow_invalid_text",
-    "flow_execution_failed",
-}
 
 
 def workflow_id(identifier):
@@ -91,7 +42,10 @@ class Engine:
         if not rows:
             return None
         row = rows[0]
-        code = row.error.code if isinstance(row.error, ServiceError) else str(row.error)
+        error = row.error
+        if isinstance(error, dbos_error.DBOSMaxStepRetriesExceeded) and error.errors:
+            error = error.errors[-1]
+        code = error.code if isinstance(error, ServiceError) else str(error)
         return {
             "status": row.status,
             "result": row.output,

@@ -28,8 +28,6 @@ class Settings(BaseSettings):
     file_storages: dict[StorageKey, StorageConfig] = Field(default_factory=dict, repr=False)
     file_default_storage: StorageKey = "local"
     file_max_bytes: int = Field(default=16 * 1024 * 1024, ge=1, le=1024**4)
-    file_transfer_slots: int = Field(default=4, ge=1, le=32)
-    file_temp_bytes: int = Field(default=64 * 1024**3, ge=1, le=32 * 1024**4)
     file_min_free_bytes: int = Field(default=1024**3, ge=0, le=1024**4)
     file_upload_timeout_seconds: int = Field(default=3600, ge=1, le=86400)
     file_unreferenced_grace_seconds: int | None = Field(default=None, ge=1, le=31536000)
@@ -79,6 +77,11 @@ class Settings(BaseSettings):
     @classmethod
     def resolve_file_paths(cls, values):
         values = dict(values)
+        if any(
+            name in os.environ
+            for name in ("KEYSTONE_FILE_TRANSFER_SLOTS", "KEYSTONE_FILE_TEMP_BYTES")
+        ):
+            raise ValueError("Remove retired file slot and temporary-total environment settings")
         config = values.get("config_file", "keystone.toml")
         base = Path(config).resolve().parent if config is not None else Path.cwd()
 

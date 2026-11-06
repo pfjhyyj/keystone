@@ -122,6 +122,19 @@ def test_file_capacity_defaults_preserve_platform_configuration():
     ]
 
 
+@pytest.mark.parametrize("name", ["file_transfer_slots", "file_temp_bytes"])
+def test_retired_file_limits_are_rejected_in_all_configuration_sources(tmp_path, monkeypatch, name):
+    with pytest.raises(ValidationError):
+        Settings(config_file=None, **{name: 4})
+    config = tmp_path / "retired.toml"
+    config.write_text(f"{name} = 4\n", encoding="utf8")
+    with pytest.raises(ValidationError):
+        Settings(config_file=config)
+    monkeypatch.setenv("KEYSTONE_" + name.upper(), "4")
+    with pytest.raises(ValidationError, match="retired"):
+        Settings(config_file=None)
+
+
 @pytest.mark.parametrize("floor", [-1, 1024**4 + 1])
 def test_invalid_file_capacity_floor_is_rejected(floor):
     with pytest.raises(ValidationError):

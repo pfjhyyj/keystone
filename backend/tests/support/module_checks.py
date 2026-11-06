@@ -74,7 +74,7 @@ def _execution_dependencies(tree, package, *, allow_client=False):
             allow_client
             and isinstance(node, ast.ImportFrom)
             and base == "dbos"
-            and all(alias.name == "DBOSClient" for alias in node.names)
+            and all(alias.name in {"DBOSClient", "error"} for alias in node.names)
         )
         contracts_only = bool(children) and all(
             _under(d, execution + ".contracts") for d in children

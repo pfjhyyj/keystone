@@ -133,6 +133,8 @@ class InferenceClient:
         protocol = self.protocol(selected, provider=provider)
         observation.pricing_profile = profile_for(protocol)
         seconds = getattr(protocol, "timeout_seconds", 60)
+        if reasoning is not None and reasoning.mode == "on":
+            seconds = max(seconds, 120)
         maximum = (
             getattr(protocol, "max_input_bytes", 0) + 128 * 1024
             if selected.operation == "image.edit" and hasattr(protocol, "max_input_bytes")
@@ -154,7 +156,7 @@ class InferenceClient:
             async with (
                 DefaultAsyncHttpxClient(
                     transport=transport,
-                    timeout=seconds if seconds > 60 else 30,
+                    timeout=seconds,
                     follow_redirects=False,
                     trust_env=False,
                 ) as http,
@@ -163,7 +165,7 @@ class InferenceClient:
                     base_url=base,
                     http_client=http,
                     max_retries=0,
-                    timeout=seconds if seconds > 60 else 30,
+                    timeout=seconds,
                 ) as sdk,
             ):
                 yield sdk

@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack
 from threading import Event
 from uuid import UUID
 
@@ -152,11 +151,8 @@ def test_stream_disconnect_and_readers_do_not_lock_out_cleanup(client):
         return {"closed": True}
 
     assert client.get("/_acceptance/disconnect").json() == {"closed": True}
-    with ExitStack() as stack:
-        for _ in range(runtime.settings.file_transfer_slots):
-            stack.enter_context(runtime.storage.transfers.slot())
-        response = client.get(f"/api/v1/_test/materials/{identifier}/content")
-        assert response.status_code == 503 and response.json()["code"] == "file_transfer_busy"
+    response = client.get(f"/api/v1/_test/materials/{identifier}/content")
+    assert response.status_code == 200
     assert client.delete(f"/api/v1/_test/materials/{identifier}").status_code == 202
     clean(client)
     assert client.get(f"/api/v1/_test/materials/{identifier}").json()["status"] == "deleted"
@@ -190,10 +186,8 @@ def test_disconnect_before_headers_cancels_integrity_scan(client, monkeypatch):
         return {"closed": True}
 
     assert client.get("/_acceptance/disconnect-before-headers").json() == {"closed": True}
-    with ExitStack() as stack:
-        stack.enter_context(runtime.storage.lease(file_id))
-        for _ in range(runtime.settings.file_transfer_slots):
-            stack.enter_context(runtime.storage.transfers.slot())
+    with runtime.storage.lease(file_id):
+        pass
 
 
 def test_legacy_read_rejects_large_file_before_allocating(client, monkeypatch):
@@ -439,34 +433,10 @@ def test_worker_admission_and_size_limits_precede_storage_scan(media, monkeypatc
         async with host._materialize_file(run_id, identifier):
             pytest.fail("Oversized or full-capacity materialization accepted")
 
-    with ExitStack() as stack:
-        for _ in range(runtime.settings.file_transfer_slots):
-            stack.enter_context(runtime.storage.transfers.slot())
-        with pytest.raises(ServiceError) as rejected:
-            media.portal.call(materialize)
-        assert rejected.value.code == "file_transfer_busy"
-        with pytest.raises(ServiceError) as rejected:
-            media.portal.call(
-                lambda: host._upload_file(
-                    run_id, "copy", tmp_path / "missing", name="copy.mp4", content_type="video/mp4"
-                )
-            )
-        assert rejected.value.code == "file_transfer_busy"
-    runtime.settings.file_temp_bytes = runtime.settings.file_transfer_slots * 4
+    runtime.settings.file_max_bytes = 4
     with pytest.raises(ServiceError) as rejected:
         media.portal.call(materialize)
     assert rejected.value.code == "file_too_large"
-
-
-def test_upload_waiting_for_api_slot_obeys_timeout(client):
-    runtime = client.app.state.runtime
-    runtime.settings.file_upload_timeout_seconds = 1
-    client.app.state.upload_slots = asyncio.Semaphore(0)
-    result = upload(client)
-    assert result.status_code == 408 and result.json()["code"] == "upload_timeout"
-    assert stored_files(client) == []
-    client.app.state.upload_slots = asyncio.Semaphore(1)
-    assert upload(client).status_code == 201
 
 
 def test_timeout_during_final_write_keeps_retryable_file(client, monkeypatch):

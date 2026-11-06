@@ -4,12 +4,16 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from alembic.migration import MigrationContext
+from psycopg.errors import ConnectionTimeout
 from sqlalchemy import MetaData, text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from keystone.core.catalog import Catalog
 from keystone.core.config import Settings
+from keystone.core.errors import ServiceError
 
 
 class Base(DeclarativeBase):
@@ -44,6 +48,14 @@ class Database:
         if self.sessions is None:
             raise RuntimeError("Database is not configured")
         async with self.sessions() as session, session.begin():
+            try:
+                await session.connection()
+            except (OperationalError, PoolTimeout) as error:
+                if isinstance(error, PoolTimeout) or isinstance(error.orig, ConnectionTimeout):
+                    raise ServiceError(
+                        503, "database_connection_busy", "数据库连接暂不可用，请稍后重试"
+                    ) from None
+                raise
             yield session
 
     async def readiness(self, heads: set[str]) -> dict[str, str]:

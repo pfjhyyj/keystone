@@ -1,19 +1,14 @@
-"""Bounded local transfer workspace, shared by API and Worker on one host.
-
-Each permanent OS-locked slot owns one scratch directory. A crashed process releases
-its lock; the next holder removes its residue before reuse. No user paths enter
-this namespace. Each slot gets an equal part of the configured disk budget.
-"""
+"""Owned temporary directories with per-operation bounds and physical disk reservations."""
 
 import asyncio
 import hashlib
-from contextlib import asynccontextmanager, contextmanager, nullcontext
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Event
 
 from keystone.core.errors import ServiceError
-from keystone.platform.files.adapters.capacity import Capacity, Reservation, clear_scratch
+from keystone.platform.files.adapters.capacity import Capacity, Reservation
 from keystone.platform.files.adapters.storage import blocking, opened
 
 CHUNK_BYTES = 256 * 1024
@@ -42,6 +37,7 @@ class StagedUpload:
     checksum: str
     cancelled: Event = field(default_factory=Event, repr=False, compare=False)
     capacity: Reservation | None = field(default=None, repr=False, compare=False)
+    stream: object | None = field(default=None, repr=False, compare=False)
 
     def __len__(self):
         return self.size
@@ -93,91 +89,42 @@ class Transfers:
         self.settings = settings
         self.capacity = Capacity(coordination, settings)
 
-    @property
-    def limit(self):
-        return min(
-            self.settings.file_max_bytes,
-            self.settings.file_temp_bytes // self.settings.file_transfer_slots,
-        )
-
-    @contextmanager
-    def slot(self):
-        for number in range(self.settings.file_transfer_slots):
-            lease = self.coordination.lease(f"transfer:{number}")
-            try:
-                lease.__enter__()
-            except ServiceError as error:
-                if error.code == "file_busy":
-                    continue
-                raise
-            try:
-                yield number
-            finally:
-                lease.__exit__(None, None, None)
-            return
-        raise ServiceError(503, "file_transfer_busy", "文件传输已满，请稍后重试")
-
     @asynccontextmanager
-    async def read_slot(self, timeout=0):
-        """Briefly queue HTTP reads; keep the same cross-process slot bound."""
-        deadline = asyncio.get_running_loop().time() + timeout
-        while True:
-            lease = self.slot()
-            try:
-                number = lease.__enter__()
-            except ServiceError as error:
-                remaining = deadline - asyncio.get_running_loop().time()
-                if error.code != "file_transfer_busy" or remaining <= 0:
-                    raise
-                await asyncio.sleep(min(0.05, remaining))
-                continue
-            try:
-                yield number
-            finally:
-                lease.__exit__(None, None, None)
-            return
-
-    @asynccontextmanager
-    async def temporary(self, size, *, _slot=None):
-        async with self.workspace(size, _slot=_slot) as workspace:
+    async def temporary(self, size):
+        async with self.workspace(size) as workspace:
             yield workspace.path
 
     @asynccontextmanager
-    async def workspace(self, size, *, _slot=None, destination=None):
-        # _slot is only for host helpers already holding this registry's slot lease.
-        if type(size) is not int or size < 0:
+    async def workspace(self, size, *, destination=None):
+        if type(size) is not int or not 0 <= size <= 2 * 1024**4:
             raise ValueError("Invalid workspace byte promise")
-        if size > self.limit:
-            raise ServiceError(413, "file_temporary_limit", "文件超过临时空间配额")
-        with self.slot() if _slot is None else nullcontext(_slot) as number:
-            root = self.coordination.root
-            path = root / ".transfers" / str(number)
+        root = self.coordination.root
+        directory = root / ".transfers"
 
-            def prepare():
-                self.coordination.fingerprint()
-                directory = path.parent
-                if not directory.resolve().is_relative_to(root):
-                    raise ServiceError(503, "storage_unavailable", "临时存储路径无效")
-                directory.mkdir(exist_ok=True)
-                clear_scratch(path, root)
+        def prepare():
+            self.coordination.fingerprint()
+            if (
+                directory.is_symlink()
+                or directory.is_junction()
+                or not directory.resolve().is_relative_to(root)
+            ):
+                raise ServiceError(503, "storage_unavailable", "临时存储路径无效")
+            directory.mkdir(exist_ok=True)
 
-            await blocking(prepare)
-            targets = [(path.parent, size)]
-            if destination is not None:
-                targets.append((destination, size))
-
-            async with opened(lambda: self.capacity.reserve(targets, slot=number)) as allocation:
-                workspace = Workspace(path, allocation)
-                try:
-                    await blocking(path.mkdir)
-                    async with monitor(workspace, size):
-                        yield workspace
-                finally:
-                    await blocking(clear_scratch, path, root)
+        await blocking(prepare)
+        targets = [(directory, size)]
+        if destination is not None:
+            targets.append((destination, size))
+        async with opened(lambda: self.capacity.reserve(targets, workspace=True)) as allocation:
+            path = directory / allocation.identifier
+            await blocking(path.mkdir)
+            workspace = Workspace(path, allocation)
+            async with monitor(workspace, size):
+                yield workspace
 
     @asynccontextmanager
-    async def stage(self, chunks, size, checksum=None, *, _slot=None, destination=None):
-        async with self.workspace(size, _slot=_slot, destination=destination) as workspace:
+    async def stage(self, chunks, size, checksum=None, *, destination=None):
+        async with self.workspace(size, destination=destination) as workspace:
             path, allocation = workspace.path / "upload", workspace.capacity
             actual, digest = 0, hashlib.sha256()
             async with opened(path.open, "xb") as stream:

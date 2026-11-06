@@ -127,7 +127,9 @@ class Storage:
                 else self.capacity.reserve([(self.root / "files", len(data))])
             )
             if staged:
-                source = stack.enter_context(data.path.open("rb"))
+                source = stack.enter_context(
+                    nullcontext(data.stream) if data.stream is not None else data.path.open("rb")
+                )
                 chunks = iter(lambda: source.read(CHUNK_BYTES), b"")
             else:
                 content = memoryview(data)

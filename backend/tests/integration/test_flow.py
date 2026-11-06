@@ -98,8 +98,6 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
         "model_cooldown_max_seconds",
         "worker_shutdown_seconds",
         "file_max_bytes",
-        "file_transfer_slots",
-        "file_temp_bytes",
         "file_min_free_bytes",
         "file_upload_timeout_seconds",
         "history_cleanup_enabled",
