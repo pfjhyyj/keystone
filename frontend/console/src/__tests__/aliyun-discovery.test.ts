@@ -36,7 +36,7 @@ it.each(['llm-next', ''])(
     const writes: Record<string, unknown>[] = []
     fakeApi((path, init) => {
       if (path === '/model-access/options')
-        return modelOptionsFixture({ providers: ['aliyun_bailian'], balance_providers: [] })
+        return modelOptionsFixture({ creatable: ['aliyun_bailian'], balance: [] })
       if (init.method === 'PATCH') {
         writes.push(JSON.parse(String(init.body)))
         return { ...channel, workspace_id: value || null }
@@ -63,8 +63,8 @@ it('uses the default shared endpoint without a workspace and clears unsaved work
   fakeApi((path, init) => {
     if (path === '/model-access/options')
       return modelOptionsFixture({
-        providers: ['openrouter', 'aliyun_bailian'],
-        balance_providers: [],
+        creatable: ['openrouter', 'aliyun_bailian'],
+        balance: [],
       })
     if (init.method === 'POST') {
       writes.push(JSON.parse(String(init.body)))

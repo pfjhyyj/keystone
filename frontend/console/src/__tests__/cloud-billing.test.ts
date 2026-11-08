@@ -46,7 +46,7 @@ it.each(['aliyun_bailian', 'volcengine'])(
     const writes: Record<string, unknown>[] = []
     fakeApi((path, init) => {
       if (path === '/model-access/options')
-        return modelOptionsFixture({ providers: ['openrouter', provider], balance_providers: [] })
+        return modelOptionsFixture({ creatable: ['openrouter', provider], balance: [] })
       if (init.method === 'POST') {
         writes.push(JSON.parse(String(init.body)))
         return channel
@@ -96,7 +96,7 @@ it('keeps saved cloud credentials write-only and supports clearing them', async 
   const writes: Record<string, unknown>[] = []
   fakeApi((path, init) => {
     if (path === '/model-access/options')
-      return modelOptionsFixture({ providers: ['volcengine'], balance_providers: [] })
+      return modelOptionsFixture({ creatable: ['volcengine'], balance: [] })
     if (init.method === 'PATCH') {
       writes.push(JSON.parse(String(init.body)))
       return channel

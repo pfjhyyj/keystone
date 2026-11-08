@@ -164,7 +164,7 @@ def _measure(profile, usage, *, complete, success, generated):
 
     data = usage if isinstance(usage, dict) else {}
     # Only the currently installed OpenAI-compatible wire contracts are normalized.
-    image_wire = profile.id == "openai_images.v2"
+    image_wire = "usage.output_image_tokens" in profile.quantities
     put("input_total_tokens", data.get("input_tokens" if image_wire else "prompt_tokens"))
     put("output_total_tokens", data.get("output_tokens" if image_wire else "completion_tokens"))
     details = data.get("input_tokens_details" if image_wire else "prompt_tokens_details")
@@ -178,7 +178,7 @@ def _measure(profile, usage, *, complete, success, generated):
     out = data.get("output_tokens_details" if image_wire else "completion_tokens_details")
     out = out if isinstance(out, dict) else {}
     put("reasoning_tokens", out.get("reasoning_tokens"))
-    if profile.id == "embedding.v2":
+    if "usage.output_total_tokens" in profile.structural_zero:
         if "usage.input_total_tokens" not in result.values:
             put("input_total_tokens", data.get("total_tokens"), "derived")
         put("output_total_tokens", 0, "protocol")
@@ -304,9 +304,9 @@ def normalize_pricing_facts(profile, usage, *, complete=False, success=False, ge
         prompt["cached_tokens"] = hit
     if reasoning is not None:
         output["reasoning_tokens"] = reasoning
-    if profile.id == "embedding.v2" and outputs not in (None, 0):
+    if "usage.output_total_tokens" in profile.structural_zero and outputs not in (None, 0):
         invalid = True
-    image = profile.id == "openai_images.v2"
+    image = "usage.output_image_tokens" in profile.quantities
     canonical = {
         "input_tokens" if image else "prompt_tokens": inputs,
         "output_tokens" if image else "completion_tokens": outputs,

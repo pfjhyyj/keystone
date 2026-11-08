@@ -140,10 +140,6 @@ export interface LegacySite {
 export interface ModelOptions {
   channels: ChannelDescriptor[]
   legacy_sites?: LegacySite[]
-  providers: string[]
-  balance_providers: string[]
-  bill_providers?: string[]
-  default_api_bases: Record<string, string>
 }
 export const modelApi = {
   options: () => request<ModelOptions>('/model-access/options'),

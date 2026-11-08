@@ -26,7 +26,6 @@ INSTALLED = (
     deepseek.SPEC,
 )
 CHANNELS = {spec.id: spec for spec in INSTALLED}
-PROVIDERS = tuple(spec.id for spec in INSTALLED if spec.creatable)
 REFERENCE_PRICES = {
     key: price for spec in INSTALLED for key, price in spec.reference_prices.items()
 }
@@ -76,12 +75,8 @@ def channel_options():
                 }
             sites[site.api_base]["providers"].append(provider)
     return {
-        "providers": list(PROVIDERS),
         "channels": [spec.describe() for spec in CHANNELS.values()],
         "legacy_sites": list(sites.values()),
-        "default_api_bases": {key: CHANNELS[key].api_base for key in PROVIDERS},
-        "balance_providers": [key for key, spec in CHANNELS.items() if spec.balance_available],
-        "bill_providers": [key for key, spec in CHANNELS.items() if spec.bills_available],
     }
 
 

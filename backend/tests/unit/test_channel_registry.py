@@ -47,12 +47,9 @@ def test_channel_options_descriptors_and_legacy_capabilities():
             assert set(fields[0]) == {"name", "label", "hint", "placeholder", "pattern"}
         else:
             assert fields == []
-    assert options["providers"] == ["openrouter", "newapi", "yunwu", "aliyun_bailian", "volcengine"]
-    assert options["default_api_bases"] == {
-        key: descriptors[key]["default_api_base"] for key in options["providers"]
-    }
-    assert options["balance_providers"] == ["openrouter", "newapi", "aliyun_bailian", "volcengine"]
-    assert options["bill_providers"] == ["aliyun_bailian", "volcengine"]
+    creatable = [item["id"] for item in options["channels"] if item["creatable"]]
+    assert creatable == ["openrouter", "newapi", "yunwu", "aliyun_bailian", "volcengine"]
+    assert sorted(options) == ["channels", "legacy_sites"]
     assert options["legacy_sites"] == [
         {
             "api_base": base,

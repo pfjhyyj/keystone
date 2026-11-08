@@ -255,7 +255,7 @@ def check_module_layers(root, namespace):
                     or d
                     in {
                         f"{CHANNELS}.{name}"
-                        for name in ("CHANNELS", "PROVIDERS", "INSTALLED", "REFERENCE_PRICES")
+                        for name in ("CHANNELS", "INSTALLED", "REFERENCE_PRICES")
                     }
                     or _under(d, CHANNELS + ".spec")
                     or _under(d, CHANNELS + ".rules")

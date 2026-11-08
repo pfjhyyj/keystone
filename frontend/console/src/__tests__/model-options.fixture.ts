@@ -1,4 +1,4 @@
-import type { ChannelDescriptor, ModelOptions } from '../api/models'
+import type { ChannelDescriptor, LegacySite, ModelOptions } from '../api/models'
 
 const descriptors: ChannelDescriptor[] = [
   {
@@ -89,8 +89,19 @@ const descriptors: ChannelDescriptor[] = [
   },
 ]
 
-export function modelOptionsFixture(overrides: Partial<ModelOptions> = {}): ModelOptions {
-  const providers = overrides.providers ?? [
+// Test-only conveniences: select or reshape descriptors without the removed
+// flat provider lists that the API used to return.
+type OptionsOverrides = {
+  creatable?: string[]
+  balance?: string[]
+  bills?: string[]
+  api_bases?: Record<string, string>
+  channels?: ChannelDescriptor[]
+  legacy_sites?: LegacySite[]
+}
+
+export function modelOptionsFixture(overrides: OptionsOverrides = {}): ModelOptions {
+  const creatable = overrides.creatable ?? [
     'openrouter',
     'newapi',
     'yunwu',
@@ -100,21 +111,14 @@ export function modelOptionsFixture(overrides: Partial<ModelOptions> = {}): Mode
   const channels =
     overrides.channels ??
     descriptors
-      .filter((item) => providers.includes(item.id) || !item.creatable)
+      .filter((item) => creatable.includes(item.id) || !item.creatable)
       .map((item) => ({
         ...item,
-        default_api_base: overrides.default_api_bases?.[item.id] ?? item.default_api_base,
-        balance: overrides.balance_providers?.includes(item.id) ?? item.balance,
-        bills: overrides.bill_providers?.includes(item.id) ?? item.bills,
+        default_api_base: overrides.api_bases?.[item.id] ?? item.default_api_base,
+        balance: overrides.balance?.includes(item.id) ?? item.balance,
+        bills: overrides.bills?.includes(item.id) ?? item.bills,
       }))
   return {
-    providers,
-    default_api_bases: Object.fromEntries(
-      channels.map((item) => [item.id, item.default_api_base ?? '']),
-    ),
-    balance_providers: channels.filter((item) => item.balance).map((item) => item.id),
-    bill_providers: channels.filter((item) => item.bills).map((item) => item.id),
-    ...overrides,
     channels,
     legacy_sites:
       overrides.legacy_sites ??
