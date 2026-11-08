@@ -12,17 +12,11 @@ class Channel(Base):
     __tablename__ = "model_channels"
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('deepseek','openrouter','aliyun_bailian',"
-            "'newapi','openlux','yunwu','volcengine')",
-            name="channel_provider",
-        ),
-        CheckConstraint(
             "balance_check_status IN ('never','ok','error','unavailable')",
             name="channel_balance_status",
         ),
         CheckConstraint(
-            "workspace_id IS NULL OR (provider = 'aliyun_bailian' "
-            "AND workspace_id ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')",
+            "workspace_id IS NULL OR workspace_id ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'",
             name="channel_workspace",
         ),
     )

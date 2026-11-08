@@ -74,6 +74,11 @@ class ResponseBilling:
     enabled = False
     balance_path = None
 
+    async def query_balance(self, http, base, secret):
+        from .http import balance_get
+
+        return await balance_get(http, self, base, secret)
+
     def binding(self, api_base):
         return None
 

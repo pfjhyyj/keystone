@@ -1,6 +1,7 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { expect, it } from 'vitest'
 import ModelManager from '../views/models/ModelsView.vue'
+import { modelOptionsFixture } from './model-options.fixture'
 import { authorize, chooseSelect, fakeApi } from './support'
 
 const channel = {
@@ -35,7 +36,7 @@ it.each(['llm-next', ''])(
     const writes: Record<string, unknown>[] = []
     fakeApi((path, init) => {
       if (path === '/model-access/options')
-        return { providers: ['aliyun_bailian'], balance_providers: [] }
+        return modelOptionsFixture({ providers: ['aliyun_bailian'], balance_providers: [] })
       if (init.method === 'PATCH') {
         writes.push(JSON.parse(String(init.body)))
         return { ...channel, workspace_id: value || null }
@@ -61,7 +62,10 @@ it('uses the default shared endpoint without a workspace and clears unsaved work
   const writes: Record<string, unknown>[] = []
   fakeApi((path, init) => {
     if (path === '/model-access/options')
-      return { providers: ['openrouter', 'aliyun_bailian'], balance_providers: [] }
+      return modelOptionsFixture({
+        providers: ['openrouter', 'aliyun_bailian'],
+        balance_providers: [],
+      })
     if (init.method === 'POST') {
       writes.push(JSON.parse(String(init.body)))
       return channel

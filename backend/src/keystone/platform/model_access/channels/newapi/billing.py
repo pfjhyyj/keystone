@@ -2,16 +2,19 @@
 
 from decimal import Decimal, localcontext
 
-from keystone.platform.model_access.adapters.billing.contracts import (
+from keystone.platform.model_access.channels.shared.billing.contracts import (
     BillingQueryError,
     Binding,
     LogPage,
     Receipt,
     balance_item,
 )
-from keystone.platform.model_access.adapters.billing.http import cost_get
-from keystone.platform.model_access.adapters.billing.token_logs import TokenLogs, quota_scale
-from keystone.platform.model_access.adapters.receipts import request_id
+from keystone.platform.model_access.channels.shared.billing.http import cost_get
+from keystone.platform.model_access.channels.shared.billing.token_logs import (
+    TokenLogs,
+    quota_scale,
+)
+from keystone.platform.model_access.channels.shared.receipts import request_id
 from keystone.platform.model_access.schemas.errors import AdapterError
 
 
@@ -104,7 +107,7 @@ class Newapi(TokenLogs):
         except (KeyError, TypeError, ValueError, OverflowError, RecursionError):
             raise BillingQueryError("cost_invalid_response", blocked=True) from None
 
-    async def token_balance(self, http, base, secret):
+    async def query_balance(self, http, base, secret):
         try:
             context = self.binding(base).snapshot("", self.provider, base)
             policy = await self.validate_policy(http, context, secret)

@@ -7,10 +7,10 @@ import httpx2
 import pytest
 from support.model_stub import image_bytes
 
-from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.adapters.inference.client import InferenceClient
 from keystone.platform.model_access.adapters.inference.transport import Observation
+from keystone.platform.model_access.channels import CHANNELS
 from keystone.platform.model_access.schemas.embeddings import EmbeddingRequest
 from keystone.platform.model_access.schemas.images import VisionRequest
 from keystone.platform.model_access.schemas.invocations import Invoke, Selection

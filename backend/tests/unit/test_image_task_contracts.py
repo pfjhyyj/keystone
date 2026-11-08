@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from keystone.core.time import utcnow
 from keystone.platform.flow.schemas.definitions import ModelRole
 from keystone.platform.model_access.adapters.http import HttpClient, ResponseTooLarge
-from keystone.platform.model_access.adapters.inference import kling
+from keystone.platform.model_access.channels.openlux import kling
 from keystone.platform.model_access.schemas.errors import AdapterError, QueryLater
 from keystone.platform.model_access.schemas.images import ImageTaskReceipt
 
@@ -86,7 +86,11 @@ def test_only_the_original_task_and_supported_https_sources_are_accepted():
         assert error.value.code == "model_result_source_denied"
     selected = SimpleNamespace(provider="openlux", api_base=kling.BASE, provider_model="not-kling")
     with pytest.raises(AdapterError):
-        kling.submit_body(selected, SimpleNamespace(prompt="x", n=1, resolution="1K"))
+        kling.submit_body(
+            selected,
+            SimpleNamespace(prompt="x", n=1, resolution="1K"),
+            allowed_targets=frozenset({("openlux", kling.BASE)}),
+        )
 
 
 @pytest.mark.parametrize("header,seconds", [("7", 7), ("999999", 60), ("²", 5), ("9" * 5000, 5)])

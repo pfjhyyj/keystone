@@ -85,7 +85,7 @@ def test_image_references_and_real_rasters_are_bounded_and_checked(monkeypatch):
 
     from PIL import Image
 
-    from keystone.platform.model_access.adapters.inference import images
+    from keystone.platform.model_access.channels.shared import images
     from keystone.platform.model_access.schemas.images import ImageInput, VisionRequest
 
     output = BytesIO()

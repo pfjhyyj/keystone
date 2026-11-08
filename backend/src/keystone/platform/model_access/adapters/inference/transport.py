@@ -7,9 +7,9 @@ import httpx2
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.model_access.adapters.inference.limits import retry_after
 from keystone.platform.model_access.adapters.inference.pricing import merge_usage, request_context
-from keystone.platform.model_access.adapters.receipts import request_id
+from keystone.platform.model_access.channels.shared.limits import retry_after
+from keystone.platform.model_access.channels.shared.receipts import request_id
 
 
 def usage(data):
@@ -126,10 +126,7 @@ class Observation:
                 self.pricing_success = True
             items = payload.get("data")
             if self.pricing_profile and isinstance(items, list) and items:
-                if self.pricing_profile.id in {
-                    "openai_images.v2",
-                    "openrouter_images.v2",
-                }:
+                if "usage.generated_images" in self.pricing_profile.quantities:
                     if len(items) <= 2 and all(
                         isinstance(item, dict)
                         and any(
@@ -140,7 +137,7 @@ class Observation:
                     ):
                         self.pricing_generated = len(items)
                         self.pricing_success = True
-                elif self.pricing_profile.id == "embedding.v2" and all(
+                elif "usage.output_total_tokens" in self.pricing_profile.structural_zero and all(
                     isinstance(item, dict)
                     and isinstance(item.get("embedding"), list)
                     and item["embedding"]

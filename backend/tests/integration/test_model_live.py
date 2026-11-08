@@ -19,7 +19,9 @@ from test_flow import start, wait_run, worker
 from test_model_access import BILLING, SECRET, channel, entry, invoke
 
 from keystone.platform.flow.adapters.dbos import Engine
-from keystone.platform.model_access.adapters.inference import client as gateway
+from keystone.platform.model_access.channels.openrouter import SPEC
+
+OPENROUTER_BASE = SPEC.api_base
 
 NETWORK_TRANSPORT = httpx2.AsyncHTTPTransport
 
@@ -177,7 +179,7 @@ def live(client, monkeypatch):
 
 
 def configure(client, **changes):
-    row = channel(client, api_base=gateway.OPENROUTER_BASE, **changes)
+    row = channel(client, api_base=OPENROUTER_BASE, **changes)
     entry(client, row)
     return row
 

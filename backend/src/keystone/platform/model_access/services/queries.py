@@ -2,7 +2,7 @@ from sqlalchemy import case, or_, select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time_range import history_range
-from keystone.platform.model_access.adapters.channels import channel_adapter
+from keystone.platform.model_access.channels import channel_adapter
 from keystone.platform.model_access.models import ModelInvocation
 
 

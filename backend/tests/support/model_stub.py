@@ -277,9 +277,12 @@ def install(monkeypatch=None):
 
     install_catalog(monkeypatch)
 
-    from keystone.platform.model_access.adapters.channels import CHANNELS, OPENROUTER_BASE
+    from keystone.platform.model_access.channels import CHANNELS
+    from keystone.platform.model_access.channels.openrouter import SPEC
+
+    OPENROUTER_BASE = SPEC.api_base
     from keystone.platform.model_access.adapters.http import HttpClient
-    from keystone.platform.model_access.adapters.inference.protocols import ChatCompletions
+    from keystone.platform.model_access.channels.shared.chat import ChatCompletions
 
     def set_value(obj, name, value):
         if monkeypatch is None:
@@ -293,12 +296,12 @@ def install(monkeypatch=None):
         else:
             monkeypatch.setitem(CHANNELS, key, value)
 
-    from keystone.platform.model_access.adapters.billing.http import balance_get
+    from keystone.platform.model_access.channels.shared.billing.http import balance_get
 
     async def mock_aliyun_balance(http, base, secret):
         return await balance_get(http, CHANNELS["aliyun_bailian"].billing, base, secret)
 
-    set_value(CHANNELS["aliyun_bailian"].billing, "account_balance", mock_aliyun_balance)
+    set_value(CHANNELS["aliyun_bailian"].billing, "query_balance", mock_aliyun_balance)
     set_value(CHANNELS["aliyun_bailian"].billing, "balance_path", "/mock/QueryAccountBalance")
     for provider in ("deepseek", "aliyun_bailian"):
         adapter = CHANNELS[provider]

@@ -9,6 +9,7 @@ from keystone.platform.model_access.schemas.errors import AdapterError
 
 @dataclass(frozen=True)
 class Embeddings:
+    pricing_meter = "embedding.v2"
     operations: frozenset = frozenset({"text.embed"})
     delivery = "sync"
     models = None

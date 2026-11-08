@@ -19,10 +19,12 @@ from test_model_access import channel, entry, invoke
 from test_model_access import model_configuration as model_configuration
 
 from keystone.platform.audit.services import writer as audit
-from keystone.platform.model_access.adapters.channels import CHANNELS, CHAT, EMBEDDINGS
 from keystone.platform.model_access.adapters.http import HttpClient
-from keystone.platform.model_access.adapters.inference.dashscope import DashScopeChat
-from keystone.platform.model_access.adapters.pricing.catalog import ALI_BASE, ARK_BASE
+from keystone.platform.model_access.channels import CHANNELS
+from keystone.platform.model_access.channels.aliyun_bailian.chat import DashScopeChat
+from keystone.platform.model_access.channels.aliyun_bailian.pricing import BASE as ALI_BASE
+from keystone.platform.model_access.channels.shared import CHAT, EMBEDDINGS
+from keystone.platform.model_access.channels.volcengine.pricing import BASE as ARK_BASE
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.schemas.embeddings import EmbeddingRequest
 from keystone.platform.model_access.schemas.structured import StructuredRequest

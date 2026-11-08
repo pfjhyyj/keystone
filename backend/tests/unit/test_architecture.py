@@ -345,12 +345,10 @@ def test_relative_imports_cannot_bypass_layers():
 
 def test_model_access_protocols_and_services_are_independent_of_dbos():
     root = Path(__file__).parents[2] / "src/keystone/platform/model_access"
-    files = [root / "adapters/channels.py", root / "schemas/errors.py"]
-    files += [
-        root / "adapters/inference" / name
-        for name in ("protocols.py", "images.py", "kling.py", "openai_images.py")
-    ]
-    files += [p for p in (root / "adapters/billing").glob("*.py") if p.name != "registry.py"]
+    assert (root / "channels/__init__.py").is_file()
+    assert (root / "channels/spec.py").is_file()
+    files = [root / "schemas/errors.py", *(root / "channels").rglob("*.py")]
+    files += [p for p in (root / "adapters/billing").rglob("*.py") if p.name != "registry.py"]
     for path in files:
         package = "keystone.platform.model_access." + ".".join(path.relative_to(root).parts[:-1])
         dependencies = list(imports(ast.parse(path.read_text(encoding="utf8")), package))
@@ -371,7 +369,7 @@ def test_model_access_protocols_and_services_are_independent_of_dbos():
             or ".models" in name
             or ".workflows" in name
             or name.startswith("keystone.platform.identity")
-            or name.endswith(("adapters.http", "adapters.coordination", "adapters.credentials"))
+            or name.startswith("keystone.platform.model_access.adapters")
             for name in dependencies
         ), path
 
@@ -401,6 +399,42 @@ def test_model_access_protocols_and_services_are_independent_of_dbos():
             ), file
         if layer == "services":
             assert not any(d.startswith(("openai", "httpx2")) for d in dependencies), file
+
+
+def test_model_access_provider_validation_is_lazy_and_does_not_load_adapter_hosts():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\n"
+            "from pydantic import TypeAdapter, ValidationError\n"
+            # Existing structured DTOs load ServiceError; baseline their dependencies
+            # before checking what lazy registry validation adds.
+            "from keystone.platform.model_access.schemas import structured\n"
+            "from keystone.platform.model_access.schemas.types import Provider\n"
+            "prefix = 'keystone.platform.model_access'\n"
+            "assert not any(n.startswith(prefix + '.channels') for n in sys.modules)\n"
+            "baseline = set(sys.modules)\n"
+            "validator = TypeAdapter(Provider)\n"
+            "for provider in ('deepseek', 'openrouter', 'aliyun_bailian', 'newapi', "
+            "'openlux', 'yunwu', 'volcengine'):\n"
+            "    assert validator.validate_python(provider) == provider\n"
+            "try:\n"
+            "    validator.validate_python('__uninstalled_channel__')\n"
+            "except ValidationError:\n"
+            "    pass\n"
+            "else:\n"
+            "    raise AssertionError('Provider accepted an uninstalled channel')\n"
+            "for name in set(sys.modules) - baseline:\n"
+            "    assert not name.startswith((prefix + '.adapters', 'dbos', 'sqlalchemy', "
+            "'keystone.core.errors', 'keystone.core.execution')), name\n"
+            "    assert '.services' not in name and '.models' not in name, name\n",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_system_task_adapters_do_not_own_domain_persistence():

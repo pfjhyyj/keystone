@@ -41,7 +41,7 @@ cd backend
 - 并发使用事件、门闩和明确状态，不依赖短 sleep 的偶然顺序。反复取消须等待原生 I/O/进程/文件清理。
 - 领域终态、调用收尾与 DBOS 检查点完成是独立事实；需要 Workflow 完成时等待 SUCCESS，取消中的步骤历史可以暂缺，保留真实发送位置。
 - `test_model_flow_migrations.py` 使用原始隔离库验证模型/Flow 完整基线、默认值与约束、含数据的升级/回滚；不导入自动升级 head 的应用夹具。回滚只发生在测试库。
-- 架构检查递归覆盖平台/业务、相对导入、嵌套任务与例外绕过；脚手架输出遵守相同规范。
+- 架构检查递归覆盖平台/业务、相对导入、嵌套任务与例外绕过；脚手架输出遵守相同规范。只有 `model_access` 可增加顶层 `channels/`，按纯 adapter 下层约束检查，不得依赖 Service、ORM/数据库、HTTP controller、DBOS、身份权限、`core.errors` 或 runtime adapter host；其他模块不得直接引用渠道实现。渠道 billing 与协议同目录但禁止双向导入，SPEC 可组合本渠道实现；跨渠道专属引用禁止，复用放 shared。负向用例覆盖包级/相对导入和 shared，另验证 Provider 校验懒加载注册表、历史 ID 可解析且不加载 adapter host。定向运行：`cd backend && .venv/bin/python -m pytest tests/unit/test_architecture.py`。
 - `test_operations.py` 使用真实身份、领域表、DBOS 原生客户端和 Worker，验证状态明细认证、积压口径、预览与清理、终态 Run 的 PAT 引用、未知调用、活动父任务及历史分叉保护，以及自动清理默认关闭/显式启用。`test_business_flow_hooks.py` 验证业务入口限制、原身份先行的执行守卫、依赖故障暂缓和准入后的 Runtime 绑定。
 - `test_scaffold_business.py` 在临时目录生成本人资源模块及追加迁移，显式装配目录、模型和路由，在随机库初始化并检查 ORM 一致，通过真实 HTTP 验证部分更新、对象范围、PAT 交集、撤权、审计摘要与事务回滚。`test_identity_locks.py` 验证真实共享/排他锁的有界等待、取消后清理、身份变更失败不落库及重试；不以 mock 替代数据库锁语义。
 

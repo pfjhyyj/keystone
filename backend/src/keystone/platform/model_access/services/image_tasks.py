@@ -8,11 +8,11 @@ from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.model_access.adapters.channels import channel_adapter
 from keystone.platform.model_access.adapters.inference.pricing import (
-    PROFILES,
     normalize_pricing_facts,
+    profile_for,
 )
+from keystone.platform.model_access.channels import channel_adapter
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.schemas.errors import QueryLater
 from keystone.platform.model_access.schemas.images import (
@@ -265,8 +265,16 @@ class ImageTaskService:
             if row.cost_deadline_at is None:
                 initialize_check(row, row.finished_at)
             if generated is not None:
+                channel = channel_adapter(selected.provider, selected.api_base)
+                protocol = (
+                    channel.protocol(
+                        selected.operation, selected.delivery, model=selected.provider_model
+                    )
+                    if channel is not None
+                    else None
+                )
                 facts = normalize_pricing_facts(
-                    PROFILES["kling_images.v1"],
+                    profile_for(protocol),
                     {},
                     complete=True,
                     success=True,

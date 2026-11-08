@@ -4,14 +4,13 @@ from decimal import Decimal
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.model_access.adapters.channels import channel_adapter
 from keystone.platform.model_access.adapters.inference.pricing import (
     PROFILES,
     normalize_pricing_facts,
     observed_time_context,
     profile_for,
 )
-from keystone.platform.model_access.adapters.pricing.catalog import reference
+from keystone.platform.model_access.channels import channel_adapter, reference
 from keystone.platform.model_access.models import Channel, ModelEntry
 from keystone.platform.model_access.schemas.pricing import (
     EstimateResult,

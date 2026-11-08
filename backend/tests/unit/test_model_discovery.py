@@ -5,10 +5,10 @@ import pytest
 
 from keystone.core.errors import ServiceError
 from keystone.platform.model_access.adapters.billing.registry import BillingClient
-from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.adapters.inference.client import InferenceClient
 from keystone.platform.model_access.adapters.inference.transport import Observation
+from keystone.platform.model_access.channels import CHANNELS
 from keystone.platform.model_access.schemas import Invoke, Selection
 from keystone.platform.model_access.schemas.channels import ChannelCreate
 

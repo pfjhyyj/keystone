@@ -1,15 +1,27 @@
+import base64
+import hmac
 from datetime import UTC, datetime
+from urllib.parse import quote
 from uuid import uuid4
 
-from keystone.platform.model_access.adapters.billing.cloud import (
+from keystone.platform.model_access.channels.shared.billing.cloud import (
     accounting_request,
-    aliyun_signature,
     bill_amounts,
     bill_text,
     credentials,
+    query_string,
 )
-from keystone.platform.model_access.adapters.billing.contracts import ResponseBilling, balance_item
+from keystone.platform.model_access.channels.shared.billing.contracts import (
+    ResponseBilling,
+    balance_item,
+)
 from keystone.platform.model_access.schemas.errors import AdapterError
+
+
+def aliyun_signature(params, secret):
+    canonical = query_string(params)
+    message = "GET&%2F&" + quote(canonical, safe="-_.~")
+    return base64.b64encode(hmac.digest((secret + "&").encode(), message.encode(), "sha1")).decode()
 
 
 class AliyunBailian(ResponseBilling):
@@ -47,7 +59,7 @@ class AliyunBailian(ResponseBilling):
             )
         return payload
 
-    async def account_balance(self, http, base, secret):
+    async def query_balance(self, http, base, secret):
         payload = await self.query(http, base, secret, "QueryAccountBalance")
         try:
             return self.balance(payload)

@@ -1,17 +1,58 @@
 """Volcengine account balances and product-level monthly bills, never per-call costs."""
 
+import hashlib
+import hmac
 import json
 from datetime import UTC, datetime
 
-from keystone.platform.model_access.adapters.billing.cloud import (
+from keystone.platform.model_access.channels.shared.billing.cloud import (
     accounting_request,
     bill_amounts,
     bill_text,
     credentials,
-    volcengine_headers,
+    query_string,
 )
-from keystone.platform.model_access.adapters.billing.contracts import ResponseBilling, balance_item
+from keystone.platform.model_access.channels.shared.billing.contracts import (
+    ResponseBilling,
+    balance_item,
+)
 from keystone.platform.model_access.schemas.errors import AdapterError
+
+
+def volcengine_headers(
+    keys, host, params, *, timestamp, body=b"", method="GET", region="cn-beijing"
+):
+    headers = {"host": host, "x-date": timestamp}
+    if keys.security_token is not None:
+        headers["x-security-token"] = keys.security_token.get_secret_value()
+    signed = ";".join(sorted(headers))
+    canonical_headers = "".join(name + ":" + headers[name] + "\n" for name in sorted(headers))
+    canonical = "\n".join(
+        (
+            method,
+            "/",
+            query_string(params),
+            canonical_headers,
+            signed,
+            hashlib.sha256(body).hexdigest(),
+        )
+    )
+    scope = timestamp[:8] + "/" + region + "/billing/request"
+    message = "\n".join(
+        ("HMAC-SHA256", timestamp, scope, hashlib.sha256(canonical.encode()).hexdigest())
+    )
+    signing_key = keys.access_key_secret.get_secret_value().encode()
+    for part in (timestamp[:8], region, "billing", "request"):
+        signing_key = hmac.digest(signing_key, part.encode(), "sha256")
+    signature = hmac.new(signing_key, message.encode(), hashlib.sha256).hexdigest()
+    identifier = keys.access_key_id.get_secret_value()
+    headers["Authorization"] = (
+        f"HMAC-SHA256 Credential={identifier}/{scope}, "
+        f"SignedHeaders={signed}, Signature={signature}"
+    )
+    if method == "POST":
+        headers["content-type"] = "application/json"
+    return headers
 
 
 class Volcengine(ResponseBilling):
@@ -45,7 +86,7 @@ class Volcengine(ResponseBilling):
             )
         return payload
 
-    async def account_balance(self, http, base, secret):
+    async def query_balance(self, http, base, secret):
         payload = await self.query(http, base, secret, "QueryBalanceAcct")
         try:
             data = payload["Result"]

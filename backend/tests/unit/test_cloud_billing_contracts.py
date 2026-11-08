@@ -7,13 +7,11 @@ import httpx2
 import pytest
 
 from keystone.core.errors import ServiceError
-from keystone.platform.model_access.adapters.billing.cloud import (
-    aliyun_signature,
-    volcengine_headers,
-)
 from keystone.platform.model_access.adapters.billing.registry import BillingClient
-from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.adapters.http import HttpClient
+from keystone.platform.model_access.channels import CHANNELS
+from keystone.platform.model_access.channels.aliyun_bailian.billing import aliyun_signature
+from keystone.platform.model_access.channels.volcengine.billing import volcengine_headers
 from keystone.platform.model_access.schemas.channels import ChannelCreate
 from keystone.platform.model_access.schemas.cloud_billing import CloudBillingCredentials
 

@@ -75,7 +75,7 @@ def transport(self, provider):
     return httpx2.MockTransport(send)
 HttpClient.transport = transport
 if {crash!r} == 'response':
-    from keystone.platform.model_access.adapters.inference import images
+    from keystone.platform.model_access.channels.shared import images
     original_batch = images.image_batch
     def batch(*args):
         original_batch(*args)

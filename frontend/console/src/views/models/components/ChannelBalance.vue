@@ -95,7 +95,7 @@ function inspect() {
           </div>
         </div>
       </template>
-      <p v-if="snapshot && ['aliyun_account', 'volcengine_account'].includes(snapshot.scope)">
+      <p v-if="snapshot && billsAvailable">
         这是云账户余额，含其他云产品共享资金；可用额度和现金余额可能重叠，不能相加。
       </p>
       <h3>查询记录</h3>

@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { expect, it } from 'vitest'
 import ModelManager from '../views/models/ModelsView.vue'
+import { modelOptionsFixture } from './model-options.fixture'
 import CloudBills from '../views/models/components/CloudBills.vue'
 import { authorize, chooseSelect, deferred, fakeApi } from './support'
 
@@ -45,7 +46,7 @@ it.each(['aliyun_bailian', 'volcengine'])(
     const writes: Record<string, unknown>[] = []
     fakeApi((path, init) => {
       if (path === '/model-access/options')
-        return { providers: ['openrouter', provider], balance_providers: [] }
+        return modelOptionsFixture({ providers: ['openrouter', provider], balance_providers: [] })
       if (init.method === 'POST') {
         writes.push(JSON.parse(String(init.body)))
         return channel
@@ -95,7 +96,7 @@ it('keeps saved cloud credentials write-only and supports clearing them', async 
   const writes: Record<string, unknown>[] = []
   fakeApi((path, init) => {
     if (path === '/model-access/options')
-      return { providers: ['volcengine'], balance_providers: [] }
+      return modelOptionsFixture({ providers: ['volcengine'], balance_providers: [] })
     if (init.method === 'PATCH') {
       writes.push(JSON.parse(String(init.body)))
       return channel

@@ -9,10 +9,17 @@ from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.adapters.channels import CHANNELS, PROVIDERS
+from keystone.platform.model_access.channels import CHANNELS, channel_adapter, channel_options
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.services.cost_context import bind_channel
 from keystone.platform.model_access.services.queries import balance_config, locked
+
+
+def check_fields(provider, data):
+    spec = CHANNELS.get(provider)
+    declared = {item.name for item in spec.fields} if spec is not None else set()
+    if data.workspace_id is not None and "workspace_id" not in declared:
+        raise ServiceError(422, "model_workspace_invalid", "当前渠道不支持业务空间 ID")
 
 
 class ChannelService:
@@ -21,19 +28,7 @@ class ChannelService:
 
     async def options(self):
         async with self.identity.access("model:manage"):
-            return {
-                "providers": list(PROVIDERS),
-                "default_api_bases": {key: CHANNELS[key].api_base for key in PROVIDERS},
-                "balance_providers": [
-                    key
-                    for key, adapter in CHANNELS.items()
-                    if getattr(adapter.billing, "enabled", False)
-                    and getattr(adapter.billing, "balance_path", None)
-                ],
-                "bill_providers": [
-                    key for key, adapter in CHANNELS.items() if hasattr(adapter.billing, "bills")
-                ],
-            }
+            return channel_options()
 
     async def upstream_models(self, identifier):
         async with self.clients.coordination.balance_slots:
@@ -58,7 +53,8 @@ class ChannelService:
             raise ServiceError(422, "model_api_key_required", "请填写渠道 API Key")
         billing_key = data.billing_api_key
         if data.billing_credentials is not None:
-            if row.provider not in {"aliyun_bailian", "volcengine"}:
+            spec = CHANNELS.get(row.provider)
+            if spec is None or not spec.cloud_billing:
                 raise ServiceError(
                     422, "model_billing_credentials_invalid", "当前渠道不使用云账务凭据"
                 )
@@ -123,10 +119,7 @@ class ChannelService:
                 values.pop("workspace_id", None)
             if identifier:
                 row = await locked(session, Channel, identifier)
-                if data.workspace_id is not None and row.provider != "aliyun_bailian":
-                    raise ServiceError(
-                        422, "model_workspace_invalid", "仅阿里云百炼支持业务空间 ID"
-                    )
+                check_fields(row.provider, data)
                 if self.clients.billing.adapter(
                     row.provider, row.api_base
                 ).cost_query_mode == "logs" and (
@@ -163,10 +156,7 @@ class ChannelService:
                     row.balance_check_status = "never"
                 self.identity.touch(row, auth)
             else:
-                if data.workspace_id is not None and data.provider != "aliyun_bailian":
-                    raise ServiceError(
-                        422, "model_workspace_invalid", "仅阿里云百炼支持业务空间 ID"
-                    )
+                check_fields(data.provider, data)
                 before = None
                 row = Channel(
                     id=uuid4(), **values, created_by=auth.user.id, updated_by=auth.user.id
@@ -204,7 +194,8 @@ class ChannelService:
         async with self.clients.coordination.balance_slots:
             async with self.identity.access("model:manage") as (session, _):
                 row = await self.identity.existing(session, Channel, identifier)
-                if not hasattr(self.clients.billing.adapter(row.provider, row.api_base), "bills"):
+                spec = channel_adapter(row.provider, row.api_base)
+                if spec is None or not spec.bills_available:
                     raise ServiceError(
                         409, "model_billing_unavailable", "当前渠道未接入云账户月账单"
                     )

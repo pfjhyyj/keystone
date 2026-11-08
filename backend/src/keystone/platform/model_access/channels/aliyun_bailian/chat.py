@@ -2,7 +2,7 @@
 
 import re
 
-from keystone.platform.model_access.adapters.inference.protocols import ChatCompletions
+from keystone.platform.model_access.channels.shared.chat import ChatCompletions
 from keystone.platform.model_access.schemas.errors import AdapterError
 
 # Official Chat Completions and structured-output contracts, verified 2026-11-05.

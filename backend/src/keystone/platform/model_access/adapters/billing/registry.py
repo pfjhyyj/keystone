@@ -1,10 +1,15 @@
 """Keystone billing facade over the installed channel compositions."""
 
 from keystone.core.errors import ServiceError
-from keystone.platform.model_access.adapters.billing.contracts import BillingQueryError
-from keystone.platform.model_access.adapters.billing.http import balance_get
-from keystone.platform.model_access.adapters.channels import CHANNELS, channel_adapter
 from keystone.platform.model_access.adapters.errors import adapter_errors
+from keystone.platform.model_access.channels import CHANNELS, channel_adapter
+from keystone.platform.model_access.channels.shared.billing.contracts import BillingQueryError
+from keystone.platform.model_access.channels.spec import (
+    BalanceQuery,
+    CloudBills,
+    CostLogs,
+    RequestCost,
+)
 from keystone.platform.model_access.schemas.errors import AdapterError
 
 
@@ -19,40 +24,37 @@ class BillingClient:
             raise ServiceError(503, "model_provider_unavailable", "当前服务商尚未开放账务查询")
         return channel.billing
 
-    def operation(self, provider, name, base=None):
-        method = getattr(self.adapter(provider, base), name, None)
-        if method is None:
+    def capability(self, provider, capability, base=None):
+        adapter = self.adapter(provider, base)
+        if not isinstance(adapter, capability):
             raise BillingQueryError("cost_query_unavailable", blocked=True)
-        return method
+        return adapter
 
     async def validate_policy(self, provider, context, secret):
-        return await self.operation(provider, "validate_policy", context.get("api_base"))(
+        return await self.capability(provider, CostLogs, context.get("api_base")).validate_policy(
             self.http, context, secret
         )
 
     async def page(self, provider, context, secret, **window):
-        return await self.operation(provider, "page", context.get("api_base"))(
+        return await self.capability(provider, CostLogs, context.get("api_base")).page(
             self.http, context, secret, **window
         )
 
     async def lookup(self, provider, context, secret, identifier):
-        return await self.operation(provider, "lookup", context.get("api_base"))(
+        return await self.capability(provider, RequestCost, context.get("api_base")).lookup(
             self.http, context, secret, identifier
         )
 
     async def balance(self, provider, base, secret):
         with adapter_errors():
             adapter = self.adapter(provider, base)
-            query = getattr(adapter, "account_balance", None) or getattr(
-                adapter, "token_balance", None
-            )
-            if query is not None:
-                return await query(self.http, base, secret)
-            return await balance_get(self.http, adapter, base, secret)
+            if not isinstance(adapter, BalanceQuery):
+                raise AdapterError(503, "model_provider_unavailable", "当前服务商尚未开放账务查询")
+            return await adapter.query_balance(self.http, base, secret)
 
     async def bills(self, provider, base, secret, period, offset):
         with adapter_errors():
-            query = getattr(self.adapter(provider, base), "bills", None)
-            if query is None:
+            adapter = self.adapter(provider, base)
+            if not isinstance(adapter, CloudBills):
                 raise AdapterError(409, "model_billing_unavailable", "当前渠道未接入云账户月账单")
-            return await query(self.http, base, secret, period, offset)
+            return await adapter.bills(self.http, base, secret, period, offset)

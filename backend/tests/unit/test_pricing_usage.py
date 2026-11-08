@@ -6,7 +6,6 @@ import httpx2
 import pytest
 from support.pricing import SOURCE, token_rule
 
-from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.adapters.inference.pricing import (
     PROFILES,
     merge_usage,
@@ -14,12 +13,10 @@ from keystone.platform.model_access.adapters.inference.pricing import (
     profile_for,
     request_context,
 )
-from keystone.platform.model_access.adapters.pricing.catalog import (
-    ALI_BASE,
-    ARK_BASE,
-    REFERENCE_RULES,
-    reference,
-)
+from keystone.platform.model_access.channels import CHANNELS, reference
+from keystone.platform.model_access.channels import REFERENCE_PRICES as REFERENCE_RULES
+from keystone.platform.model_access.channels.aliyun_bailian.pricing import BASE as ALI_BASE
+from keystone.platform.model_access.channels.volcengine.pricing import BASE as ARK_BASE
 from keystone.platform.model_access.schemas.pricing import PricingSnapshot
 from keystone.platform.model_access.services.pricing_calculator import estimate, validate_rule
 

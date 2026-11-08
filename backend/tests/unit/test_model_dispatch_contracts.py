@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from keystone.core.config import Settings
 from keystone.core.worker_identity import config_digest
-from keystone.platform.model_access.adapters.inference.limits import retry_after
+from keystone.platform.model_access.channels.shared.limits import retry_after
 
 
 def test_retry_after_bounds_seconds_dates_and_untrusted_values():

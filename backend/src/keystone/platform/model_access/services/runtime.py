@@ -17,9 +17,9 @@ from sqlalchemy.event import listen
 from keystone.core.errors import ServiceError
 from keystone.core.retries import retry_operation
 from keystone.core.time import utcnow
-from keystone.platform.model_access.adapters.billing.contracts import Receipt
 from keystone.platform.model_access.adapters.inference.errors import classify_error
 from keystone.platform.model_access.adapters.inference.transport import Observation
+from keystone.platform.model_access.channels.shared.billing.contracts import Receipt
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.schemas.images import (
     ImageBatch,

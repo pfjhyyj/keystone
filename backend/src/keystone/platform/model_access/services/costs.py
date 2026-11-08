@@ -9,7 +9,10 @@ from sqlalchemy import func, select
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
-from keystone.platform.model_access.adapters.billing.contracts import BillingQueryError, amount
+from keystone.platform.model_access.channels.shared.billing.contracts import (
+    BillingQueryError,
+    amount,
+)
 from keystone.platform.model_access.models import Channel, ModelInvocation
 from keystone.platform.model_access.services.cost_policy import (
     MAX_ERRORS,

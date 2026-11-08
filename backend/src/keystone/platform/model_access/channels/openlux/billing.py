@@ -1,4 +1,4 @@
-from keystone.platform.model_access.adapters.billing.token_logs import TokenLogs
+from keystone.platform.model_access.channels.shared.billing.token_logs import TokenLogs
 
 
 class Openlux(TokenLogs):

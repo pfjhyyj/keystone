@@ -108,13 +108,45 @@ export interface CloudBillReport {
     amounts: Record<string, string>
   }[]
 }
+export type BillingCredentials = 'cloud' | 'key' | 'none'
+export interface ChannelField {
+  name: string
+  label: string
+  hint?: string
+  placeholder?: string
+  pattern?: string
+}
+export interface ChannelDescriptor {
+  id: string
+  label: string
+  display_as: string
+  creatable: boolean
+  default_api_base: string | null
+  custom_base: boolean
+  balance: boolean
+  bills: boolean
+  billing_credentials: BillingCredentials
+  fields: ChannelField[]
+  hint: string
+}
+export interface LegacySite {
+  providers: string[]
+  api_base: string
+  display_as: string
+  balance: boolean
+  bills: boolean
+  billing_credentials: BillingCredentials
+}
 export interface ModelOptions {
+  channels: ChannelDescriptor[]
+  legacy_sites?: LegacySite[]
   providers: string[]
   balance_providers: string[]
   bill_providers?: string[]
   default_api_bases: Record<string, string>
 }
 export const modelApi = {
+  options: () => request<ModelOptions>('/model-access/options'),
   channels: (offset: number) => request<Channel[]>(`/model-channels?offset=${offset}&limit=50`),
   entries: (offset: number) => request<ModelEntry[]>(`/model-entries?offset=${offset}&limit=50`),
 
@@ -137,22 +169,34 @@ export const balanceStates: Record<string, string> = {
   error: '查询失败',
   unavailable: '不可用',
 }
-export const providers = {
-  openrouter: 'OpenRouter',
-  newapi: 'NewAPI',
-  openlux: 'Yunwu',
-  yunwu: 'Yunwu',
-  deepseek: 'DeepSeek',
-  aliyun_bailian: '阿里云百炼（DashScope）',
-  volcengine: '火山方舟（豆包）',
-}
-export function channelProvider(row: Pick<Channel, 'provider' | 'api_base'>) {
-  return row.provider === 'openlux' ||
-    row.provider === 'yunwu' ||
-    (row.provider === 'newapi' &&
-      ['https://api.openlux.ai/v1', 'https://yunwu.ai/v1'].includes(row.api_base))
-    ? 'yunwu'
-    : row.provider
+// Resolve presentation and capabilities without changing the persisted provider identity.
+export function resolveChannel(
+  row: Pick<Channel, 'provider' | 'api_base'>,
+  options?: ModelOptions | null,
+): ChannelDescriptor {
+  const descriptors = options?.channels ?? []
+  const source = descriptors.find((item) => item.id === row.provider)
+  const site = options?.legacy_sites?.find(
+    (item) => item.api_base === row.api_base && item.providers.includes(row.provider),
+  )
+  const displayId = site?.display_as || source?.display_as || row.provider
+  const display = descriptors.find((item) => item.id === displayId)
+  return {
+    display_as: row.provider,
+    creatable: false,
+    default_api_base: null,
+    custom_base: false,
+    balance: false,
+    bills: false,
+    billing_credentials: 'none',
+    fields: [],
+    hint: '',
+    ...source,
+    ...(site ? display : {}),
+    ...site,
+    id: row.provider,
+    label: display?.label ?? source?.label ?? row.provider,
+  }
 }
 export const costCheckStates: Record<string, string> = {
   pending: '等待核对',

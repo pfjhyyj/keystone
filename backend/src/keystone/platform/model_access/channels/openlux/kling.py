@@ -1,8 +1,10 @@
 """Verified OpenLux native image task protocol; no domain state or retries."""
 
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-from keystone.platform.model_access.adapters.inference.limits import retry_after
+from keystone.platform.model_access.channels.shared.limits import retry_after
+from keystone.platform.model_access.channels.shared.metering import make_profile
 from keystone.platform.model_access.schemas.errors import AdapterError, QueryLater
 from keystone.platform.model_access.schemas.images import ImageTaskReceipt
 
@@ -11,11 +13,19 @@ BASE = ORIGIN + "/v1"
 SUBMIT = "/kling/v1/images/generations"
 QUERY = SUBMIT + "/{id}"
 MODELS = {"kling-v1", "kling-v1-5", "kling-v2", "kling-v2-1"}
+PROFILE = make_profile(
+    "kling_images.v1",
+    {"none": []},
+    {"none": []},
+    {"context.resolution": "string"},
+    images=True,
+    enums={"context.resolution": ["1k", "2k"]},
+)
 
 
-def submit_body(selected, data):
+def submit_body(selected, data, *, allowed_targets):
     if (
-        selected.provider not in {"openlux", "newapi", "yunwu"}
+        (selected.provider, selected.api_base) not in allowed_targets
         or selected.api_base != BASE
         or selected.provider_model not in MODELS
     ):
@@ -105,6 +115,7 @@ def check_download(response):
         raise AdapterError(502, "model_result_download_unavailable", "原图片结果无法取回")
 
 
+# Queries/downloads use the physical Openlux transport even for a saved relay alias.
 async def query(http, receipt, secret):
     import httpx2
 
@@ -143,7 +154,11 @@ async def download(http, url):
         raise AdapterError(502, "model_response_too_large", "原图片结果超过上限") from None
 
 
+@dataclass(frozen=True)
 class KlingImages:
+    # Empty unless channel composition explicitly grants saved provider/base identities.
+    allowed_targets: frozenset[tuple[str, str]] = frozenset()
+    pricing_meter = "kling_images.v1"
     operations = frozenset({"image.generate"})
     delivery = "async"
     models = frozenset(MODELS)
@@ -155,7 +170,11 @@ class KlingImages:
         return ORIGIN, SUBMIT, "model_name"
 
     async def submit(self, sdk, selected, data):
-        response = await sdk.post(SUBMIT, body=submit_body(selected, data), cast_to=dict)
+        response = await sdk.post(
+            SUBMIT,
+            body=submit_body(selected, data, allowed_targets=self.allowed_targets),
+            cast_to=dict,
+        )
         return task_id(response)
 
     query = staticmethod(query)

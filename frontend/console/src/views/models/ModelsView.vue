@@ -8,8 +8,7 @@ import {
   modelApi,
   operationLabels,
   type ModelOperation,
-  providers,
-  channelProvider,
+  resolveChannel,
   type Channel,
   type ModelEntry,
   type ModelOptions,
@@ -54,9 +53,9 @@ const form = ref<'channel' | 'entry' | null>(null),
   editingChannel = ref<Channel | null>(null),
   editingEntry = ref<ModelEntry | null>(null)
 const name = ref(''),
-  provider = ref('openrouter'),
+  provider = ref(''),
   apiBase = ref(''),
-  workspaceId = ref(''),
+  channelFields = ref<Record<string, string>>({}),
   credential = ref(''),
   billing = ref(''),
   billingAk = ref(''),
@@ -65,7 +64,15 @@ const name = ref(''),
   clearBilling = ref(false),
   account = ref(''),
   active = ref(true)
-const cloudBilling = computed(() => ['aliyun_bailian', 'volcengine'].includes(provider.value))
+const creatableChannels = computed(
+  () => options.value?.channels?.filter((item) => item.creatable) ?? [],
+)
+const selectedChannel = computed(() =>
+  resolveChannel({ provider: provider.value, api_base: apiBase.value }, options.value),
+)
+const cloudBilling = computed(() => selectedChannel.value.billing_credentials === 'cloud')
+const keyBilling = computed(() => selectedChannel.value.billing_credentials === 'key')
+const describeChannel = (row: Channel) => resolveChannel(row, options.value)
 const key = ref(''),
   modelName = ref(''),
   channelId = ref(''),
@@ -77,7 +84,7 @@ const fingerprint = computed(() =>
     name.value,
     provider.value,
     apiBase.value,
-    workspaceId.value,
+    channelFields.value,
     credential.value,
     billing.value,
     billingAk.value,
@@ -141,7 +148,7 @@ async function submitAction() {
 async function loadOptions() {
   optionsError.value = ''
   try {
-    options.value = await request<ModelOptions>('/model-access/options')
+    options.value = await modelApi.options()
   } catch (e) {
     options.value = null
     optionsError.value = e instanceof Error ? e.message : '配置不可用'
@@ -150,9 +157,15 @@ async function loadOptions() {
 function channel(row: Channel | null) {
   editingChannel.value = row
   name.value = row?.name ?? ''
-  provider.value = row ? channelProvider(row) : 'openrouter'
-  apiBase.value = row?.api_base ?? 'https://openrouter.ai/api/v1'
-  workspaceId.value = row?.workspace_id ?? ''
+  const descriptor = row ? describeChannel(row) : creatableChannels.value[0]
+  provider.value = row?.provider ?? descriptor?.id ?? ''
+  apiBase.value = row?.api_base ?? descriptor?.default_api_base ?? ''
+  channelFields.value = Object.fromEntries(
+    (descriptor?.fields ?? []).map((field) => [
+      field.name,
+      String((row as unknown as Record<string, unknown> | null)?.[field.name] ?? ''),
+    ]),
+  )
   credential.value = ''
   billing.value = ''
   billingAk.value = billingSk.value = billingToken.value = ''
@@ -180,11 +193,14 @@ async function save() {
       const body = {
         name: name.value,
         api_base: apiBase.value,
-        ...(provider.value === 'aliyun_bailian'
-          ? { workspace_id: workspaceId.value.trim() || null }
-          : {}),
+        ...Object.fromEntries(
+          selectedChannel.value.fields.map((field) => [
+            field.name,
+            channelFields.value[field.name]?.trim() || null,
+          ]),
+        ),
         ...(credential.value ? { api_key: credential.value } : {}),
-        ...(!cloudBilling.value && billing.value && !clearBilling.value
+        ...(keyBilling.value && billing.value && !clearBilling.value
           ? { billing_api_key: billing.value }
           : {}),
         ...(cloudBilling.value &&
@@ -240,21 +256,21 @@ watch(form, (value) => {
     clearBilling.value = false
   }
 })
-watch(provider, (value, previous) => {
-  if (form.value === 'channel' && !editingChannel.value && previous !== value)
-    workspaceId.value = ''
+watch(provider, () => {
+  if (form.value !== 'channel' || editingChannel.value) return
+  channelFields.value = {}
   billing.value = billingAk.value = billingSk.value = billingToken.value = ''
-  if (form.value === 'channel' && !editingChannel.value) {
-    const bases: Record<string, string> = {
-      openrouter: 'https://openrouter.ai/api/v1',
-      newapi: 'https://newapiai.com/v1',
-      yunwu: 'https://yunwu.ai/v1',
-      aliyun_bailian: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      volcengine: 'https://ark.cn-beijing.volces.com/api/v3',
-    }
-    apiBase.value = options.value?.default_api_bases?.[value] ?? bases[value] ?? ''
-  }
+  clearBilling.value = false
+  apiBase.value =
+    options.value?.channels?.find((item) => item.id === provider.value)?.default_api_base ?? ''
 })
+watch(
+  () => selectedChannel.value.billing_credentials,
+  () => {
+    billing.value = billingAk.value = billingSk.value = billingToken.value = ''
+    clearBilling.value = false
+  },
+)
 watch(upstream, (value) => {
   if (form.value !== 'entry' || editingEntry.value || key.value || !value) return
   const suggested = value
@@ -300,7 +316,7 @@ onMounted(() => {
             <h2>渠道账户</h2>
             <div class="row-actions">
               <el-button
-                :disabled="busy || !options"
+                :disabled="busy || !creatableChannels.length"
                 @click="channel(null)"
                 native-type="button"
                 type="primary"
@@ -341,7 +357,7 @@ onMounted(() => {
               >
               <el-table-column label="服务商" min-width="110"
                 ><template #default="{ row: row }">{{
-                  providers[channelProvider(row) as keyof typeof providers] ?? row.provider
+                  describeChannel(row).label
                 }}</template></el-table-column
               >
               <el-table-column label="状态" min-width="90"
@@ -355,8 +371,8 @@ onMounted(() => {
                 ><template #default="{ row }"
                   ><ChannelBalance
                     :channel="row"
-                    :available="!!options?.balance_providers?.includes(channelProvider(row))"
-                    :bills-available="!!options?.bill_providers?.includes(row.provider)"
+                    :available="describeChannel(row).balance"
+                    :bills-available="describeChannel(row).bills"
                     :busy="busy"
                     :error="error"
                     @inspect="error = ''"
@@ -591,31 +607,33 @@ onMounted(() => {
               <span class="form-label">服务商</span
               ><AppSelect v-model="provider" aria-label="服务商" :disabled="!!editingChannel"
                 ><el-option
-                  v-if="editingChannel && !options?.providers?.includes(provider)"
+                  v-if="editingChannel"
                   :value="provider"
-                  :label="providers[provider as keyof typeof providers] ?? provider" /><el-option
-                  v-for="value in options?.providers ?? ['openrouter']"
-                  :key="value"
-                  :value="value"
-                  :label="providers[value as keyof typeof providers] ?? value"
+                  :label="selectedChannel.label" /><el-option
+                  v-for="descriptor in editingChannel ? [] : creatableChannels"
+                  :key="descriptor.id"
+                  :value="descriptor.id"
+                  :label="resolveChannel({ provider: descriptor.id, api_base: '' }, options).label"
               /></AppSelect>
             </div>
             <label
-              >服务地址<el-input v-model="apiBase" type="url" required maxlength="512"
+              >服务地址<el-input
+                v-model="apiBase"
+                type="url"
+                required
+                maxlength="512"
+                :readonly="!selectedChannel.custom_base"
             /></label>
-            <template v-if="provider === 'aliyun_bailian'">
+            <template v-for="field in selectedChannel.fields" :key="field.name">
               <label
-                >百炼业务空间 ID（可选）<el-input
-                  v-model="workspaceId"
-                  aria-label="百炼业务空间 ID"
-                  maxlength="63"
-                  pattern="[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
-                  placeholder="例如 llm-xxxxxxxx"
+                >{{ field.label
+                }}<el-input
+                  v-model="channelFields[field.name]"
+                  :aria-label="field.label"
+                  :pattern="field.pattern"
+                  :placeholder="field.placeholder"
               /></label>
-              <p>
-                用已保存的推理 API Key
-                查询模型列表。留空使用北京区共享域名，填写后改用该业务空间的北京区专属域名，不改变模型调用地址。
-              </p>
+              <p v-if="field.hint">{{ field.hint }}</p>
             </template>
             <label
               >推理 API Key<el-input
@@ -626,22 +644,8 @@ onMounted(() => {
                 maxlength="4096"
                 :placeholder="editingChannel?.has_api_key ? '已设置，留空保留' : '请输入 API Key'"
             /></label>
-            <p v-if="provider === 'openrouter'">
-              OpenRouter 地址固定为 https://openrouter.ai/api/v1。推理使用普通 API
-              Key；可选的账户余额查询使用同一账户的 Management Key。
-            </p>
-            <p v-else-if="provider === 'newapi'">
-              填写标准 NewAPI 的 HTTPS API 地址，默认 https://newapiai.com/v1，可包含路径前缀。 普通
-              Key 用于模型列表、调用费用核对和额度查询。上游允许时同时查询账户剩余额度，与当前 Key
-              的额度分开展示；Token 不限额仍受账户余额限制。更换站点或 Key
-              时请新建渠道，保留历史查费凭据。
-            </p>
-            <p v-else-if="provider === 'yunwu'">
-              Yunwu 类使用 Key 查询参数和分页日志，包含 Yunwu、Openlux 等兼容站点。 默认
-              https://yunwu.ai/v1，Openlux 填 https://api.openlux.ai/v1；也可填写兼容站点的 API
-              地址。 此类暂未接入账户余额查询，更换站点或 Key 时请新建渠道，保留历史查费凭据。
-            </p>
-            <label v-if="!cloudBilling && !['newapi', 'openlux', 'yunwu'].includes(provider)"
+            <p v-if="selectedChannel.hint">{{ selectedChannel.hint }}</p>
+            <label v-if="keyBilling"
               >账务 API Key<el-input
                 v-model="billing"
                 type="password"
@@ -649,7 +653,7 @@ onMounted(() => {
                 maxlength="4096"
                 :disabled="clearBilling"
                 :placeholder="
-                  editingChannel?.has_billing_api_key ? '已设置，留空保留' : '可选 Management Key'
+                  editingChannel?.has_billing_api_key ? '已设置，留空保留' : '可选账务 API Key'
                 "
             /></label>
             <template v-if="cloudBilling">
@@ -699,7 +703,7 @@ onMounted(() => {
             <el-checkbox
               v-if="
                 editingChannel?.has_billing_api_key &&
-                !['newapi', 'openlux', 'yunwu'].includes(provider)
+                selectedChannel.billing_credentials !== 'none'
               "
               v-model="clearBilling"
               >清除已保存的账务 Key</el-checkbox

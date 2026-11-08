@@ -8,7 +8,7 @@ ModelEntry.pricing 为 inherit/override/disabled，pricing_revision 单调递增
 
 规则按 provider、规范化 api_base、精确上游模型、operation/delivery 解析，不按名称前缀或角色猜测。中转站和 ep-* 不继承直连厂商价格。改绑目标/操作重新校验覆盖，改名不改价格。
 
-默认规则随制品发布，包含来源 URL、核对时间和版本，不在调用期间抓价。参考目录由 adapters/pricing/catalog.py 列举：百炼北京 Qwen Max/Plus/Flash 及六个向量模型；方舟北京 Seed Evolving、2.1/2.0 系列的核实版本。完整 ID 和价格以代码数据为准。
+默认规则随制品发布，包含来源 URL、核对时间和版本，不在调用期间抓价。参考数据分别由 `channels/aliyun_bailian/pricing.py`、`channels/volcengine/pricing.py` 列举，通过本渠道 SPEC 的 `reference_prices` 注册并由 `channels/__init__.py` 聚合：百炼北京 Qwen Max/Plus/Flash 及六个向量模型；方舟北京 Seed Evolving、2.1/2.0 系列的核实版本。共用规则构造函数在 `channels/rules.py`；完整 ID 和价格以代码数据为准。本文代码路径相对 `backend/src/keystone/platform/model_access/`。
 
 百炼输入档位按 K=1000，方舟按接口整数边界（32K=32768、128K=131072）；完整输入选档后对全部数量用该档价格。qwen-plus 按实际思考用量，百炼隐式缓存使用官方折扣、实时原价，不套活动或显式缓存；方舟默认仅标准服务，fast/flex/auto 需覆盖价。未核实的缓存单价不猜测。
 
@@ -147,6 +147,8 @@ partial 的已知项仅放 detail，不作为总额。估价与 cost_* 互不覆
 
 ## 代码与验证
 
-schemas/pricing.py 放规则/快照/事实/结果 DTO；services/pricing_calculator.py 的 validate_rule、estimate 为纯函数；adapters/pricing/catalog.py 放默认数据，协议负责归一化。pricing/entries 管价格授权与 revision，runtime/image_tasks/image_results/recovery 保存原调用事实，statistics 管口径与覆盖。
+`schemas/pricing.py` 放规则/快照/事实/结果 DTO；`services/pricing_calculator.py` 的 validate_rule、estimate 为纯函数；`channels/<id>/pricing.py` 放本渠道参考数据，通过 SPEC 汇总；`channels/shared/metering.py` 放共用计量 profile 声明，渠道通过 SPEC 注册 profile，`adapters/inference/pricing.py` 负责归一化与计量装配。`services/pricing.py`、`services/entries.py` 管价格授权与 revision，`services/` 的 runtime/image_tasks/image_results/recovery 保存原调用事实，statistics 管口径与覆盖。
+
+新增渠道遵循[添加渠道](model-access.md#添加渠道)：在 `channels/<id>/` 导出 SPEC 并在 `channels/__init__.py` 注册一项，复用已有配置字段时不改迁移或前端供应商分支。新的额外字段仍需数据库/必要迁移和请求、保存、校验支持，SPEC 不是任意字段免迁移机制。billing 与协议不得互相导入，计量/价格数据也不能依赖运行时 adapter host；SPEC 可组合两者。渠道 ID 和历史计量/价格版本保持稳定，legacy 不提供 UI 新建但仍保留历史解析。
 
 单元验证分区不重计、32000/32001 档位、零/缺失/冲突、精度/溢出、树边界和时间来源；真实 PostgreSQL/DBOS 验证登记快照、调价竞争、迁移、权限、恢复及取消不重发。HTTP 用本地协议桩，不发送付费请求，不以手造计量声称协议已支持。

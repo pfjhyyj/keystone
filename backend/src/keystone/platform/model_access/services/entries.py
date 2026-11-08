@@ -3,7 +3,7 @@ from sqlalchemy import and_, false, or_, select
 from keystone.core.errors import ServiceError
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
-from keystone.platform.model_access.adapters.channels import channel_adapter, channel_targets
+from keystone.platform.model_access.channels import channel_adapter, channel_targets
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.schemas.images import MAX_INPUT_IMAGE_BYTES
 from keystone.platform.model_access.schemas.operations import Delivery, Operation

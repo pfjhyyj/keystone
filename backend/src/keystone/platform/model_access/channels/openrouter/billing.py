@@ -1,6 +1,6 @@
 from decimal import localcontext
 
-from keystone.platform.model_access.adapters.billing.contracts import (
+from keystone.platform.model_access.channels.shared.billing.contracts import (
     BillingQueryError,
     Binding,
     Fee,
@@ -9,7 +9,7 @@ from keystone.platform.model_access.adapters.billing.contracts import (
     amount,
     balance_item,
 )
-from keystone.platform.model_access.adapters.billing.http import cost_get
+from keystone.platform.model_access.channels.shared.billing.http import cost_get
 
 
 class OpenRouter(ResponseBilling):

@@ -3,8 +3,9 @@
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
-from keystone.platform.model_access.adapters.billing.contracts import BillingQueryError
 from keystone.platform.model_access.schemas.errors import AdapterError, ResponseTooLarge
+
+from .contracts import BillingQueryError
 
 
 def retry_delay(value):

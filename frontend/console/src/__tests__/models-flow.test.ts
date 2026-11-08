@@ -8,6 +8,7 @@ import {
   type VueWrapper,
 } from '@vue/test-utils'
 import ModelManager from '../views/models/ModelsView.vue'
+import { modelOptionsFixture } from './model-options.fixture'
 import FlowManager from '../views/flows/FlowsView.vue'
 import FlowRunDialog from '../views/flows/components/FlowRunDialog.vue'
 import { authorize, deferred, fakeApi, chooseSelect, selectControl } from './support'
@@ -87,7 +88,7 @@ it('preserves channel fields and labels stale balance; provider and account are 
       writes.push(JSON.parse(String(init.body)))
       return channel
     }
-    if (path === '/model-access/options') return { providers: ['openrouter'] }
+    if (path === '/model-access/options') return modelOptionsFixture({ providers: ['openrouter'] })
     return path.startsWith('/model-channels') ? [channel] : [entry]
   })
   const wrapper = mount(ModelManager)
@@ -117,7 +118,7 @@ it('updates write-only API keys and clears optional billing keys without retaini
       writes.push(JSON.parse(String(init.body)))
       return channel
     }
-    if (path === '/model-access/options') return { providers: ['openrouter'] }
+    if (path === '/model-access/options') return modelOptionsFixture({ providers: ['openrouter'] })
     return path.startsWith('/model-channels') ? [channel] : []
   })
   const wrapper = mount(ModelManager)
@@ -145,7 +146,7 @@ it('preserves an off-page channel and never sends model key in PATCH', async () 
       writes.push(JSON.parse(String(init.body)))
       return entry
     }
-    if (path === '/model-access/options') return { providers: ['openrouter'] }
+    if (path === '/model-access/options') return modelOptionsFixture({ providers: ['openrouter'] })
     if (path.endsWith('/models')) return { items: [{ id: 'mock-chat' }] }
     return path.startsWith('/model-entries') ? [entry] : []
   })
@@ -177,7 +178,10 @@ it('loads channel models, selects an upstream ID and suggests a model key', asyn
       return entry
     }
     if (path === '/model-access/options')
-      return { providers: ['openrouter', 'newapi', 'yunwu'], balance_providers: [] }
+      return modelOptionsFixture({
+        providers: ['openrouter', 'newapi', 'yunwu'],
+        balance_providers: [],
+      })
     if (path.endsWith('/models')) {
       discoveryCalls++
       return { items: [{ id: 'vendor/chat-v1' }] }
@@ -227,7 +231,7 @@ it.each(['', '   '])('resets a cleared model display name to its fixed key (%j)'
       writes.push({ path, body: JSON.parse(String(init.body)) })
       return entry
     }
-    if (path === '/model-access/options') return { providers: ['openrouter'] }
+    if (path === '/model-access/options') return modelOptionsFixture({ providers: ['openrouter'] })
     if (path.endsWith('/models')) return { items: [{ id: 'mock-chat' }] }
     return path.startsWith('/model-entries') ? [{ ...entry, name: '旧显示名称' }] : []
   })
@@ -254,11 +258,11 @@ it.each([
   const writes: unknown[] = []
   fakeApi((path, init) => {
     if (path === '/model-access/options')
-      return {
+      return modelOptionsFixture({
         providers: ['openrouter', 'newapi', 'yunwu'],
         balance_providers: ['openrouter'],
         default_api_bases: { newapi: 'https://newapiai.com/v1' },
-      }
+      })
     if (init.method === 'POST') {
       writes.push(JSON.parse(String(init.body)))
       return channel
@@ -286,7 +290,10 @@ it.each(['openlux', 'yunwu'])(
     authorize(['model:manage'])
     fakeApi((path) =>
       path === '/model-access/options'
-        ? { providers: ['openrouter', 'newapi', 'yunwu'], balance_providers: ['openrouter'] }
+        ? modelOptionsFixture({
+            providers: ['openrouter', 'newapi', 'yunwu'],
+            balance_providers: ['openrouter'],
+          })
         : path.startsWith('/model-channels')
           ? [{ ...channel, provider }]
           : [],
@@ -295,7 +302,7 @@ it.each(['openlux', 'yunwu'])(
     await flushPromises()
     await button(wrapper, '编辑渠道').trigger('click')
     const control = selectControl(wrapper, '服务商')
-    expect(control.props('modelValue')).toBe('yunwu')
+    expect(control.props('modelValue')).toBe(provider)
     expect(control.text()).not.toContain('Openlux')
     expect(control.text()).toContain('Yunwu')
     expect((wrapper.get('input[type=url]').element as HTMLInputElement).value).toBe(
@@ -308,11 +315,11 @@ it('creates a Yunwu protocol channel for Openlux and keeps it separate from NewA
   const writes: unknown[] = []
   fakeApi((path, init) => {
     if (path === '/model-access/options')
-      return {
+      return modelOptionsFixture({
         providers: ['openrouter', 'newapi', 'yunwu'],
         balance_providers: ['openrouter', 'newapi'],
         default_api_bases: { yunwu: 'https://yunwu.ai/v1' },
-      }
+      })
     if (init.method === 'POST') {
       writes.push(JSON.parse(String(init.body)))
       return channel
@@ -336,10 +343,10 @@ it('shows unlimited NewAPI Token quota without suggesting a zero account balance
   authorize(['model:manage'])
   fakeApi((path) =>
     path === '/model-access/options'
-      ? {
+      ? modelOptionsFixture({
           providers: ['openrouter', 'newapi', 'yunwu'],
           balance_providers: ['openrouter', 'newapi'],
-        }
+        })
       : path.startsWith('/model-channels')
         ? [
             {
@@ -369,7 +376,7 @@ it.each([true, false])(
     authorize(['model:manage'])
     fakeApi((path) =>
       path === '/model-access/options'
-        ? { providers: ['newapi'], balance_providers: ['newapi'] }
+        ? modelOptionsFixture({ providers: ['newapi'], balance_providers: ['newapi'] })
         : path.startsWith('/model-channels')
           ? [
               {
@@ -412,7 +419,7 @@ it.each(['渠道', '模型'])('renames %s from the list using only the display n
       return {}
     }
     if (path === '/model-access/options')
-      return { providers: ['openrouter'], balance_providers: ['openrouter'] }
+      return modelOptionsFixture({ providers: ['openrouter'], balance_providers: ['openrouter'] })
     return path.startsWith('/model-channels') ? [channel] : [entry]
   })
   const wrapper = mount(ModelManager)
@@ -455,7 +462,7 @@ it.each(['渠道', '模型'])(
           : new Response(null, { status: 204 })
       }
       if (path === '/model-access/options')
-        return { providers: ['openrouter'], balance_providers: ['openrouter'] }
+        return modelOptionsFixture({ providers: ['openrouter'], balance_providers: ['openrouter'] })
       return path.startsWith('/model-channels') ? [channel] : [entry]
     })
     const wrapper = mount(ModelManager)
@@ -480,7 +487,9 @@ it.each(['渠道', '模型'])(
 )
 it('uses the official address and no fake upstream model when configuring live mode', async () => {
   authorize(['model:manage'])
-  fakeApi((path) => (path === '/model-access/options' ? { providers: ['openrouter'] } : []))
+  fakeApi((path) =>
+    path === '/model-access/options' ? modelOptionsFixture({ providers: ['openrouter'] }) : [],
+  )
   const wrapper = mount(ModelManager)
   await flushPromises()
   expect(wrapper.text()).toContain('模型接入')
@@ -599,7 +608,7 @@ it('keeps balance details open and replaces only the refreshed channel snapshot'
   }
   fakeApi((path, init) => {
     if (path === '/model-access/options')
-      return { providers: ['openrouter'], balance_providers: ['openrouter'] }
+      return modelOptionsFixture({ providers: ['openrouter'], balance_providers: ['openrouter'] })
     if (init.method === 'POST') {
       writes++
       return updated
@@ -636,11 +645,11 @@ it.each([
   const writes: unknown[] = []
   fakeApi((path, init) => {
     if (path === '/model-access/options')
-      return {
+      return modelOptionsFixture({
         providers: ['openrouter', 'aliyun_bailian', 'volcengine'],
         balance_providers: [],
         default_api_bases: { [provider]: base },
-      }
+      })
     if (init.method === 'POST') {
       writes.push(JSON.parse(String(init.body)))
       return { ...channel, provider, api_base: base }

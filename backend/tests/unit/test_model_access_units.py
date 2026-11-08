@@ -13,12 +13,10 @@ from pydantic_ai.exceptions import ModelHTTPError
 from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
 from keystone.platform.files.adapters.storage import initialize
-from keystone.platform.model_access.adapters.billing.openrouter import OpenRouter
 from keystone.platform.model_access.adapters.credentials import KEY_FILE, ChannelCredentials
 from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.adapters.inference import client as gateway
 from keystone.platform.model_access.adapters.inference.client import (
-    OPENROUTER_BASE,
     InferenceClient,
 )
 from keystone.platform.model_access.adapters.inference.errors import (
@@ -26,7 +24,11 @@ from keystone.platform.model_access.adapters.inference.errors import (
     network_reason,
     upstream_error,
 )
+from keystone.platform.model_access.channels.openrouter import SPEC
+from keystone.platform.model_access.channels.openrouter.billing import OpenRouter
 from keystone.platform.model_access.schemas.errors import AdapterError
+
+OPENROUTER_BASE = SPEC.api_base
 
 
 def test_credentials_are_bound_to_channel_and_purpose_and_shared_between_processes(tmp_path):

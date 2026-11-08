@@ -762,8 +762,12 @@ def test_openrouter_missing_response_cost_uses_direct_lookup(client, monkeypatch
 def test_another_billing_contract_reuses_inference_and_reconciliation(client, billing, monkeypatch):
     from dataclasses import replace
 
-    from keystone.platform.model_access.adapters.billing.contracts import Binding, LogPage, Receipt
-    from keystone.platform.model_access.adapters.channels import CHANNELS
+    from keystone.platform.model_access.channels import CHANNELS
+    from keystone.platform.model_access.channels.shared.billing.contracts import (
+        Binding,
+        LogPage,
+        Receipt,
+    )
 
     pages = []
 

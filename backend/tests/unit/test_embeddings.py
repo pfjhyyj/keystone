@@ -57,7 +57,7 @@ async def test_embedding_actual_sdk_response_validation(index, vector):
     import httpx2
     from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
-    from keystone.platform.model_access.adapters.inference.embeddings import Embeddings
+    from keystone.platform.model_access.channels.shared.embeddings import Embeddings
     from keystone.platform.model_access.schemas.errors import AdapterError
 
     def respond(request):

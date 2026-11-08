@@ -6,119 +6,23 @@ from email.parser import BytesParser
 from email.policy import default
 from zoneinfo import ZoneInfo
 
-from keystone.platform.model_access.schemas.pricing import (
-    Measurement,
-    MetricProfile,
-    PricingFacts,
-)
+from keystone.platform.model_access.channels import INSTALLED
+from keystone.platform.model_access.schemas.pricing import Measurement, PricingFacts
 
-INPUT = {
-    "none": [],
-    "aggregate": ["usage.input_total_tokens"],
-    "cache": ["usage.input_regular_tokens", "usage.input_cache_read_tokens"],
-}
-CACHE_WRITES = {**INPUT, "cache": [*INPUT["cache"], "usage.input_cache_write_tokens"]}
-OUTPUT = {
-    "none": [],
-    "aggregate": ["usage.output_total_tokens"],
-    "reasoning": ["usage.output_regular_tokens", "usage.reasoning_tokens"],
-}
-MODAL_INPUT = ["usage.input_text_tokens", "usage.input_image_tokens"]
-MODAL_OUTPUT = ["usage.output_text_tokens", "usage.output_image_tokens"]
-
-
-def _profile(name, inputs, outputs, context, *, images=False, zeros=()):
-    tokens = {key for parts in (inputs, outputs) for fields in parts.values() for key in fields}
-    return MetricProfile(
-        id=name,
-        quantities={
-            **{key: "token" for key in tokens},
-            "events.upstream_success_count": "request",
-            **({"usage.generated_images": "image"} if images else {}),
-        },
-        input_partitions=inputs,
-        output_partitions=outputs,
-        context_fields=context,
-        structural_zero=list(zeros),
-    )
-
-
-PROFILES = {
-    "chat.v2": _profile("chat.v2", INPUT, OUTPUT, {"context.enable_thinking": "integer"}),
-    "relay_chat.v2": _profile(
-        "relay_chat.v2",
-        CACHE_WRITES,
-        OUTPUT,
-        {"context.enable_thinking": "integer", "context.cache_ttl": "string"},
-    ),
-    "embedding.v2": _profile(
-        "embedding.v2",
-        {"none": [], "aggregate": INPUT["aggregate"]},
-        {"none": [], "aggregate": OUTPUT["aggregate"]},
-        {"context.dimensions": "integer"},
-        zeros=("usage.output_total_tokens",),
-    ),
-    "openrouter_images.v2": _profile(
-        "openrouter_images.v2",
-        CACHE_WRITES,
-        OUTPUT,
-        {
-            "context.resolution": "string",
-            "context.output_format": "string",
-            "context.reference_images": "integer",
-        },
-        images=True,
-    ),
-    "openai_images.v2": _profile(
-        "openai_images.v2",
-        {**INPUT, "modality": MODAL_INPUT},
-        {"none": [], "aggregate": OUTPUT["aggregate"], "modality": MODAL_OUTPUT},
-        {
-            "context.size": "string",
-            "context.quality": "string",
-            "context.output_format": "string",
-            "context.reference_images": "integer",
-        },
-        images=True,
-    ),
-    "kling_images.v1": _profile(
-        "kling_images.v1", {"none": []}, {"none": []}, {"context.resolution": "string"}, images=True
-    ),
-}
-for name, enums in {
-    "chat.v2": {"context.enable_thinking": [0, 1]},
-    "relay_chat.v2": {"context.enable_thinking": [0, 1], "context.cache_ttl": ["5m", "1h"]},
-    "openrouter_images.v2": {
-        "context.resolution": ["1K", "2K", "4K"],
-        "context.output_format": ["png", "jpeg", "webp"],
-    },
-    "openai_images.v2": {
-        "context.quality": ["low", "medium", "high"],
-        "context.output_format": ["png", "jpeg", "webp"],
-    },
-    "kling_images.v1": {"context.resolution": ["1k", "2k"]},
-}.items():
-    PROFILES[name].context_enums = enums
-
-for name in ("chat", "relay_chat", "embedding", "openrouter_images", "openai_images"):
-    profile = PROFILES[f"{name}.v2"]
-    if "cache" in profile.input_partitions:
-        profile.quantities["usage.input_uncached_tokens"] = "token"
-        profile.input_partitions["cache_read"] = [
-            "usage.input_uncached_tokens",
-            "usage.input_cache_read_tokens",
-        ]
-        profile.context_fields["context.cache_mode"] = "string"
-        profile.context_enums["context.cache_mode"] = ["implicit", "explicit"]
-PROFILES["volcengine_chat.v2"] = PROFILES["chat.v2"].model_copy(deep=True)
-PROFILES["volcengine_chat.v2"].id = "volcengine_chat.v2"
-PROFILES["volcengine_chat.v2"].context_fields["context.service_tier"] = "string"
-PROFILES["volcengine_chat.v2"].context_enums["context.service_tier"] = [
-    "default",
-    "auto",
-    "flex",
-    "fast",
-]
+# Channel implementations depend only on pure declarations, never on this engine.
+PROFILES = {}
+CONTEXT_DEFAULTS = {}
+for spec in INSTALLED:
+    for profile in spec.pricing_profiles:
+        if profile.id in PROFILES and PROFILES[profile.id] != profile:
+            raise ValueError(f"Conflicting pricing profile: {profile.id}")
+        PROFILES[profile.id] = profile
+    for meter, defaults in spec.pricing_context_defaults.items():
+        if meter not in {profile.id for profile in spec.pricing_profiles}:
+            raise ValueError(f"Undeclared pricing profile defaults: {meter}")
+        if meter in CONTEXT_DEFAULTS and CONTEXT_DEFAULTS[meter] != defaults:
+            raise ValueError(f"Conflicting pricing context defaults: {meter}")
+        CONTEXT_DEFAULTS[meter] = defaults
 
 
 def merge_usage(previous, incoming):
@@ -173,23 +77,10 @@ def merge_usage(previous, incoming):
 
 def profile_for(protocol):
     # Explicit installation; a new protocol must opt into its own metering contract.
-    from .embeddings import Embeddings
-    from .kling import KlingImages
-    from .openai_images import OpenAIImages
-    from .protocols import ChatCompletions, OpenRouterImages
-
-    for protocol_type, name in (
-        (KlingImages, "kling_images.v1"),
-        (OpenAIImages, "openai_images.v2"),
-        (OpenRouterImages, "openrouter_images.v2"),
-        (Embeddings, "embedding.v2"),
-        (ChatCompletions, "chat.v2"),
-    ):
-        if isinstance(protocol, protocol_type):
-            return PROFILES[
-                protocol.pricing_meter if isinstance(protocol, ChatCompletions) else name
-            ]
-    raise ValueError("No installed pricing meter")
+    meter = getattr(protocol, "pricing_meter", None)
+    if meter not in PROFILES:
+        raise ValueError("No installed pricing meter")
+    return PROFILES[meter]
 
 
 def request_context(request, profile):
@@ -211,10 +102,7 @@ def request_context(request, profile):
         body["reference_images"] = references
     else:
         body = json.loads(request.content)
-        if profile.id in {
-            "openrouter_images.v2",
-            "openai_images.v2",
-        }:
+        if "context.reference_images" in profile.context_fields:
             body["reference_images"] = len(body.get("input_references", []))
     result = {}
     if "context.cache_mode" in profile.context_fields:
@@ -227,9 +115,9 @@ def request_context(request, profile):
             if any(isinstance(part, dict) and "cache_control" in part for part in controls)
             else "implicit"
         )
-    if profile.id == "volcengine_chat.v2" and "service_tier" not in body:
-        # Ark documents default service as the omitted request parameter's default.
-        result["service_tier"] = "default"
+    for key, value in CONTEXT_DEFAULTS.get(profile.id, {}).items():
+        if key not in body:
+            result[key] = value
     if "context.cache_ttl" in profile.context_fields:
         ttls = set()
         unknown_ttl = False

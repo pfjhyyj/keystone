@@ -13,7 +13,7 @@ from test_files_dictionary import client as client
 from test_identity import bearer, query, token
 
 from keystone.core.time import utcnow
-from keystone.platform.model_access.adapters.channels import CHANNELS
+from keystone.platform.model_access.channels import CHANNELS
 from keystone.platform.model_access.models import Channel
 
 pytestmark = pytest.mark.postgres

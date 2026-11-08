@@ -257,7 +257,7 @@ def install_transport(client, monkeypatch, handler):
 
 
 def test_upstream_model_discovery_requires_management_and_does_not_import(client, monkeypatch):
-    from keystone.platform.model_access.adapters.channels import CHANNELS
+    from keystone.platform.model_access.channels import CHANNELS
 
     c = channel(client, "newapi", api_base=CHANNELS["newapi"].api_base)
     calls = []
@@ -292,7 +292,7 @@ def test_upstream_model_discovery_requires_management_and_does_not_import(client
 def test_independent_channel_sites_keep_their_targets_and_billing_scopes(
     client, monkeypatch, site, unit
 ):
-    from keystone.platform.model_access.adapters.channels import CHANNELS
+    from keystone.platform.model_access.channels import CHANNELS
 
     base = CHANNELS[site].api_base
     c = channel(client, site, api_base=base)

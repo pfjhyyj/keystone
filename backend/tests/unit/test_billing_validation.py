@@ -5,9 +5,9 @@ import json
 import httpx2
 import pytest
 
-from keystone.platform.model_access.adapters.billing.contracts import BillingQueryError
-from keystone.platform.model_access.adapters.billing.openlux import Openlux
 from keystone.platform.model_access.adapters.http import HttpClient
+from keystone.platform.model_access.channels.openlux.billing import Openlux
+from keystone.platform.model_access.channels.shared.billing.contracts import BillingQueryError
 
 SECRET = "private-billing-token"
 

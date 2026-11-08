@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from keystone.core.errors import ServiceError
 from keystone.platform.flow.schemas.diagnostics import source_invocation
-from keystone.platform.model_access.adapters.inference import kling
+from keystone.platform.model_access.channels.openlux import kling
 from keystone.platform.model_access.schemas.diagnostics import diagnostic
 from keystone.platform.model_access.schemas.invocations import InvocationContext, Selection
 from keystone.platform.model_access.services.image_tasks import ImageTaskService

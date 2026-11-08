@@ -4,7 +4,7 @@
 
 ## 渠道与模型列表
 
-新建可选 OpenRouter、NewAPI、Yunwu、阿里云百炼和火山方舟；已有 openlux 内部标识保留，界面归 Yunwu 类。DeepSeek 仅保留声明。模型能力由代码协议和条目 operations 决定，不由模型列表推断。
+新建可选 OpenRouter、NewAPI、Yunwu、阿里云百炼和火山方舟；已有 openlux 内部标识保留，界面归 Yunwu 类。DeepSeek 仅保留声明。`deepseek`、`openrouter`、`aliyun_bailian`、`newapi`、`openlux`、`yunwu`、`volcengine` 的 ID 全部保持不变；Openlux、DeepSeek 为 `creatable=False` 的 legacy 声明，不在 UI 提供新建，但历史渠道、回执和快照仍须解析，不能删除注册项或重写 ID。模型能力由代码协议和条目 operations 决定，不由模型列表推断。
 
 | 渠道 | 地址/能力限制 |
 |---|---|
@@ -221,17 +221,30 @@ keystone recover-model-calls --confirm-api-stopped
 
 | 位置/接口 | 职责 |
 |---|---|
-| adapters/channels.py：CHANNELS、protocol/supports | 显式组合能力，无数据库/网络 |
-| adapters/inference/ 协议 validate_request | 校验实际报文与固定目标，不一致时拒绝发送 |
-| 文本/图片/原生任务协议 | 明确 DTO＋短期配置＋受控传输 → 类型结果/事件/回执 |
-| adapters/billing/：binding/receipt/lookup/page/balance | 原范围、回执、费用、分页、余额；仅支持的实现提供 |
-| inference/client、transport、errors；billing/registry | SDK 生命周期、发送观察、宿主错误转换 |
+| `channels/__init__.py`：INSTALLED、CHANNELS、channel_adapter | 已安装 SPEC 注册表、固定目标解析及目录聚合，无数据库/网络调用 |
+| `channels/spec.py`：ChannelSpec、ChannelField | 渠道能力、地址、鉴权、账务和配置字段的数据声明 |
+| `channels/<id>/`：SPEC、billing、chat/images/kling/discovery/pricing 等 | 一渠道一目录；SPEC 组合本渠道协议、账务、计量和参考价，只安装实际支持的实现 |
+| `channels/shared/`、`channels/shared/billing/` | 共用协议/计量实现，以及共用账务契约、HTTP 和日志辅助；云签名由各渠道实现；不反向依赖专属渠道 |
+| `channels/` 内协议 validate_request | 校验实际报文与固定目标，不一致时拒绝发送；明确 DTO＋短期配置＋受控传输 → 类型结果/事件/回执 |
+| `channels/<id>/billing.py`：binding/receipt/lookup/page/query_balance | 原范围、回执、费用、分页、余额；仅支持的实现提供 |
+| `adapters/inference/{client,pricing,transport,errors}.py`；`adapters/billing/registry.py` | 通用 host：SDK 生命周期、估价归一化装配、发送观察、账务调度和宿主错误转换 |
 | adapters/http、credentials、coordination | 受控下载、秘密、共享技术协调 |
 | services/entries、channels、queries | 配置、SQL 授权、角色批量绑定 |
 | services/runtime、image_results、image_tasks、costs | 发送登记、用量、证据、原结果恢复和费用核对 |
 | composition.py | 显式注入依赖，协议与宿主同制品发布 |
 
-协议仅依赖轻量 DTO 和传入 SDK/传输，不导入 ORM、Service、用户权限、DBOS/FlowContext。AdapterError/QueryLater 在宿主边界转换；秘密本次注入，不进快照。没有统一大基类、在线插件或数据库请求模板。
+`channels/` 是顶层的纯 adapter 下层，不是应用 Service，也不隶属 `adapters/`。其全部实现、shared 和 SPEC 声明都不能依赖 controllers、services、models、SQLAlchemy、数据库、DBOS/执行器、`core.errors`、身份权限或运行时 adapter host。协议只依赖轻量 DTO 和传入 SDK/传输；`schemas/errors.py` 的 AdapterError/QueryLater 在宿主边界转换。秘密本次注入，不进快照。没有统一大基类、在线插件或数据库请求模板。
+
+渠道的 billing 与推理实现同目录，但依赖仍隔离：billing 不导入协议/chat/images/kling 等模块，协议也不导入 billing；仅 SPEC 组合层允许同时引用两者。专属实现只能引用本渠道和 shared，不得引用另一渠道的专属实现；跨渠道复用先提取到 shared。其他平台/业务模块不得直连这些渠道实现。
+
+`schemas/types.py` 的 Provider 使用 `AfterValidator` 在校验时懒加载渠道注册表，以已安装 ID 为准，不在 schemas 导入时加载注册表，避免注册表与 DTO 的循环依赖。允许本模块 schemas 引用渠道注册表及纯数据声明，不允许借此导入 adapter host 或渠道协议/账务实现。
+
+### 添加渠道
+
+1. 新建 `channels/<id>/` 包，在该目录实现必要的协议、`billing.py`、发现或 `pricing.py`；通用实现复用 `channels/shared/`。在包内导出一份 `SPEC`，用 `channels/spec.py` 的声明类型组合固定地址、能力、账务、计量 profile、参考价格和 UI 描述；不能用配置宣称尚未实现的能力。
+2. 在 `channels/__init__.py` 导入该包，并向 `INSTALLED` 注册一项 `<id>.SPEC`；`CHANNELS`、可新建类型、参考价格和 `/model-access/options` 描述由注册表派生。仅增加使用现有配置字段的渠道，无须修改数据库迁移或前端供应商分支，也不用另维护 Provider ID 枚举。下线时保留 ID/SPEC 并设 `creatable=False`，继续支持历史解析。
+3. `SPEC.fields` 只描述已有受支持字段，不是任意字段存储机制。若渠道需要新的额外字段，必须补齐数据库列/必要迁移、请求与响应 DTO、校验、保存读取和权限/审计支持，再添加字段描述；复杂交互还需相应前端支持，不能承诺任意字段仅声明即可无迁移接入。
+4. 使用本地 HTTP 协议桩验证准入、报文、计量、账务和错误脱敏，并运行 `backend/tests/unit/test_architecture.py`；涉及持久化或恢复时补充真实 PostgreSQL/DBOS 用例，不发起付费请求。
 
 InvocationContext 的 workflow_id 长 1～512，step_id 为 0～2³¹−1 整数，保存原发送位置，异步查询不覆盖。image_sources_in_transaction 每批最多 100，在同 Run 与当前可见记录内核对 Manifest 和登记字节元数据，只返回确认来源。
 

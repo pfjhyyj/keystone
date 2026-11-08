@@ -6,9 +6,9 @@ import httpx2
 import pytest
 
 from keystone.core.errors import ServiceError
-from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.adapters.inference.client import InferenceClient
+from keystone.platform.model_access.channels import CHANNELS
 from keystone.platform.model_access.schemas.channels import ChannelCreate
 
 BASE = CHANNELS["aliyun_bailian"].api_base

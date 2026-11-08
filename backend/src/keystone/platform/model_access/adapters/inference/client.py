@@ -9,13 +9,12 @@ from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
 from keystone.core.asyncio import blocking
 from keystone.core.errors import ServiceError
-from keystone.platform.model_access.adapters.channels import CHANNELS, channel_adapter
-from keystone.platform.model_access.adapters.channels import OPENROUTER_BASE as OPENROUTER_BASE
 from keystone.platform.model_access.adapters.errors import adapter_errors
-from keystone.platform.model_access.adapters.inference.discovery import discover
-from keystone.platform.model_access.adapters.inference.images import verify_image
-from keystone.platform.model_access.adapters.inference.protocols import validate_request
 from keystone.platform.model_access.adapters.inference.transport import SendTransport
+from keystone.platform.model_access.channels import CHANNELS, channel_adapter
+from keystone.platform.model_access.channels.shared.chat import validate_request
+from keystone.platform.model_access.channels.shared.discovery import discover
+from keystone.platform.model_access.channels.shared.images import verify_image
 
 
 class InferenceClient:
@@ -215,7 +214,9 @@ class InferenceClient:
     async def download_image(self, selected, url, authorize):
         from urllib.parse import urljoin
 
-        from keystone.platform.model_access.adapters.inference.openai_images import download_host
+        from keystone.platform.model_access.channels.shared.openai_images import (
+            download_host,
+        )
         from keystone.platform.model_access.schemas.errors import (
             AdapterError,
             QueryLater,

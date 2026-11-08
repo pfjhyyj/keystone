@@ -4,12 +4,12 @@ import httpx2
 import pytest
 
 from keystone.core.errors import ServiceError
-from keystone.platform.model_access.adapters.billing.contracts import BillingQueryError
-from keystone.platform.model_access.adapters.billing.newapi import Newapi
 from keystone.platform.model_access.adapters.billing.registry import BillingClient
-from keystone.platform.model_access.adapters.billing.token_logs import quota_scale
-from keystone.platform.model_access.adapters.billing.yunwu import Yunwu
 from keystone.platform.model_access.adapters.http import HttpClient
+from keystone.platform.model_access.channels.newapi.billing import Newapi
+from keystone.platform.model_access.channels.shared.billing.contracts import BillingQueryError
+from keystone.platform.model_access.channels.shared.billing.token_logs import quota_scale
+from keystone.platform.model_access.channels.yunwu.billing import Yunwu
 
 
 def entry(**changes):

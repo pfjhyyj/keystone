@@ -1,4 +1,7 @@
-from keystone.platform.model_access.adapters.billing.contracts import ResponseBilling, balance_item
+from keystone.platform.model_access.channels.shared.billing.contracts import (
+    ResponseBilling,
+    balance_item,
+)
 
 
 class DeepSeek(ResponseBilling):

@@ -1,4 +1,4 @@
-"""Yunwu/Openlux GPT Image wire protocol; no persistence or implicit POST retries."""
+"""Shared GPT Image wire protocol; no persistence or implicit POST retries."""
 
 import json
 import math
@@ -6,7 +6,7 @@ from email.parser import BytesParser
 from email.policy import default
 from urllib.parse import urlsplit
 
-from keystone.platform.model_access.adapters.inference import images
+from keystone.platform.model_access.channels.shared import images
 from keystone.platform.model_access.schemas.errors import AdapterError
 from keystone.platform.model_access.schemas.images import (
     MAX_IMAGE_BYTES,
@@ -138,6 +138,7 @@ def validate_request(request, selected, target):
 
 
 class OpenAIImages:
+    pricing_meter = "openai_images.v2"
     image_parameters = ("aspect_ratio", "quality")
     operations = frozenset({"image.generate", "image.edit"})
     delivery = "sync"

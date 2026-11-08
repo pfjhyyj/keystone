@@ -11,7 +11,7 @@ import {
   type Readiness,
   type WorkerStatus,
 } from '../../api/system'
-import { modelApi, providers, channelProvider, type Channel } from '../../api/models'
+import { modelApi, resolveChannel, type Channel, type ModelOptions } from '../../api/models'
 import { usageApi, percent, type UsageStatistics } from '../../api/modelUsage'
 import MoneyAmount from '../../components/MoneyAmount.vue'
 import UsageTrend from '../usage/components/UsageTrend.vue'
@@ -22,6 +22,7 @@ const health = ref<Health | null>(null),
   worker = ref<WorkerStatus | null>(null)
 const statistics = ref<UsageStatistics | null>(null),
   channels = ref<Channel[]>([])
+const modelOptions = ref<ModelOptions | null>(null)
 const statusBusy = ref(false),
   usageBusy = ref(false),
   usageError = ref(''),
@@ -99,11 +100,13 @@ async function refreshUsage() {
         })
       : Promise.resolve(null),
     can('model:manage') ? modelApi.channels(0) : Promise.resolve([]),
+    can('model:manage') ? modelApi.options() : Promise.resolve(null),
   ])
   if (!alive || generation !== usageGeneration) return
   statistics.value = result[0].status === 'fulfilled' ? result[0].value : null
   if (result[0].status === 'rejected') usageError.value = '用量统计暂时不可用，请刷新重试。'
   channels.value = result[1].status === 'fulfilled' ? result[1].value : []
+  modelOptions.value = result[2].status === 'fulfilled' ? result[2].value : null
   if (result[1].status === 'rejected') channelError.value = '渠道列表暂时不可用。'
   usageBusy.value = false
 }
@@ -117,6 +120,7 @@ watch(
     usageGeneration++
     statistics.value = null
     channels.value = []
+    modelOptions.value = null
     usageBusy.value = false
     void refreshUsage()
   },
@@ -339,9 +343,7 @@ onScopeDispose(() => {
                 ><small>{{ channel.id.slice(0, 8) }}</small>
               </td>
               <td>
-                {{
-                  providers[channelProvider(channel) as keyof typeof providers] ?? channel.provider
-                }}
+                {{ resolveChannel(channel, modelOptions).label }}
               </td>
               <td>
                 <StatusTag :status="channel.is_active ? 'active' : 'disabled'">{{

@@ -5,6 +5,8 @@ import ast
 from support.ast_support import imports
 
 LAYERS = {"controllers", "schemas", "models", "services", "adapters", "tasks", "workflows"}
+MODEL_ACCESS = "keystone.platform.model_access"
+CHANNELS = MODEL_ACCESS + ".channels"
 
 
 def _under(dependency, prefix):
@@ -36,9 +38,11 @@ def _module_dependencies(dependencies, namespace, file):
             ["keystone", "businesses"],
         ):
             owner = ".".join(parts[:3])
-            assert owner == namespace or parts[3] not in {"models", "adapters"}, (
-                f"Module imports another module's persistence/adapter: {file} -> {dependency}"
-            )
+            assert owner == namespace or not (
+                parts[3] in {"models", "adapters"}
+                or owner == MODEL_ACCESS
+                and parts[3] == "channels"
+            ), f"Module imports another module's persistence/adapter: {file} -> {dependency}"
 
 
 def check_core_dependencies(root):
@@ -128,10 +132,50 @@ def _lightweight_root(file, tree, dependencies):
         ), f"Module root must contain lightweight declarations only: {file}"
 
 
+def _channel_dependencies(tree, package, relative, file):
+    registry = relative.as_posix() == "channels/__init__.py"
+    owner = relative.parts[1] if len(relative.parts) > 2 else None
+    composition = registry or (
+        len(relative.parts) == 3 and owner != "shared" and file.name in {"__init__.py", "spec.py"}
+    )
+    billing = "billing" in relative.with_suffix("").parts[2:]
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        dependencies = list(imports(node, package))
+        # ImportFrom's base is also emitted by imports(); inspect its children so
+        # `from shared import billing` is not mistaken for a protocol dependency.
+        if isinstance(node, ast.ImportFrom):
+            dependencies = dependencies[1:]
+        for dependency in dependencies:
+            if not _under(dependency, CHANNELS):
+                continue
+            target = dependency.split(".")[4:]
+            assert registry or target and target[0] in {owner, "shared", "spec", "rules"}, (
+                f"Channel imports another channel's implementation/registry: {file} -> {dependency}"
+            )
+            if (
+                composition
+                or target[0] in {"spec", "rules"}
+                or target[:2] == ["shared", "receipts"]
+            ):
+                continue
+            target_billing = len(target) > 1 and target[1] == "billing"
+            assert billing == target_billing, (
+                f"Channel billing/protocol dependency crosses boundary: {file} -> {dependency}"
+            )
+            assert (
+                target[0] == "shared"
+                or len(target) > 1
+                and target[1] not in {"SPEC", "spec", "__init__"}
+            ), f"Channel implementation imports SPEC composition: {file} -> {dependency}"
+
+
 def check_module_layers(root, namespace):
+    layers = LAYERS | ({"channels"} if namespace == MODEL_ACCESS else set())
     for directory in root.iterdir():
         if directory.is_dir() and directory.name != "__pycache__":
-            assert directory.name in LAYERS, f"Unknown module layer: {directory}"
+            assert directory.name in layers, f"Unknown module layer: {directory}"
             assert (directory / "__init__.py").is_file(), f"Missing layer package: {directory}"
     for file in root.rglob("*.py"):
         relative = file.relative_to(root)
@@ -157,7 +201,7 @@ def check_module_layers(root, namespace):
                 "keystone.use_cases",
             )
         ), f"Module imports application assembly: {file}"
-        if layer in {"controllers", "services", "schemas", "models", "adapters"}:
+        if layer in {"controllers", "services", "schemas", "models", "adapters", "channels"}:
             forbidden = list(
                 _execution_dependencies(
                     tree,
@@ -187,11 +231,11 @@ def check_module_layers(root, namespace):
                 or _domain_layer(d, "controllers")
                 for d in dependencies
             ), f"Module implementation imports HTTP/controller boundary: {file}"
-        if layer in {"models", "schemas", "adapters"}:
+        if layer in {"models", "schemas", "adapters", "channels"}:
             assert not any(_domain_layer(d, "services") for d in dependencies), (
                 f"Lower layer imports business Service: {file}"
             )
-        if layer in {"schemas", "adapters"}:
+        if layer in {"schemas", "adapters", "channels"}:
             assert not any(_domain_layer(d, "models") for d in dependencies), (
                 f"Schema/adapter imports domain persistence: {file}"
             )
@@ -203,10 +247,42 @@ def check_module_layers(root, namespace):
                 or _domain_layer(d, "adapters")
                 for d in dependencies
             ), f"Schema imports runtime infrastructure: {file}"
+            assert all(
+                not _under(d, CHANNELS)
+                or namespace == MODEL_ACCESS
+                and (
+                    d == CHANNELS
+                    or d
+                    in {
+                        f"{CHANNELS}.{name}"
+                        for name in ("CHANNELS", "PROVIDERS", "INSTALLED", "REFERENCE_PRICES")
+                    }
+                    or _under(d, CHANNELS + ".spec")
+                    or _under(d, CHANNELS + ".rules")
+                )
+                for d in dependencies
+            ), f"Schema imports channel implementation: {file}"
+        if layer == "channels":
+            assert not any(
+                d.startswith("sqlalchemy")
+                or any(_domain_layer(d, layer) for layer in ("adapters", "tasks", "workflows"))
+                or _under(d, "keystone.platform.identity")
+                or any(
+                    _under(d, prefix)
+                    for prefix in (
+                        "keystone.core.errors",
+                        "keystone.core.database",
+                        "keystone.core.models",
+                        "keystone.core.execution",
+                    )
+                )
+                for d in dependencies
+            ), f"Channel imports runtime infrastructure: {file}"
+            _channel_dependencies(tree, package, relative, file)
         if layer == "models":
-            assert not any(_domain_layer(d, "adapters") for d in dependencies), (
-                f"Model imports runtime adapter: {file}"
-            )
+            assert not any(
+                _domain_layer(d, "adapters") or _under(d, CHANNELS) for d in dependencies
+            ), f"Model imports runtime adapter: {file}"
         if layer == "services":
             assert not any(
                 d.startswith(("fastapi", "starlette", "openai", "httpx2", "casbin"))
@@ -231,6 +307,7 @@ def check_module_layers(root, namespace):
                 assert not list(_execution_dependencies(tree, package)) and not any(
                     _domain_layer(d, "services")
                     or _domain_layer(d, "adapters")
+                    or _under(d, CHANNELS)
                     or d.startswith(("openai", "httpx2", "casbin", "pydantic_ai"))
                     for d in dependencies
                 ), f"Task declaration imports execution implementation: {file}"

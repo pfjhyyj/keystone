@@ -1,7 +1,9 @@
 import json
 from decimal import Decimal, localcontext
 
-from keystone.platform.model_access.adapters.billing.contracts import (
+from keystone.platform.model_access.channels.shared.receipts import request_id
+
+from .contracts import (
     BillingQueryError,
     Binding,
     LogPage,
@@ -9,8 +11,7 @@ from keystone.platform.model_access.adapters.billing.contracts import (
     ResponseBilling,
     amount,
 )
-from keystone.platform.model_access.adapters.billing.http import cost_get
-from keystone.platform.model_access.adapters.receipts import request_id
+from .http import cost_get
 
 
 def quota_scale(payload):

@@ -1,6 +1,12 @@
-from keystone.platform.model_access.adapters.billing.contracts import BillingQueryError, Binding
-from keystone.platform.model_access.adapters.billing.http import cost_get
-from keystone.platform.model_access.adapters.billing.token_logs import TokenLogs, quota_scale
+from keystone.platform.model_access.channels.shared.billing.contracts import (
+    BillingQueryError,
+    Binding,
+)
+from keystone.platform.model_access.channels.shared.billing.http import cost_get
+from keystone.platform.model_access.channels.shared.billing.token_logs import (
+    TokenLogs,
+    quota_scale,
+)
 
 
 class Yunwu(TokenLogs):

@@ -11,14 +11,14 @@ import httpx2
 import pytest
 from support.model_stub import image_bytes
 
-from keystone.platform.model_access.adapters.channels import CHANNELS
 from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.adapters.inference.client import InferenceClient
-from keystone.platform.model_access.adapters.inference.openai_images import (
+from keystone.platform.model_access.adapters.inference.transport import Observation
+from keystone.platform.model_access.channels import CHANNELS
+from keystone.platform.model_access.channels.shared.openai_images import (
     download_host,
     image_size,
 )
-from keystone.platform.model_access.adapters.inference.transport import Observation
 from keystone.platform.model_access.schemas.errors import AdapterError
 from keystone.platform.model_access.schemas.images import (
     ImageBatch,

@@ -115,7 +115,21 @@ def test_workspace_is_ali_only_and_invalid_values_rollback_without_side_effects(
         },
     )
     assert other.status_code == 422
+    assert other.json()["code"] == "model_workspace_invalid"
     assert len(client.get("/api/v1/model-channels").json()) == 1
+    other_row = create_channel(
+        client,
+        name="other",
+        provider="openrouter",
+        api_base="https://openrouter.ai/api/v1",
+        workspace_id=None,
+    )
+    rejected = edit_channel(client, other_row, workspace_id="llm-other")
+    assert rejected.status_code == 422
+    assert rejected.json()["code"] == "model_workspace_invalid"
+    rows = {item["id"]: item for item in client.get("/api/v1/model-channels").json()}
+    assert rows[other_row["id"]]["workspace_id"] is None
+    assert rows[row["id"]]["workspace_id"] == "llm-original"
 
 
 @pytest.mark.parametrize("change", ["workspace", "key", "revoke"])
@@ -173,8 +187,15 @@ def test_workspace_baseline_defaults_and_constraints(empty_database_url):
             connection.execute(
                 text("UPDATE keystone.model_channels SET workspace_id='llm-example'")
             )
-        for update in ["workspace_id='evil.invalid'", "provider='openrouter'"]:
-            with pytest.raises(IntegrityError), engine.begin() as connection:
-                connection.execute(text("UPDATE keystone.model_channels SET " + update))
+            # The database enforces syntax, not the installed channel registry.
+            connection.execute(text("UPDATE keystone.model_channels SET provider='new_provider'"))
+            assert connection.execute(
+                text("SELECT provider,workspace_id FROM keystone.model_channels")
+            ).one() == ("new_provider", "llm-example")
+        with pytest.raises(IntegrityError) as error, engine.begin() as connection:
+            connection.execute(
+                text("UPDATE keystone.model_channels SET workspace_id='evil.invalid'")
+            )
+        assert error.value.orig.diag.constraint_name == "channel_workspace"
     finally:
         engine.dispose()

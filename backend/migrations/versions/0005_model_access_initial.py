@@ -53,13 +53,7 @@ def upgrade():
             name="channel_balance_status",
         ),
         sa.CheckConstraint(
-            "provider IN ('deepseek','openrouter','aliyun_bailian',"
-            "'newapi','openlux','yunwu','volcengine')",
-            name="channel_provider",
-        ),
-        sa.CheckConstraint(
-            "workspace_id IS NULL OR (provider = 'aliyun_bailian' "
-            "AND workspace_id ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$')",
+            "workspace_id IS NULL OR workspace_id ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'",
             name="channel_workspace",
         ),
         sa.PrimaryKeyConstraint("id"),
