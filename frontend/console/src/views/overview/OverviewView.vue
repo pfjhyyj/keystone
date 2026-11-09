@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onScopeDispose, ref } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 import { getHealth, getReadiness, getWorkerStatus } from '../../api/system'
 import type { Health, Readiness, WorkerStatus } from '../../api/system'
+const props = defineProps<{ section?: string; workerId?: string }>()
 const health = ref<Health | null>(null),
   ready = ref<Readiness | null>(null),
   worker = ref<WorkerStatus | null>(null),
@@ -10,6 +11,31 @@ const health = ref<Health | null>(null),
 let alive = true
 let timer: ReturnType<typeof setInterval> | undefined
 const checked = ref('尚未检查')
+const checkedOnce = ref(false)
+const dependenciesTarget = ref<HTMLElement | null>(null)
+const workersTarget = ref<HTMLElement | null>(null)
+const workerTarget = ref<HTMLElement | null>(null)
+const maintenanceTarget = ref<HTMLElement | null>(null)
+const selectedWorker = computed(() =>
+  props.section === '#worker-instances'
+    ? worker.value?.instances?.find((instance) => instance.worker_id === props.workerId)?.worker_id
+    : undefined,
+)
+watch(
+  () => {
+    if (props.section === '#dependencies') return dependenciesTarget.value
+    if (!checkedOnce.value) return null
+    if (props.section === '#shared-maintenance') return maintenanceTarget.value
+    if (props.section === '#worker-instances')
+      return selectedWorker.value ? workerTarget.value : workersTarget.value
+    return null
+  },
+  (target) => {
+    target?.focus({ preventScroll: true })
+    target?.scrollIntoView?.({ block: 'nearest' })
+  },
+  { flush: 'post' },
+)
 const workerLabels = { ready: '就绪', unready: '未就绪', offline: '离线', unknown: '无法确认' }
 const processLabels: Record<string, string> = {
   starting: '启动中',
@@ -69,6 +95,7 @@ async function refresh() {
   ready.value = result[1].status === 'fulfilled' ? result[1].value : null
   worker.value = result[2].status === 'fulfilled' ? result[2].value : null
   checked.value = new Date().toLocaleString('zh-CN')
+  checkedOnce.value = true
   busy.value = false
 }
 onMounted(() => {
@@ -86,7 +113,13 @@ onScopeDispose(() => {
       <h1>平台状态</h1>
       <el-button :icon="Refresh" :loading="busy" @click="refresh">刷新</el-button>
     </div>
-    <ul class="status-list" aria-live="polite">
+    <ul
+      id="dependencies"
+      ref="dependenciesTarget"
+      class="status-list"
+      tabindex="-1"
+      aria-live="polite"
+    >
       <li v-for="card in cards" :key="card.label" class="status-row">
         <span class="state-dot" :class="{ 'is-warning': !card.good }" aria-hidden="true" />
         <span class="status-name">{{ card.label }}</span>
@@ -94,10 +127,38 @@ onScopeDispose(() => {
         <small>{{ card.note }}</small>
       </li>
     </ul>
-    <el-card v-if="worker?.instances?.length" shadow="never" class="overview-detail">
-      <template #header><h2>Worker 实例</h2></template>
-      <el-table :data="worker.instances" row-key="worker_id">
-        <el-table-column prop="worker_id" label="固定身份" />
+    <el-card
+      v-if="worker?.instances?.length || section === '#worker-instances'"
+      shadow="never"
+      class="overview-detail"
+    >
+      <template #header>
+        <h2 id="worker-instances" ref="workersTarget" tabindex="-1">Worker 实例</h2>
+      </template>
+      <p v-if="workerId && !selectedWorker && checkedOnce" class="muted">
+        {{ worker ? `当前快照中没有实例 ${workerId}` : '无法确认实例，Worker 状态暂不可用' }}
+      </p>
+      <el-table
+        v-if="worker?.instances?.length"
+        :data="worker.instances"
+        row-key="worker_id"
+        :row-class-name="
+          ({ row }: { row: { worker_id: string } }) =>
+            row.worker_id === selectedWorker ? 'located-worker' : ''
+        "
+      >
+        <el-table-column label="固定身份">
+          <template #default="{ row }">
+            <span
+              v-if="row.worker_id === selectedWorker"
+              :id="`worker-${row.worker_id}`"
+              ref="workerTarget"
+              tabindex="-1"
+              >{{ row.worker_id }}</span
+            >
+            <span v-else>{{ row.worker_id }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="进程状态"
           ><template #default="{ row }"
             >{{ workerLabels[row.status as keyof typeof workerLabels] }} ·
@@ -127,9 +188,21 @@ onScopeDispose(() => {
           }}</template></el-table-column
         >
       </el-table>
-      <div v-if="worker.maintenance" class="overview-note">
+      <p v-else-if="!workerId || !checkedOnce" class="muted">
+        {{ !checkedOnce ? '正在检查实例…' : worker ? '暂无登记实例' : '运行状态暂不可用' }}
+      </p>
+    </el-card>
+    <el-card
+      v-if="Object.keys(worker?.maintenance ?? {}).length || section === '#shared-maintenance'"
+      shadow="never"
+      class="overview-detail"
+    >
+      <template #header>
+        <h2 id="shared-maintenance" ref="maintenanceTarget" tabindex="-1">共享维护</h2>
+      </template>
+      <div v-if="Object.keys(worker?.maintenance ?? {}).length" class="maintenance-status">
         <el-tag
-          v-for="(task, name) in worker.maintenance"
+          v-for="(task, name) in worker?.maintenance"
           :key="name"
           :type="task.status === 'ready' ? 'success' : 'warning'"
           effect="plain"
@@ -137,6 +210,7 @@ onScopeDispose(() => {
           >{{ taskLabels[String(name)] ?? name }}：{{ workerLabels[task.status] }}</el-tag
         >
       </div>
+      <p v-else class="muted">{{ checkedOnce ? '暂无可确认的维护状态' : '正在检查维护状态…' }}</p>
     </el-card>
     <el-card v-if="worker?.backlog" shadow="never" class="overview-detail">
       <template #header><h2>待处理任务</h2></template>
@@ -176,3 +250,20 @@ onScopeDispose(() => {
     </el-card>
   </section>
 </template>
+<style scoped>
+[tabindex='-1'] {
+  scroll-margin-top: 72px;
+}
+[tabindex='-1']:focus {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 3px;
+}
+.maintenance-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+:deep(.el-table tr.located-worker > td) {
+  background: var(--el-color-primary-light-9);
+}
+</style>

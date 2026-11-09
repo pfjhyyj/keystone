@@ -41,7 +41,14 @@ export function makeRouter(history: RouterHistory = createWebHistory(import.meta
     history,
     routes: [
       { path: '/', component: () => import('../views/overview/DashboardView.vue') },
-      { path: '/platform', component: () => import('../views/overview/OverviewView.vue') },
+      {
+        path: '/platform',
+        component: () => import('../views/overview/OverviewView.vue'),
+        props: (route) => ({
+          section: route.hash,
+          workerId: typeof route.query.worker === 'string' ? route.query.worker : undefined,
+        }),
+      },
       { path: '/users', component: () => import('../views/users/UsersView.vue') },
       { path: '/roles', component: () => import('../views/roles/RolesView.vue') },
       { path: '/audit', component: () => import('../views/audit/AuditView.vue') },

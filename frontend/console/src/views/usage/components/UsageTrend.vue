@@ -84,14 +84,17 @@ const width = (point: UsagePoint) =>
   <section aria-label="费用与调用趋势" class="usage-panel">
     <div class="heading">
       <h2>费用与调用趋势</h2>
-      <div class="trend-control">
-        <AppSelect v-model="metric" aria-label="趋势指标"
-          ><el-option label="调用次数" value="calls" /><el-option
-            v-for="unit in units"
-            :key="unit"
-            :label="`已知费用 · ${unit}`"
-            :value="unit"
-        /></AppSelect>
+      <div class="trend-controls">
+        <slot name="controls" />
+        <div class="trend-metric">
+          <AppSelect v-model="metric" aria-label="趋势指标"
+            ><el-option label="调用次数" value="calls" /><el-option
+              v-for="unit in units"
+              :key="unit"
+              :label="`已知费用 · ${unit}`"
+              :value="unit"
+          /></AppSelect>
+        </div>
       </div>
     </div>
     <p>点击柱形查看该时段明细。费用仅含已知金额，虚线表示该时段费用未知。</p>
@@ -193,8 +196,14 @@ svg {
   height: 200px;
   color: var(--el-color-primary);
 }
-.trend-control {
-  width: 230px;
+.trend-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.trend-metric {
+  width: 200px;
   max-width: 100%;
 }
 .chart-shell {

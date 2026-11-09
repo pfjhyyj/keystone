@@ -32,8 +32,17 @@ let alive = true,
   timer: ReturnType<typeof setInterval> | undefined
 let usageGeneration = 0
 const summary = computed(() => statistics.value?.summary)
+const costBasis = 'actual'
+const usageScope = computed(() => ({
+  cost_basis: costBasis,
+  since: statistics.value?.since,
+  until: statistics.value?.until,
+}))
 const maintenanceIssue = computed(() =>
   Object.values(worker.value?.maintenance ?? {}).some((item) => item.status !== 'ready'),
+)
+const workerIssues = computed(
+  () => worker.value?.instances?.filter((item) => item.expected && item.status !== 'ready') ?? [],
 )
 const statusNames: Record<string, string> = {
   ready: '就绪',
@@ -97,6 +106,7 @@ async function refreshUsage() {
           until: until.toISOString(),
           group_by: 'channel',
           bucket: 'day',
+          cost_basis: costBasis,
         })
       : Promise.resolve(null),
     can('model:manage') ? modelApi.channels(0) : Promise.resolve([]),
@@ -130,9 +140,10 @@ function drill(filters: Record<string, string>) {
   void router.push({
     path: '/model-usage',
     query: {
-      since: statistics.value?.since,
-      until: statistics.value?.until,
       ...filters,
+      cost_basis: costBasis,
+      since: filters.since ?? usageScope.value.since,
+      until: filters.until ?? usageScope.value.until,
       tab: 'details',
     },
   })
@@ -175,11 +186,29 @@ onScopeDispose(() => {
               <strong>平台依赖需要检查</strong>
               <p>请确认 API、数据库版本和存储的就绪状态。</p>
             </div>
-            <RouterLink to="/platform"
+            <RouterLink to="/platform#dependencies"
               >检查依赖 <el-icon><ArrowRight /></el-icon
             ></RouterLink>
           </div>
-          <div v-if="!worker || worker.status !== 'ready'" class="attention-row">
+          <div v-for="instance in workerIssues" :key="instance.worker_id" class="attention-row">
+            <el-icon class="attention-marker"><WarningFilled /></el-icon>
+            <div>
+              <strong>{{ instance.worker_id }}</strong>
+              <p>{{ statusNames[instance.state] ?? statusNames[instance.status] }}</p>
+            </div>
+            <RouterLink
+              :to="{
+                path: '/platform',
+                hash: '#worker-instances',
+                query: { worker: instance.worker_id },
+              }"
+              >查看实例 <el-icon><ArrowRight /></el-icon
+            ></RouterLink>
+          </div>
+          <div
+            v-if="!workerIssues.length && (!worker || worker.status !== 'ready')"
+            class="attention-row"
+          >
             <el-icon class="attention-marker"><WarningFilled /></el-icon>
             <div>
               <strong>Worker {{ statusNames[worker?.status ?? 'unknown'] }}</strong>
@@ -190,33 +219,38 @@ onScopeDispose(() => {
                     : '未能确认运行状态，请检查平台连接。'
                 }}
               </p>
-              <p v-if="maintenanceIssue">共享维护也需检查，进程就绪与维护状态分别确认。</p>
             </div>
-            <RouterLink to="/platform"
+            <RouterLink to="/platform#worker-instances"
               >查看实例 <el-icon><ArrowRight /></el-icon
             ></RouterLink>
           </div>
-          <div v-if="worker?.status === 'ready' && maintenanceIssue" class="attention-row">
+          <div v-if="maintenanceIssue" class="attention-row">
             <el-icon class="attention-marker"><WarningFilled /></el-icon>
             <div>
               <strong>共享维护需要检查</strong>
-              <p>进程状态与文件清理、流程协调、费用扫描分别确认。</p>
             </div>
-            <RouterLink to="/platform"
+            <RouterLink to="/platform#shared-maintenance"
               >查看维护 <el-icon><ArrowRight /></el-icon
             ></RouterLink>
+          </div>
+          <div v-if="summary?.pending_calls" class="attention-row">
+            <el-icon class="attention-marker"><WarningFilled /></el-icon>
+            <div>
+              <strong>{{ summary.pending_calls.toLocaleString('zh-CN') }} 次调用等待核对</strong>
+            </div>
+            <el-button link @click="drill({ cost_status: 'pending' })"
+              >查看待核对 <el-icon><ArrowRight /></el-icon
+            ></el-button>
           </div>
           <div v-if="summary?.unknown_cost_calls" class="attention-row">
             <el-icon class="attention-marker"><WarningFilled /></el-icon>
             <div>
-              <strong>费用待核对</strong>
-              <p>
-                {{ summary.pending_calls }} 次等待核对，{{ summary.unknown_cost_calls }}
-                次费用未知。
-              </p>
+              <strong
+                >{{ summary.unknown_cost_calls.toLocaleString('zh-CN') }} 次调用费用未知</strong
+              >
             </div>
             <el-button link @click="drill({ cost_known: 'false' })"
-              >查看调用 <el-icon><ArrowRight /></el-icon
+              >查看未知费用 <el-icon><ArrowRight /></el-icon
             ></el-button>
           </div>
           <p
@@ -225,6 +259,8 @@ onScopeDispose(() => {
               readiness?.status === 'ready' &&
               worker?.status === 'ready' &&
               !maintenanceIssue &&
+              !workerIssues.length &&
+              !summary?.pending_calls &&
               !summary?.unknown_cost_calls
             "
             class="panel-empty"
@@ -235,7 +271,7 @@ onScopeDispose(() => {
         <section class="work-panel">
           <div class="panel-heading">
             <h2>Worker 实例</h2>
-            <RouterLink to="/platform">完整状态</RouterLink>
+            <RouterLink to="/platform#worker-instances">完整状态</RouterLink>
           </div>
           <div class="native-table-scroll">
             <table class="compact-table">
@@ -278,7 +314,7 @@ onScopeDispose(() => {
       <section v-if="can('model_invocation:read')" class="work-panel dashboard-usage">
         <div class="panel-heading">
           <h2>近 30 天用量</h2>
-          <RouterLink to="/model-usage"
+          <RouterLink :to="{ path: '/model-usage', query: usageScope }"
             >查看全部用量 <el-icon><ArrowRight /></el-icon
           ></RouterLink>
         </div>
@@ -287,14 +323,14 @@ onScopeDispose(() => {
         <template v-else-if="summary"
           ><div class="dashboard-money">
             <div v-for="cost in summary.costs" :key="cost.unit">
-              <span>已知费用 · {{ cost.unit }}</span
+              <span>上游实扣 · {{ cost.unit }}</span
               ><strong><MoneyAmount :amount="cost.amount" :unit="cost.unit" /></strong>
             </div>
             <p v-if="!summary.costs.length">暂无已知费用，未知金额不计为零。</p>
           </div>
           <div class="dashboard-metrics">
             <span
-              ><strong>{{ summary.calls.toLocaleString() }}</strong> 次调用</span
+              ><strong>{{ summary.calls.toLocaleString('zh-CN') }}</strong> 次调用</span
             ><span
               >成功率 <strong>{{ percent(summary.succeeded, summary.calls) }}</strong></span
             ><span
@@ -332,7 +368,7 @@ onScopeDispose(() => {
               <th>渠道</th>
               <th>服务商</th>
               <th>状态</th>
-              <th>本期已知费用</th>
+              <th>本期上游实扣</th>
               <th>操作</th>
             </tr>
           </thead>
@@ -364,7 +400,7 @@ onScopeDispose(() => {
               <td>
                 <RouterLink
                   v-if="can('model_invocation:read')"
-                  :to="{ path: '/model-usage', query: { channel_id: channel.id } }"
+                  :to="{ path: '/model-usage', query: { ...usageScope, channel_id: channel.id } }"
                   >查看用量</RouterLink
                 ><RouterLink v-else to="/models?tab=channels">配置渠道</RouterLink>
               </td>

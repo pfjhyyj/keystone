@@ -24,6 +24,7 @@ import { shanghaiInput, shanghaiDate, statisticsRange } from './time'
 import AppSelect from '../../components/AppSelect.vue'
 import InvocationDialog from '../models/components/InvocationDialog.vue'
 import { estimateStates } from '../../api/pricing'
+import { Refresh } from '@element-plus/icons-vue'
 import FlowRunDialog from '../flows/components/FlowRunDialog.vue'
 import StatisticsPicker from './components/StatisticsPicker.vue'
 import UsageSummary from './components/UsageSummary.vue'
@@ -101,8 +102,7 @@ const calls = ref<Invocation[]>([]),
   callsError = ref(''),
   callsLoading = ref(false)
 const preset = ref('custom')
-const advancedOpen = ref(false),
-  filtersExpanded = ref(false)
+const filtersExpanded = ref(false)
 const rollingPresets = ['today', '7', '30', 'month']
 const fields: { dimension: Dimension; key: (typeof filterKeys)[number]; label: string }[] = [
   { dimension: 'upstream_model', key: 'provider_model', label: '上游模型' },
@@ -233,7 +233,7 @@ const rangeFor = statisticsRange
 function setPreset(value: string) {
   preset.value = value
   if (value === 'custom') {
-    advancedOpen.value = true
+    filtersExpanded.value = true
     return
   }
   const range = rangeFor(value)
@@ -275,7 +275,6 @@ async function apply() {
     }
   }
   const next = Object.fromEntries(filterKeys.map((key) => [key, draft[key].trim() || null]))
-  filtersExpanded.value = false
   await navigate({
     ...next,
     since:
@@ -364,7 +363,7 @@ const filterNames: Record<string, string> = {
   source: '来源',
   operation: '操作',
   status: '结果',
-  cost_status: '查费',
+  cost_status: '核对状态',
   cost_source: '费用来源',
   cost_known: '金额',
   cost_unit: '单位',
@@ -409,28 +408,20 @@ onScopeDispose(() => {
   <section aria-label="用量与费用">
     <div class="heading">
       <h1>用量与费用</h1>
+      <el-button
+        v-if="allowed"
+        :icon="Refresh"
+        :disabled="statsLoading || callsLoading"
+        @click="refresh()"
+        >刷新统计</el-button
+      >
     </div>
     <template v-if="allowed">
       <p class="usage-scope">
-        {{ can('model_invocation:read_all') ? '可见全部用户及系统调用' : '仅显示本人调用' }} ·
-        默认近 30 天，最长 366 天。统一按上海时间（UTC+8）。
+        {{ can('model_invocation:read_all') ? '全部用户及系统调用' : '仅显示本人调用' }}
       </p>
-      <el-button
-        class="usage-filter-toggle"
-        :aria-expanded="filtersExpanded"
-        aria-controls="usage-filter-form"
-        @click="filtersExpanded = !filtersExpanded"
-        >{{ filtersExpanded ? '收起筛选' : '调整筛选'
-        }}<span v-if="activeFilters.length"> · {{ activeFilters.length }} 项限定</span></el-button
-      >
-      <form
-        id="usage-filter-form"
-        class="usage-filters"
-        :class="{ 'is-expanded': filtersExpanded }"
-        aria-label="用量费用筛选"
-        @submit.prevent="apply"
-      >
-        <div class="filter-grid">
+      <form class="usage-filters" aria-label="用量费用筛选" @submit.prevent="apply">
+        <div class="primary-filters">
           <label
             >时间范围<AppSelect
               :model-value="preset"
@@ -443,36 +434,55 @@ onScopeDispose(() => {
                 label="近 30 天" /><el-option value="month" label="本月" /></AppSelect
           ></label>
           <label
-            >渠道 / 站点<StatisticsPicker
-              v-model="draft.channel_id"
-              dimension="channel"
-              label="渠道筛选"
-              :filters="current"
-              @update:model-value="apply"
-          /></label>
-          <label
-            >业务模型<StatisticsPicker
-              v-model="draft.model_entry_id"
-              dimension="model"
-              label="模型筛选"
-              :filters="current"
-              @update:model-value="apply"
-          /></label>
-          <label v-if="can('model_invocation:read_all')"
-            >用户 / 系统<StatisticsPicker
-              v-model="draft.user_id"
-              dimension="user"
-              label="用户筛选"
-              :filters="current"
-              @update:model-value="apply"
-          /></label>
+            >费用口径<AppSelect
+              v-model="draft.cost_basis"
+              aria-label="费用口径"
+              @update:model-value="
+                () => {
+                  resetCostFilters()
+                  void apply()
+                }
+              "
+              ><el-option value="estimated" label="预估费用" /><el-option
+                value="actual"
+                label="上游实扣" /></AppSelect
+          ></label>
+          <el-button
+            class="usage-filter-toggle"
+            native-type="button"
+            :aria-expanded="filtersExpanded"
+            aria-controls="usage-advanced-filters"
+            @click="filtersExpanded = !filtersExpanded"
+            >{{ filtersExpanded ? '收起筛选' : '更多筛选'
+            }}<span v-if="activeFilters.length"> · {{ activeFilters.length }}</span></el-button
+          >
         </div>
-        <details
-          :open="advancedOpen"
-          @toggle="advancedOpen = ($event.target as HTMLDetailsElement).open"
-        >
-          <summary>更多筛选与自定义时间</summary>
+        <div id="usage-advanced-filters" v-show="filtersExpanded" class="advanced-filters">
           <div class="filter-grid">
+            <label
+              >渠道 / 站点<StatisticsPicker
+                v-model="draft.channel_id"
+                dimension="channel"
+                label="渠道筛选"
+                :filters="current"
+                @update:model-value="apply"
+            /></label>
+            <label
+              >业务模型<StatisticsPicker
+                v-model="draft.model_entry_id"
+                dimension="model"
+                label="模型筛选"
+                :filters="current"
+                @update:model-value="apply"
+            /></label>
+            <label v-if="can('model_invocation:read_all')"
+              >用户 / 系统<StatisticsPicker
+                v-model="draft.user_id"
+                dimension="user"
+                label="用户筛选"
+                :filters="current"
+                @update:model-value="apply"
+            /></label>
             <label class="range-field"
               >时间区间（上海）<el-date-picker
                 v-model="dateRange"
@@ -529,20 +539,6 @@ onScopeDispose(() => {
                   :value="key"
                   :label="label" /></AppSelect
             ></label>
-            <label
-              >费用口径<AppSelect
-                v-model="draft.cost_basis"
-                aria-label="费用口径"
-                @update:model-value="
-                  () => {
-                    resetCostFilters()
-                    void apply()
-                  }
-                "
-                ><el-option value="estimated" label="预估费用" /><el-option
-                  value="actual"
-                  label="上游实扣" /></AppSelect
-            ></label>
             <label v-if="draft.cost_basis !== 'actual'"
               >预估状态<AppSelect
                 v-model="draft.estimate_status"
@@ -597,7 +593,12 @@ onScopeDispose(() => {
             /></label>
             <label>Agent 调用 ID<el-input v-model="draft.agent_call_id" maxlength="36" /></label>
           </div>
-        </details>
+          <div class="row-actions">
+            <el-button native-type="submit" type="primary">应用筛选</el-button>
+            <el-button native-type="button" @click="reset">重置筛选</el-button>
+            <span>自定义时间、费用单位和调用 ID 需应用后生效</span>
+          </div>
+        </div>
         <p v-if="missingLabels">
           当前还限定：未关联{{ missingLabels }}。<el-button
             link
@@ -606,16 +607,6 @@ onScopeDispose(() => {
             >清除此限定</el-button
           >
         </p>
-        <div class="row-actions">
-          <el-button native-type="submit" type="primary">应用筛选</el-button
-          ><el-button native-type="button" @click="reset">重置筛选</el-button
-          ><el-button
-            native-type="button"
-            :disabled="statsLoading || callsLoading"
-            @click="refresh()"
-            >刷新统计</el-button
-          ><span>下拉选项会立即查询；时间区间、费用单位和调用 ID 需要点「应用筛选」。</span>
-        </div>
       </form>
       <div class="applied-filters" aria-label="已应用筛选">
         <span
@@ -649,31 +640,32 @@ onScopeDispose(() => {
         >调用明细暂不可用：{{ callsError }}</el-alert
       >
       <p v-if="statsLoading" role="status">正在计算用量与费用…</p>
-      <div class="view-toolbar">
-        <label class="bucket-control"
-          >时间粒度<AppSelect
-            :model-value="bucket"
-            aria-label="时间粒度"
-            @update:model-value="navigate({ bucket: $event, group_page: null })"
-            ><el-option value="hour" label="小时" /><el-option value="day" label="天" /><el-option
-              value="month"
-              label="月" /></AppSelect
-        ></label>
-        <span>按小时统计最长 31 天</span>
-      </div>
       <el-tabs v-model="tab">
         <el-tab-pane label="总览" name="overview"
           ><template v-if="statistics"
-            ><UsageSummary
-              :value="statistics.summary"
-              :cost-basis="costBasis"
-              @drill="drill" /><UsageTrend
-              :points="statistics.trend"
-              :since="statistics.since"
-              :until="statistics.until"
-              :units="statistics.summary.costs.map((cost) => cost.unit)"
-              :timezone="statistics.timezone"
-              @drill="drill" /><UsageGroups
+            ><UsageSummary :value="statistics.summary" :cost-basis="costBasis" @drill="drill"
+              ><UsageTrend
+                :points="statistics.trend"
+                :since="statistics.since"
+                :until="statistics.until"
+                :units="statistics.summary.costs.map((cost) => cost.unit)"
+                :timezone="statistics.timezone"
+                @drill="drill"
+              >
+                <template #controls>
+                  <label class="bucket-control"
+                    >时间粒度<AppSelect
+                      :model-value="bucket"
+                      aria-label="时间粒度"
+                      @update:model-value="navigate({ bucket: $event, group_page: null })"
+                      ><el-option value="hour" label="小时（最多 31 天）" /><el-option
+                        value="day"
+                        label="天" /><el-option value="month" label="月" /></AppSelect
+                  ></label>
+                </template>
+              </UsageTrend>
+            </UsageSummary>
+            <UsageGroups
               :rows="statistics.groups"
               :dimension="grouping"
               :cost-basis="costBasis"
@@ -739,68 +731,66 @@ onScopeDispose(() => {
   </section>
 </template>
 <style scoped>
-.usage-filter-toggle {
-  display: none;
-}
 .usage-scope {
   margin-bottom: 8px;
   font-size: 12px;
 }
-@media (max-width: 600px) {
-  .usage-filter-toggle {
-    display: inline-flex;
-    margin: 12px 0;
-  }
-  .usage-filters:not(.is-expanded) {
-    display: none;
-  }
-  .usage-scope {
-    font-size: 12px;
-  }
-}
 .usage-filters {
-  padding: 20px;
+  padding: 12px 16px;
   background: #fff;
   border: 1px solid #e4e8ed;
   border-radius: 8px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+.primary-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 168px)) auto;
+  justify-content: start;
+  align-items: end;
+  gap: 12px;
+}
+.usage-filter-toggle {
+  justify-self: start;
+}
+.advanced-filters {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 .filter-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 14px;
+  gap: 12px;
   margin-bottom: 16px;
 }
 label {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
-}
-summary {
-  cursor: pointer;
-  padding: 0 0 8px;
 }
 .range-field {
   grid-column: span 2;
 }
-.view-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  margin: 16px 0 -8px;
-  color: #617084;
-  font-size: 12px;
+.range-field :deep(.el-date-editor) {
+  width: 100%;
+  min-width: 0;
 }
 .bucket-control {
   display: grid;
-  grid-template-columns: auto minmax(110px, 140px);
+  grid-template-columns: auto minmax(84px, 128px);
   align-items: center;
   gap: 8px;
   font-size: 13px;
   color: #263445;
 }
 @media (max-width: 600px) {
+  .primary-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .filter-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .range-field {
     grid-column: auto;
   }

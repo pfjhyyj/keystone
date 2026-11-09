@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed, onMounted, onScopeDispose, ref } from 'vue'
 import { can } from '../../../stores/session'
 import {
   callStates,
@@ -8,10 +9,11 @@ import {
   type ModelOperation,
 } from '../../../api/models'
 import ListPager from '../../../components/ListPager.vue'
+import StatusTag from '../../../components/StatusTag.vue'
 import { estimateStates } from '../../../api/pricing'
 import MoneyAmount from '../../../components/MoneyAmount.vue'
 import { statisticsTime } from '../time'
-withDefaults(
+const props = withDefaults(
   defineProps<{
     rows: Invocation[]
     page: number
@@ -19,6 +21,33 @@ withDefaults(
     costBasis?: 'actual' | 'estimated'
   }>(),
   { costBasis: 'estimated' },
+)
+const compact = ref(false)
+const narrowViewport = window.matchMedia('(max-width: 600px)')
+function updateDensity() {
+  compact.value = narrowViewport.matches
+}
+onMounted(() => {
+  updateDensity()
+  narrowViewport.addEventListener('change', updateDensity)
+})
+onScopeDispose(() => narrowViewport.removeEventListener('change', updateDensity))
+const missingFee = computed(() => (props.costBasis === 'estimated' ? '暂无法预估' : '费用未知'))
+const displayRows = computed(() =>
+  props.rows.map((row) => {
+    const flowRunId = row.flow_context?.flow_run_id
+    return {
+      ...row,
+      modelLabel: row.model_name ?? row.model_key ?? row.provider_model,
+      flowRunId: typeof flowRunId === 'string' ? flowRunId : '',
+      feeAmount: props.costBasis === 'estimated' ? row.estimate_amount : row.cost_amount,
+      feeUnit: props.costBasis === 'estimated' ? row.estimate_currency : row.cost_unit,
+      feeState:
+        props.costBasis === 'estimated'
+          ? estimateStates[row.estimate_status ?? 'unavailable']
+          : (costCheckStates[row.cost_check_status ?? ''] ?? row.cost_check_status),
+    }
+  }),
 )
 defineEmits<{
   page: [value: number]
@@ -30,8 +59,52 @@ defineEmits<{
 <template>
   <section aria-label="调用明细">
     <p v-if="loading" role="status">正在加载调用记录…</p>
-    <div class="table-scroll">
-      <el-table :data="rows" :fit="true" native-scrollbar stripe class="data-table">
+    <template v-if="compact">
+      <ul v-if="displayRows.length" class="compact-calls">
+        <li v-for="row in displayRows" :key="row.id">
+          <div class="call-title">
+            <strong>{{ row.modelLabel }}</strong>
+            <StatusTag :status="row.status">{{ callStates[row.status] ?? row.status }}</StatusTag>
+          </div>
+          <div class="call-fee">
+            <MoneyAmount
+              v-if="row.feeAmount != null && row.feeUnit"
+              :amount="row.feeAmount"
+              :unit="row.feeUnit"
+            />
+            <span v-else>{{ missingFee }}</span>
+            <small v-if="row.feeState && row.feeState !== missingFee">{{ row.feeState }}</small>
+          </div>
+          <div class="call-actions">
+            <small>{{ statisticsTime(row.created_at) }}</small>
+            <el-button type="primary" link native-type="button" @click="$emit('select', row.id)"
+              >查看调用</el-button
+            >
+          </div>
+          <div v-if="row.flowRunId" class="call-flow">
+            <el-button
+              type="primary"
+              link
+              native-type="button"
+              @click="$emit('drill', { flow_run_id: row.flowRunId })"
+            >
+              筛选此 Flow
+            </el-button>
+            <el-button
+              v-if="can('flow:read')"
+              link
+              native-type="button"
+              @click="$emit('flow', row.flowRunId)"
+            >
+              查看流程运行
+            </el-button>
+          </div>
+        </li>
+      </ul>
+      <el-empty v-else-if="!loading" description="暂无符合条件的调用" :image-size="64" />
+    </template>
+    <div v-else class="table-scroll">
+      <el-table :data="displayRows" :fit="true" native-scrollbar stripe class="data-table">
         <el-table-column label="登记时间" min-width="170"
           ><template #default="{ row }">{{
             statisticsTime(row.created_at)
@@ -39,10 +112,7 @@ defineEmits<{
         >
         <el-table-column label="模型 / 渠道" min-width="200"
           ><template #default="{ row }"
-            ><span
-              class="truncate"
-              :title="row.model_name ?? row.model_key ?? row.provider_model"
-              >{{ row.model_name ?? row.model_key ?? row.provider_model }}</span
+            ><span class="truncate" :title="row.modelLabel">{{ row.modelLabel }}</span
             ><small
               class="truncate"
               :title="`${row.provider_model} · ${row.channel_name ?? row.channel_id}`"
@@ -70,19 +140,13 @@ defineEmits<{
           :label="costBasis === 'estimated' ? '预估费用 / 状态' : '上游实扣 / 核对状态'"
           min-width="170"
           ><template #default="{ row }"
-            ><template v-if="costBasis === 'estimated'"
-              ><span v-if="row.estimate_amount == null || !row.estimate_currency">暂无法预估</span
-              ><MoneyAmount
-                v-else
-                :amount="row.estimate_amount"
-                :unit="row.estimate_currency"
-              /><small>{{ estimateStates[row.estimate_status ?? 'unavailable'] }}</small></template
-            ><template v-else
-              ><span v-if="row.cost_amount == null || !row.cost_unit">未知</span
-              ><MoneyAmount v-else :amount="row.cost_amount" :unit="row.cost_unit" /><small>{{
-                costCheckStates[row.cost_check_status] ?? row.cost_check_status
-              }}</small></template
-            ></template
+            ><MoneyAmount
+              v-if="row.feeAmount != null && row.feeUnit"
+              :amount="row.feeAmount"
+              :unit="row.feeUnit"
+            />
+            <span v-else>{{ missingFee }}</span>
+            <small>{{ row.feeState }}</small></template
           ></el-table-column
         >
         <el-table-column label="Flow / 步骤" min-width="180"
@@ -130,6 +194,60 @@ defineEmits<{
   </section>
 </template>
 <style scoped>
+.compact-calls {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+}
+.compact-calls li {
+  padding: 12px 16px 4px;
+}
+.compact-calls li + li {
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+.call-title,
+.call-fee,
+.call-actions,
+.call-flow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.call-title {
+  justify-content: space-between;
+}
+.call-title strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+.call-title .el-tag {
+  flex-shrink: 0;
+}
+.call-fee {
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.call-fee small,
+.call-actions small {
+  color: var(--el-text-color-secondary);
+}
+.call-actions {
+  justify-content: space-between;
+  align-items: center;
+}
+.compact-calls .el-button {
+  min-height: 40px;
+}
+.call-flow {
+  flex-wrap: wrap;
+}
+.call-flow .el-button + .el-button {
+  margin-left: 0;
+}
 .truncate {
   display: block;
   overflow: hidden;

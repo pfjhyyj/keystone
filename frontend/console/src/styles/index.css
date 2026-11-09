@@ -43,6 +43,10 @@ body {
   font-variant-numeric: tabular-nums;
   caret-color: #8b6f47;
 }
+.el-button--primary:not(.is-link, .is-text, .is-plain) {
+  --el-button-hover-bg-color: var(--el-color-primary-dark-2);
+  --el-button-hover-border-color: var(--el-color-primary-dark-2);
+}
 ::selection {
   background: #e7daca;
   color: #4a3d2a;
@@ -772,13 +776,6 @@ dd {
 }
 .overview-detail .el-card__body {
   padding: 20px 22px;
-}
-.overview-note {
-  margin-top: 18px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 .login-page {
   min-height: 100vh;

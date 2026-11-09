@@ -177,6 +177,7 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   const history = page.getByRole('region', { name: '调用明细', exact: true })
   await expect(history.locator('tbody tr')).toHaveCount(1)
   await expect(page).toHaveURL(/channel_id=/)
+  await page.getByRole('button', { name: '更多筛选' }).click()
   const channelPicker = page
     .getByRole('combobox', { name: '渠道筛选', exact: true })
     .locator('xpath=ancestor::div[contains(@class, "app-select")][1]')
@@ -196,6 +197,7 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await expect(selectedChannel).toHaveText('newapi_prefix 模拟')
   // Tab changes are intentionally part of the history; restore the unfiltered overview.
   await page.getByRole('button', { name: '重置筛选', exact: true }).click()
+  await page.getByRole('button', { name: '收起筛选' }).click()
   await page.getByRole('tab', { name: '总览', exact: true }).click()
   await expect(overview).toBeVisible()
   await choose(page, '分析维度', '业务模型')
@@ -212,6 +214,7 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await expect(dialog).toContainText('账务查询')
   await dialog.getByRole('button', { name: '关闭对话框' }).click()
   await page.setViewportSize({ width: 390, height: 844 })
+  await expect(history.getByRole('listitem')).toHaveCount(3)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   )

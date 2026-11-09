@@ -2,6 +2,7 @@ import { expect, it, vi, afterEach } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import UsageView from '../views/usage/UsageView.vue'
+import DashboardView from '../views/overview/DashboardView.vue'
 import StatisticsPicker from '../views/usage/components/StatisticsPicker.vue'
 import MoneyAmount from '../components/MoneyAmount.vue'
 import { compactMoney } from '../api/models'
@@ -122,6 +123,43 @@ async function page(query: Record<string, string> = {}) {
 }
 const button = (wrapper: VueWrapper, label: string) =>
   wrapper.findAll('button').find((node) => node.text() === label)!
+it('opens actual cost details from the dashboard with distinct follow-up filters', async () => {
+  authorize(['model_invocation:read'])
+  const paths: string[] = []
+  fakeApi((path) => {
+    paths.push(path)
+    if (path.startsWith('/model-invocations/statistics?')) return result()
+    return {}
+  })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/', component: DashboardView },
+      { path: '/model-usage', component: UsageView },
+      { path: '/platform', component: { template: '<div />' } },
+    ],
+  })
+  await router.push('/')
+  const wrapper = mount(DashboardView, { global: { plugins: [router] } })
+  await flushPromises()
+  expect(paths).toContainEqual(
+    expect.stringMatching(/\/model-invocations\/statistics\?.*cost_basis=actual/),
+  )
+  for (const [label, filter] of [
+    ['查看待核对', { cost_status: 'pending' }],
+    ['查看未知费用', { cost_known: 'false' }],
+  ] as const) {
+    await button(wrapper, label).trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual({
+      ...filter,
+      since,
+      until,
+      cost_basis: 'actual',
+      tab: 'details',
+    })
+  }
+})
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
@@ -301,6 +339,8 @@ it('persists grouping, unit-specific ranking and bucket choices in links', async
   const { wrapper, router } = await page({ tab: 'analysis' })
   await chooseSelect(wrapper, 'model', '分析维度')
   await chooseSelect(wrapper, 'USD', '分组排序')
+  await wrapper.get('[role=tab][id=tab-overview]').trigger('click')
+  await flushPromises()
   await chooseSelect(wrapper, 'month', '时间粒度')
   await flushPromises()
   expect(router.currentRoute.value.query).toMatchObject({
@@ -521,6 +561,6 @@ it('uses Shanghai for shortcuts and datetime inputs without exposing a timezone 
   })
   const { wrapper } = await page()
   expect(wrapper.find('[aria-label="统计时区"]').exists()).toBe(false)
-  expect(wrapper.text()).toContain('统一按上海时间')
+  expect(wrapper.get('[aria-label="已应用筛选"]').text()).toContain('上海时间')
   expect(paths.some((path) => new URLSearchParams(path.split('?')[1]).has('timezone'))).toBe(false)
 })
