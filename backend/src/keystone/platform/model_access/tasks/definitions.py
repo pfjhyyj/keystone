@@ -24,4 +24,6 @@ COST_SCHEDULE = ScheduleDefinition(
     name="keystone.model_access.reconcile_costs",
     tick_entrypoint="keystone.model_access.cost_tick",
     task_key=COST_SCAN.key,
+    cron="0 * * * * *",
+    max_lateness_seconds=45,
 )

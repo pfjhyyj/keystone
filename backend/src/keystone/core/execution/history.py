@@ -28,7 +28,8 @@ HISTORY_SCHEDULE = ScheduleDefinition(
     name="keystone.history.retention",
     tick_entrypoint="keystone.history.tick",
     task_key=HISTORY.key,
-    cron="0 * * * * *",
+    cron="0 0 * * * *",
+    max_lateness_seconds=300,
 )
 QUEUE = HISTORY.queue
 

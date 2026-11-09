@@ -71,7 +71,7 @@ upload_referenced 在上传完成事务内登记固定 owner/slot，不暴露 OR
 
 ## 清理与 S3 残留
 
-keystone.files.cleanup 每 5 秒触发、启动立即扫描，使用 keystone-files-maintenance 串行队列，同类活动合并；无存储时禁用，不补停机时间片。
+keystone.files.cleanup 按[维护计划](../execution.md#4-持久计划)触发、启动立即扫描，使用 keystone-files-maintenance 串行队列，同类活动合并；无存储时禁用，不补停机时间片。
 
 每轮最多 20 个候选，共享于 deleting、1 小时未更新的 uploading/failed、每小时复核的 S3 deleted 墓碑，以及显式启用后的超期无引用 active 文件。取得文件锁后复查状态、引用及期限；活跃写入跳过，过期 uploading 标 failed，failed 保留以便原键重试，残留最多每小时重试。
 

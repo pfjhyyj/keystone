@@ -49,6 +49,7 @@ async def lifespan(
             "run_admin_server": False,
             "log_level": "CRITICAL",
             "sys_db_pool_size": 5,
+            "max_executor_threads": 32,
             "scheduler_polling_interval_sec": 1,
             "db_engine_kwargs": {
                 "connect_args": {"connect_timeout": 3},

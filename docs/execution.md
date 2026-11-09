@@ -121,7 +121,16 @@ Worker 的 enqueue_task 还检查绑定是否启用。Workflow 层保持确定�
 
 默认 cron=*/5 * * * * *、UTC、max_lateness=10 秒、run_on_startup=True、backfill=False、overlap=coalesce。迟到约束首次受理，不是执行超时。禁用目标时暂停计划并保留残留 tick 的禁用检查，共享队列仍可供其他任务使用。
 
-现有三项维护 tick 适配 scheduled_at/context 后只投递，不等待子任务；启动立即扫描当前待办，停机不补全部时间片。当前计划为 keystone.files.cleanup、keystone.flow.reconcile、keystone.model_access.reconcile_costs，采用上述默认触发策略；队列预算见[第 7.2 节](#72-队列预算)。
+维护 tick 适配 scheduled_at/context 后只投递，不等待子任务；统一保留 UTC、启动立即扫描当前待办、coalesce 合并活动执行和 no backfill（停机不补全部时间片）。具体周期与首次受理迟到窗口如下；窗口按周期分别设置，避免低频维护仍因默认 10 秒窗口过度跳过，但不保证拥堵时每次触发均执行。
+
+| 计划 | cron（秒在首位） | 周期 | 最大迟到 |
+|---|---|---|---|
+| keystone.flow.reconcile | `*/5 * * * * *` | 5 秒 | 10 秒 |
+| keystone.files.cleanup | `0 */5 * * * *` | 5 分钟 | 60 秒 |
+| keystone.model_access.reconcile_costs | `0 * * * * *` | 1 分钟 | 45 秒 |
+| keystone.history.retention（启用时） | `0 0 * * * *` | 1 小时 | 300 秒 |
+
+队列预算见[第 7.2 节](#72-队列预算)。
 
 ## 5. Step、失败与恢复
 
@@ -160,6 +169,11 @@ Worker 顺序：取得宿主/固定身份锁 → 校验登记、制品和配置 
 | keystone-flow-maintenance | 1 | 1 |
 | keystone-model-maintenance | 1 | 1 |
 | keystone-system | 2 | 2 |
+| keystone-history-maintenance | 1 | 1 |
+
+DBOS 执行线程池通过锁定版本 3.2.0 支持的 `DBOS(config={"max_executor_threads": 32, ...})` 固定为每 Worker 最多 32 个执行线程；它不是异步 Workflow 并发上限，也不限制全部 SDK 后台线程。
+
+**内部队列限制尚未实现**：3.2.0 的 `_dbos_internal_queue` 是 SDK 私有内存队列，公共 `register_queue` 拒绝内部保留名称，Queue 动态配置仅支持数据库队列，`DBOSConfig` 没有内部队列并发配置。因此当前不能通过受支持 API 保证内部队列每 Worker 并发 ≤ 2；不修改 SDK 私有属性、不 monkeypatch，也不以线程池大小代替队列保证。上表维护业务队列仍为原有 1/1；监听业务队列列表不排除 SDK 内部队列。
 
 新增 Worker 不增加全局预算。DBOS 两级并发与 API/Worker 的模型、账务 HTTP 共享容量分别生效，见[配置](operations/configuration.md)。
 

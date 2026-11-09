@@ -86,9 +86,9 @@ GET https://api.openlux.ai/api/log/token?key=<原调用API_KEY>&start_timestamp=
 
 调用结束事务保存回执和 pending 待办；仅扫描已结束、pending 且 next_check_at 到期记录，不改运行中调用。succeeded/failed/unknown 都可能有费用。
 
-keystone.model_access.reconcile_costs 每 5 秒、启动立即扫描。keystone-model-maintenance 串行扫描，每轮最多 20 范围，查询使用 keystone-system。API 手动和 Worker 默认共享查询容量 2，同范围串行，不占推理容量。
+keystone.model_access.reconcile_costs 按[维护计划](../execution.md#4-持久计划)触发、启动立即扫描。keystone-model-maintenance 串行扫描，每轮最多 20 范围，查询使用 keystone-system。API 手动和 Worker 默认共享查询容量 2，同范围串行，不占推理容量。
 
-日志按原 Token 及相近窗口合并，每批最多 20 调用，每页 20 日志，每次 2 页/25 秒，HTTP 最长 10 秒。固定窗口从本批最早登记前 120 秒至轮次开始；未扫完保存下一页，约 5 秒后继续，不消耗“完整未找到”轮次。完整覆盖才确认匹配，崩溃重读页不重复累加。
+日志按原 Token 及相近窗口合并，每批最多 20 调用，每页 20 日志，每次 2 页/25 秒，HTTP 最长 10 秒。固定窗口从本批最早登记前 120 秒至轮次开始；未扫完保存下一页，至少等待 5 秒后可由后续扫描继续，不消耗“完整未找到”轮次。完整覆盖才确认匹配，崩溃重读页不重复累加。
 
 真实 scope 由站点/Token HMAC 产生，最早 Channel 保存共享 checkpoint、阻塞与冷却。费用与页进度同事务推进，revision 防旧结果覆盖，连接失锁不得换连接提交。分页和后续轮次允许重叠，不能以日志 ID/最高时间永久跳过旧窗口；新待办不改写当前窗口，扫描须避免饥饿。
 

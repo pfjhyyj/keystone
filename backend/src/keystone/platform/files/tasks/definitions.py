@@ -10,4 +10,6 @@ CLEANUP_SCHEDULE = ScheduleDefinition(
     name="keystone.files.cleanup",
     tick_entrypoint="keystone.files.cleanup_tick",
     task_key=CLEANUP.key,
+    cron="0 */5 * * * *",
+    max_lateness_seconds=60,
 )

@@ -1,6 +1,7 @@
 """Execution boundaries: reject invalid inputs and sanitize before persistence."""
 
 from dataclasses import replace
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -8,7 +9,7 @@ import pytest
 from pydantic import BaseModel, Field, RootModel, model_serializer
 
 from keystone.core.config import Settings
-from keystone.core.execution import dispatch, steps
+from keystone.core.execution import dispatch, runtime, schedules, steps
 from keystone.core.execution.contracts import (
     NoInput,
     QueueDefinition,
@@ -17,8 +18,85 @@ from keystone.core.execution.contracts import (
     TaskDefinition,
     task_payload,
 )
+from keystone.core.execution.history import HISTORY_SCHEDULE
 from keystone.core.execution.planning import queue_budgets
-from keystone.platform.model_access.tasks.definitions import COST_SCOPE
+from keystone.core.time import utcnow
+from keystone.platform.files.tasks.definitions import CLEANUP_SCHEDULE
+from keystone.platform.flow.tasks.definitions import RECONCILE_SCHEDULE
+from keystone.platform.model_access.tasks.definitions import COST_SCHEDULE, COST_SCOPE
+
+
+@pytest.mark.parametrize(
+    "plan,cron,lateness",
+    [
+        (RECONCILE_SCHEDULE, "*/5 * * * * *", 10),
+        (CLEANUP_SCHEDULE, "0 */5 * * * *", 60),
+        (COST_SCHEDULE, "0 * * * * *", 45),
+        (HISTORY_SCHEDULE, "0 0 * * * *", 300),
+    ],
+)
+def test_maintenance_schedule_policies(plan, cron, lateness):
+    assert plan.cron == cron
+    assert plan.max_lateness_seconds == lateness
+    assert plan.timezone == "UTC"
+    assert plan.run_on_startup is True
+    assert plan.backfill is False
+    assert plan.overlap == "coalesce"
+
+
+@pytest.mark.parametrize(
+    "plan", [RECONCILE_SCHEDULE, CLEANUP_SCHEDULE, COST_SCHEDULE, HISTORY_SCHEDULE]
+)
+async def test_maintenance_tick_accepts_lateness_boundary_and_skips_older(monkeypatch, plan):
+    now = utcnow()
+    workflows = {}
+
+    def workflow(*, name):
+        def decorate(function):
+            workflows[name] = function
+            return function
+
+        return decorate
+
+    monkeypatch.setattr(schedules, "DBOS", SimpleNamespace(workflow=workflow, workflow_id="tick"))
+    monkeypatch.setattr(schedules, "safe_step", lambda **kwargs: lambda function: function)
+    monkeypatch.setattr(schedules, "utcnow", lambda: now)
+    enqueue = AsyncMock()
+    monkeypatch.setattr(schedules, "enqueue_task", enqueue)
+    definition = TaskDefinition(plan.task_key, "maintenance", NoInput, "maintenance")
+    schedules.register_schedule(plan, TaskBinding(definition, nothing), execution_prefix="test")
+    tick = workflows[plan.tick_entrypoint]
+    await tick(now - timedelta(seconds=plan.max_lateness_seconds), None)
+    enqueue.assert_awaited_once()
+    assert enqueue.call_args.kwargs["coalesce_key"] == plan.name
+    enqueue.reset_mock()
+    await tick(now - timedelta(seconds=plan.max_lateness_seconds, microseconds=1), None)
+    enqueue.assert_not_awaited()
+
+
+async def test_worker_passes_supported_executor_limit_before_launch(monkeypatch):
+    client = SimpleNamespace(register_queue_async=AsyncMock(), destroy=Mock())
+    monkeypatch.setattr(runtime, "DBOSClient", Mock(return_value=client))
+    lease = AsyncMock()
+
+    def construct(*, config):
+        assert config["max_executor_threads"] == 32
+        assert config["scheduler_polling_interval_sec"] == 1
+        lease.assert_awaited_once()
+        assert client.register_queue_async.await_args_list == [
+            (("maintenance",), {"worker_concurrency": 1, "global_concurrency": 1})
+        ]
+        # Stop before native launch: this unit test must never connect to a database.
+        raise RuntimeError("configuration checked")
+
+    monkeypatch.setattr(runtime, "DBOS", construct)
+    settings = Settings(config_file=None, database_url="postgresql+psycopg://localhost/unused")
+    with pytest.raises(RuntimeError, match="configuration checked"):
+        async with runtime.lifespan(
+            settings, application_version="release", queues={"maintenance": (1, 1)}, lease=lease
+        ):
+            pytest.fail("Native executor must not launch")
+    client.destroy.assert_called_once()
 
 
 async def nothing(payload):
@@ -180,9 +258,9 @@ def test_plan_checks_bindings_queues_schedules_and_disabled_queue_consumption():
         ([binding], [queue], [replace(plan, payload={"secret": "unexpected"})]),
         ([replace(binding, workflow=nothing)], [queue], [plan]),
     ]
-    for bindings, queues, schedules in cases:
+    for bindings, queues, plans in cases:
         with pytest.raises(ValueError):
-            queue_budgets(bindings, queues, schedules)
+            queue_budgets(bindings, queues, plans)
 
 
 async def test_safe_step_cleans_error_before_dbos_receives_it(monkeypatch, caplog):
