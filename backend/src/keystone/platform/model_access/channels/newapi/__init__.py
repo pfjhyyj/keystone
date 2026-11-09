@@ -5,6 +5,7 @@ from keystone.platform.model_access.channels.shared import EMBEDDINGS, RELAY_CHA
 from keystone.platform.model_access.channels.shared.metering import (
     EMBEDDING_PROFILE,
     RELAY_CHAT_PROFILE,
+    RELAY_CHAT_PROFILE_V3,
 )
 from keystone.platform.model_access.channels.spec import ChannelSpec
 
@@ -13,7 +14,7 @@ SPEC = ChannelSpec(
     label="NewAPI",
     api_base=Newapi.api_base,
     protocols=(RELAY_CHAT, EMBEDDINGS),
-    pricing_profiles=(RELAY_CHAT_PROFILE, EMBEDDING_PROFILE),
+    pricing_profiles=(RELAY_CHAT_PROFILE, RELAY_CHAT_PROFILE_V3, EMBEDDING_PROFILE),
     billing=Newapi(),
     models_path="/models",
     custom_base=True,

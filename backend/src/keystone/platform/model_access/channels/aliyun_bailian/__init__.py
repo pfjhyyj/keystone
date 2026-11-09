@@ -9,6 +9,7 @@ from keystone.platform.model_access.channels.aliyun_bailian.discovery import (
 from keystone.platform.model_access.channels.shared import CHAT, EMBEDDINGS
 from keystone.platform.model_access.channels.shared.metering import (
     CHAT_PROFILE,
+    CHAT_PROFILE_V3,
     EMBEDDING_PROFILE,
 )
 from keystone.platform.model_access.channels.spec import ChannelField, ChannelSpec
@@ -18,7 +19,7 @@ SPEC = ChannelSpec(
     label="阿里云百炼（DashScope）",
     api_base=pricing.BASE,
     protocols=(DashScopeChat(CHAT.operations), EMBEDDINGS),
-    pricing_profiles=(CHAT_PROFILE, EMBEDDING_PROFILE),
+    pricing_profiles=(CHAT_PROFILE, CHAT_PROFILE_V3, EMBEDDING_PROFILE),
     billing=AliyunBailian(),
     models_path="/api/v1/models",
     discover=dashscope_models,
@@ -36,5 +37,4 @@ SPEC = ChannelSpec(
         ),
     ),
     reference_prices=pricing.REFERENCE_PRICES,
-    reference_applies=pricing.applies,
 )

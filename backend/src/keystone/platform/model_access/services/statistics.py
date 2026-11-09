@@ -47,6 +47,8 @@ COUNTS = (
     "pending_calls",
     "input_reported",
     "output_reported",
+    "cache_read_reported",
+    "cache_write_reported",
     "duration_reported",
 )
 
@@ -68,6 +70,12 @@ def metrics(row, *, estimated=False):
         "unknown_cost_calls": int((row["calls"] or 0) - (row["known_calls"] or 0)),
         "input_tokens": str(row["input_tokens"]) if row["input_tokens"] is not None else None,
         "output_tokens": str(row["output_tokens"]) if row["output_tokens"] is not None else None,
+        "cache_read_tokens": str(row["cache_read_tokens"])
+        if row["cache_read_tokens"] is not None
+        else None,
+        "cache_write_tokens": str(row["cache_write_tokens"])
+        if row["cache_write_tokens"] is not None
+        else None,
         "avg_duration_ms": float(row["avg_duration_ms"])
         if row["avg_duration_ms"] is not None
         else None,
@@ -163,6 +171,8 @@ class StatisticsService:
                     Call.estimate_reason,
                     token_value("input_tokens").label("input_tokens"),
                     token_value("output_tokens").label("output_tokens"),
+                    token_value("cache_read_input_tokens").label("cache_read_tokens"),
+                    token_value("cache_write_input_tokens").label("cache_write_tokens"),
                     duration.label("duration"),
                 )
                 .where(*conditions)
@@ -195,8 +205,12 @@ class StatisticsService:
                     func.sum(f.cost_amount).label("amount"),
                     func.sum(f.input_tokens).label("input_tokens"),
                     func.sum(f.output_tokens).label("output_tokens"),
+                    func.sum(f.cache_read_tokens).label("cache_read_tokens"),
+                    func.sum(f.cache_write_tokens).label("cache_write_tokens"),
                     func.count(f.input_tokens).label("input_reported"),
                     func.count(f.output_tokens).label("output_reported"),
+                    func.count(f.cache_read_tokens).label("cache_read_reported"),
+                    func.count(f.cache_write_tokens).label("cache_write_reported"),
                     func.count(f.duration).label("duration_reported"),
                     func.avg(f.duration).label("avg_duration_ms"),
                     func.percentile_cont(0.95).within_group(f.duration).label("p95_duration_ms"),

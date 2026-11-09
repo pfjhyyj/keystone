@@ -193,6 +193,11 @@ def estimate(
                 ),
             ),
             ("input_total_tokens", ("input_text_tokens", "input_image_tokens")),
+            # Reported write lifetimes are disjoint subsets of the reported write count.
+            (
+                "input_cache_write_tokens",
+                ("input_cache_write_5m_tokens", "input_cache_write_1h_tokens"),
+            ),
             ("output_total_tokens", ("output_regular_tokens", "reasoning_tokens")),
             ("output_total_tokens", ("output_text_tokens", "output_image_tokens")),
         ):

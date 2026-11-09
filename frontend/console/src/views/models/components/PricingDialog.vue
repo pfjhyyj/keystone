@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElForm, ElFormItem, ElRadioButton, ElRadioGroup } from 'element-plus'
+import { ElForm, ElFormItem, ElMessageBox, ElRadioButton, ElRadioGroup } from 'element-plus'
 import { operationLabels, money, type ModelEntry } from '../../../api/models'
 import {
   pricingApi,
@@ -28,13 +28,32 @@ const view = ref<PricingView | null>(null)
 const mode = ref<PricingConfig['mode']>('inherit'),
   selected = ref('')
 type Template = 'token' | 'tier' | 'time' | 'image' | 'request' | 'json'
-interface Editor {
-  enabled: boolean
-  template: Template
-  currency: string
+type Mode = 'implicit' | 'explicit'
+/** One side of a cache-mode branch: its own partition and prices. */
+interface Rates {
   input: string
   output: string
   rates: Record<string, string>
+  tiers: { after: number; rates: Record<string, string>; idle: Record<string, string> }[]
+}
+/**
+ * A rule that prices implicit and explicit cache separately. Both sides keep the same tier
+ * layout and factor so the table can show one set of limits and two sets of prices.
+ */
+interface CacheModes {
+  kind: 'token' | 'tier'
+  factor: string
+  implicit: Rates
+  explicit: Rates
+}
+interface Editor extends Rates {
+  enabled: boolean
+  template: Template
+  currency: string
+  /** Present when the saved rule branches on the request's declared cache mode. */
+  modes: CacheModes | null
+  /** Which side the rate table edits; ignored without `modes`. */
+  mode: Mode
   /**
    * Tiers after the first; `after` is the exclusive lower bound (= previous tier's inclusive
    * upper bound). `rates` is the peak/only price, `idle` the idle-period price of that tier.
@@ -76,6 +95,11 @@ const groupLabel = (item: Group) =>
     item.members[0]!.delivery === 'async' ? '异步' : '同步'
   }`
 const editor = computed(() => editors[selected.value])
+/** The rate table always edits one cache mode; a rule without a mode branch edits itself. */
+const active = computed<Rates>(() => {
+  const item = editor.value
+  return (item?.modes?.[item.mode] ?? item) as Rates
+})
 const result = ref<EstimateResult | null>(null),
   sample = ref('')
 const baseline = ref('')
@@ -93,13 +117,17 @@ const partitionLabels: Record<string, string> = {
   aggregate: '全部统一计价',
   cache: '普通输入与缓存读取分价',
   cache_read: '仅区分缓存命中／未命中',
+  cache_ttl: '缓存写入按时长分价',
   modality: '文本与图片分价',
   reasoning: '普通输出与推理分价',
 }
 const writesCache = (t: PricingTarget) =>
   !!t.profile.input_partitions.cache?.includes('usage.input_cache_write_tokens')
+const writesCacheByTtl = (t: PricingTarget) =>
+  !!t.profile.input_partitions.cache_ttl?.includes('usage.input_cache_write_5m_tokens')
 function partitionLabel(t: PricingTarget, key: string) {
   if (key === 'cache' && writesCache(t)) return '普通输入、缓存读取、缓存写入分价'
+  if (key === 'cache_ttl' && writesCacheByTtl(t)) return '普通输入、缓存读取与分时长写入分价'
   return partitionLabels[key] ?? key
 }
 function partitionHelp(t: PricingTarget, key: string) {
@@ -112,6 +140,8 @@ function partitionHelp(t: PricingTarget, key: string) {
         : '普通输入已扣除缓存读取部分，缓存读取单独定价。'
     case 'cache_read':
       return '只区分命中与未命中，缓存写入按未命中价计。适合只报告命中数的渠道，如百炼隐式缓存、方舟。'
+    case 'cache_ttl':
+      return '缓存写入按上游报告的有效期（5 分钟／1 小时）分别定价；只有同时报告两种写入量的渠道才可预估。'
     case 'modality':
       return '文本与图片 Token 分别定价。'
     case 'reasoning':
@@ -164,6 +194,69 @@ function tierChain(t: PricingTarget, node?: PriceNode) {
           .join() === expected,
     )
   return editable ? { leaves, limits } : undefined
+}
+/** Recognizes one cache-mode side as a token price or a full-context tier chain. */
+function sideOf(
+  t: PricingTarget,
+  node?: PriceNode,
+): (Rates & { kind: 'token' | 'tier'; factor: string }) | undefined {
+  const chain = tierChain(t, node)
+  if (chain?.limits.length) {
+    const first = chain.leaves[0]!
+    return {
+      kind: 'tier',
+      factor: first.factor,
+      input: first.input_partition,
+      output: first.output_partition,
+      rates: rateMap(first),
+      tiers: chain.leaves.slice(1).map((leaf, index) => ({
+        after: chain.limits[index]!,
+        rates: rateMap(leaf),
+        idle: {},
+      })),
+    }
+  }
+  if (node?.kind !== 'price') return
+  const token = node.items.every(
+    (item) => t.profile.quantities[item.quantity] === 'token' && item.per === 1000000,
+  )
+  if (!token) return
+  return {
+    kind: 'token',
+    factor: node.factor,
+    input: node.input_partition,
+    output: node.output_partition,
+    rates: rateMap(node),
+    tiers: [],
+  }
+}
+/** Recognizes a rule that branches on the request's declared cache mode. */
+function cacheModes(t: PricingTarget, node?: PriceNode): CacheModes | undefined {
+  if (node?.kind !== 'branch') return
+  const when = node.when as Record<string, unknown>
+  if (when.field !== 'context.cache_mode' || when.op !== 'eq' || Object.keys(when).length !== 3)
+    return
+  const implicitNode =
+    when.value === 'explicit' ? node.else : when.value === 'implicit' ? node.then : undefined
+  const explicitNode =
+    when.value === 'explicit' ? node.then : when.value === 'implicit' ? node.else : undefined
+  const implicit = sideOf(t, implicitNode)
+  const explicit = sideOf(t, explicitNode)
+  if (!implicit || !explicit || implicit.kind !== explicit.kind) return
+  if (implicit.factor !== explicit.factor) return
+  if (
+    implicit.tiers.map((item) => item.after).join() !==
+    explicit.tiers.map((item) => item.after).join()
+  )
+    return
+  const { kind, factor } = implicit
+  const toRates = (side: Rates): Rates => ({
+    input: side.input,
+    output: side.output,
+    rates: side.rates,
+    tiers: side.tiers,
+  })
+  return { kind, factor, implicit: toRates(implicit), explicit: toRates(explicit) }
 }
 type HourPredicate = { field?: unknown; op?: unknown; value?: unknown }
 function idleWhen(time: Editor['time']) {
@@ -238,7 +331,8 @@ const currencies = ['CNY', 'USD', 'EUR', 'GBP', 'JPY', 'HKD', 'SGD', 'AUD', 'CAD
 function newEditor(t: PricingTarget, price?: OperationPrice): Editor {
   const root = price?.rule.root
   const timed = timeSplit(t, price)
-  const parsed = price?.rule.time_basis ? undefined : tierChain(t, root)
+  const modes = price?.rule.time_basis ? undefined : cacheModes(t, root)
+  const parsed = modes || price?.rule.time_basis ? undefined : tierChain(t, root)
   const chain = timed?.peak ?? (parsed?.limits.length ? parsed : undefined)
   const simple = chain
     ? chain.leaves[0]
@@ -254,22 +348,30 @@ function newEditor(t: PricingTarget, price?: OperationPrice): Editor {
     enabled: !!price,
     template: timed
       ? 'time'
-      : chain
-        ? 'tier'
-        : tokens
-          ? 'token'
-          : single?.quantity === 'usage.generated_images'
-            ? 'image'
-            : single?.quantity === 'events.upstream_success_count'
-              ? 'request'
-              : root
-                ? 'json'
-                : t.profile.input_partitions.aggregate
-                  ? 'token'
-                  : 'image',
+      : modes
+        ? modes.kind
+        : chain
+          ? 'tier'
+          : tokens
+            ? 'token'
+            : single?.quantity === 'usage.generated_images'
+              ? 'image'
+              : single?.quantity === 'events.upstream_success_count'
+                ? 'request'
+                : root
+                  ? 'json'
+                  : t.profile.input_partitions.aggregate
+                    ? 'token'
+                    : 'image',
     currency: price?.rule.currency ?? 'CNY',
-    input: simple?.input_partition ?? (t.profile.input_partitions.aggregate ? 'aggregate' : 'none'),
+    modes: modes ?? null,
+    mode: 'implicit',
+    input:
+      modes?.implicit.input ??
+      simple?.input_partition ??
+      (t.profile.input_partitions.aggregate ? 'aggregate' : 'none'),
     output:
+      modes?.implicit.output ??
       simple?.output_partition ??
       (t.operation === 'text.embed'
         ? 'none'
@@ -277,16 +379,18 @@ function newEditor(t: PricingTarget, price?: OperationPrice): Editor {
           ? 'aggregate'
           : 'none'),
     rates:
-      simple && (tokens || single)
+      !modes && simple && (tokens || single)
         ? Object.fromEntries(simple.items.map((item) => [item.quantity, item.rate]))
         : {},
-    tiers: chain?.limits.length
-      ? chain.leaves.slice(1).map((item, index) => ({
-          after: chain.limits[index]!,
-          rates: rateMap(item),
-          idle: timed ? rateMap(timed.idle.leaves[index + 1]!) : {},
-        }))
-      : [{ after: 32000, rates: {}, idle: {} }],
+    tiers: modes
+      ? []
+      : chain?.limits.length
+        ? chain.leaves.slice(1).map((item, index) => ({
+            after: chain.limits[index]!,
+            rates: rateMap(item),
+            idle: timed ? rateMap(timed.idle.leaves[index + 1]!) : {},
+          }))
+        : [{ after: 32000, rates: {}, idle: {} }],
     time: timed
       ? {
           timezone: timed.timezone,
@@ -296,7 +400,7 @@ function newEditor(t: PricingTarget, price?: OperationPrice): Editor {
           idle: rateMap(timed.idle.leaves[0]!),
         }
       : { timezone: 'Asia/Shanghai', start: 22, end: 8, tiered: false, idle: {} },
-    factor: simple?.factor ?? '1',
+    factor: modes?.factor ?? simple?.factor ?? '1',
     json: price ? JSON.stringify(price.rule, null, 2) : '',
     source: price ? { ...price.source } : { label: '管理员配置', version: 'custom.1' },
   }
@@ -337,23 +441,24 @@ async function load() {
   result.value = null
   sample.value = ''
 }
-function quantities(t: PricingTarget, e: Editor): string[] {
+function quantities(t: PricingTarget, e: Editor, r: Rates): string[] {
   if (e.template === 'image') return ['usage.generated_images']
   if (e.template === 'request') return ['events.upstream_success_count']
   return [
-    ...(t.profile.input_partitions[e.input] ?? []),
-    ...(t.profile.output_partitions[e.output] ?? []),
+    ...(t.profile.input_partitions[r.input] ?? []),
+    ...(t.profile.output_partitions[r.output] ?? []),
   ]
 }
 function leaf(
   t: PricingTarget,
   e: Editor,
+  r: Rates,
   id: string,
   rates: Record<string, string>,
   strict = true,
 ): PriceLeaf {
   const token = e.template === 'token' || e.template === 'tier' || e.template === 'time'
-  const items = quantities(t, e).map((quantity) => {
+  const items = quantities(t, e, r).map((quantity) => {
     const rate = rates[quantity]?.trim() ?? ''
     if (strict && !/^\d+(\.\d{1,18})?$/.test(rate))
       throw new Error('请填写每一项单价；免费项请明确填 0。')
@@ -364,8 +469,8 @@ function leaf(
   return {
     kind: 'price',
     id,
-    input_partition: token ? e.input : 'none',
-    output_partition: token ? e.output : 'none',
+    input_partition: token ? r.input : 'none',
+    output_partition: token ? r.output : 'none',
     factor: e.factor,
     items,
   }
@@ -388,9 +493,25 @@ function timeBasis(e: Editor): Pick<PriceRule, 'time_basis'> {
 }
 /** Tier i covers (tiers[i-1].after, tiers[i].after]; the last tier is unbounded. */
 function formRoot(t: PricingTarget, e: Editor, strict = true): PriceNode {
+  if (e.modes)
+    return {
+      kind: 'branch',
+      when: { field: 'context.cache_mode', op: 'eq', value: 'explicit' },
+      then: sideRoot(t, e, e.modes.explicit, 'explicit_', strict),
+      else: sideRoot(t, e, e.modes.implicit, '', strict),
+    }
+  return sideRoot(t, e, e, '', strict)
+}
+function sideRoot(
+  t: PricingTarget,
+  e: Editor,
+  r: Rates,
+  prefix: string,
+  strict: boolean,
+): PriceNode {
   if (e.template === 'tier')
-    return chain(t, e, 'tier_', [e.rates, ...e.tiers.map((item) => item.rates)], strict)
-  if (e.template !== 'time') return leaf(t, e, 'standard', e.rates, strict)
+    return chain(t, e, r, `${prefix}tier_`, [r.rates, ...r.tiers.map((item) => item.rates)], strict)
+  if (e.template !== 'time') return leaf(t, e, r, `${prefix}standard`, r.rates, strict)
   const { start, end, tiered } = e.time
   if (
     strict &&
@@ -398,21 +519,29 @@ function formRoot(t: PricingTarget, e: Editor, strict = true): PriceNode {
   )
     throw new Error('闲时开始和结束须为 0–23 的整点，且不能相同。')
   const idle = tiered
-    ? chain(t, e, 'idle_tier_', [e.time.idle, ...e.tiers.map((item) => item.idle)], strict)
-    : leaf(t, e, 'idle', e.time.idle, strict)
+    ? chain(
+        t,
+        e,
+        r,
+        `${prefix}idle_tier_`,
+        [e.time.idle, ...r.tiers.map((item) => item.idle)],
+        strict,
+      )
+    : leaf(t, e, r, `${prefix}idle`, e.time.idle, strict)
   const peak = tiered
-    ? chain(t, e, 'peak_tier_', [e.rates, ...e.tiers.map((item) => item.rates)], strict)
-    : leaf(t, e, 'peak', e.rates, strict)
+    ? chain(t, e, r, `${prefix}peak_tier_`, [r.rates, ...r.tiers.map((item) => item.rates)], strict)
+    : leaf(t, e, r, `${prefix}peak`, r.rates, strict)
   return { kind: 'branch', when: idleWhen(e.time), then: idle, else: peak }
 }
 function chain(
   t: PricingTarget,
   e: Editor,
+  r: Rates,
   prefix: string,
   rateSets: Record<string, string>[],
   strict: boolean,
 ): PriceNode {
-  const limits = e.tiers.map((item) => item.after)
+  const limits = r.tiers.map((item) => item.after)
   if (
     strict &&
     limits.some(
@@ -421,7 +550,9 @@ function chain(
     )
   )
     throw new Error('阶梯分界须为逐档递增的非负整数。')
-  const leaves = rateSets.map((rates, index) => leaf(t, e, `${prefix}${index + 1}`, rates, strict))
+  const leaves = rateSets.map((rates, index) =>
+    leaf(t, e, r, `${prefix}${index + 1}`, rates, strict),
+  )
   let root: PriceNode = leaves.at(-1)!
   for (let index = limits.length - 1; index >= 0; index--)
     root = {
@@ -432,21 +563,36 @@ function chain(
     }
   return root
 }
+/** Every editable side; a cache-mode rule mirrors its tier layout to both sides. */
+function tierRows(e: Editor): Rates[] {
+  return e.modes ? [e.modes.implicit, e.modes.explicit] : [e]
+}
 function addTier() {
-  const e = editor.value
-  if (!e || e.tiers.length + 1 >= MAX_TIERS) return
-  const last = e.tiers.at(-1)?.after ?? 0
-  e.tiers.push({ after: last ? last * 2 : 32000, rates: {}, idle: {} })
+  const e = editor.value,
+    r = active.value
+  if (!e || !r || r.tiers.length + 1 >= MAX_TIERS) return
+  const last = r.tiers.at(-1)?.after ?? 0
+  const after = last ? last * 2 : 32000
+  for (const side of tierRows(e)) side.tiers.push({ after, rates: {}, idle: {} })
 }
 function removeTier(index: number) {
-  editor.value?.tiers.splice(index, 1)
+  const e = editor.value
+  if (!e) return
+  for (const side of tierRows(e)) side.tiers.splice(index, 1)
 }
-function tierRange(e: Editor, index: number) {
-  const low = index === 0 ? undefined : e.tiers[index - 1]!.after
-  const high = e.tiers[index]?.after
-  if (low === undefined) return `完整输入 ≤ ${high}`
-  if (high === undefined) return `完整输入 > ${low}`
-  return `${low} < 完整输入 ≤ ${high}`
+function setTierLimit(index: number, value: number | undefined) {
+  const e = editor.value
+  if (!e || typeof value !== 'number') return
+  for (const side of tierRows(e)) {
+    const row = side.tiers[index]
+    if (row) row.after = value
+  }
+}
+function tierRange(r: Rates, index: number) {
+  const low = index === 0 ? undefined : r.tiers[index - 1]!.after
+  const high = r.tiers[index]?.after
+  if (high === undefined) return low === undefined ? '不限' : `完整输入 > ${low}`
+  return low === undefined ? `完整输入 ≤ ${high}` : `${low} < 完整输入 ≤ ${high}`
 }
 const opSymbols: Record<string, string> = {
   eq: '==',
@@ -542,6 +688,64 @@ function jsonTemplate() {
     )
   e.template = 'json'
 }
+async function selectTemplate(next: Exclude<Template, 'json'>) {
+  const t = target.value,
+    e = editor.value
+  if (!t || !e) return
+  error.value = ''
+  if (e.template === 'json') {
+    try {
+      const parsed = JSON.parse(e.json) as PriceRule
+      const restored = newEditor(t, {
+        operation: t.operation,
+        delivery: t.delivery,
+        rule: parsed,
+        source: e.source,
+      })
+      // Node/item identifiers are labels, not pricing semantics; all other fields must survive.
+      const canonical = (value: unknown): string =>
+        JSON.stringify(value, (_key, item: unknown) => {
+          if (item && typeof item === 'object' && !Array.isArray(item))
+            return Object.fromEntries(
+              Object.entries(item)
+                .filter(([key]) => key !== 'id')
+                .sort(([a], [b]) => a.localeCompare(b)),
+            )
+          return item
+        })
+      if (restored.template === 'json' || canonical(parsed) !== canonical(rule(t, restored)))
+        throw new Error('当前 JSON 无法由表单无损表达，请继续使用高级 JSON；草稿已保留。')
+      Object.assign(e, restored, { enabled: e.enabled, json: e.json })
+      return
+    } catch (cause) {
+      error.value =
+        cause instanceof SyntaxError
+          ? '价格规则 JSON 格式有误，请修正后再返回表单；草稿已保留。'
+          : cause instanceof Error
+            ? cause.message
+            : '当前 JSON 无法由表单无损表达；草稿已保留。'
+      return
+    }
+  }
+  if (e.template === 'tier' && next === 'token') {
+    try {
+      await ElMessageBox.confirm(
+        '将删除全部高档，仅保留第一档单价；隐式和显式两种缓存模式的高档都会删除。未保存的阶梯草稿无法恢复。',
+        '确认转换为 Token 单价？',
+        { confirmButtonText: '确认转换', cancelButtonText: '保留阶梯草稿', type: 'warning' },
+      )
+    } catch {
+      return
+    }
+    e.tiers = []
+    if (e.modes) {
+      e.modes.implicit.tiers = []
+      e.modes.explicit.tiers = []
+      e.modes.kind = 'token'
+    }
+  }
+  e.template = next
+}
 function selectOperation() {
   result.value = null
   sample.value = ''
@@ -635,7 +839,11 @@ function sampleData() {
   )
   sample.value = JSON.stringify(
     {
-      context: timed ? { pricing_hour: 23 } : {},
+      context: {
+        ...(timed ? { pricing_hour: 23 } : {}),
+        // A cache-mode branch is undecidable without the request's declared mode.
+        ...(t.profile.context_fields['context.cache_mode'] ? { cache_mode: 'implicit' } : {}),
+      },
       facts: { format: 1, profile: t.profile.id, values },
     },
     null,
@@ -748,29 +956,40 @@ onMounted(() => run(load))
               <div class="row-actions">
                 <el-button
                   v-if="target.profile.input_partitions.aggregate"
-                  @click="editor.template = 'token'"
+                  @click="selectTemplate('token')"
                   >Token 单价</el-button
                 >
                 <el-button
                   v-if="target.profile.input_partitions.aggregate"
-                  @click="editor.template = 'tier'"
+                  @click="selectTemplate('tier')"
                   >上下文阶梯</el-button
                 >
                 <el-button
-                  v-if="target.profile.input_partitions.aggregate"
-                  @click="editor.template = 'time'"
+                  v-if="target.profile.input_partitions.aggregate && !editor.modes"
+                  @click="selectTemplate('time')"
                   >闲忙时</el-button
                 >
                 <el-button
                   v-if="target.profile.quantities['usage.generated_images']"
-                  @click="editor.template = 'image'"
+                  @click="selectTemplate('image')"
                   >按张</el-button
                 >
-                <el-button @click="editor.template = 'request'">按次</el-button>
+                <el-button @click="selectTemplate('request')">按次</el-button>
                 <el-button @click="jsonTemplate">高级 JSON</el-button>
                 <el-button v-if="target.reference" @click="copyReference">复制参考规则</el-button>
               </div>
               <template v-if="editor.template !== 'json'">
+                <template v-if="editor.modes">
+                  <el-form-item label="缓存模式">
+                    <el-radio-group v-model="editor.mode" aria-label="缓存模式">
+                      <el-radio-button value="implicit">隐式缓存</el-radio-button>
+                      <el-radio-button value="explicit">显式缓存</el-radio-button>
+                    </el-radio-group>
+                  </el-form-item>
+                  <p class="pricing-help">
+                    上游按请求声明的缓存模式选一套单价，两种模式需分别填完整。隐式与显式互斥，不会同时计费；请求未声明模式时不计价。
+                  </p>
+                </template>
                 <div class="pricing-pair">
                   <el-form-item label="币种"
                     ><AppSelect v-model="editor.currency" aria-label="币种"
@@ -789,7 +1008,7 @@ onMounted(() => run(load))
                   class="pricing-pair"
                 >
                   <el-form-item label="输入计价分区"
-                    ><AppSelect v-model="editor.input" aria-label="输入计价分区"
+                    ><AppSelect v-model="active.input" aria-label="输入计价分区"
                       ><el-option
                         v-for="(_, key) in target.profile.input_partitions"
                         :key="key"
@@ -797,15 +1016,15 @@ onMounted(() => run(load))
                         :label="partitionLabel(target, key)" /></AppSelect
                   ></el-form-item>
                   <el-form-item label="输出计价分区"
-                    ><AppSelect v-model="editor.output" aria-label="输出计价分区"
+                    ><AppSelect v-model="active.output" aria-label="输出计价分区"
                       ><el-option
                         v-for="(_, key) in target.profile.output_partitions"
                         :key="key"
                         :value="key"
                         :label="partitionLabel(target, key)" /></AppSelect
                   ></el-form-item>
-                  <p class="pricing-help">{{ partitionHelp(target, editor.input) }}</p>
-                  <p class="pricing-help">{{ partitionHelp(target, editor.output) }}</p>
+                  <p class="pricing-help">{{ partitionHelp(target, active.input) }}</p>
+                  <p class="pricing-help">{{ partitionHelp(target, active.output) }}</p>
                 </div>
                 <template v-if="editor.template === 'time'">
                   <el-form-item label="时区"
@@ -861,13 +1080,13 @@ onMounted(() => run(load))
                           <th scope="col">计价项</th>
                           <template v-if="editor.time.tiered">
                             <th
-                              v-for="(_, index) in editor.tiers.length + 1"
+                              v-for="(_, index) in active.tiers.length + 1"
                               :key="index"
                               scope="col"
                               colspan="2"
                             >
                               <div>第{{ tierNames[index] }}档</div>
-                              <div class="pricing-help">{{ tierRange(editor, index) }}</div>
+                              <div class="pricing-help">{{ tierRange(active, index) }}</div>
                             </th>
                           </template>
                           <template v-else>
@@ -877,7 +1096,7 @@ onMounted(() => run(load))
                         </tr>
                         <tr v-if="editor.time.tiered">
                           <th scope="col"></th>
-                          <template v-for="(_, index) in editor.tiers.length + 1" :key="index">
+                          <template v-for="(_, index) in active.tiers.length + 1" :key="index">
                             <th scope="col">闲时</th>
                             <th scope="col">忙时</th>
                           </template>
@@ -886,7 +1105,7 @@ onMounted(() => run(load))
                       <tbody>
                         <tr v-if="editor.time.tiered">
                           <th scope="row">上限（含）</th>
-                          <td v-for="(tier, index) in editor.tiers" :key="index" colspan="2">
+                          <td v-for="(tier, index) in active.tiers" :key="index" colspan="2">
                             <el-input-number
                               v-model="tier.after"
                               :min="0"
@@ -898,7 +1117,7 @@ onMounted(() => run(load))
                           </td>
                           <td colspan="2" class="pricing-help">不限</td>
                         </tr>
-                        <tr v-for="quantity in quantities(target, editor)" :key="quantity">
+                        <tr v-for="quantity in quantities(target, editor, active)" :key="quantity">
                           <th scope="row">{{ quantityLabels[quantity] ?? quantity }}</th>
                           <template v-if="editor.time.tiered">
                             <td>
@@ -911,13 +1130,13 @@ onMounted(() => run(load))
                             </td>
                             <td>
                               <el-input
-                                v-model="editor.rates[quantity]"
+                                v-model="active.rates[quantity]"
                                 :aria-label="`${quantityLabels[quantity]}第一档忙时单价`"
                                 placeholder="免费填 0"
                                 inputmode="decimal"
                               />
                             </td>
-                            <template v-for="(tier, index) in editor.tiers" :key="index">
+                            <template v-for="(tier, index) in active.tiers" :key="index">
                               <td>
                                 <el-input
                                   v-model="tier.idle[quantity]"
@@ -947,7 +1166,7 @@ onMounted(() => run(load))
                             </td>
                             <td>
                               <el-input
-                                v-model="editor.rates[quantity]"
+                                v-model="active.rates[quantity]"
                                 :aria-label="`${quantityLabels[quantity]}忙时单价`"
                                 placeholder="免费填 0"
                                 inputmode="decimal"
@@ -958,7 +1177,7 @@ onMounted(() => run(load))
                         <tr v-if="editor.time.tiered">
                           <th scope="row"></th>
                           <td colspan="2"></td>
-                          <td v-for="(_, index) in editor.tiers" :key="index" colspan="2">
+                          <td v-for="(_, index) in active.tiers" :key="index" colspan="2">
                             <el-button
                               link
                               type="danger"
@@ -973,19 +1192,19 @@ onMounted(() => run(load))
                   </div>
                   <el-button
                     v-if="editor.time.tiered"
-                    :disabled="editor.tiers.length + 1 >= MAX_TIERS"
+                    :disabled="active.tiers.length + 1 >= MAX_TIERS"
                     @click="addTier"
                     >添加档位</el-button
                   >
                 </template>
                 <template v-else-if="editor.template !== 'tier'">
                   <el-form-item
-                    v-for="quantity in quantities(target, editor)"
+                    v-for="quantity in quantities(target, editor, active)"
                     :key="quantity"
                     :label="`${quantityLabels[quantity] ?? quantity} · ${editor.template === 'token' ? '每百万 Token' : editor.template === 'image' ? '每张' : '每次'}`"
                   >
                     <el-input
-                      v-model="editor.rates[quantity]"
+                      v-model="active.rates[quantity]"
                       :aria-label="`${quantityLabels[quantity]}单价`"
                       placeholder="请填写；免费项填 0"
                       inputmode="decimal"
@@ -1004,41 +1223,42 @@ onMounted(() => run(load))
                         <tr>
                           <th scope="col">计价项</th>
                           <th
-                            v-for="(_, index) in editor.tiers.length + 1"
+                            v-for="(_, index) in active.tiers.length + 1"
                             :key="index"
                             scope="col"
                           >
                             <div>第{{ tierNames[index] }}档</div>
-                            <div class="pricing-help">{{ tierRange(editor, index) }}</div>
+                            <div class="pricing-help">{{ tierRange(active, index) }}</div>
                           </th>
                         </tr>
                       </thead>
                       <tbody>
                         <tr>
                           <th scope="row">上限（含）</th>
-                          <td v-for="(tier, index) in editor.tiers" :key="index">
+                          <td v-for="(tier, index) in active.tiers" :key="index">
                             <el-input-number
-                              v-model="tier.after"
+                              :model-value="tier.after"
                               :min="0"
                               :max="1000000000"
                               :precision="0"
                               :controls="false"
                               :aria-label="`第${tierNames[index]}档上限`"
+                              @update:model-value="setTierLimit(index, $event)"
                             />
                           </td>
                           <td class="pricing-help">不限</td>
                         </tr>
-                        <tr v-for="quantity in quantities(target, editor)" :key="quantity">
+                        <tr v-for="quantity in quantities(target, editor, active)" :key="quantity">
                           <th scope="row">{{ quantityLabels[quantity] ?? quantity }}</th>
                           <td>
                             <el-input
-                              v-model="editor.rates[quantity]"
+                              v-model="active.rates[quantity]"
                               :aria-label="`${quantityLabels[quantity]}第一档单价`"
                               placeholder="免费填 0"
                               inputmode="decimal"
                             />
                           </td>
-                          <td v-for="(tier, index) in editor.tiers" :key="index">
+                          <td v-for="(tier, index) in active.tiers" :key="index">
                             <el-input
                               v-model="tier.rates[quantity]"
                               :aria-label="`${quantityLabels[quantity]}第${tierNames[index + 1]}档单价`"
@@ -1050,7 +1270,7 @@ onMounted(() => run(load))
                         <tr>
                           <th scope="row"></th>
                           <td></td>
-                          <td v-for="(_, index) in editor.tiers" :key="index">
+                          <td v-for="(_, index) in active.tiers" :key="index">
                             <el-button
                               link
                               type="danger"
@@ -1063,7 +1283,7 @@ onMounted(() => run(load))
                       </tbody>
                     </table>
                   </div>
-                  <el-button :disabled="editor.tiers.length + 1 >= MAX_TIERS" @click="addTier"
+                  <el-button :disabled="active.tiers.length + 1 >= MAX_TIERS" @click="addTier"
                     >添加档位</el-button
                   >
                 </template>

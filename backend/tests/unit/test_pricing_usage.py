@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import httpx2
 import pytest
-from support.pricing import SOURCE, token_rule
+from support.pricing import SOURCE, token_rule, ttl_rule
 
 from keystone.platform.model_access.adapters.inference.pricing import (
     PROFILES,
@@ -13,6 +13,7 @@ from keystone.platform.model_access.adapters.inference.pricing import (
     profile_for,
     request_context,
 )
+from keystone.platform.model_access.adapters.inference.transport import usage as receipt_usage
 from keystone.platform.model_access.channels import CHANNELS, reference
 from keystone.platform.model_access.channels import REFERENCE_PRICES as REFERENCE_RULES
 from keystone.platform.model_access.channels.aliyun_bailian.pricing import BASE as ALI_BASE
@@ -30,6 +31,11 @@ def binding(provider="aliyun_bailian", model="qwen-plus", operation="text.genera
         "operation": operation,
         "delivery": "sync",
     }
+
+
+def installed(provider, model, operation="text.generate"):
+    """The exact meter the channel installs for this model, never a guessed version."""
+    return profile_for(CHANNELS[provider].protocol(operation, "sync", model=model))
 
 
 def calculate(usage, rule=None, *, profile="relay_chat.v2", context=None):
@@ -55,7 +61,15 @@ def read_rule():
 
 @pytest.mark.parametrize(
     "profile",
-    ["chat.v2", "relay_chat.v2", "volcengine_chat.v2", "openai_images.v2", "openrouter_images.v2"],
+    [
+        "chat.v2",
+        "chat.v3",
+        "relay_chat.v2",
+        "relay_chat.v3",
+        "volcengine_chat.v2",
+        "openai_images.v2",
+        "openrouter_images.v2",
+    ],
 )
 def test_common_cache_read_prices_do_not_require_a_fictitious_write_zero(profile):
     result, facts = calculate(
@@ -221,8 +235,8 @@ def test_reference_tiers_use_full_input_and_one_rate_for_the_whole_request(
             "prompt_tokens_details": {"cached_tokens": hit},
         },
         price.rule,
-        profile="chat.v2",
-        context={"enable_thinking": 0},
+        profile=installed(provider, model).id,
+        context={"enable_thinking": 0, "cache_mode": "implicit"},
     )
     assert result.status == "estimated" and Decimal(result.amount) == Decimal(expected)
 
@@ -230,6 +244,7 @@ def test_reference_tiers_use_full_input_and_one_rate_for_the_whole_request(
 def test_thinking_and_request_variants_cannot_silently_inherit_the_wrong_price():
     target = binding()
     price = reference(target)
+    meter = installed("aliyun_bailian", "qwen-plus").id
     usage = {
         "prompt_tokens": 1000,
         "completion_tokens": 200,
@@ -237,19 +252,78 @@ def test_thinking_and_request_variants_cannot_silently_inherit_the_wrong_price()
         "completion_tokens_details": {"reasoning_tokens": 100},
     }
     assert Decimal(
-        calculate(usage, price.rule, profile="chat.v2", context={"enable_thinking": 1})[0].amount
+        calculate(
+            usage,
+            price.rule,
+            profile=meter,
+            context={"enable_thinking": 1, "cache_mode": "implicit"},
+        )[0].amount
     ) == Decimal("0.0024")
     usage["completion_tokens_details"]["reasoning_tokens"] = 0
     assert Decimal(
-        calculate(usage, price.rule, profile="chat.v2", context={"enable_thinking": 1})[0].amount
+        calculate(
+            usage,
+            price.rule,
+            profile=meter,
+            context={"enable_thinking": 1, "cache_mode": "implicit"},
+        )[0].amount
     ) == Decimal("0.0012")
     del usage["completion_tokens_details"]
     assert (
-        calculate(usage, price.rule, profile="chat.v2", context={"enable_thinking": 1})[0].status
+        calculate(
+            usage,
+            price.rule,
+            profile=meter,
+            context={"enable_thinking": 1, "cache_mode": "implicit"},
+        )[0].status
         == "partial"
     )
-    assert calculate(usage, price.rule, profile="chat.v2")[0].status == "partial"
-    assert reference(target, context={"cache_mode": "explicit"}) is None
+    assert (
+        calculate(usage, price.rule, profile=meter, context={"cache_mode": "implicit"})[0].status
+        == "partial"
+    )
+    # Explicit cache is a separate branch of the same published tariff: creating 1000
+    # tokens bills 125% of the 0.8 input price and no ordinary input remains.
+    explicit = reference(target, context={"cache_mode": "explicit"})
+    assert explicit is not None
+    created = calculate(
+        {
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "prompt_tokens_details": {
+                "cached_tokens": 0,
+                "cache_creation_input_tokens": 1000,
+            },
+        },
+        explicit.rule,
+        profile=meter,
+        context={"enable_thinking": 0, "cache_mode": "explicit"},
+    )[0]
+    assert created.status == "estimated" and Decimal(created.amount) == Decimal("0.0014")
+    # Explicit reads bill 10% instead of the implicit 20%.
+    hit = calculate(
+        {
+            "prompt_tokens": 1000,
+            "completion_tokens": 0,
+            "prompt_tokens_details": {"cached_tokens": 1000, "cache_creation_input_tokens": 0},
+        },
+        explicit.rule,
+        profile=meter,
+        context={"enable_thinking": 0, "cache_mode": "explicit"},
+    )[0]
+    assert hit.status == "estimated" and Decimal(hit.amount) == Decimal("0.00008")
+    assert Decimal(
+        calculate(
+            {
+                "prompt_tokens": 1000,
+                "completion_tokens": 0,
+                "prompt_tokens_details": {"cached_tokens": 1000},
+            },
+            explicit.rule,
+            profile=meter,
+            context={"enable_thinking": 0, "cache_mode": "implicit"},
+        )[0].amount
+    ) == Decimal("0.00016")
     ark = binding("volcengine", "doubao-seed-2-1-pro-260915")
     assert reference(ark, context={"service_tier": "fast"}) is None
     assert reference(ark, context={"service_tier": "default"}) is not None
@@ -291,3 +365,144 @@ def test_effective_context_cannot_be_spoofed_by_synthetic_top_level_parameters()
     context = request_context(request, PROFILES["volcengine_chat.v2"])
     assert "service_tier" not in context
     assert reference(binding("volcengine", "doubao-seed-evolving"), context=context) is None
+
+
+def test_stored_usage_keeps_cache_writes_and_only_reported_lifetimes():
+    assert receipt_usage(
+        {
+            "prompt_tokens": 1000,
+            "completion_tokens": 20,
+            "prompt_tokens_details": {
+                "cached_tokens": 100,
+                "cache_creation_input_tokens": 50,
+            },
+            "claude_cache_creation_5_m_tokens": 30,
+        }
+    ) == {
+        "input_tokens": 1000,
+        "output_tokens": 20,
+        "cache_read_input_tokens": 100,
+        "cache_write_input_tokens": 50,
+        "cache_write_5m_input_tokens": 30,
+    }
+    # Statistics never sum aliases of the same tokens, and never invent a zero.
+    assert (
+        receipt_usage(
+            {
+                "prompt_tokens": 1,
+                "prompt_tokens_details": {
+                    "cache_write_tokens": 50,
+                    "cached_creation_tokens": 70,
+                },
+            }
+        )["cache_write_input_tokens"]
+        == 70
+    )
+    assert receipt_usage({"prompt_tokens": 10}) == {"input_tokens": 10}
+
+
+def test_installed_chat_meters_now_declare_cache_writes():
+    for name in ("chat.v3", "relay_chat.v3"):
+        profile = PROFILES[name]
+        assert "usage.input_cache_write_tokens" in profile.input_partitions["cache"]
+        assert "usage.input_cache_write_5m_tokens" in profile.input_partitions["cache_ttl"]
+        # The requested lifetime stays a request fact; writes come from the response.
+        assert profile.context_fields["context.cache_ttl"] == "string"
+    # Frozen v2 stays resolvable for snapshots registered before writes were priced.
+    assert "usage.input_cache_write_tokens" in PROFILES["relay_chat.v2"].quantities
+    assert "usage.input_cache_write_5m_tokens" not in PROFILES["relay_chat.v2"].quantities
+
+
+def test_cache_write_aliases_price_the_same_tokens_once():
+    result, facts = calculate(
+        {
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "prompt_tokens_details": {
+                "cached_tokens": 100,
+                "cached_creation_tokens": 50,
+            },
+        },
+        token_rule(cached=True, writes=True),
+        profile="relay_chat.v3",
+    )
+    assert Decimal(result.amount) == Decimal("0.003445")
+    assert facts.values["usage.input_regular_tokens"].value == 850
+
+
+@pytest.mark.parametrize(
+    "writes",
+    [
+        {"cache_write_tokens": 50, "cached_creation_tokens": 51},
+        {"cache_write_tokens": 50, "cache_creation_input_tokens": 51},
+    ],
+)
+def test_disagreeing_write_aliases_are_a_conflict_not_a_maximum(writes):
+    result, _ = calculate(
+        {
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "prompt_tokens_details": {"cached_tokens": 100, **writes},
+        },
+        token_rule(cached=True, writes=True),
+        profile="relay_chat.v3",
+    )
+    assert result.status == "invalid" and result.amount is None
+
+
+def test_write_lifetimes_price_disjoint_components():
+    result, facts = calculate(
+        {
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "prompt_tokens_details": {"cached_tokens": 100, "cached_creation_tokens": 100},
+            "claude_cache_creation_5_m_tokens": 60,
+            "claude_cache_creation_1_h_tokens": 40,
+        },
+        ttl_rule(),
+        profile="relay_chat.v3",
+    )
+    # 800 regular + 100 read + 60 x 5m + 40 x 1h + 200 output, each billed once.
+    assert result.status == "estimated" and Decimal(result.amount) == Decimal("0.00353")
+    assert facts.values["usage.input_regular_tokens"].value == 800
+    assert facts.values["usage.input_cache_write_5m_tokens"].value == 60
+
+
+def test_write_lifetimes_must_remain_subsets_of_the_reported_write_count():
+    result, _ = calculate(
+        {
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "prompt_tokens_details": {"cached_tokens": 100, "cached_creation_tokens": 100},
+            "claude_cache_creation_5_m_tokens": 60,
+            "claude_cache_creation_1_h_tokens": 50,
+        },
+        ttl_rule(),
+        profile="relay_chat.v3",
+    )
+    assert result.status == "invalid" and result.reason == "meter_conflict"
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        {"cache_write_tokens_details": {"ttl_12h_tokens": 10}},
+        {"cache_write_tokens_details": {"ttl_30m_tokens": 10}},
+        {"cache_write_tokens_details": "unknown"},
+    ],
+)
+def test_unverified_write_lifetimes_are_not_priced_as_the_ordinary_write_rate(details):
+    result, _ = calculate(
+        {
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+            "prompt_tokens_details": {
+                "cached_tokens": 100,
+                "cache_write_tokens": 10,
+                **details,
+            },
+        },
+        token_rule(cached=True, writes=True),
+        profile="relay_chat.v3",
+    )
+    assert result.status == "invalid" and result.reason == "meter_conflict"

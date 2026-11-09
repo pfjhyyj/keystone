@@ -39,6 +39,8 @@ def merge_usage(previous, incoming):
         "reasoning_tokens",
         "cache_read_input_tokens",
         "cache_creation_input_tokens",
+        "claude_cache_creation_5_m_tokens",
+        "claude_cache_creation_1_h_tokens",
     ):
         if key in incoming:
             value = incoming[key]
@@ -62,6 +64,7 @@ def merge_usage(previous, incoming):
         for field in (
             "cached_tokens",
             "cache_write_tokens",
+            "cached_creation_tokens",
             "reasoning_tokens",
             "text_tokens",
             "image_tokens",
@@ -71,6 +74,17 @@ def merge_usage(previous, incoming):
             if field in details:
                 value = details[field]
                 target[field] = value if type(value) is int or value is None else -1
+        if "cache_write_tokens_details" in details:
+            lifetimes = details["cache_write_tokens_details"]
+            target["cache_write_tokens_details"] = (
+                {
+                    name: value
+                    for name in ("ttl_30m_tokens", "ttl_12h_tokens")
+                    if type(value := lifetimes.get(name)) is int
+                }
+                if isinstance(lifetimes, dict)
+                else -1
+            )
         result[key] = target
     return result
 
@@ -175,6 +189,14 @@ def _measure(profile, usage, *, complete, success, generated):
     put("input_cache_write_tokens", write)
     if write not in (None, 0) and "usage.input_cache_write_tokens" not in profile.quantities:
         result.error = "meter_conflict"
+    for key, source in (
+        ("input_cache_write_5m_tokens", "cache_write_5m_input_tokens"),
+        ("input_cache_write_1h_tokens", "cache_write_1h_input_tokens"),
+    ):
+        value = data.get(source)
+        put(key, value)
+        if value not in (None, 0) and f"usage.{key}" not in profile.quantities:
+            result.error = "meter_conflict"
     out = data.get("output_tokens_details" if image_wire else "completion_tokens_details")
     out = out if isinstance(out, dict) else {}
     put("reasoning_tokens", out.get("reasoning_tokens"))
@@ -263,6 +285,7 @@ def normalize_pricing_facts(profile, usage, *, complete=False, success=False, ge
         fields = (
             "cached_tokens",
             "cache_write_tokens",
+            "cached_creation_tokens",
             "cache_creation_input_tokens",
             "reasoning_tokens",
             "text_tokens",
@@ -273,8 +296,11 @@ def normalize_pricing_facts(profile, usage, *, complete=False, success=False, ge
         # Audio has no installed pricing meter. Never price it as ordinary text.
         if result.pop("audio_tokens") not in (None, 0):
             invalid = True
+        # Every alias names the same cache-write count; disagreement is a conflict, not a max.
         result["cache_write_tokens"] = number(
-            result["cache_write_tokens"], result.pop("cache_creation_input_tokens")
+            result["cache_write_tokens"],
+            result.pop("cached_creation_tokens"),
+            result.pop("cache_creation_input_tokens"),
         )
         return {key: value for key, value in result.items() if value is not None}
 
@@ -313,7 +339,21 @@ def normalize_pricing_facts(profile, usage, *, complete=False, success=False, ge
         "input_tokens_details" if image else "prompt_tokens_details": prompt,
         "output_tokens_details" if image else "completion_tokens_details": output,
         "total_tokens": number(data.get("total_tokens")),
+        "cache_write_5m_input_tokens": number(data.get("claude_cache_creation_5_m_tokens")),
+        "cache_write_1h_input_tokens": number(data.get("claude_cache_creation_1_h_tokens")),
     }
+    # Cache-write lifetimes outside the installed 5m/1h split have no verified tariff, and
+    # billing them at the ordinary write price would invent one.
+    for name in ("prompt_tokens_details", "input_tokens_details"):
+        value = data.get(name)
+        lifetimes = value.get("cache_write_tokens_details") if isinstance(value, dict) else None
+        if lifetimes is None:
+            continue
+        if not isinstance(lifetimes, dict) or any(
+            number(lifetimes.get(key)) not in (None, 0)
+            for key in ("ttl_30m_tokens", "ttl_12h_tokens")
+        ):
+            invalid = True
     result = _measure(
         profile,
         canonical,

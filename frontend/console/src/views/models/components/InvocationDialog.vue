@@ -18,6 +18,10 @@ const usageLabels: Record<string, string> = {
   prompt_tokens: '输入 Token',
   completion_tokens: '输出 Token',
   cached_tokens: '缓存 Token',
+  cache_read_input_tokens: '缓存命中 Token',
+  cache_write_input_tokens: '缓存写入 Token',
+  cache_write_5m_input_tokens: '缓存写入 Token（5 分钟）',
+  cache_write_1h_input_tokens: '缓存写入 Token（1 小时）',
   reasoning_tokens: '推理 Token',
 }
 const usageFacts = computed(() =>

@@ -10,11 +10,11 @@ ModelEntry.pricing 为 inherit/override/disabled，pricing_revision 单调递增
 
 默认规则随制品发布，包含来源 URL、核对时间和版本，不在调用期间抓价。参考数据分别由 `channels/aliyun_bailian/pricing.py`、`channels/volcengine/pricing.py` 列举，通过本渠道 SPEC 的 `reference_prices` 注册并由 `channels/__init__.py` 聚合：百炼北京 Qwen Max/Plus/Flash 及六个向量模型；方舟北京 Seed Evolving、2.1/2.0 系列的核实版本。共用规则构造函数在 `channels/rules.py`；完整 ID 和价格以代码数据为准。本文代码路径相对 `backend/src/keystone/platform/model_access/`。
 
-百炼输入档位按 K=1000，方舟按接口整数边界（32K=32768、128K=131072）；完整输入选档后对全部数量用该档价格。qwen-plus 按实际思考用量，百炼隐式缓存使用官方折扣、实时原价，不套活动或显式缓存；方舟默认仅标准服务，fast/flex/auto 需覆盖价。未核实的缓存单价不猜测。
+百炼输入档位按 K=1000，方舟按接口整数边界（32K=32768、128K=131072）；完整输入选档后对全部数量用该档价格。qwen-plus 按实际思考用量；百炼上下文缓存按请求实际模式分支：隐式命中为该档输入单价的 20%，显式创建 125%、命中 10%，创建量来自响应的 `cache_creation_input_tokens`。官方另有价格例外的 qwen3.8 系列未列入目录，需取得控制台报价后覆盖。方舟默认仅标准服务，fast/flex/auto 需覆盖价。未核实的缓存单价不猜测。
 
 价格可记录采购单价/折扣及来源，不自动扣免费额度、资源包或代金券。查询目录、余额/月账单、轮询和下载均不增加计价次数；币种不自动换汇，预估只用于费用展示，不限制 Flow 受理或执行。
 
-依据：[百炼价格](https://help.aliyun.com/zh/model-studio/model-pricing)、[隐式缓存](https://help.aliyun.com/zh/model-studio/context-cache)、[方舟价格](https://docs.volcengine.com/docs/ark/model-pricing?lang=zh)；条件树及快照参考 [NewAPI 计价表达式](https://github.com/QuantumNous/new-api/blob/main/pkg/billingexpr/expr.md)，不采用其钱包或用户组售价。
+依据：[百炼价格](https://help.aliyun.com/zh/model-studio/model-pricing)、[上下文缓存](https://help.aliyun.com/zh/model-studio/context-cache)、[方舟价格](https://docs.volcengine.com/docs/ark/model-pricing?lang=zh)；条件树及快照参考 [NewAPI 计价表达式](https://github.com/QuantumNous/new-api/blob/main/pkg/billingexpr/expr.md)，不采用其钱包或用户组售价。
 
 ## 计量与分区
 
@@ -30,14 +30,14 @@ prompt、正文、URL、密钥不进入估价事实。max_tokens、请求 n、�
 
 | 协议 | 已支持计量 |
 |---|---|
-| Chat：文本、结构化、识图、Agent、SSE | 真实输入/输出 token、缓存、完整上下文档位、已确认成功请求数；不从图片数推 token |
+| Chat：文本、结构化、识图、Agent、SSE | 真实输入/输出 token、缓存读取与写入（含上游报告的 5m/1h 生命周期拆分）、完整上下文档位、已确认成功请求数；不从图片数推 token |
 | Embeddings | prompt_tokens，或规范明确的全输入 total_tokens；16 文本仍为 1 请求，输出 token 为结构性零 |
 | OpenRouterImages | 已报告 token、受控生成张数、成功请求数和有效参数 |
 | Yunwu/Openlux OpenAIImages | GPT Image 输入/输出及文本/图片细分、生成张数、实际 size/quality |
 | KlingImages | 原任务成功生成张数及请求数，不提供计费秒或 credits；轮询不计次 |
 | 未装配视频/音频等 | 不允许通过配置启用计量 |
 
-文本/向量/同步图片使用 v2，Kling 使用 kling_images.v1；每种协议只安装当前计量规范。v2 校验 input/prompt、output/completion 及明细别名一致；DeepSeek hit/miss 仅在总量关系成立时推导。调用统计 usage() 与估价归一化分别保存，不改变实际用量口径。
+文本、结构化与识图使用 chat.v3/relay_chat.v3；方舟 volcengine_chat.v2、向量 embedding.v2 与同步图片规范保持原版本，Kling 使用 kling_images.v1；每种协议只安装当前计量规范。方舟继续使用自己的 v2；chat/relay 的 v2 仅保留用于解析该版本下冻结的历史快照，不重新计价。v3 增加缓存写入总量及按上游报告的 5m/1h 拆分；`cache_ttl` 仍只是请求事实，写入量一律取自响应。归一化校验 input/prompt、output/completion 及明细别名一致：写入总量在 `cache_write_tokens`、`cached_creation_tokens`、`cache_creation_input_tokens` 之间不一致时判 meter_conflict，不取最大值；DeepSeek hit/miss 仅在总量关系成立时推导。调用统计 usage() 与估价归一化分别保存，不改变实际用量口径。
 
 规则为输入、输出各选一个互斥分区：
 
@@ -46,16 +46,17 @@ prompt、正文、URL、密钥不进入估价事实。max_tokens、请求 n、�
 | aggregate | 总输入/输出，不另收缓存、图片或 reasoning 子集 |
 | cache | 普通输入＋独立缓存读/写，普通输入扣除已单独计价部分 |
 | cache_read | 未命中（含写入）＋命中输入，不要求捏造缓存写入 0 |
+| cache_ttl | 普通输入＋读取＋按生命周期拆分的写入；上报的是互斥子集，不得同时再计写入总量 |
 | modality | 协议明确提供的文本/图片互斥数量 |
 | modality_cache | 需有模态/缓存交集；当前无独立计量，未开放 |
 | reasoning | 普通输出＋reasoning，避免输出总量重复计费 |
 | none | 明确不按该侧 token 计价 |
 
-input_total_tokens 用于完整上下文档位，包含缓存。所选分区的所有可能非零项必须配置，免费项也显式 rate=0；编译拒绝总量与子集重复收费、单位错误、未声明字段。缺细分可用 aggregate，不能按比例拆分交集。
+input_total_tokens 用于完整上下文档位，包含缓存。所选分区的所有可能非零项必须配置，免费项也显式 rate=0；编译拒绝总量与子集重复收费、单位错误、未声明字段。缺细分可用 aggregate，不能按比例拆分交集。写入总量与 5m/1h 拆分同时上报时，拆分之和须等于总量，否则 meter_conflict。
 
 思考与回复同属输出；模型采用统一输出单价时，按包含推理用量的输出总量计费。模式差价按具体模型规则选择：百炼部分混合思考模型按实际是否产生思考过程确定输出单价，开启思考参数本身不能代替这一响应事实，见[思考计费说明](https://help.aliyun.com/zh/model-studio/deep-thinking/#计费说明)。
 
-当前 chat.v2 为直连文本规范；relay_chat.v2/OpenRouter 图片规范 cache 分区需显式普通输入、读取、写入，上游未回写入不能补 0。GPT Image 缺文本/图片分项时记 partial。
+chat.v3/relay_chat.v3 的 cache 分区需显式普通输入、读取、写入，上游未回写入不能补 0；cache_ttl 分区需 5m、1h 两项写入。上游以 `cache_write_tokens_details.ttl_30m/ttl_12h` 报告的写入生命周期没有核实价格，判 meter_conflict，而不是按普通写入价估算。原生 Anthropic 协议的顶层 `cache_creation_input_tokens` 语义不同，该协议未安装，出现非零值同样判冲突。GPT Image 缺文本/图片分项时记 partial。
 
 upstream_success_count 只在原请求/任务成功确认时为 1，不随 SSE、轮询或多图增加。generated_images 为实际受控结果数量，不等于请求 n 或成功下载数。秒数/credits 须有明确上游字段，不能从耗时或费用反算。
 
@@ -97,7 +98,7 @@ Decimal 内部至少 80 位，项目不提前舍入，总额 ROUND_HALF_EVEN 到
 }
 ```
 
-仅当协议没有其他缓存写入项时该 cache 分区才完整。输入 1000（缓存 100）、输出 200，普通输入 900，总额 0.00342 CNY；reasoning 已含输出时不另加。
+仅当协议没有其他缓存写入项时该 cache 分区才完整。输入 1000（缓存 100）、输出 200，普通输入 900，总额 0.00342 CNY；reasoning 已含输出时不另加。写入项同样单列，例如普通输入 2、读取 0.2、写入 2.5、输出 8，输入 1000（读取 100、写入 50）、输出 200 时普通输入 850，总额 0.003445 CNY。
 
 阶梯可用 branch 判断 input_total_tokens≤32000，32000 进 A，32001 进 B，A/B 为完整 price 叶。图片使用 generated_images，每次价使用 upstream_success_count，size/quality 作为条件。
 
@@ -139,7 +140,7 @@ partial 的已知项仅放 detail，不作为总额。估价与 cost_* 互不覆
 
 合法规则但本次漏计量可 partial；非法或未装配字段拒绝保存。审计仅变更、规则哈希、revision、绑定摘要，不存示例正文。
 
-编辑页支持继承/自定义/关闭、单价/多档阶梯（最多 6 档，按完整输入上限逐档递增）/闲忙时/按次/按张及高级 JSON，同一计算器预览；另显示只读的 NewAPI 风格表达式，不回写、不执行。闲忙时以收到完整响应的本地整点划分 [开始, 结束)，结束整点不算闲时，跨零点则结束于次日，其余为忙时，并可叠加同一套阶梯；试算示例写入 context.pricing_hour。厂商若按请求开始时间计费，结果可能不同。同一交付方式下计量 profile 完全相同的操作（如文本生成、结构化文本、图片理解）合并为一组，价格只填一次，保存时仍为每个操作各写一条相同的规则；已保存规则或参考价在组内不一致时分开显示并提示，可手动“分别设置”或“合并设置”。显示币种、来源、核对时间、适用操作和缺项，不用 0 占位。
+编辑页支持继承/自定义/关闭、单价/多档阶梯（最多 6 档，按完整输入上限逐档递增）/闲忙时/按次/按张及高级 JSON，同一计算器预览；另显示只读的 NewAPI 风格表达式，不回写、不执行。按缓存模式分支的参考价（如百炼显式缓存）在表单中切换“隐式缓存／显式缓存”分别填价，两侧共用阶梯分界、各自持有计价分区与单价；两侧模板、系数或阶梯不一致时退回高级 JSON，不猜测合并方式。闲忙时以收到完整响应的本地整点划分 [开始, 结束)，结束整点不算闲时，跨零点则结束于次日，其余为忙时，并可叠加同一套阶梯；试算示例写入 context.pricing_hour。厂商若按请求开始时间计费，结果可能不同。同一交付方式下计量 profile 完全相同的操作（如文本生成、结构化文本、图片理解）合并为一组，价格只填一次，保存时仍为每个操作各写一条相同的规则；已保存规则或参考价在组内不一致时分开显示并提示，可手动“分别设置”或“合并设置”。显示币种、来源、核对时间、适用操作和缺项，不用 0 占位。
 
 新界面主要显示预估，实扣独立区域。统计 cost_basis=estimated|actual，旧客户端默认 actual，新界面显式 estimated；一次聚合只用一种口径，币种分组。预估状态与实扣 cost_status/source 不混传，未知覆盖不从分母消失，有效 0 计已估价。公开仅白名单分项/来源，不暴露内部地址、秘密或结果证据。
 

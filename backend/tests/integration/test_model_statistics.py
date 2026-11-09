@@ -38,7 +38,12 @@ def facts(client):
                     "credits",
                     "confirmed",
                     None,
-                    {"input_tokens": 10, "output_tokens": 5},
+                    {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cache_read_input_tokens": 4,
+                        "cache_write_input_tokens": 2,
+                    },
                     "2026-10-19T16:05:00Z",
                 ),
                 (
@@ -66,7 +71,7 @@ def facts(client):
                         "agent_key": "planner",
                         "agent_call_id": str(agent),
                     },
-                    {"input_tokens": 20, "output_tokens": 8},
+                    {"input_tokens": 20, "output_tokens": 8, "cache_read_input_tokens": 6},
                     "2026-10-20T01:00:00Z",
                 ),
                 (
@@ -143,6 +148,9 @@ def test_exact_money_unknown_coverage_timezone_and_paginated_groups(client, fact
     assert summary["failed"] == 1 and summary["pending_calls"] == 1
     assert summary["input_tokens"] == "30" and summary["input_reported"] == 3
     assert summary["output_tokens"] == "13" and summary["output_reported"] == 2
+    # Cache counts aggregate only what upstream reported; a missing field is never a zero.
+    assert summary["cache_read_tokens"] == "10" and summary["cache_read_reported"] == 2
+    assert summary["cache_write_tokens"] == "2" and summary["cache_write_reported"] == 1
     costs = {item["unit"]: item for item in summary["costs"]}
     assert costs["credits"]["amount"] == "1.000000000000000001"
     assert Decimal(costs["credits"]["avg_cost"]) == Decimal("0.500000000000000000")

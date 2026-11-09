@@ -1,9 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { ElOption } from 'element-plus'
+import { ElMessageBox, ElOption } from 'element-plus'
 import PricingDialog from '../views/models/components/PricingDialog.vue'
 import { authorize, chooseSelect, fakeApi } from './support'
-import type { PricingView, PricingConfig, PricingTarget } from '../api/pricing'
+import type { PricingView, PricingConfig, PricingTarget, PriceRule } from '../api/pricing'
 
 const entry = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -823,4 +823,276 @@ it('re-merges split groups and keeps the selected editor prices', async () => {
       ],
     })
   }
+})
+
+/** A Bailian-shaped reference rule: the same tiers price implicit and explicit cache. */
+function cachePricingView(): PricingView {
+  const value = JSON.parse(JSON.stringify(loaded)) as PricingView
+  const meter = value.operations[0]!.profile
+  meter.id = 'chat.v3'
+  meter.quantities = {
+    'usage.input_total_tokens': 'token',
+    'usage.input_uncached_tokens': 'token',
+    'usage.input_regular_tokens': 'token',
+    'usage.input_cache_read_tokens': 'token',
+    'usage.input_cache_write_tokens': 'token',
+    'usage.output_total_tokens': 'token',
+    'events.upstream_success_count': 'request',
+  }
+  meter.context_fields = { 'context.cache_mode': 'string' }
+  meter.context_enums = { 'context.cache_mode': ['implicit', 'explicit'] }
+  meter.input_partitions = {
+    none: [],
+    aggregate: ['usage.input_total_tokens'],
+    cache: [
+      'usage.input_regular_tokens',
+      'usage.input_cache_read_tokens',
+      'usage.input_cache_write_tokens',
+    ],
+    cache_read: ['usage.input_uncached_tokens', 'usage.input_cache_read_tokens'],
+  }
+  value.operations[0]!.reference = {
+    operation: 'text.generate',
+    delivery: 'sync',
+    rule: cacheModeRule(),
+    source: { label: '官方原价', version: 'v1', checked_at: null, url: null },
+  }
+  return value
+}
+function cacheModeRule(explicitLimit = 128000): PriceRule {
+  const items = (rates: [string, string][]) =>
+    rates.map(([quantity, rate]) => ({
+      id: quantity.split('.').at(-1)!,
+      quantity,
+      rate,
+      per: 1000000,
+    }))
+  return {
+    format: 1,
+    currency: 'CNY',
+    root: {
+      kind: 'branch',
+      when: { field: 'context.cache_mode', op: 'eq', value: 'explicit' },
+      then: {
+        kind: 'branch',
+        when: { field: 'usage.input_total_tokens', op: 'lte', value: explicitLimit },
+        then: {
+          kind: 'price',
+          id: 'explicit_tier_0',
+          input_partition: 'cache',
+          output_partition: 'aggregate',
+          factor: '1',
+          items: items([
+            ['usage.input_regular_tokens', '0.8'],
+            ['usage.output_total_tokens', '2'],
+            ['usage.input_cache_read_tokens', '0.08'],
+            ['usage.input_cache_write_tokens', '1.0'],
+          ]),
+        },
+        else: {
+          kind: 'price',
+          id: 'explicit_tier_1',
+          input_partition: 'cache',
+          output_partition: 'aggregate',
+          factor: '1',
+          items: items([
+            ['usage.input_regular_tokens', '2'],
+            ['usage.output_total_tokens', '8'],
+            ['usage.input_cache_read_tokens', '0.2'],
+            ['usage.input_cache_write_tokens', '2.5'],
+          ]),
+        },
+      },
+      else: {
+        kind: 'branch',
+        when: { field: 'usage.input_total_tokens', op: 'lte', value: 128000 },
+        then: {
+          kind: 'price',
+          id: 'tier_0',
+          input_partition: 'cache_read',
+          output_partition: 'aggregate',
+          factor: '1',
+          items: items([
+            ['usage.input_uncached_tokens', '0.8'],
+            ['usage.output_total_tokens', '2'],
+            ['usage.input_cache_read_tokens', '0.16'],
+          ]),
+        },
+        else: {
+          kind: 'price',
+          id: 'tier_1',
+          input_partition: 'cache_read',
+          output_partition: 'aggregate',
+          factor: '1',
+          items: items([
+            ['usage.input_uncached_tokens', '2'],
+            ['usage.output_total_tokens', '8'],
+            ['usage.input_cache_read_tokens', '0.4'],
+          ]),
+        },
+      },
+    },
+  }
+}
+const field = (wrapper: VueWrapper, label: string) =>
+  (wrapper.get(`input[aria-label="${label}"]`).element as HTMLInputElement).value
+
+it('edits each declared cache mode from one tier table and saves both sides', async () => {
+  const { wrapper, requests } = await open(cachePricingView(), () => ({
+    status: 'estimated',
+    amount: '0.0036',
+    currency: 'CNY',
+    reason: null,
+    detail: { items: [] },
+  }))
+  await custom(wrapper)
+  await wrapper.get('input[type=checkbox]').setValue(true)
+  await button(wrapper, '复制参考规则').trigger('click')
+  await flushPromises()
+  expect(wrapper.text()).toContain('缓存模式')
+  // The implicit side, with its cache-read layout and its own prices.
+  expect(field(wrapper, '未命中缓存的输入（含写入）第一档单价')).toBe('0.8')
+  expect(field(wrapper, '缓存读取第一档单价')).toBe('0.16')
+  expect(field(wrapper, '第一档上限')).toBe('128000')
+  await wrapper.get('input[type=radio][value=explicit]').setValue()
+  await flushPromises()
+  // The explicit side keeps the tier limits and adds a write price.
+  expect(field(wrapper, '普通输入（排除缓存）第一档单价')).toBe('0.8')
+  expect(field(wrapper, '缓存写入第一档单价')).toBe('1.0')
+  expect(field(wrapper, '第一档上限')).toBe('128000')
+  await wrapper.get('input[aria-label="缓存写入第一档单价"]').setValue('1.25')
+  await button(wrapper, '填入示例计量').trigger('click')
+  await button(wrapper, '试算当前草稿').trigger('click')
+  await flushPromises()
+  const preview = requests.find((item) => item.path.endsWith('/preview'))!
+  expect(preview.body).toMatchObject({ context: { cache_mode: 'implicit' } })
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  const config = requests.find((item) => item.method === 'PUT')!.body?.config as PricingConfig
+  expect(config.rules[0]?.rule.root).toMatchObject({
+    kind: 'branch',
+    when: { field: 'context.cache_mode', op: 'eq', value: 'explicit' },
+    then: {
+      then: {
+        id: 'explicit_tier_1',
+        input_partition: 'cache',
+        items: expect.arrayContaining([
+          expect.objectContaining({ quantity: 'usage.input_cache_write_tokens', rate: '1.25' }),
+        ]),
+      },
+    },
+    else: {
+      then: {
+        id: 'tier_1',
+        input_partition: 'cache_read',
+        items: expect.arrayContaining([
+          expect.objectContaining({ quantity: 'usage.input_cache_read_tokens', rate: '0.16' }),
+        ]),
+      },
+    },
+  })
+})
+
+it('returns from the current edited JSON rather than the stale form', async () => {
+  const { wrapper, requests } = await open()
+  await custom(wrapper)
+  await rates(wrapper)
+  await button(wrapper, '高级 JSON').trigger('click')
+  const area = wrapper.get('textarea[aria-label="结构化价格规则"]')
+  const rule = JSON.parse((area.element as HTMLTextAreaElement).value)
+  rule.currency = 'USD'
+  rule.root.items[0].rate = '17'
+  await area.setValue(JSON.stringify(rule))
+  await button(wrapper, 'Token 单价').trigger('click')
+  await flushPromises()
+  expect(field(wrapper, '全部输入单价')).toBe('17')
+  await button(wrapper, '高级 JSON').trigger('click')
+  expect(
+    JSON.parse(
+      (wrapper.get('textarea[aria-label="结构化价格规则"]').element as HTMLTextAreaElement).value,
+    ),
+  ).toMatchObject(rule)
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  expect(
+    (requests.find((item) => item.method === 'PUT')!.body?.config as PricingConfig).rules[0]!.rule,
+  ).toEqual(rule)
+})
+
+it.each(['invalid', 'unsupported'])('keeps %s JSON when returning to a form', async (kind) => {
+  const { wrapper } = await open()
+  await custom(wrapper)
+  await rates(wrapper)
+  await button(wrapper, '高级 JSON').trigger('click')
+  const area = wrapper.get('textarea[aria-label="结构化价格规则"]')
+  const rule = JSON.parse((area.element as HTMLTextAreaElement).value)
+  rule.root.items[0].per = 1000
+  const draft = kind === 'invalid' ? '{' : JSON.stringify(rule)
+  await area.setValue(draft)
+  await button(wrapper, 'Token 单价').trigger('click')
+  await flushPromises()
+  expect(
+    (wrapper.get('textarea[aria-label="结构化价格规则"]').element as HTMLTextAreaElement).value,
+  ).toBe(draft)
+  expect(wrapper.text()).toContain('草稿已保留')
+  expect(wrapper.find('input[aria-label="全部输入单价"]').exists()).toBe(false)
+})
+
+it.each([false, true])('confirms destructive tier conversion (accepted: %s)', async (accepted) => {
+  const confirm = vi.spyOn(ElMessageBox, 'confirm')
+  if (accepted)
+    confirm.mockResolvedValue('confirm' as Awaited<ReturnType<typeof ElMessageBox.confirm>>)
+  else confirm.mockRejectedValue('cancel')
+  const { wrapper, requests } = await open(cachePricingView())
+  await custom(wrapper)
+  await wrapper.get('input[type=checkbox]').setValue(true)
+  await button(wrapper, '复制参考规则').trigger('click')
+  await flushPromises()
+  await wrapper.get('input[aria-label="缓存读取第一档单价"]').setValue('0.23')
+  await button(wrapper, '高级 JSON').trigger('click')
+  const before = (
+    wrapper.get('textarea[aria-label="结构化价格规则"]').element as HTMLTextAreaElement
+  ).value
+  await button(wrapper, '上下文阶梯').trigger('click')
+  await flushPromises()
+  await button(wrapper, 'Token 单价').trigger('click')
+  await flushPromises()
+  expect(confirm).toHaveBeenCalledWith(
+    expect.stringContaining('隐式和显式'),
+    expect.any(String),
+    expect.objectContaining({ cancelButtonText: '保留阶梯草稿' }),
+  )
+  if (!accepted) {
+    await button(wrapper, '高级 JSON').trigger('click')
+    expect(
+      (wrapper.get('textarea[aria-label="结构化价格规则"]').element as HTMLTextAreaElement).value,
+    ).toBe(before)
+  }
+  await wrapper.get('form').trigger('submit')
+  await flushPromises()
+  const root = (requests.find((item) => item.method === 'PUT')!.body?.config as PricingConfig)
+    .rules[0]!.rule.root
+  expect(root).toMatchObject({
+    kind: 'branch',
+    then: { kind: accepted ? 'price' : 'branch' },
+    else: { kind: accepted ? 'price' : 'branch' },
+  })
+  if (accepted) {
+    await button(wrapper, '上下文阶梯').trigger('click')
+    expect(wrapper.find('input[aria-label="第一档上限"]').exists()).toBe(false)
+  }
+})
+
+it('falls back to JSON when the two cache modes do not share a tier layout', async () => {
+  const value = cachePricingView()
+  value.operations[0]!.reference!.rule = cacheModeRule(256000)
+  const { wrapper } = await open(value)
+  await custom(wrapper)
+  await wrapper.get('input[type=checkbox]').setValue(true)
+  await button(wrapper, '复制参考规则').trigger('click')
+  await flushPromises()
+  expect(wrapper.find('input[type=radio][value=explicit]').exists()).toBe(false)
+  expect(
+    (wrapper.get('textarea[aria-label="结构化价格规则"]').element as HTMLTextAreaElement).value,
+  ).toContain('"field": "context.cache_mode"')
 })

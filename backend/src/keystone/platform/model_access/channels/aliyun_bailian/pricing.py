@@ -5,9 +5,13 @@ an administrator override; absence is deliberately not a zero price.
 """
 
 from copy import deepcopy
-from decimal import Decimal
 
-from keystone.platform.model_access.channels.rules import tier_rule, token_rule
+from keystone.platform.model_access.channels.rules import (
+    by_cache_mode,
+    cache_tier_rule,
+    share,
+    token_rule,
+)
 from keystone.platform.model_access.schemas.pricing import OperationPricing
 
 BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -19,67 +23,29 @@ SOURCE = {
 }
 CACHE_SOURCE = {
     **SOURCE,
-    "version": "2026-11-05.1",
-    "label": "百炼北京实时推理原价及隐式缓存命中价；不含显式缓存、免费额度或限时折扣",
+    "version": "2026-11-09.1",
+    "label": "百炼北京实时推理原价及隐式、显式缓存价格；不含免费额度或限时折扣",
 }
 
 
 def ali_tiers(rows):
     # Official implicit-cache tariff: 20% for these explicitly enumerated families.
     # Newer Qwen 3.8 exceptions require a console quote; never infer their cache price.
-    return tier_rule(
-        [
-            (limit, incoming, outgoing, format(Decimal(incoming) * Decimal("0.2"), "f"))
-            for limit, incoming, outgoing in rows
-        ]
+    return cache_tier_rule(rows, read=lambda rate: share(rate, "0.2"))
+
+
+def explicit_tiers(rows):
+    # Official explicit-cache tariff: creating a cache bills 125% of the standard input
+    # price and hitting it bills 10%. Families whose explicit ratio differs (qwen3.8-*)
+    # are not listed here at all, so their explicit requests stay price_missing.
+    return cache_tier_rule(
+        rows,
+        read=lambda rate: share(rate, "0.1"),
+        write=lambda rate: share(rate, "1.25"),
     )
 
 
-CHAT_RULES = {
-    **dict.fromkeys(
-        ("qwen3.7-max", "qwen3.7-max-2026-05-20", "qwen3.7-max-2026-06-08"),
-        ali_tiers([(1000000, "12", "36")]),
-    ),
-    **dict.fromkeys(
-        ("qwen3.7-plus", "qwen3.7-plus-2026-05-26"),
-        ali_tiers([(256000, "2", "8"), (1000000, "6", "24")]),
-    ),
-    "qwen3.6-plus": ali_tiers([(256000, "2", "12"), (1000000, "8", "48")]),
-    **dict.fromkeys(
-        ("qwen3.5-plus", "qwen3.5-plus-2026-04-20"),
-        ali_tiers([(128000, "0.8", "4.8"), (256000, "2", "12"), (1000000, "4", "24")]),
-    ),
-    **dict.fromkeys(
-        ("qwen3.7-flash", "qwen3.7-flash-2026-07-15"),
-        ali_tiers([(32000, "0.2", "0.8"), (256000, "0.6", "2.4"), (1000000, "1.2", "4.8")]),
-    ),
-    "qwen3.6-flash": ali_tiers([(256000, "1.2", "7.2"), (1000000, "4.8", "28.8")]),
-    "qwen3.5-flash": ali_tiers(
-        [(128000, "0.2", "2"), (256000, "0.8", "8"), (1000000, "1.2", "12")]
-    ),
-    "qwen-flash": ali_tiers(
-        [(128000, "0.15", "1.5"), (256000, "0.6", "6"), (1000000, "1.2", "12")]
-    ),
-    "qwen-plus": {
-        "format": 1,
-        "currency": "CNY",
-        "root": {
-            "kind": "branch",
-            "when": {"field": "context.enable_thinking", "op": "eq", "value": 0},
-            "then": ali_tiers(
-                [(128000, "0.8", "2"), (256000, "2.4", "20"), (1000000, "4.8", "48")]
-            )["root"],
-            "else": {
-                **ali_tiers([(128000, "0.8", "8"), (256000, "2.4", "24"), (1000000, "4.8", "64")])[
-                    "root"
-                ]
-            },
-        },
-    },
-}
-
-
-# Leaf IDs must remain unique across both thinking branches.
+# Leaf IDs must remain unique across every branch of a rule.
 def _prefix_leaves(node, prefix):
     if node["kind"] == "price":
         node["id"] = prefix + node["id"]
@@ -88,17 +54,62 @@ def _prefix_leaves(node, prefix):
         _prefix_leaves(node["else"], prefix)
 
 
-_prefix_leaves(CHAT_RULES["qwen-plus"]["root"]["else"], "thinking_")
-# A thinking request that reports zero reasoning uses the non-thinking output tariff.
-# Missing reasoning usage remains unknown, rather than assuming the request took effect.
-_qwen_price = CHAT_RULES["qwen-plus"]["root"]
-_no_reasoning = deepcopy(_qwen_price["then"])
-_prefix_leaves(_no_reasoning, "no_reasoning_")
-_qwen_price["else"] = {
-    "kind": "branch",
-    "when": {"field": "usage.reasoning_tokens", "op": "gt", "value": 0},
-    "then": _qwen_price["else"],
-    "else": _no_reasoning,
+def cache_modes(rows):
+    explicit = explicit_tiers(rows)
+    _prefix_leaves(explicit["root"], "explicit_")
+    return by_cache_mode(ali_tiers(rows), explicit["root"])
+
+
+def qwen_plus(without_thinking, with_thinking):
+    root = {
+        "kind": "branch",
+        "when": {"field": "context.enable_thinking", "op": "eq", "value": 0},
+        "then": cache_modes(without_thinking)["root"],
+        "else": cache_modes(with_thinking)["root"],
+    }
+    _prefix_leaves(root["else"], "thinking_")
+    # A thinking request that reports zero reasoning uses the non-thinking output tariff.
+    # Missing reasoning usage remains unknown, rather than assuming the request took effect.
+    no_reasoning = deepcopy(root["then"])
+    _prefix_leaves(no_reasoning, "no_reasoning_")
+    root["else"] = {
+        "kind": "branch",
+        "when": {"field": "usage.reasoning_tokens", "op": "gt", "value": 0},
+        "then": root["else"],
+        "else": no_reasoning,
+    }
+    return {"format": 1, "currency": "CNY", "root": root}
+
+
+CHAT_RULES = {
+    **dict.fromkeys(
+        ("qwen3.7-max", "qwen3.7-max-2026-05-20", "qwen3.7-max-2026-06-08"),
+        cache_modes([(1000000, "12", "36")]),
+    ),
+    **dict.fromkeys(
+        ("qwen3.7-plus", "qwen3.7-plus-2026-05-26"),
+        cache_modes([(256000, "2", "8"), (1000000, "6", "24")]),
+    ),
+    "qwen3.6-plus": cache_modes([(256000, "2", "12"), (1000000, "8", "48")]),
+    **dict.fromkeys(
+        ("qwen3.5-plus", "qwen3.5-plus-2026-04-20"),
+        cache_modes([(128000, "0.8", "4.8"), (256000, "2", "12"), (1000000, "4", "24")]),
+    ),
+    **dict.fromkeys(
+        ("qwen3.7-flash", "qwen3.7-flash-2026-07-15"),
+        cache_modes([(32000, "0.2", "0.8"), (256000, "0.6", "2.4"), (1000000, "1.2", "4.8")]),
+    ),
+    "qwen3.6-flash": cache_modes([(256000, "1.2", "7.2"), (1000000, "4.8", "28.8")]),
+    "qwen3.5-flash": cache_modes(
+        [(128000, "0.2", "2"), (256000, "0.8", "8"), (1000000, "1.2", "12")]
+    ),
+    "qwen-flash": cache_modes(
+        [(128000, "0.15", "1.5"), (256000, "0.6", "6"), (1000000, "1.2", "12")]
+    ),
+    "qwen-plus": qwen_plus(
+        [(128000, "0.8", "2"), (256000, "2.4", "20"), (1000000, "4.8", "48")],
+        [(128000, "0.8", "8"), (256000, "2.4", "24"), (1000000, "4.8", "64")],
+    ),
 }
 
 
@@ -113,11 +124,6 @@ for alias, target in {
     "qwen-flash-2025-07-28": "qwen-flash",
 }.items():
     CHAT_RULES[alias] = CHAT_RULES[target]
-
-
-def applies(context):
-    # Explicit-cache requests have a different tariff that is not listed.
-    return context.get("cache_mode") != "explicit"
 
 
 REFERENCE_PRICES = {

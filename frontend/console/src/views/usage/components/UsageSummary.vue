@@ -74,6 +74,14 @@ defineEmits<{ drill: [filters: Record<string, string>] }>()
         输入覆盖 {{ value.input_reported }}/{{ value.calls }} · 输出覆盖
         {{ value.output_reported }}/{{ value.calls }}
       </p>
+      <p>
+        缓存读取 {{ value.cache_read_tokens ?? '未报告' }} · 缓存写入
+        {{ value.cache_write_tokens ?? '未报告' }}
+      </p>
+      <small
+        >缓存读取覆盖 {{ value.cache_read_reported }}/{{ value.calls }} · 缓存写入覆盖
+        {{ value.cache_write_reported }}/{{ value.calls }}；未报告不代表零用量。</small
+      >
     </article>
     <article class="usage-card">
       <h2>平均调用耗时</h2>

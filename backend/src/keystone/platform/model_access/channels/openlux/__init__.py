@@ -10,6 +10,7 @@ from keystone.platform.model_access.channels.shared import RELAY_CHAT, RELAY_IMA
 from keystone.platform.model_access.channels.shared.metering import (
     OPENAI_IMAGES_PROFILE,
     RELAY_CHAT_PROFILE,
+    RELAY_CHAT_PROFILE_V3,
 )
 from keystone.platform.model_access.channels.spec import ChannelSpec
 
@@ -24,7 +25,7 @@ SPEC = ChannelSpec(
             allowed_targets=frozenset({("openlux", BASE), ("newapi", BASE), ("yunwu", BASE)})
         ),
     ),
-    pricing_profiles=(RELAY_CHAT_PROFILE, OPENAI_IMAGES_PROFILE, PROFILE),
+    pricing_profiles=(RELAY_CHAT_PROFILE, RELAY_CHAT_PROFILE_V3, OPENAI_IMAGES_PROFILE, PROFILE),
     billing=Openlux(),
     models_path="/models",
     creatable=False,

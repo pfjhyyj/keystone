@@ -150,6 +150,19 @@ function label(row: UsageGroup) {
             ></template
           ></el-table-column
         >
+        <el-table-column label="缓存读 / 写 Token" min-width="180" align="right"
+          ><template #default="{ row }"
+            ><span
+              class="truncate"
+              :title="`读 ${row.cache_read_tokens ?? '未报告'} / 写 ${row.cache_write_tokens ?? '未报告'}`"
+              >{{ row.cache_read_tokens ?? '未报告' }} /
+              {{ row.cache_write_tokens ?? '未报告' }}</span
+            ><small
+              >覆盖 {{ row.cache_read_reported }}/{{ row.calls }} ·
+              {{ row.cache_write_reported }}/{{ row.calls }}</small
+            ></template
+          ></el-table-column
+        >
         <el-table-column label="平均 / P95 耗时" min-width="160" align="right"
           ><template #default="{ row }"
             >{{ duration(row.avg_duration_ms) }} / {{ duration(row.p95_duration_ms) }}</template

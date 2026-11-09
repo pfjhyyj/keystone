@@ -11,6 +11,7 @@ from keystone.platform.model_access.channels.shared import EMBEDDINGS, RELAY_CHA
 from keystone.platform.model_access.channels.shared.metering import (
     EMBEDDING_PROFILE,
     RELAY_CHAT_PROFILE,
+    RELAY_CHAT_PROFILE_V3,
 )
 from keystone.platform.model_access.channels.spec import ChannelSpec
 
@@ -19,7 +20,7 @@ SPEC = ChannelSpec(
     label="OpenRouter",
     api_base=OpenRouter.api_base,
     protocols=(replace(RELAY_CHAT, require_parameters=True), OpenRouterImages(), EMBEDDINGS),
-    pricing_profiles=(RELAY_CHAT_PROFILE, PROFILE, EMBEDDING_PROFILE),
+    pricing_profiles=(RELAY_CHAT_PROFILE, RELAY_CHAT_PROFILE_V3, PROFILE, EMBEDDING_PROFILE),
     billing=OpenRouter(),
     models_path="/models",
     hint=(

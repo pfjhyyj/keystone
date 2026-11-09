@@ -87,8 +87,12 @@ export interface UsageMetrics {
   pending_calls: number
   input_tokens: string | null
   output_tokens: string | null
+  cache_read_tokens: string | null
+  cache_write_tokens: string | null
   input_reported: number
   output_reported: number
+  cache_read_reported: number
+  cache_write_reported: number
   duration_reported: number
   avg_duration_ms: number | null
   p95_duration_ms: number | null

@@ -57,14 +57,20 @@ def native_cloud_protocols(model_configuration, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "stream,provider,model,expected",
+    "stream,provider,model,profile,expected",
     [
-        (False, "aliyun_bailian", "qwen-plus", "0.001136"),
-        (True, "volcengine", "doubao-seed-2-0-pro-260215", "0.006144"),
+        (False, "aliyun_bailian", "qwen-plus", "chat.v3", "0.001136"),
+        (
+            True,
+            "volcengine",
+            "doubao-seed-2-0-pro-260215",
+            "volcengine_chat.v2",
+            "0.006144",
+        ),
     ],
 )
 def test_native_reference_prices_use_normalized_cached_receipts_without_manual_configuration(
-    client, monkeypatch, stream, provider, model, expected
+    client, monkeypatch, stream, provider, model, profile, expected
 ):
     entry(
         client,
@@ -126,7 +132,7 @@ def test_native_reference_prices_use_normalized_cached_receipts_without_manual_c
     saved = stored(client, row["id"])
     assert saved.estimate_snapshot["revision"] == 0
     assert saved.estimate_facts["values"]["usage.input_uncached_tokens"]["value"] == 900
-    assert saved.estimate_snapshot["profile"].endswith(".v2") and len(sent) == 1
+    assert saved.estimate_snapshot["profile"] == profile and len(sent) == 1
     if provider == "aliyun_bailian":
         assert sent[0]["enable_thinking"] is False
     else:

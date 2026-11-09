@@ -4,6 +4,7 @@ from keystone.platform.model_access.channels.shared import RELAY_CHAT, RELAY_IMA
 from keystone.platform.model_access.channels.shared.metering import (
     OPENAI_IMAGES_PROFILE,
     RELAY_CHAT_PROFILE,
+    RELAY_CHAT_PROFILE_V3,
 )
 from keystone.platform.model_access.channels.spec import ChannelSpec
 from keystone.platform.model_access.channels.yunwu.billing import Yunwu
@@ -13,7 +14,7 @@ SPEC = ChannelSpec(
     label="Yunwu",
     api_base=Yunwu.api_base,
     protocols=(RELAY_CHAT, RELAY_IMAGES),
-    pricing_profiles=(RELAY_CHAT_PROFILE, OPENAI_IMAGES_PROFILE),
+    pricing_profiles=(RELAY_CHAT_PROFILE, RELAY_CHAT_PROFILE_V3, OPENAI_IMAGES_PROFILE),
     billing=Yunwu(),
     models_path="/models",
     custom_base=True,

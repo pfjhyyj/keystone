@@ -110,6 +110,8 @@ export const estimateReasons: Record<string, string> = {
 }
 export const quantityLabels: Record<string, string> = {
   'usage.input_cache_write_tokens': '缓存写入',
+  'usage.input_cache_write_5m_tokens': '缓存写入（5 分钟）',
+  'usage.input_cache_write_1h_tokens': '缓存写入（1 小时）',
   'usage.input_total_tokens': '全部输入',
   'usage.input_regular_tokens': '普通输入（排除缓存）',
   'usage.input_uncached_tokens': '未命中缓存的输入（含写入）',

@@ -70,7 +70,7 @@ def validate_request(request, selected, target, *, require_parameters=False):
 class ChatCompletions:
     operations: frozenset = frozenset({"text.generate"})
     require_parameters: bool = False
-    pricing_meter: str = "chat.v2"
+    pricing_meter: str = "chat.v3"
     delivery = "sync"
     models = None
     paths = {"/chat/completions": "POST"}

@@ -22,6 +22,9 @@ def usage(data):
         "total_tokens": "total_tokens",
         "prompt_cache_hit_tokens": "cache_read_input_tokens",
         "prompt_cache_miss_tokens": "cache_miss_input_tokens",
+        # Relays name the same lifetime split differently; keep it as reported, never derived.
+        "claude_cache_creation_5_m_tokens": "cache_write_5m_input_tokens",
+        "claude_cache_creation_1_h_tokens": "cache_write_1h_input_tokens",
     }
     for source, target in fields.items():
         value = data.get(source)
@@ -35,6 +38,21 @@ def usage(data):
         value = extra.get(detail) if isinstance(extra, dict) else None
         if type(value) is int and 0 <= value < 2**63:
             result[target] = value
+    # OpenAI-compatible explicit cache reports the write count under several names;
+    # they describe the same tokens, so statistics keep their maximum and never sum them.
+    details = data.get("prompt_tokens_details")
+    details = details if isinstance(details, dict) else {}
+    writes = [
+        value
+        for value in (
+            details.get("cache_write_tokens"),
+            details.get("cached_creation_tokens"),
+            details.get("cache_creation_input_tokens"),
+        )
+        if type(value) is int and 0 <= value < 2**63
+    ]
+    if writes:
+        result["cache_write_input_tokens"] = max(writes)
     return result or None
 
 
