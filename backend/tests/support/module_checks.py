@@ -65,7 +65,7 @@ def check_core_dependencies(root):
         ), f"Core imports domain/application implementation: {file}"
 
 
-def _execution_dependencies(tree, package, *, allow_client=False):
+def _execution_dependencies(tree, package, *, allow_client=False, allow_worker_config_query=False):
     """Evaluate exceptions per import, never grant them to another statement."""
     execution = "keystone.core.execution"
     for node in ast.walk(tree):
@@ -80,6 +80,11 @@ def _execution_dependencies(tree, package, *, allow_client=False):
             and base == "dbos"
             and all(alias.name in {"DBOSClient", "error"} for alias in node.names)
         )
+        worker_config_query_only = (
+            allow_worker_config_query
+            and base == "keystone.worker.registration"
+            and children == ["keystone.worker.registration.shared_config_matches"]
+        )
         contracts_only = bool(children) and all(
             _under(d, execution + ".contracts") for d in children
         )
@@ -90,7 +95,7 @@ def _execution_dependencies(tree, package, *, allow_client=False):
         for dependency in dependencies:
             if _under(dependency, "dbos") and not client_only:
                 yield dependency
-            if _under(dependency, "keystone.worker"):
+            if _under(dependency, "keystone.worker") and not worker_config_query_only:
                 yield dependency
             if _under(dependency, execution) and not (
                 _under(dependency, execution + ".contracts")
@@ -208,6 +213,8 @@ def check_module_layers(root, namespace):
                     package,
                     allow_client=namespace == "keystone.platform.flow"
                     and relative.as_posix() == "adapters/dbos.py",
+                    allow_worker_config_query=namespace == MODEL_ACCESS
+                    and relative.as_posix() == "adapters/coordination.py",
                 )
             )
             assert not forbidden, f"Module layer imports execution implementation: {file}"
@@ -243,7 +250,7 @@ def check_module_layers(root, namespace):
             assert not any(
                 d.startswith("sqlalchemy")
                 or _under(d, "keystone.core.database")
-                or _under(d, "keystone.core.models")
+                or _under(d, "keystone.worker.models")
                 or _domain_layer(d, "adapters")
                 for d in dependencies
             ), f"Schema imports runtime infrastructure: {file}"
@@ -272,7 +279,7 @@ def check_module_layers(root, namespace):
                     for prefix in (
                         "keystone.core.errors",
                         "keystone.core.database",
-                        "keystone.core.models",
+                        "keystone.worker.models",
                         "keystone.core.execution",
                     )
                 )
@@ -293,7 +300,7 @@ def check_module_layers(root, namespace):
                 d.startswith("sqlalchemy")
                 or _domain_layer(d, "models")
                 or _under(d, "keystone.core.database")
-                or _under(d, "keystone.core.models")
+                or _under(d, "keystone.worker.models")
                 for d in dependencies
             ), f"Execution adapter owns domain persistence: {file}"
         if layer == "tasks":

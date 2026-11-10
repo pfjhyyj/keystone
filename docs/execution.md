@@ -158,7 +158,7 @@ Agent 使用 DBOSDurability 原生模型检查点，I/O 工具显式建 Step，�
 
 Worker 顺序：取得宿主/固定身份锁 → 校验登记、制品和配置 → 收尾本身份旧调用 → 写入队列预算 → 启动 DBOS → 登记计划 → 就绪。预算先于引擎恢复，未准入进程不能修改。
 
-公共 DBOS 生命周期在 core/execution，模块 tasks/ 管执行适配，业务 workflows/ 管编排；运行契约见 [Flow](domains/flow.md)。
+公共 DBOS 生命周期在 `core/execution/`。Worker 身份、登记、心跳及其 ORM 模型在 `keystone/worker/`；模型接入在原事务内通过 Worker 的只读接口核对公共配置。各模块的 `tasks/` 管执行适配，业务 `workflows/` 管编排；运行契约见 [Flow](domains/flow.md)。
 
 ### 7.2 队列预算
 

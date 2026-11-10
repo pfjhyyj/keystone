@@ -88,7 +88,7 @@ def test_fixed_worker_identity_and_shared_capacity_reject_invalid_configuration(
 
 
 def test_worker_identity_is_independent_of_shared_config_digest():
-    from keystone.core.worker_identity import config_digest
+    from keystone.worker.identity import config_digest
 
     original = Settings(config_file=None)
     extra = Settings(config_file=None, worker_id="keystone-worker-02")
@@ -98,7 +98,7 @@ def test_worker_identity_is_independent_of_shared_config_digest():
 def test_worker_shared_config_digest_checks_storage_secrets_without_exposing_them(tmp_path):
     from pydantic import SecretStr
 
-    from keystone.core.worker_identity import config_digest
+    from keystone.worker.identity import config_digest
 
     settings = Settings(config_file=write_config(tmp_path))
     before = config_digest(settings)
@@ -201,7 +201,7 @@ def test_invalid_file_capacity_floor_is_rejected(floor):
 
 @pytest.mark.parametrize("floor", [0, 1024**4])
 def test_file_capacity_floor_toml_environment_and_worker_digest(tmp_path, monkeypatch, floor):
-    from keystone.core.worker_identity import config_digest
+    from keystone.worker.identity import config_digest
 
     config = tmp_path / "keystone.toml"
     config.write_text("file_min_free_bytes = 512\n", encoding="utf-8")

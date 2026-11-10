@@ -6,9 +6,30 @@ from sqlalchemy import select, text
 
 from keystone.core.advisory import lock_key, session_lease
 from keystone.core.errors import ServiceError
-from keystone.core.models import WorkerRegistration
+from keystone.worker.identity import config_digest
+from keystone.worker.models import WorkerRegistration
 
 MAX_WORKERS = 4
+
+
+async def shared_config_matches(session, settings):
+    """Compare against active Worker registrations using the caller's transaction."""
+    digests = list(
+        await session.scalars(
+            select(WorkerRegistration.config_digest)
+            .where(
+                WorkerRegistration.state == "registered",
+                WorkerRegistration.stopped_at.is_(None),
+                WorkerRegistration.instance_id.is_not(None),
+                WorkerRegistration.config_digest.is_not(None),
+            )
+            .distinct()
+        )
+    )
+    if not digests:
+        return True
+    expected = config_digest(settings)
+    return all(digest == expected for digest in digests)
 
 
 @asynccontextmanager

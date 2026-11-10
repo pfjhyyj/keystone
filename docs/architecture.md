@@ -36,6 +36,7 @@ PostgreSQL 的 keystone schema 保存领域数据，dbos schema 保存执行状�
 | [文件](domains/files.md) | File、引用、内容完整性和清理 | 业务/Flow 维护引用，业务负责对象访问规则 |
 | [模型接入](domains/model-access.md) | 渠道、模型映射、调用、用量、费用和恢复证据 | 业务/Flow 调用并按需保存文件 |
 | [Flow](domains/flow.md) | Run、固定输入与模型绑定、结果和取消意图 | 使用身份、模型和文件能力，DBOS 负责执行与检查点 |
+| [Worker](execution.md#7-worker-与资源) | 固定身份登记、心跳和退役 | API 与 CLI 查询状态，模型接入通过只读接口核对公共配置 |
 | 业务模块 | 自己的对象、权限范围、业务状态和结果 | 按需组合平台 Service，保存业务记录及文件引用 |
 
 跨模块只调用公开 Service/Schema，不访问其他模块的 ORM/Adapter。core 提供配置、连接、日志、锁和执行设施，不包含业务规则。

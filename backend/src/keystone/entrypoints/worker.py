@@ -20,8 +20,8 @@ from keystone.core.errors import ServiceError
 from keystone.core.execution.runtime import inspect_queues
 from keystone.core.execution.runtime import lifespan as dbos_lifespan
 from keystone.core.logging import configure_logging, safe_exception
-from keystone.core.worker_health import WorkerHealth, worker_status
-from keystone.core.worker_registration import identity_lease
+from keystone.worker.health import WorkerHealth, worker_status
+from keystone.worker.registration import identity_lease
 
 log = logging.getLogger(__name__)
 POLL_SECONDS = 5

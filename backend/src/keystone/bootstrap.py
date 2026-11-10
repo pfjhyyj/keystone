@@ -17,8 +17,6 @@ from keystone.core.database import Database
 from keystone.core.execution.dispatch import TaskClient
 from keystone.core.http import install_errors, validate_http_routes
 from keystone.core.migrations import expected_heads
-from keystone.core.worker_health import worker_status
-from keystone.core.worker_identity import WorkerIdentity
 from keystone.model_registry import load_models
 from keystone.platform.audit.controllers import router as audit_router
 from keystone.platform.browser.adapters.opensandbox import OpenSandbox
@@ -39,6 +37,8 @@ from keystone.platform.model_access.adapters.clients import ModelClients
 from keystone.platform.model_access.controllers import router as models_router
 from keystone.platform.model_access.services.invocations import InvocationService
 from keystone.use_cases import FlowCosts, FlowDiagnostics
+from keystone.worker.health import worker_status
+from keystone.worker.identity import WorkerIdentity
 
 
 @dataclass

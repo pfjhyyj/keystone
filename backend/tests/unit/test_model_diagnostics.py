@@ -6,10 +6,10 @@ from uuid import uuid4
 import pytest
 
 from keystone.core.logging import JsonFormatter
-from keystone.core.worker_identity import WorkerIdentity
 from keystone.platform.model_access.adapters.inference.transport import Observation
 from keystone.platform.model_access.schemas.invocations import InvocationContext, Selection
 from keystone.platform.model_access.services.diagnostics import log_failure
+from keystone.worker.identity import WorkerIdentity
 
 
 @pytest.mark.parametrize("stage", ["inference", "persist_receipt", "persist_result"])

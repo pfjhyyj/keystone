@@ -7,9 +7,9 @@ from test_files_dictionary import client as client
 from test_identity import query
 
 from keystone.composition import execution_version
-from keystone.core.models import WorkerHeartbeat, WorkerRegistration
-from keystone.core.worker_health import WorkerHealth, worker_status
 from keystone.entrypoints.worker import probe
+from keystone.worker.health import WorkerHealth, worker_status
+from keystone.worker.models import WorkerHeartbeat, WorkerRegistration
 
 pytestmark = pytest.mark.postgres
 

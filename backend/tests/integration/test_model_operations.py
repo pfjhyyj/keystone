@@ -160,12 +160,12 @@ def test_structured_operation_routes_and_revalidates_with_real_worker(
         from uuid import uuid4
 
         from keystone.core.errors import ServiceError
-        from keystone.core.worker_identity import WorkerIdentity
         from keystone.platform.flow.services.identity import ExecutionIdentity
         from keystone.platform.model_access.schemas.invocations import InvocationContext, Selection
         from keystone.platform.model_access.schemas.structured import StructuredRequest
         from keystone.platform.model_access.services.entries import ModelEntryService
         from keystone.platform.model_access.services.runtime import ModelRuntime
+        from keystone.worker.identity import WorkerIdentity
 
         model = ModelRuntime(
             ModelEntryService(ExecutionIdentity(runtime, UUID(run_id)), runtime.models)

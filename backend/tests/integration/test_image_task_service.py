@@ -12,7 +12,6 @@ from test_image_tasks import accept
 from test_model_access import model_configuration as model_configuration
 
 from keystone.core.errors import ServiceError
-from keystone.core.worker_identity import WorkerIdentity
 from keystone.platform.files.models import File
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.services.identity import ExecutionIdentity
@@ -22,6 +21,7 @@ from keystone.platform.model_access.schemas.images import ImageTaskRequest
 from keystone.platform.model_access.schemas.invocations import InvocationContext, Selection
 from keystone.platform.model_access.services.entries import ModelEntryService
 from keystone.platform.model_access.services.image_tasks import ImageTaskService
+from keystone.worker.identity import WorkerIdentity
 
 pytestmark = pytest.mark.postgres
 

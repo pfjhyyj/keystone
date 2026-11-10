@@ -778,9 +778,9 @@ def test_recovery_only_closes_flow_calls_not_live_api_calls(client):
 
     from test_model_access import invoke
 
-    from keystone.core.worker_identity import WorkerIdentity
-    from keystone.core.worker_registration import identity_lease
     from keystone.platform.model_access.services.recovery import recover_interrupted_calls
+    from keystone.worker.identity import WorkerIdentity
+    from keystone.worker.registration import identity_lease
 
     owner = WorkerIdentity("keystone-worker", uuid4(), execution_version())
 
@@ -936,7 +936,7 @@ from dbos import DBOS, SetWorkflowID
 from keystone.bootstrap import build_runtime
 from keystone.core.asyncio import run
 from keystone.core.config import Settings
-from keystone.core.worker_health import worker_status
+from keystone.worker.health import worker_status
 from keystone.entrypoints import worker
 
 entered = asyncio.Event()

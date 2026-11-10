@@ -156,6 +156,12 @@ def test_core_rejects_upward_dependencies(tmp_path, source):
             "from dbos import DBOSClient\nfrom dbos import DBOS",
             "execution implementation",
         ),
+        (
+            "keystone.platform.model_access",
+            "adapters/coordination.py",
+            "from keystone.worker.registration import shared_config_matches, admit",
+            "execution implementation",
+        ),
     ],
 )
 def test_module_ownership_and_client_exception_are_enforced(
@@ -379,7 +385,8 @@ def test_model_access_protocols_and_services_are_independent_of_dbos():
         dependencies = list(imports(ast.parse(file.read_text(encoding="utf8")), package))
         layer = file.relative_to(root).parts[0]
         if layer != "tasks":
-            assert not any(d.startswith(("dbos", "keystone.worker")) for d in dependencies), file
+            # check_module_layers enforces the narrower Worker query boundary.
+            assert not any(d.startswith("dbos") for d in dependencies), file
         if (
             layer == "adapters"
             and len(file.relative_to(root).parts) > 2

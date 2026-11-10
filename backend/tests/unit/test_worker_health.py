@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from keystone.bootstrap import Runtime
-from keystone.core import worker_health
 from keystone.core.config import Settings
-from keystone.core.worker_health import WorkerHealth
 from keystone.entrypoints import worker
+from keystone.worker import health as worker_health
+from keystone.worker.health import WorkerHealth
 
 
 def test_liveness_and_readiness_are_separate_and_old_checks_expire(monkeypatch):

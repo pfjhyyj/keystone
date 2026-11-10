@@ -3,12 +3,9 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from sqlalchemy import select
-
 from keystone.core.advisory import session_lease
 from keystone.core.errors import ServiceError
-from keystone.core.models import WorkerRegistration
-from keystone.core.worker_identity import config_digest
+from keystone.worker.registration import shared_config_matches
 
 
 class QueryCoordination:
@@ -45,17 +42,7 @@ class QueryCoordination:
     async def check_config(self, lease):
         if self.settings is not None:
             async with lease.transaction() as session:
-                digests = await session.scalars(
-                    select(WorkerRegistration.config_digest)
-                    .where(
-                        WorkerRegistration.state == "registered",
-                        WorkerRegistration.stopped_at.is_(None),
-                        WorkerRegistration.instance_id.is_not(None),
-                        WorkerRegistration.config_digest.is_not(None),
-                    )
-                    .distinct()
-                )
-                if any(digest != config_digest(self.settings) for digest in digests):
+                if not await shared_config_matches(session, self.settings):
                     raise ServiceError(
                         409, "worker_deployment_conflict", "模型请求的公共配置与 Worker 不一致"
                     )

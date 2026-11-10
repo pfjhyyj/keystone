@@ -11,12 +11,12 @@ from keystone.core.database import Database
 from keystone.core.errors import ServiceError
 from keystone.core.execution.runtime import has_owned_work
 from keystone.core.migrations import expected_heads
-from keystone.core.models import WorkerRegistration
-from keystone.core.worker_identity import config_digest
-from keystone.core.worker_registration import admit, identity_lease, serialized
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.model_access.services.recovery import has_worker_calls
+from keystone.worker.identity import config_digest
+from keystone.worker.models import WorkerRegistration
+from keystone.worker.registration import admit, identity_lease, serialized
 
 
 async def change_worker(settings, worker_id, *, reactivate=False):

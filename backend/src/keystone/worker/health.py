@@ -9,9 +9,9 @@ from uuid import uuid4
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 
-from keystone.core.models import WorkerHeartbeat, WorkerRegistration
-from keystone.core.worker_identity import WorkerIdentity, config_digest
-from keystone.core.worker_registration import admit
+from keystone.worker.identity import WorkerIdentity, config_digest
+from keystone.worker.models import WorkerHeartbeat, WorkerRegistration
+from keystone.worker.registration import admit
 
 MAX_AGE_SECONDS = 30
 IO_TIMEOUT_SECONDS = 3

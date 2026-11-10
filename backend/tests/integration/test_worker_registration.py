@@ -22,13 +22,13 @@ from test_multi_workers import FIRST, SECOND, held_model_code, status
 
 from keystone.composition import execution_version
 from keystone.core.errors import ServiceError
-from keystone.core.models import WorkerHeartbeat, WorkerRegistration
-from keystone.core.worker_health import WorkerHealth
-from keystone.core.worker_identity import config_digest
-from keystone.core.worker_registration import identity_lease
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.model_access.models import ModelInvocation
 from keystone.worker import lifecycle
+from keystone.worker.health import WorkerHealth
+from keystone.worker.identity import config_digest
+from keystone.worker.models import WorkerHeartbeat, WorkerRegistration
+from keystone.worker.registration import identity_lease
 
 pytestmark = [pytest.mark.postgres, pytest.mark.usefixtures("flow_engine")]
 
@@ -190,7 +190,7 @@ entry.main()
 
 
 def test_admission_rolls_back_when_identity_connection_is_lost(client, monkeypatch):
-    from keystone.core import worker_health
+    from keystone.worker import health as worker_health
 
     runtime = client.app.state.runtime
     original = worker_health.admit
