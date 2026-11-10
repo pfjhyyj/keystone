@@ -2,6 +2,7 @@ import argparse
 import getpass
 import json
 import logging
+from uuid import UUID
 
 from alembic import command
 from sqlalchemy import select
@@ -119,11 +120,15 @@ def main() -> None:
             "retire-worker",
             "reactivate-worker",
             "prune-history",
+            "register-browser-workspace",
         ],
     )
     parser.add_argument("--username", help="Initial administrator login name")
     parser.add_argument("--worker-id", help="Fixed identity for retire-worker or reactivate-worker")
     parser.add_argument("--display-name", default="管理员")
+    parser.add_argument("--owner-id", type=UUID, help="Browser workspace owner's Keystone user ID")
+    parser.add_argument("--workspace-name", help="Display name for the browser workspace")
+    parser.add_argument("--volume", help="Existing named Docker volume for the browser workspace")
     parser.add_argument("--apply", action="store_true", help="Delete one eligible history batch")
     parser.add_argument(
         "--history-offset", type=int, default=0, help="Continue a maintenance history scan"
@@ -139,6 +144,15 @@ def main() -> None:
         help="Confirm all API processes are stopped and will stay stopped during recovery",
     )
     args = parser.parse_args()
+    if args.command == "register-browser-workspace":
+        if not args.owner_id or not args.workspace_name or not args.volume:
+            parser.error(
+                "register-browser-workspace requires --owner-id, --workspace-name, and --volume"
+            )
+    elif args.owner_id or args.workspace_name or args.volume:
+        parser.error(
+            "--owner-id, --workspace-name, and --volume only apply to register-browser-workspace"
+        )
     if args.apply and args.command != "prune-history":
         parser.error("--apply only applies to prune-history")
     if not 0 <= args.history_offset <= 1_000_000_000 or (
@@ -167,6 +181,23 @@ def main() -> None:
             return
         if not settings.database_url:
             raise RuntimeError("Database is not configured")
+        if args.command == "register-browser-workspace":
+            from keystone.platform.browser.services.registration import register_workspace
+
+            async def register():
+                runtime = build_runtime(settings)
+                try:
+                    return await register_workspace(
+                        runtime.database,
+                        args.owner_id,
+                        args.workspace_name,
+                        args.volume,
+                    )
+                finally:
+                    await runtime.close()
+
+            print(run_async(register()))
+            return
         if args.command == "prune-history":
 
             async def prune():

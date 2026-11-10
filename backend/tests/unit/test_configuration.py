@@ -122,6 +122,64 @@ def test_file_capacity_defaults_preserve_platform_configuration():
     ]
 
 
+def test_browser_settings_require_complete_runtime_and_local_backup_storage(tmp_path):
+    storage = {
+        "local": {
+            "driver": "filesystem",
+            "root": tmp_path / "files",
+        }
+    }
+    runtime = {
+        "browser_runtime_url": "http://opensandbox:8090",
+        "browser_runtime_key": "runtime-secret",
+        "browser_runtime_image": "keystone-browser:test",
+    }
+    Settings(
+        config_file=None,
+        file_coordination_root=tmp_path / "coordination",
+        file_storages=storage,
+        browser_backup_key="a" * 64,
+        **runtime,
+    )
+
+    with pytest.raises(ValidationError, match="OpenSandbox"):
+        Settings(
+            config_file=None,
+            file_coordination_root=tmp_path / "coordination",
+            file_storages=storage,
+            browser_runtime_url="http://opensandbox:8090",
+            browser_runtime_key="runtime-secret",
+        )
+    with pytest.raises(ValidationError, match="OpenSandbox"):
+        Settings(
+            config_file=None,
+            file_coordination_root=tmp_path / "coordination",
+            file_storages=storage,
+            browser_runtime_image="keystone-browser:test",
+        )
+    with pytest.raises(ValidationError, match="32-byte hexadecimal"):
+        Settings(
+            config_file=None,
+            file_coordination_root=tmp_path / "coordination",
+            file_storages=storage,
+            browser_backup_key="a" * 63,
+            **runtime,
+        )
+    with pytest.raises(ValidationError, match="configured browser runtime"):
+        Settings(
+            config_file=None,
+            file_coordination_root=tmp_path / "coordination",
+            file_storages=storage,
+            browser_backup_key="a" * 64,
+        )
+    with pytest.raises(ValidationError, match="local filesystem"):
+        Settings(
+            config_file=None,
+            browser_backup_key="a" * 64,
+            **runtime,
+        )
+
+
 @pytest.mark.parametrize("name", ["file_transfer_slots", "file_temp_bytes"])
 def test_retired_file_limits_are_rejected_in_all_configuration_sources(tmp_path, monkeypatch, name):
     with pytest.raises(ValidationError):

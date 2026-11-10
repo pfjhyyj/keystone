@@ -2,7 +2,7 @@
 
 import secrets
 
-from fastapi import Request
+from fastapi import Request, WebSocket
 
 from keystone.core.errors import ServiceError
 from keystone.platform.identity.adapters.security import csrf_token
@@ -54,4 +54,17 @@ def clear_cookie(request, response):
         httponly=True,
         secure=settings.env == "production",
         samesite="lax",
+    )
+
+
+def socket_access_context(socket: WebSocket) -> AccessContext:
+    runtime = socket.app.state.runtime
+    if socket.headers.get("origin") not in runtime.settings.browser_origins:
+        raise ServiceError(403, "invalid_origin", "请求来源不受信任")
+    secret = socket.cookies.get(cookie_name(runtime.settings))
+    return AccessContext(
+        runtime.database,
+        runtime.settings,
+        Credential("session", secret) if secret else None,
+        socket.state.request_id,
     )

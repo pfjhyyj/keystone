@@ -1,0 +1,75 @@
+name: keystone-browser-workbench
+
+include:
+  - ../../deploy/compose.yaml
+
+services:
+  opensandbox:
+    image: opensandbox/server:release-1.2.0
+    environment:
+      OPENSANDBOX_SERVER_API_KEY: ${KEYSTONE_BROWSER_RUNTIME_KEY:?set the OpenSandbox API key}
+      SANDBOX_CONFIG_PATH: /etc/opensandbox/config.toml
+    networks:
+      - default
+      - browser_runtime
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    configs:
+      - source: opensandbox_config
+        target: /etc/opensandbox/config.toml
+    restart: unless-stopped
+
+  api:
+    build: ../../backend
+    environment:
+      KEYSTONE_DATABASE_URL: ${KEYSTONE_DATABASE_URL:-postgresql+psycopg://keystone:keystone_local_only@postgres:5432/keystone}
+      KEYSTONE_FILE_COORDINATION_ROOT: /data/files/coordination
+      KEYSTONE_FILE_STORAGES: '{"local":{"driver":"filesystem","root":"/data/files/content"}}'
+      KEYSTONE_BROWSER_RUNTIME_URL: http://opensandbox:8090
+      KEYSTONE_BROWSER_RUNTIME_KEY: ${KEYSTONE_BROWSER_RUNTIME_KEY:?set the OpenSandbox API key}
+      KEYSTONE_BROWSER_RUNTIME_IMAGE: ${KEYSTONE_BROWSER_RUNTIME_IMAGE:-keystone-browser-chromium:local}
+      KEYSTONE_BROWSER_BACKUP_KEY: ${KEYSTONE_BROWSER_BACKUP_KEY:-}
+      KEYSTONE_FILE_MAX_BYTES: ${KEYSTONE_FILE_MAX_BYTES:-268435456}
+      KEYSTONE_BROWSER_ORIGINS: '${KEYSTONE_BROWSER_ORIGINS:-["http://127.0.0.1:${WORKBENCH_HTTP_PORT:-8080}","http://localhost:${WORKBENCH_HTTP_PORT:-8080}"]}'
+    volumes:
+      - workbench_api_files:/data/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensandbox:
+        condition: service_started
+
+  workbench:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:${WORKBENCH_HTTP_PORT:-8080}:8080"
+    depends_on:
+      - api
+
+configs:
+  opensandbox_config:
+    content: |
+      [server]
+      host = "0.0.0.0"
+      port = 8090
+      [runtime]
+      type = "docker"
+      execd_image = "opensandbox/execd:release-1.2.0"
+      [proxy]
+      resolve_internal = true
+      [ingress]
+      mode = "direct"
+      [storage]
+      allowed_host_paths = ["/var/lib/keystone-browser/no-host-mounts"]
+      [docker]
+      network_mode = "${COMPOSE_PROJECT_NAME}_browser_runtime"
+      publish_host = "127.0.0.1"
+      no_new_privileges = true
+      seccomp_profile = '''${WORKBENCH_SECCOMP_JSON:?set the Chromium seccomp profile JSON}'''
+
+volumes:
+  workbench_api_files:
+
+networks:
+  browser_runtime:
+    name: ${COMPOSE_PROJECT_NAME}_browser_runtime

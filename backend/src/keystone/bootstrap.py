@@ -21,6 +21,9 @@ from keystone.core.worker_health import worker_status
 from keystone.core.worker_identity import WorkerIdentity
 from keystone.model_registry import load_models
 from keystone.platform.audit.controllers import router as audit_router
+from keystone.platform.browser.adapters.opensandbox import OpenSandbox
+from keystone.platform.browser.controllers.routes import router as browser_router
+from keystone.platform.browser.services.browser import BrowserControls
 from keystone.platform.dictionary.controllers import router as dictionary_router
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.files.services.files import FileService
@@ -178,10 +181,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.runtime = runtime
         app.state.passwords = Passwords()
         app.state.login_limiter = LoginLimiter()
+        browser_runtime = None
         try:
+            if settings.browser_runtime_url:
+                browser_runtime = OpenSandbox(
+                    settings.browser_runtime_url,
+                    settings.browser_runtime_key.get_secret_value(),
+                    settings.browser_runtime_image,
+                )
+            app.state.browser_runtime = browser_runtime
+            app.state.browser_controls = BrowserControls()
             yield
         finally:
-            await runtime.close()
+            try:
+                if browser_runtime is not None:
+                    await browser_runtime.close()
+            finally:
+                await runtime.close()
 
     app = FastAPI(title="Keystone", version=__version__, lifespan=lifespan)
     install_errors(app)
@@ -204,6 +220,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(identity_router)
     app.include_router(audit_router)
+    app.include_router(browser_router)
     app.include_router(dictionary_router)
     app.include_router(models_router)
     app.include_router(flow_router)

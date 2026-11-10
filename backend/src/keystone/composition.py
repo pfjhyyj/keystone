@@ -10,6 +10,7 @@ from keystone.core.execution.contracts import QueueDefinition
 from keystone.core.execution.planning import queue_budgets
 from keystone.core.execution.version import artifact_version
 from keystone.platform.audit.catalog import CATALOG as AUDIT_CATALOG
+from keystone.platform.browser.catalog import CATALOG as BROWSER_CATALOG
 from keystone.platform.dictionary.catalog import CATALOG as DICTIONARY_CATALOG
 from keystone.platform.files.catalog import CATALOG as FILES_CATALOG
 from keystone.platform.flow.catalog import CATALOG as FLOW_CATALOG
@@ -23,6 +24,7 @@ PLATFORM_CATALOG = combine_catalogs(
         FLOW_CATALOG,
         IDENTITY_CATALOG,
         AUDIT_CATALOG,
+        BROWSER_CATALOG,
         FILES_CATALOG,
         DICTIONARY_CATALOG,
         MODEL_CATALOG,

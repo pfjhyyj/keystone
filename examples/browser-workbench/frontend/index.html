@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>浏览器工作台 · Keystone</title>
+    <link rel="stylesheet" href="./style.css">
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Keystone 浏览器工作台">
+        <svg width="25" height="25" viewBox="0 0 25 25" fill="none" aria-hidden="true">
+          <path d="M4 4h17v17H4zM8 8v9m0-4 8-5m-8 5 8 4" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+        Keystone <span>浏览器工作台</span>
+      </a>
+      <div class="account" id="account" hidden>
+        <span id="account-name"></span>
+        <button type="button" id="logout" class="quiet">退出</button>
+      </div>
+    </header>
+    <main>
+      <p id="notice" class="notice" role="alert" hidden></p>
+      <p id="loading" class="loading" role="status">正在检查登录状态…</p>
+      <form id="login" class="login" hidden>
+        <h1>登录工作台</h1>
+        <p>使用你的 Keystone 账号连接工作浏览器。</p>
+        <label>用户名<input name="username" autocomplete="username" required></label>
+        <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">登录</button>
+      </form>
+      <form id="change-password" class="login" hidden>
+        <h1>修改初始密码</h1>
+        <p>修改后请用新密码重新登录。</p>
+        <label>当前密码<input name="current_password" type="password" autocomplete="current-password" required></label>
+        <label>新密码<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+        <button class="primary" type="submit">保存密码</button>
+      </form>
+      <div id="workbench" class="workspace" hidden>
+        <aside>
+          <div class="sidebar-title">
+            <h2>我的空间</h2>
+            <button type="button" id="refresh" class="quiet">刷新</button>
+          </div>
+          <div id="workspaces"></div>
+          <div id="empty-workspaces" class="muted" hidden>
+            <p>暂无浏览器空间。请联系部署管理员为这个账号登记空间。</p>
+            <p>用户 ID</p>
+            <code id="owner-id"></code>
+          </div>
+        </aside>
+        <section class="session" aria-labelledby="workspace-name">
+          <div class="session-toolbar">
+            <div class="session-heading">
+              <h1 id="workspace-name">浏览器</h1>
+              <p id="run-status" class="muted" aria-live="polite"></p>
+              <p id="backup-status" class="muted" aria-live="polite" hidden></p>
+            </div>
+            <div class="actions">
+              <button type="button" id="open" class="primary">打开浏览器</button>
+              <button type="button" id="check">重新检查</button>
+              <button type="button" id="backup" hidden>备份空间</button>
+              <button type="button" id="paste" aria-haspopup="dialog" hidden>粘贴文本</button>
+              <button type="button" id="disconnect">断开画面</button>
+              <button type="button" id="stop" class="danger">停止浏览器</button>
+            </div>
+          </div>
+          <div class="screen">
+            <div id="placeholder">
+              <svg width="48" height="42" viewBox="0 0 48 42" fill="none" aria-hidden="true">
+                <rect x="3" y="4" width="42" height="33" rx="3" stroke="currentColor"/>
+                <path d="M3 13h42m-36-4h2m3 0h2m3 0h2" stroke="currentColor"/>
+              </svg>
+              <p id="screen-status" role="status">尚未连接画面</p>
+            </div>
+            <div id="viewer" aria-label="远程浏览器画面" hidden></div>
+          </div>
+        </section>
+      </div>
+    </main>
+    <dialog id="paste-dialog" aria-labelledby="paste-title">
+      <form id="paste-form" autocomplete="off">
+        <h2 id="paste-title">粘贴文本到远程浏览器</h2>
+        <p id="paste-help" class="muted">把文字粘贴到这里。发送后，在远程浏览器中按 Ctrl+V 或右键选择「粘贴」。</p>
+        <textarea id="paste-text" aria-label="要发送的文本" aria-describedby="paste-help" required maxlength="16000" rows="4" spellcheck="false" autofocus></textarea>
+        <p id="paste-error" role="alert" hidden></p>
+        <div class="actions dialog-actions">
+          <button type="button" id="paste-cancel">取消</button>
+          <button type="submit" class="primary">发送到剪贴板</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

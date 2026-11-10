@@ -39,6 +39,8 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 | `database_url` | `KEYSTONE_DATABASE_URL` | 必须使用 `postgresql+psycopg`；示例连接本机 55432 端口 |
 | `host` / `port` | `KEYSTONE_HOST` / `KEYSTONE_PORT` | `127.0.0.1` / `8000` |
 | `browser_origins` | `KEYSTONE_BROWSER_ORIGINS` | 精确的浏览器来源数组；生产要求 HTTPS |
+| `browser_runtime_url` / `browser_runtime_key` / `browser_runtime_image` | `KEYSTONE_BROWSER_RUNTIME_URL` / `KEYSTONE_BROWSER_RUNTIME_KEY` / `KEYSTONE_BROWSER_RUNTIME_IMAGE` | 可选模块；OpenSandbox 地址、API Key 和固定运行镜像，三者必须同时配置 |
+| `browser_backup_key` | `KEYSTONE_BROWSER_BACKUP_KEY` | 可选；32 字节十六进制备份密钥。设置后启用浏览器空间备份，且 `file_default_storage` 必须是本地 `filesystem` |
 | `log_level` | `KEYSTONE_LOG_LEVEL` | `INFO` |
 | `session_hours` / `pat_max_days` | `KEYSTONE_SESSION_HOURS` / `KEYSTONE_PAT_MAX_DAYS` | 8 小时 / 90 天 |
 | 历史保留与自动清理 | `KEYSTONE_HISTORY_CLEANUP_ENABLED` 等 | 自动删除默认关闭；期限、批量边界与手动预览见[历史清理](deployment.md#历史保留与清理) |
@@ -62,6 +64,8 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 | `initial_admin_password` | `KEYSTONE_INITIAL_ADMIN_PASSWORD` | 可选，仅供空安装首次初始化；设置后即使交互式 `keystone init` 也直接采用、不再提示，已有用户时忽略 |
 
 嵌套环境变量用双下划线 `__` 分隔层级。例如 `KEYSTONE_FILE_STORAGES__LOCAL__ROOT=/data/files` 只覆盖 `local` 源的根目录。源名称以小写字母开头，可包含数字、单下划线和连字符；不要使用连续双下划线，因为该名称无法再通过环境变量层级覆盖。环境变量中的名称使用大写。数组在 TOML 中直接填写；通过环境变量覆盖 `browser_origins` 时使用 JSON 数组，例如 `KEYSTONE_BROWSER_ORIGINS='["https://console.example.com"]'`。
+
+浏览器运行镜像由 [`deploy/browser/runtime`](../../deploy/browser/README.md) 构建。`browser_backup_key` 由部署方提供并保存在 Keystone 配置之外的安全位置；不要从备份文件、数据库或浏览器空间卷中推导它，也不要在轮换时覆盖仍被旧备份引用的密钥。
 
 后端镜像默认监听 `0.0.0.0:8000`，配置在运行时挂载，真实 `keystone.toml` 不进入构建上下文，详见[打包与发布](deployment.md)。
 

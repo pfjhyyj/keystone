@@ -60,3 +60,7 @@ docker compose -p keystone-recovery -f deploy/compose.yaml exec -T postgres \
 ## 3. 多存储源
 
 filesystem/S3 多源必须在同一停写窗口保存所有源的内容及配置身份，不能只备份默认本地目录。保存源键、endpoint/bucket/region/prefix 及对象版本，恢复时使用原位置身份。S3 删除标记和未完成上传可能仍有维护义务；保留相关元数据与桶策略。文件多源配置见[配置说明](configuration.md#4-同时配置本地与-s3)。
+
+## 4. 浏览器空间卷
+
+上述联合备份不会直接导出 Chromium 的 Docker 空间卷。配置 `KEYSTONE_BROWSER_BACKUP_KEY` 后，浏览器通过 Keystone Files 保存最近成功的加密副本。覆盖该空间的联合备份应同时保留 Files 中的该副本、对应数据库引用，以及配置系统或独立密钥库中保存的 `KEYSTONE_BROWSER_BACKUP_KEY`。该密钥不能与备份文件交给同一无权操作者。

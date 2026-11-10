@@ -11,6 +11,7 @@
 ```bash
 docker build -t keystone-backend:local ./backend
 docker build -t keystone-console:local ./frontend/console
+docker build -t keystone-browser-chromium:local ./deploy/browser/runtime
 ```
 
 | 镜像 | Dockerfile | 运行命令 |
@@ -18,8 +19,9 @@ docker build -t keystone-console:local ./frontend/console
 | 后端 API | `backend/Dockerfile` | `keystone-api`（镜像默认命令） |
 | 后端 Worker | 同一个后端镜像 | `keystone-worker` |
 | 控制台 | `frontend/console/Dockerfile` | Nginx（镜像默认命令） |
+| 浏览器运行时 | `deploy/browser/runtime/Dockerfile` | `browser-runtime`（供 OpenSandbox 创建沙箱） |
 
-API 与 Worker 使用同一份代码、锁文件和镜像，分别启动进程。控制台镜像包含编译后的 Vue 静态文件及 `/api` 反向代理；后端镜像只含 API、Worker 与 CLI 代码。每个工程的 `.dockerignore` 仅允许构建所需源码和配置进入上下文，不读取或打包实际 `keystone.toml`、`.env`；构建不执行初始化、不创建模型配置。
+API 与 Worker 使用同一份代码、锁文件和镜像，分别启动进程。控制台镜像包含编译后的 Vue 静态文件及 `/api` 反向代理；后端镜像只含 API、Worker 与 CLI 代码。浏览器运行时镜像只在启用 Browser 模块时需要，必须预先分发到 OpenSandbox 所用的 Docker 宿主，并通过 `browser_runtime_image` 固定版本或摘要。每个工程的 `.dockerignore` 仅允许构建所需源码和配置进入上下文，不读取或打包实际 `keystone.toml`、`.env`；构建不执行初始化、不创建模型配置。
 
 ## 2. 运行配置与初始化
 
