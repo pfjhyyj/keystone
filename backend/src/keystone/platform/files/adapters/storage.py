@@ -16,6 +16,8 @@ from keystone.core.asyncio import blocking as blocking
 from keystone.core.errors import ServiceError
 from keystone.core.storage_config import StorageConfig
 
+LOCAL_WRITE_CHUNK_BYTES = 4 * 1024 * 1024
+
 
 def initialize(root):
     leases.initialize(root)
@@ -114,7 +116,7 @@ class Storage:
             raise leases.unavailable() from None
 
     def _write_local(self, key, data):
-        from keystone.platform.files.adapters.transfers import CHUNK_BYTES, StagedUpload
+        from keystone.platform.files.adapters.transfers import StagedUpload
 
         staged = isinstance(data, StagedUpload)
         existing = data.capacity if staged else None
@@ -130,12 +132,12 @@ class Storage:
                 source = stack.enter_context(
                     nullcontext(data.stream) if data.stream is not None else data.path.open("rb")
                 )
-                chunks = iter(lambda: source.read(CHUNK_BYTES), b"")
+                chunks = iter(lambda: source.read(LOCAL_WRITE_CHUNK_BYTES), b"")
             else:
                 content = memoryview(data)
                 chunks = (
-                    content[offset : offset + CHUNK_BYTES]
-                    for offset in range(0, len(content), CHUNK_BYTES)
+                    content[offset : offset + LOCAL_WRITE_CHUNK_BYTES]
+                    for offset in range(0, len(content), LOCAL_WRITE_CHUNK_BYTES)
                 )
             checksum, size = hashlib.sha256(), 0
             target = stack.enter_context((self.root / key).open("wb"))
