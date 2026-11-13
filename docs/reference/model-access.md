@@ -132,7 +132,7 @@ NewAPI 自定义 api_base 为完整 HTTPS 前缀，拒绝内嵌凭据、查询�
 | 发送后取消事实收尾 | 最多 5 秒 |
 | 余额刷新 | HTTP 10 秒，本进程 2，同渠道会话锁串行 |
 
-ModelDispatchScope 保存 next_send_at、blocked_until、updated_at，站点/Token HMAC 为键。model_send_interval_ms 默认 0、范围 0～60000；冷却默认 5 秒（1～300），上限默认 300（1～3600，且≥默认）。不预领未来槽，不持事务 sleep；异步任务 GET 同样受节奏，CDN 使用取回限制。
+ModelDispatchScope 保存 next_send_at、blocked_until、updated_at，站点/Token HMAC 为键。model_send_interval_ms 默认 0、范围 0～60000；冷却默认 5 秒（1～300），上限默认 300（1～3600，且≥默认）。发送间隔和冷却期间释放全局与凭据级推理许可，等待结束后重新准入并复查授权、固定目标和发送资格。不预领未来槽，不持事务 sleep；异步任务 GET 同样受节奏，CDN 使用取回限制。
 
 余额外部请求不持事务，写回复查原配置；持锁连接失效不换连接提交。响应保存失败可能遗留 running，返回 model_result_unavailable，不重发。
 

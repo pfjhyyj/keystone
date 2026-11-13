@@ -10,7 +10,7 @@ from psycopg import sql
 from keystone.core.asyncio import new_event_loop
 
 ROOT = Path(__file__).parent
-for directory in (ROOT, ROOT / "unit", ROOT / "integration"):
+for directory in (ROOT, ROOT / "unit", ROOT / "integration", ROOT.parents[1] / "examples"):
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
 

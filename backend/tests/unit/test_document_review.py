@@ -1,21 +1,19 @@
 """Business acceptance, real Agent correction, and bounded tool readback."""
 
 from inspect import unwrap
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
+from document_review import workflow
+from document_review.contracts import EXCERPT_CHARACTERS, PREVIEW_CHARACTERS
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse, RetryPromptPart, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
 
 from keystone.core.errors import ServiceError
-from keystone.examples.document_review import workflow
-from keystone.examples.document_review.contracts import (
-    EXCERPT_CHARACTERS,
-    PREVIEW_CHARACTERS,
-)
 
 
 @pytest.fixture(autouse=True)
@@ -256,11 +254,11 @@ def test_contract_import_does_not_load_agent_or_skill_runtime():
         [
             sys.executable,
             "-c",
+            f"import sys; sys.path.insert(0, {str(Path(__file__).parents[3] / 'examples')!r})\n"
             """
-import sys
-from keystone.examples.document_review.contracts import definition
+from document_review.contracts import definition
 assert definition.key == 'document.review'
-assert 'keystone.examples.document_review.workflow' not in sys.modules
+assert 'document_review.workflow' not in sys.modules
 assert 'pydantic_ai_harness' not in sys.modules
 """,
         ],

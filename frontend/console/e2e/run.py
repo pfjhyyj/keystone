@@ -135,7 +135,10 @@ def main():
                         "KEYSTONE_FILE_STORAGES__LOCAL__DRIVER": "filesystem",
                         "KEYSTONE_FILE_STORAGES__LOCAL__ROOT": str(root),
                         "KEYSTONE_BROWSER_ORIGINS": json.dumps(["http://127.0.0.1:5175"]),
-                        "PYTHONPATH": str(console.parents[1] / "backend/tests"),
+                        "PYTHONPATH": os.pathsep.join(
+                            str(console.parents[1] / directory)
+                            for directory in ("backend/tests", "examples")
+                        ),
                         "KEYSTONE_E2E": "1",
                         "KEYSTONE_API_PROXY": f"http://127.0.0.1:{port}",
                     }

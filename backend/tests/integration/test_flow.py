@@ -77,6 +77,7 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
                 [
                     str(Path(__file__).parents[1]),
                     str(Path(__file__).parent),
+                    str(Path(__file__).parents[3] / "examples"),
                     os.getenv("PYTHONPATH"),
                 ],
             )

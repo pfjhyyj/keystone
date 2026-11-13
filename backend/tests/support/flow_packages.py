@@ -1,17 +1,13 @@
 """Explicit test manifests; production composition never imports this module."""
 
+from dataclasses import replace
 from uuid import UUID, uuid4, uuid5
 
-from keystone.platform.flow.schemas.packages import FlowPackage
+from document_review.contracts import PACKAGE
 
 
 def package_for_definitions(definitions):
-    return FlowPackage(
-        key="test-flows",
-        host_api_version=1,
-        definitions=tuple(definitions),
-        execution_modules=("keystone.examples.document_review.workflow",),
-    )
+    return replace(PACKAGE, key="test-flows", definitions=tuple(definitions))
 
 
 def snapshot_for(definition):

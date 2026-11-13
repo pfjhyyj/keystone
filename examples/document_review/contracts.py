@@ -86,10 +86,9 @@ PACKAGE = FlowPackage(
     key="document-tools",
     host_api_version=1,
     definitions=(definition,),
-    execution_modules=("keystone.examples.document_review.workflow",),
+    execution_modules=("document_review.workflow",),
+    execution_packages=("document_review",),
     required_resources=(
-        PackageResource(
-            package="keystone", path="examples/document_review/skills/review-text/SKILL.md"
-        ),
+        PackageResource(package="document_review", path="skills/review-text/SKILL.md"),
     ),
 )

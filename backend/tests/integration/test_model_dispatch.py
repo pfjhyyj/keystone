@@ -3,12 +3,13 @@
 import asyncio
 import time
 from concurrent.futures import CancelledError
+from contextlib import asynccontextmanager
 from itertools import pairwise
 from threading import Event
 
 import httpx2
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from support.flow_packages import install_package
 from test_files_dictionary import client as client
 from test_identity import query, token
@@ -76,6 +77,64 @@ def test_duplicate_channels_share_spacing_and_another_token_remains_independent(
     assert invoke(client, key="other").status_code == 200
     assert len(calls) == 5
     assert len(query(client, lambda session: session.scalars(select(ModelInvocation))).all()) == 5
+
+
+def test_cooling_token_releases_single_global_slot_until_eligible(client, monkeypatch):
+    runtime = client.app.state.runtime
+    runtime.settings.model_scope_concurrency = 1
+    runtime.settings.model_inference_concurrency = 1
+    cooling_entry = entry(client, channel(client))
+    other_entry = entry(
+        client, channel(client, api_key="separate-token", name="other"), key="other"
+    )
+    scope = credential_scope(client)
+    client.portal.call(dispatch(client).cooldown, scope, 30)
+    released = Event()
+    resume = client.portal.call(asyncio.Event)
+    original = runtime.models.coordination.inference
+
+    @asynccontextmanager
+    async def inference(key):
+        async with original(key) as permit:
+            yield permit
+        if key == scope and not released.is_set():
+            released.set()
+            await resume.wait()
+
+    monkeypatch.setattr(runtime.models.coordination, "inference", inference)
+    model = ModelRuntime(internal_service(client, token(client, ["model:invoke"])["token"]))
+
+    async def cooled_call():
+        return await model.invoke(
+            Invoke(model_key="chat", messages=[{"role": "user", "content": "x"}])
+        )
+
+    pending = client.portal.start_task_soon(cooled_call)
+    try:
+        assert released.wait(5)
+        assert invoke(client, key="other").status_code == 200
+        rows = query(client, lambda session: session.scalars(select(ModelInvocation))).all()
+        assert [(str(row.model_entry_id), row.status) for row in rows] == [
+            (other_entry["id"], "succeeded")
+        ]
+        query(
+            client,
+            lambda session: session.execute(
+                update(ModelDispatchScope)
+                .where(ModelDispatchScope.scope == scope)
+                .values(blocked_until=func.clock_timestamp())
+            ),
+        )
+    finally:
+        client.portal.call(resume.set)
+        if not released.is_set():
+            pending.cancel()
+
+    pending.result(timeout=5)
+    rows = query(client, lambda session: session.scalars(select(ModelInvocation))).all()
+    assert sorted((str(row.model_entry_id), row.status) for row in rows) == sorted(
+        [(cooling_entry["id"], "succeeded"), (other_entry["id"], "succeeded")]
+    )
 
 
 def test_429_without_receipt_blocks_api_and_a_new_real_worker(client, monkeypatch, tmp_path):

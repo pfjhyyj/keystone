@@ -138,9 +138,12 @@ def test_output_schema_matches_serialization_and_field_names_everywhere():
 @pytest.mark.parametrize("omit_registration", [False, True])
 def test_worker_imports_register_every_declared_entrypoint(omit_registration):
     # Fresh imports exercise the real public decorator. No DBOS launch, DB or private registry.
+    tests = Path(__file__).parents[1]
+    examples = tests.parents[1] / "examples"
     code = (
         f"OMIT_REGISTRATION = {omit_registration!r}\n"
-        + f"import sys; sys.path.insert(0, {str(Path(__file__).parents[1])!r})\n"
+        + "import sys\n"
+        + f"sys.path[:0] = {[str(tests), str(examples)]!r}\n"
         + """
 import sys
 from support.flow_fixture import install

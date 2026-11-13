@@ -378,13 +378,13 @@ class ModelRuntime:
                     self.clients.coordination.inference(credential_scope)
                 )
 
-            permit = await retry_operation(
-                acquire_permit,
-                retry_if=lambda error: (
-                    isinstance(error, ServiceError) and error.code == "model_capacity_busy"
-                ),
-            )
             while True:
+                permit = await retry_operation(
+                    acquire_permit,
+                    retry_if=lambda error: (
+                        isinstance(error, ServiceError) and error.code == "model_capacity_busy"
+                    ),
+                )
                 async with self.identity.access("model:invoke") as (session, auth):
                     entry = await locked(session, ModelEntry, selected.model_entry_id)
                     channel = await locked(session, Channel, selected.channel_id)
@@ -473,14 +473,14 @@ class ModelRuntime:
                         listen(session.sync_session, "after_commit", committed, once=True)
                         await settle(session.commit())
                 if delay == 0:
-                    break
+                    await permit()
+                    return secret
+                # A delayed claim owns no invocation. Free both shared slots before waiting.
+                await permits.aclose()
                 remaining = send_deadline - asyncio.get_running_loop().time()
                 if delay >= remaining:
                     raise ServiceError(429, "model_dispatch_delayed", "模型共享冷却尚未到期")
                 await asyncio.sleep(min(delay, 1))
-                await permit()
-            await permit()
-            return secret
 
         async def save_receipt():
             if observation.rate_limited:

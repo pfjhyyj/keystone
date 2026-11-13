@@ -109,7 +109,7 @@ class Deployment:
             lines += [f"  {service}:", f"    image: {images['backend']}"]
             if service in {"api", "worker"}:
                 script = (
-                    "import sys; sys.path.insert(0, '/test-support'); "
+                    "import sys; sys.path[:0] = ['/test-support', '/test-examples']; "
                     "from support.model_stub import transport; "
                     "from keystone.platform.model_access.adapters.http import HttpClient; "
                     "HttpClient.transport = lambda self, provider: transport(provider); "
@@ -128,6 +128,10 @@ class Deployment:
                     "      - type: bind",
                     "        source: " + json.dumps(str(ROOT / "backend/tests/support")),
                     "        target: /test-support/support",
+                    "        read_only: true",
+                    "      - type: bind",
+                    "        source: " + json.dumps(str(ROOT / "examples/document_review")),
+                    "        target: /test-examples/document_review",
                     "        read_only: true",
                 ]
                 if service == "worker":

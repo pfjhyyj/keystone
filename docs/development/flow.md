@@ -1,6 +1,6 @@
 # 编写业务 Flow
 
-本文使用 examples/document_review 展示实际接入，契约与限制见 [Flow](../domains/flow.md)，后台设施见[任务执行](../execution.md)。模型和文件操作通过公开 Context/Service，不拼渠道协议。示例只展示定义与执行代码，业务自己提供授权和受理入口。
+本文使用[文本文件审查示例](../../examples/document_review)展示实际接入，契约与限制见 [Flow](../domains/flow.md)，后台设施见[任务执行](../execution.md)。模型和文件操作通过公开 Context/Service，不拼渠道协议。示例只展示定义与执行代码，业务自己提供授权和受理入口。
 
 ## 业务执行接入
 
@@ -27,15 +27,15 @@ document_review/
 └── skills/review-text/SKILL.md
 ```
 
-默认目录为空，在 composition.py 显式加入示例：
+示例源码在仓库根目录的 `examples/`，生产后端默认不打包。运行示例时，把该目录加入 API 和 Worker 的 Python 导入路径（例如将其绝对路径加入 `PYTHONPATH`），并在 `composition.py` 显式装配：
 
 ```python
-from keystone.examples.document_review.contracts import PACKAGE
+from document_review.contracts import PACKAGE
 
 FLOW_PACKAGES = (PACKAGE,)
 ```
 
-API 只加载轻量契约，Worker 按 execution_modules 导入执行；外部包/资源通过 FlowPackage 声明。业务模块按 schemas/services/models/controllers/workflows 分层，catalog.py 仅声明权限和审计。
+API 只加载轻量契约，Worker 按 execution_modules 导入执行。示例通过 FlowPackage 声明外部包及所需技能文件；显式装配后，示例源码和资源纳入执行版本。业务模块按 schemas/services/models/controllers/workflows 分层，catalog.py 仅声明权限和审计。
 
 上传可读 UTF-8 文本、配置可调用模型后，现有示例的发起结构为：
 
