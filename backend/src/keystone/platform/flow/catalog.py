@@ -6,6 +6,7 @@ CATALOG = Catalog(
     permissions={
         "flow:start": "发起流程",
         "flow:read": "读取本人流程",
+        "flow:diagnose": "只读排查全部流程及阶段详情",
         "flow:cancel": "取消流程",
         "flow:manage": "扩大流程管理范围",
     },

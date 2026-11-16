@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Independent detail sections and request generation, narrowed to one Run.
 import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
-import { can, identity } from '../../../stores/session'
+import { can, identity, sessionVersion } from '../../../stores/session'
 import { ApiError, request } from '../../../api/client'
 import { flowApi, flowStates, ongoing, type FlowRun, type Steps } from '../../../api/flows'
 import type { Costs } from '../../../api/models'
@@ -9,6 +9,7 @@ import { useAction } from '../../../composables/useAction'
 import AppDialog from '../../../components/AppDialog.vue'
 import CostSummary from '../../../components/models/CostSummary.vue'
 import FlowRunDiagnostics from './FlowRunDiagnostics.vue'
+import FlowStepDetails from './FlowStepDetails.vue'
 const props = defineProps<{ id: string }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 const row = ref<FlowRun | null>(null),
@@ -49,18 +50,20 @@ function unavailable(message: string) {
 let generation = 0,
   alive = true,
   timer: ReturnType<typeof setInterval> | undefined
+const flowReadable = () => can('flow:read') || can('flow:diagnose')
 const cancelAllowed = computed(
   () =>
     row.value &&
     ongoing(row.value) &&
     !row.value.cancel_requested_at &&
+    can('flow:read') &&
     can('flow:cancel') &&
     (row.value.actor_id === identity.value?.user.id || can('flow:manage')),
 )
 async function refresh() {
-  if (!alive || loading.value || busy.value || !can('flow:read')) return
+  if (!alive || loading.value || busy.value || !flowReadable()) return
   const token = ++generation,
-    current = () => alive && token === generation && can('flow:read')
+    current = () => alive && token === generation && flowReadable()
   loading.value = true
   try {
     const value = await flowApi.detail(props.id)
@@ -84,7 +87,7 @@ async function refresh() {
         }
       })(),
       (async () => {
-        if (!can('model_invocation:read')) {
+        if (!can('flow:read') || !can('model_invocation:read')) {
           costs.value = null
           costError.value = '无查看费用权限'
           return
@@ -127,12 +130,18 @@ async function cancel() {
     emit('changed')
   })
 }
-watch(
-  () => can('flow:read'),
-  (allowed) => {
-    if (!allowed) unavailable('当前权限不可查看此运行。')
-  },
-)
+watch(flowReadable, (allowed) => {
+  if (!allowed) unavailable('当前权限不可查看此运行。')
+})
+watch(sessionVersion, () => {
+  generation++
+  row.value = null
+  steps.value = null
+  costs.value = null
+  detailTab.value = 'execution'
+  loading.value = false
+  if (flowReadable()) void refresh()
+})
 onMounted(() => {
   void refresh()
   timer = setInterval(() => {
@@ -235,7 +244,7 @@ onScopeDispose(() => {
       <el-alert v-if="row.error_code" role="alert" type="error" show-icon :closable="false">
         执行错误：{{ row.error_code }}。重新执行须使用新的运行请求。
       </el-alert>
-      <el-tabs v-model="detailTab"
+      <el-tabs v-if="can('flow:read')" v-model="detailTab"
         ><el-tab-pane label="执行与结果" name="execution" /><el-tab-pane
           label="关联记录"
           name="diagnostics" /><el-tab-pane label="调用费用" name="costs"
@@ -276,12 +285,13 @@ onScopeDispose(() => {
               type="primary"
               hollow
             >
-              {{ step.name }}
+              <FlowStepDetails v-if="can('flow:diagnose')" :run-id="id" :step="step" />
+              <template v-else>{{ step.name }}</template>
             </el-timeline-item>
           </el-timeline></template
         >
       </section>
-      <section v-show="detailTab === 'diagnostics'">
+      <section v-if="can('flow:read')" v-show="detailTab === 'diagnostics'">
         <FlowRunDiagnostics
           :id="id"
           :refresh="diagnosticRefresh"
@@ -289,7 +299,7 @@ onScopeDispose(() => {
           @unavailable="unavailable"
         />
       </section>
-      <section v-show="detailTab === 'costs'">
+      <section v-if="can('flow:read')" v-show="detailTab === 'costs'">
         <h3>模型调用预估费用 · 最近 30 天</h3>
         <el-alert v-if="costError" role="alert" type="error" show-icon :closable="false">{{
           costError

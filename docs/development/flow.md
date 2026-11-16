@@ -149,6 +149,8 @@ inspect_document 返回摘要，read_document 仅接受本次输入，按 Unicod
 
 ## 运行诊断
 
-控制台独立加载运行步骤、关联模型调用、文件用途及费用。失去运行或资源权限后清空对应详情，迟到结果不覆盖当前代次；接口与授权见 Flow 领域文档。
+控制台独立加载运行步骤、关联模型调用、文件用途及费用。失去运行或资源权限后清空对应详情，迟到结果不覆盖当前代次。接口与授权见 [Flow 领域文档](../domains/flow.md#阶段详情)。
+
+在 `@DBOS.step` 下使用 `@diagnose_step(名称, project=...)` 启用阶段记录。用 `diagnostic_input` 声明可以公开给诊断人员的 JSON 字段，用 `project` 选择相同范围的输出。用 `diagnostic_attachment` 开放已归属本次运行的文件。错误默认使用公开错误码和固定说明，只有确认消息安全的业务错误码才可以加入 `safe_codes`。诊断记录失败时保留原执行结果，工作流应把诊断文件纳入已有的运行保留策略。
 
 FlowDefinition.queue 默认 keystone-flows；额外队列在 composition.FLOW_QUEUES 中用现有 QueueDefinition 声明。队列名固定到 Run 快照，API 与 Worker 使用同一声明。timeout_seconds 默认 3600，范围 1～86400，不接受 None。

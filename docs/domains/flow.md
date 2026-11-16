@@ -287,11 +287,13 @@ sequenceDiagram
 
 | 当前 API（/api/v1） | 规则 |
 |---|---|
-| GET /flow-runs、/{id} | flow:read，本人；flow:manage 扩大范围 |
+| GET /flow-runs、/{id} | flow:read 读取本人，flow:manage 扩大范围，flow:diagnose 可独立读取全部运行 |
 | POST /flow-runs/{id}/cancel | flow:cancel＋本人或 manage |
 | GET /flow-runs/{id}/steps | Run 可见；最多 32 关联流程/500 步骤，只含名称/位置/时间 |
 | GET /flow-runs/{id}/costs | Run＋模型记录权限；当前费用窗口最近 30 天 |
 | GET /flow-runs/{id}/diagnostics | section=all/models/files，默认 50、最高 100，offset 分页 |
+| GET /flow-runs/{id}/step-attempts | flow:diagnose，按 workflow_id 和 step_id 读取最多 50 次已记录的尝试 |
+| GET /flow-runs/{id}/step-attachment | flow:diagnose，按步骤、尝试和附件位置读取显式开放的本次运行文件 |
 
 诊断在短身份事务组合公开 Service，前后复查 Run；模型调用先按独立读取范围过滤，文件仅列当前 Run 的引用，再分页。模型调用不可见时返回 available=false。未请求的板块返回 null，列表通过 truncated/next_offset 分页。
 
@@ -301,3 +303,9 @@ sequenceDiagram
 不返回检查点、私有 result/cost_context、供应商任务/下载地址、原文异常、秘密或本地路径。控制台各板块独立加载，失权清相应数据，迟到结果丢弃；仅活动 Run 自动轮询，终态缺步骤/费用可手动刷新。
 
 人工决定和采用版本由业务保存，批准与后续独立 Flow 可在同事务受理，不提供通用人工等待/唤醒。平台不提供通用发起入口；业务 Service 在已授权的事务中调用 start_in_transaction，业务页面自行查询输入和模型选项。
+
+### 阶段详情
+
+控制台在「Flow 运行 → 运行详情 → 步骤记录」按需展开阶段详情。流程显式提供可诊断的输入、输出或产物引用，以及安全错误码和可读说明。每条详情关联 Run、工作流步骤和尝试序号，DBOS 重试分别记录，流程主动发起的格式纠正作为独立步骤显示。记录不超过 64 KiB，保留为 Run 中间产物。单个附件预览上限为 4 MiB，仅提供纯文本、JSON、JPEG 和 PNG，读取前后复查授权及归属。`flow:diagnose` 只授予运行与阶段的读取能力，取消、模型用量和费用仍走既有授权。
+
+步骤列表以执行历史为准。阶段详情仅来自已登记的诊断记录，历史运行或已清理的阶段可能显示「未记录」。API 与 Worker 的进程日志继续走部署环境的日志查询渠道。

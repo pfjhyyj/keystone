@@ -48,6 +48,23 @@ async def registered_file_ids_many(session, owner, slots):
     return {key: tuple(values) for key, values in result.items()}
 
 
+async def diagnostic_attempt_files(session, owner, slot_prefix, limit):
+    """Bounded lookup for a code-owned diagnostic slot prefix."""
+    return list(
+        (
+            await session.execute(
+                select(FileReference.slot, FileReference.file_id)
+                .where(
+                    FileReference.owner == owner,
+                    FileReference.slot.startswith(slot_prefix, autoescape=True),
+                )
+                .order_by(FileReference.slot, FileReference.file_id)
+                .limit(limit)
+            )
+        ).tuples()
+    )
+
+
 async def registered_file_ids(session, owner, slot):
     """Trusted, exact reference lookup. Two IDs are enough to detect an ambiguous slot.
 

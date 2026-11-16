@@ -15,7 +15,7 @@ export const navigation = [
     permissions: ['model:manage'],
   },
   { path: '/model-usage', label: '用量与费用', permissions: ['model_invocation:read'] },
-  { path: '/flows', label: 'Flow 运行', permissions: ['flow:read'] },
+  { path: '/flows', label: 'Flow 运行', permissions: ['flow:read', 'flow:diagnose'] },
 ]
 export function canNavigate(item: (typeof navigation)[number]) {
   if (item.path === '/audit') return canReadAudit()

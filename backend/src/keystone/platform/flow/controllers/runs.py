@@ -1,11 +1,13 @@
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request, Response
 
 from keystone.core.http import Page
 from keystone.platform.flow.schemas.diagnostics import Diagnostics, DiagnosticSection
+from keystone.platform.flow.schemas.step_diagnostics import MAX_ATTACHMENTS, StepAttempts
 from keystone.platform.flow.services.runs import FlowService
+from keystone.platform.flow.services.step_diagnostics import StepDiagnosticService
 from keystone.platform.identity.controllers.dependencies import access_context
 
 router = APIRouter(prefix="/api/v1", tags=["flow"])
@@ -37,6 +39,46 @@ async def cancel(identifier: UUID, request: Request):
 @router.get("/flow-runs/{identifier}/steps")
 async def steps(identifier: UUID, request: Request):
     return await _service(request).steps(identifier, request.app.state.runtime.flow_engine)
+
+
+def _step_service(request: Request):
+    identity = access_context(request)
+    return StepDiagnosticService(identity, request.app.state.runtime.managed_files(identity))
+
+
+WorkflowId = Annotated[str, Query(min_length=1, max_length=1024)]
+StepId = Annotated[int, Query(ge=0, le=2**31 - 1)]
+
+
+@router.get("/flow-runs/{identifier}/step-attempts", response_model=StepAttempts)
+async def step_attempts(
+    identifier: UUID, request: Request, response: Response, workflow_id: WorkflowId, step_id: StepId
+):
+    response.headers["Cache-Control"] = "no-store"
+    return await _step_service(request).attempts(identifier, workflow_id, step_id)
+
+
+@router.get("/flow-runs/{identifier}/step-attachment")
+async def step_attachment(
+    identifier: UUID,
+    request: Request,
+    workflow_id: WorkflowId,
+    step_id: StepId,
+    attempt: Annotated[int, Query(ge=1, le=2**31 - 1)],
+    index: Annotated[int, Query(ge=0, lt=MAX_ATTACHMENTS)],
+):
+    content, mime = await _step_service(request).attachment(
+        identifier, workflow_id, step_id, attempt, index
+    )
+    return Response(
+        content,
+        media_type=mime,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Disposition": "attachment",
+        },
+    )
 
 
 @router.get("/flow-runs/{identifier}/costs")

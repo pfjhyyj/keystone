@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onScopeDispose, ref } from 'vue'
-import { can } from '../../stores/session'
+import { onMounted, onScopeDispose, ref, watch } from 'vue'
+import { can, sessionVersion } from '../../stores/session'
 import { flowApi, flowStates, ongoing } from '../../api/flows'
 import { usePagedList } from '../../composables/usePagedList'
 import FlowRunDialog from './components/FlowRunDialog.vue'
@@ -8,10 +8,15 @@ import ListPager from '../../components/ListPager.vue'
 const status = ref(''),
   applied = ref(''),
   selected = ref('')
+const flowReadable = () => can('flow:read') || can('flow:diagnose')
 const { rows, page, loading, error, refresh, reload, search } = usePagedList(
-  'flow:read',
+  flowReadable,
   (offset) => flowApi.runs(offset, applied.value),
 )
+watch(sessionVersion, () => {
+  selected.value = ''
+  void reload()
+})
 let timer: ReturnType<typeof setInterval> | undefined
 function filter(value = status.value) {
   status.value = value
@@ -30,8 +35,11 @@ onScopeDispose(() => clearInterval(timer))
     <div class="heading">
       <h1>Flow 运行</h1>
     </div>
-    <section v-if="can('flow:read')" aria-label="运行记录">
-      <p>{{ can('flow:manage') ? '可见全部运行' : '仅显示本人运行' }} · 未完成的运行每 3 秒刷新</p>
+    <section v-if="flowReadable()" aria-label="运行记录">
+      <p>
+        {{ can('flow:manage') || can('flow:diagnose') ? '可见全部运行' : '仅显示本人运行' }} ·
+        未完成的运行每 3 秒刷新
+      </p>
       <form class="module-form" @submit.prevent="filter()">
         <div class="form-field">
           <span class="form-label">运行状态</span

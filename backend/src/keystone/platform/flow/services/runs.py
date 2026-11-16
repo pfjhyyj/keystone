@@ -21,7 +21,9 @@ from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access.services.entries import resolve_bindings_in_transaction
 
 
-def scope(auth):
+def scope(auth, *, diagnose=False):
+    if diagnose and "flow:diagnose" in auth.permissions:
+        return []
     auth.require("flow:read")
     return [] if "flow:manage" in auth.permissions else [FlowRun.actor_id == auth.user.id]
 
@@ -133,8 +135,8 @@ class FlowService:
         return view(run)
 
     async def listing(self, offset, limit, status=None):
-        async with self.identity.access("flow:read") as (session, auth):
-            filters = scope(auth) + ([FlowRun.status == status] if status else [])
+        async with self.identity.access() as (session, auth):
+            filters = scope(auth, diagnose=True) + ([FlowRun.status == status] if status else [])
             rows = await session.scalars(
                 select(FlowRun)
                 .where(*filters)
@@ -145,8 +147,8 @@ class FlowService:
             return [view(row) for row in rows]
 
     async def detail(self, identifier):
-        async with self.identity.access("flow:read") as (session, auth):
-            return await self.get_in_transaction(session, auth, identifier)
+        async with self.identity.access() as (session, auth):
+            return await self.get_in_transaction(session, auth, identifier, diagnose=True)
 
     async def statuses_in_transaction(self, session, identifiers):
         """Status only for a bounded set of Run IDs authorized by the owning caller."""
@@ -156,12 +158,12 @@ class FlowService:
         rows = await session.execute(select(FlowRun.id, FlowRun.status).where(FlowRun.id.in_(ids)))
         return dict(rows.all())
 
-    async def get_in_transaction(self, session, auth, identifier):
+    async def get_in_transaction(self, session, auth, identifier, *, diagnose=False):
         """Current Run view under the existing read/actor scope, without another transaction."""
-        return view(await self.visible(session, auth, identifier))
+        return view(await self.visible(session, auth, identifier, diagnose=diagnose))
 
-    async def visible(self, session, auth, identifier, *, lock=False):
-        stmt = select(FlowRun).where(FlowRun.id == identifier, *scope(auth))
+    async def visible(self, session, auth, identifier, *, lock=False, diagnose=False):
+        stmt = select(FlowRun).where(FlowRun.id == identifier, *scope(auth, diagnose=diagnose))
         run = await session.scalar(
             (stmt.with_for_update() if lock else stmt).execution_options(populate_existing=True)
         )
