@@ -33,6 +33,32 @@ it('restores registered business detail routes without a menu entry', async () =
   expect(loginDestination('/loop', router)).toBe('/')
 })
 
+it('checks session renewal on recent activity while throttling background polling', async () => {
+  clearSession()
+  authorize([])
+  const checks: (string | null)[] = []
+  fakeApi((_path, init) => {
+    checks.push(new Headers(init.headers).get('X-Keystone-Session-Active'))
+    return {}
+  })
+  let now = Date.now() + 120_000
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+  try {
+    await request('/flow-runs')
+    await request('/flow-runs')
+    window.dispatchEvent(new Event('pointerdown'))
+    await request('/flow-runs')
+    await request('/flow-runs')
+    await request('/auth/logout', 'POST')
+    now += 5 * 60_000
+    await request('/auth/me')
+    expect(checks).toEqual(['0', null, '1', null, null, '0'])
+  } finally {
+    clock.mockRestore()
+    clearSession()
+  }
+})
+
 it('rejects late responses after logout', async () => {
   authorize(['user:read'])
   const late = deferred<unknown>()

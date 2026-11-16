@@ -31,7 +31,10 @@ from keystone.platform.flow.schemas.definitions import FlowDefinition
 from keystone.platform.flow.services.runs import FlowService
 from keystone.platform.identity.adapters.security import Passwords
 from keystone.platform.identity.controllers import router as identity_router
-from keystone.platform.identity.controllers.dependencies import access_context
+from keystone.platform.identity.controllers.dependencies import (
+    BrowserSessionRenewal,
+    access_context,
+)
 from keystone.platform.identity.services.login_limits import LoginLimiter
 from keystone.platform.model_access.adapters.clients import ModelClients
 from keystone.platform.model_access.controllers import router as models_router
@@ -200,6 +203,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await runtime.close()
 
     app = FastAPI(title="Keystone", version=__version__, lifespan=lifespan)
+    app.add_middleware(BrowserSessionRenewal, has_active_work=FlowService.has_running_work)
     install_errors(app)
 
     @app.get("/api/v1/health", tags=["health"])

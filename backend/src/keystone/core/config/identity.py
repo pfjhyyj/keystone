@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, SecretStr, field_validator
 
 class IdentitySettings(BaseModel):
     initial_admin_password: SecretStr | None = Field(default=None, repr=False)
-    session_hours: int = Field(default=8, ge=1, le=168)
+    session_hours: int = Field(default=72, ge=1, le=168)
     pat_max_days: int = Field(default=90, ge=1, le=365)
     browser_origins: list[str] = [
         "http://127.0.0.1:5173",

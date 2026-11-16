@@ -85,10 +85,11 @@ export const flowApi = {
         attempt: String(attempt),
         index: String(index),
       })
-      const response = await fetch(`/api/v1/flow-runs/${id}/step-attachment?${query}`, {
+      const path = `/flow-runs/${id}/step-attachment?${query}`
+      const response = await fetch(`/api/v1${path}`, {
         credentials: 'same-origin',
         cache: 'no-store',
-        headers: headers(),
+        headers: headers(path),
         signal: work.signal,
       })
       if (!response.ok)

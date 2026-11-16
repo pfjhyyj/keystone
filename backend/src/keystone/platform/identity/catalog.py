@@ -17,6 +17,7 @@ CATALOG = Catalog(
     },
     audit_actions={
         "identity.login": {"reason"},
+        "identity.session.renew": set(),
         "identity.logout": {"user_id"},
         "identity.password.change": {"sessions_revoked"},
         "identity.user.create": {"display_name", "username"},

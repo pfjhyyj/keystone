@@ -4,7 +4,7 @@ from collections.abc import Callable
 from uuid import uuid4
 
 from pydantic import ValidationError
-from sqlalchemy import select, text
+from sqlalchemy import exists, select, text
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
@@ -43,6 +43,18 @@ class FlowService:
         self.execution_version = execution_version
         self.package_owners = dict(package_owners or {})
         self.queues = frozenset(queues)
+
+    @staticmethod
+    async def has_running_work(session, actor_id):
+        return await session.scalar(
+            select(
+                exists().where(
+                    FlowRun.actor_id == actor_id,
+                    FlowRun.status == "running",
+                    FlowRun.cancel_requested_at.is_(None),
+                )
+            )
+        )
 
     async def start_in_transaction(self, session, auth, data):
         """Trusted caller holds AccessContext.access() and commits business facts together.

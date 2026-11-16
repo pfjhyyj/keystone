@@ -39,14 +39,16 @@ export function setCsrf(value: string | null) {
 }
 export function invalidateRequests() {
   epoch++
+  nextSessionCheck = 0
   controllers.forEach((controller) => controller.abort())
 }
 export function observeErrors(observer: typeof errorObserver) {
   errorObserver = observer
 }
-export const headers = () => ({
+export const headers = (path: string) => ({
   'X-Keystone-Request': '1',
   ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+  ...sessionActivityHeaders(path),
 })
 export function failure(status: number, data: unknown) {
   const body = (data && typeof data === 'object' ? data : {}) as {
@@ -98,6 +100,34 @@ async function check(response: Response, work: ReturnType<typeof sessionWork>, o
     work.fail(failure(response.status, data), observe)
   }
 }
+let lastInteraction = -Infinity
+let nextSessionCheck = 0
+let lastSessionCheckWasActive = false
+for (const event of ['pointerdown', 'keydown', 'wheel']) {
+  globalThis.window?.addEventListener(event, markSessionActive, {
+    capture: true,
+    passive: true,
+  })
+}
+
+function markSessionActive() {
+  lastInteraction = Date.now()
+}
+
+function sessionActivityHeaders(path: string): Record<string, string> {
+  const now = Date.now()
+  const active = now - lastInteraction < 60_000
+  if (
+    !csrf ||
+    (now < nextSessionCheck && (lastSessionCheckWasActive || !active)) ||
+    (path.startsWith('/auth/') && path !== '/auth/me')
+  )
+    return {}
+  nextSessionCheck = now + 5 * 60 * 1000
+  lastSessionCheckWasActive = active
+  return { 'X-Keystone-Session-Active': active ? '1' : '0' }
+}
+
 export async function request<T>(
   path: string,
   method = 'GET',
@@ -114,7 +144,7 @@ export async function request<T>(
       cache: 'no-store',
       signal: work.signal,
       headers: {
-        ...headers(),
+        ...headers(path),
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),

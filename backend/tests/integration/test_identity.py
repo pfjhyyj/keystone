@@ -16,7 +16,7 @@ from keystone.core.database import Database
 from keystone.core.migrations import migration_config
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
-from keystone.platform.identity.adapters.security import Passwords
+from keystone.platform.identity.adapters.security import Passwords, digest
 from keystone.platform.identity.models import LoginSession, PersonalAccessToken, User
 from keystone.platform.identity.schemas import UserCreate
 from keystone.platform.identity.services.initialize import initialize_admin
@@ -321,6 +321,85 @@ def test_login_csrf_cookie_and_forced_password_change(client):
     # A database ID never substitutes for a secret, and bearer never falls back to Cookie.
     assert client.get("/api/v1/auth/me", headers=bearer(admin["id"])).status_code == 401
     assert session_secret not in client.get("/api/v1/auth/me").text
+
+
+def test_active_cookie_session_renews_and_expired_sessions_stay_expired(client):
+    from uuid import uuid4
+
+    from keystone.platform.flow.models import FlowRun
+
+    login(client)
+    path = "/api/v1/users"
+    active = {"X-Keystone-Session-Active": "1"}
+    idle = {"X-Keystone-Session-Active": "0"}
+    secret = client.cookies.get("keystone_session")
+    csrf = client.headers["X-CSRF-Token"]
+    credential = LoginSession.token_digest == digest(secret)
+
+    async def expiry(session):
+        return await session.scalar(select(LoginSession.expires_at).where(credential))
+
+    async def set_expiry(session, value):
+        await session.execute(update(LoginSession).where(credential).values(expires_at=value))
+
+    async def start_work(session):
+        actor_id = await session.scalar(select(LoginSession.user_id).where(credential))
+        session.add(
+            FlowRun(
+                actor_id=actor_id,
+                request_key=uuid4(),
+                definition_key="session-test",
+                definition_snapshot={},
+                execution_version="1" * 64,
+                request_digest="2" * 64,
+                status="running",
+                input={},
+            )
+        )
+
+    assert timedelta(days=2, hours=23) < query(client, expiry) - utcnow() <= timedelta(days=3)
+    personal = token(client, ["user:read"])
+    soon = utcnow() + timedelta(minutes=5)
+    query(client, lambda session: set_expiry(session, soon))
+    for headers in (
+        idle,
+        {**active, "X-CSRF-Token": "wrong"},
+        {**active, **bearer(personal["token"])},
+    ):
+        result = client.get(path, headers=headers)
+        assert result.status_code == 200
+        assert "set-cookie" not in result.headers
+        assert query(client, expiry) == soon
+    renewed = client.get(path, headers=active)
+    assert renewed.status_code == 200
+    max_age = int(renewed.headers["set-cookie"].split("Max-Age=", 1)[1].split(";", 1)[0])
+    assert 259190 <= max_age <= 259200
+    assert client.cookies.get("keystone_session") == secret
+    assert client.get("/api/v1/auth/me").json()["csrf_token"] == csrf
+    extended = query(client, expiry)
+    assert extended > soon + timedelta(days=2)
+    assert client.get(path, headers=active).status_code == 200
+    assert query(client, expiry) == extended
+
+    query(client, lambda session: set_expiry(session, soon))
+    query(client, start_work)
+    assert "set-cookie" in client.get(path, headers=idle).headers
+    assert query(client, expiry) >= extended
+
+    expired = utcnow() - timedelta(seconds=1)
+    query(client, lambda session: set_expiry(session, expired))
+    denied = client.get(path, headers=active)
+    assert denied.status_code == 401
+    assert "set-cookie" not in denied.headers
+    assert query(client, expiry) == expired
+
+    query(client, lambda session: set_expiry(session, soon))
+    assert client.post("/api/v1/auth/logout", headers=active).status_code == 204
+    client.cookies.set("keystone_session", secret)
+    denied = client.get(path, headers=active)
+    assert denied.status_code == 401
+    assert "set-cookie" not in denied.headers
+    assert query(client, expiry) == soon
 
 
 def test_pat_scopes_revocation_and_disable_never_revive_credentials(client):

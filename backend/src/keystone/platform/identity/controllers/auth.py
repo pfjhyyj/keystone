@@ -6,7 +6,7 @@ from keystone.platform.identity.controllers.dependencies import (
     access_context,
     browser_origin,
     clear_cookie,
-    cookie_name,
+    set_session_cookie,
 )
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.identity.services.auth import AuthService
@@ -27,15 +27,7 @@ async def login(data: schemas.Login, request: Request, response: Response):
         request.app.state.passwords,
     )
     secret, user = await svc.login(data, limiter=request.app.state.login_limiter)
-    response.set_cookie(
-        cookie_name(runtime.settings),
-        secret,
-        path="/",
-        httponly=True,
-        secure=runtime.settings.env == "production",
-        samesite="lax",
-        max_age=runtime.settings.session_hours * 3600,
-    )
+    set_session_cookie(response, runtime.settings, secret, runtime.settings.session_hours * 3600)
     return {"user": user, "csrf_token": csrf_token(secret)}
 
 

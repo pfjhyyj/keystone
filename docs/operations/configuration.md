@@ -42,7 +42,7 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 | `browser_runtime_url` / `browser_runtime_key` / `browser_runtime_image` | `KEYSTONE_BROWSER_RUNTIME_URL` / `KEYSTONE_BROWSER_RUNTIME_KEY` / `KEYSTONE_BROWSER_RUNTIME_IMAGE` | 可选模块；OpenSandbox 地址、API Key 和固定运行镜像，三者必须同时配置 |
 | `browser_backup_key` | `KEYSTONE_BROWSER_BACKUP_KEY` | 可选；32 字节十六进制备份密钥。设置后启用浏览器空间备份，且 `file_default_storage` 必须是本地 `filesystem` |
 | `log_level` | `KEYSTONE_LOG_LEVEL` | `INFO` |
-| `session_hours` / `pat_max_days` | `KEYSTONE_SESSION_HOURS` / `KEYSTONE_PAT_MAX_DAYS` | 8 小时 / 90 天 |
+| `session_hours` / `pat_max_days` | `KEYSTONE_SESSION_HOURS` / `KEYSTONE_PAT_MAX_DAYS` | 72 小时 / 90 天 |
 | 历史保留与自动清理 | `KEYSTONE_HISTORY_CLEANUP_ENABLED` 等 | 自动删除默认关闭；期限、批量边界与手动预览见[历史清理](deployment.md#历史保留与清理) |
 | `[file_storages.<源名>]` | `KEYSTONE_FILE_STORAGES__<源名>__<字段>` | 逐项配置内容源，见第 4 节 |
 | `file_coordination_root` | `KEYSTONE_FILE_COORDINATION_ROOT` | 本地共享协调目录，示例为 `../.data/files` |
