@@ -363,7 +363,7 @@ Cookie 使用 HttpOnly、SameSite=Lax、Path=/；生产使用 Secure 和 __Host-
 
 单 API 进程登录限流：60 秒内每用户名 5 次、全局 60 次，最多 4096 个摘要键，重启清空。Nginx 另按来源 IP 每分钟 10 次、burst 5；API 不信任任意 X-Forwarded-For。多 API/代理部署须另确认共享限流与可信代理。
 
-AccessContext.access() 默认使用 PostgreSQL 事务级共享身份锁；身份、角色、授权或凭据变更传 identity_write=True，取同键排他锁。获取连接及身份锁总等待最多 3 秒；取消后先完成连接清理再返回，不覆盖后续对象查询超时。密码计算和外部 I/O 不持该写事务。
+AccessContext.access() 默认使用 PostgreSQL 事务级共享身份锁；身份、角色、授权或凭据变更传 identity_write=True，取同键排他锁。新建连接受 `database_connect_timeout_seconds` 约束，取得连接后等待身份锁最多 3 秒；取消后先完成连接清理再返回，不覆盖后续对象查询超时。密码计算和外部 I/O 不持该写事务。
 
 ### 7.1 当前 API
 

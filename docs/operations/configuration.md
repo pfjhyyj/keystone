@@ -37,6 +37,7 @@ TOML 字段使用小写；对应环境变量加 `KEYSTONE_` 前缀并使用大�
 |---|---|---|
 | `env` | `KEYSTONE_ENV` | `development`，可选 `test`、`production` |
 | `database_url` | `KEYSTONE_DATABASE_URL` | 必须使用 `postgresql+psycopg`；示例连接本机 55432 端口 |
+| `database_connect_timeout_seconds` | `KEYSTONE_DATABASE_CONNECT_TIMEOUT_SECONDS` | 默认 10，范围 1–60；业务连接池新建连接的等待上限，超时在事务开始前返回 `database_connection_busy`。远端数据库偶发丢包时建连可能超过数秒 |
 | `host` / `port` | `KEYSTONE_HOST` / `KEYSTONE_PORT` | `127.0.0.1` / `8000` |
 | `browser_origins` | `KEYSTONE_BROWSER_ORIGINS` | 精确的浏览器来源数组；生产要求 HTTPS |
 | `browser_runtime_url` / `browser_runtime_key` / `browser_runtime_image` | `KEYSTONE_BROWSER_RUNTIME_URL` / `KEYSTONE_BROWSER_RUNTIME_KEY` / `KEYSTONE_BROWSER_RUNTIME_IMAGE` | 可选模块；OpenSandbox 地址、API Key 和固定运行镜像，三者必须同时配置 |

@@ -29,9 +29,11 @@ class Database:
             create_async_engine(
                 settings.database_url.get_secret_value(),
                 pool_pre_ping=True,
-                pool_size=5,
+                # Keep normal concurrency on persistent connections; remote databases
+                # can take seconds to open a new one when a packet is lost.
+                pool_size=10,
                 max_overflow=5,
-                connect_args={"connect_timeout": 3},
+                connect_args={"connect_timeout": settings.database_connect_timeout_seconds},
                 hide_parameters=True,
             )
             if settings.database_url

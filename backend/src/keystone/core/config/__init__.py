@@ -39,6 +39,7 @@ class Settings(
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     database_url: SecretStr | None = None
+    database_connect_timeout_seconds: int = Field(default=10, ge=1, le=60)
 
     @classmethod
     def settings_customise_sources(
