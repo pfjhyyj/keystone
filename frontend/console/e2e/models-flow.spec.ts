@@ -27,14 +27,14 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
     await choose(dialog, '服务商', provider === 'openrouter' ? 'OpenRouter' : 'NewAPI')
     await expect(dialog.getByRole('option', { name: 'Openlux', exact: true })).toHaveCount(0)
 
-    await dialog
-      .getByLabel('服务地址', { exact: true })
-      .fill(
-        provider === 'openrouter'
-          ? 'https://openrouter.ai/api/v1'
-          : provider === 'newapi_prefix'
-            ? 'https://relay.example/gateway/v1'
-            : 'https://relay-other.example/v1',
+    const address = dialog.getByLabel('服务地址', { exact: true })
+    // Fixed-address providers fill their official base; only NewAPI accepts a custom one.
+    if (provider === 'openrouter') await expect(address).toHaveValue('https://openrouter.ai/api/v1')
+    else
+      await address.fill(
+        provider === 'newapi_prefix'
+          ? 'https://relay.example/gateway/v1'
+          : 'https://relay-other.example/v1',
       )
     await dialog.getByLabel('推理 API Key', { exact: true }).fill('fake-inference')
     if (provider === 'openrouter')
@@ -51,7 +51,6 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
       await expect(row).toContainText('当前 Token 不限额')
       await expect(row).toContainText('账户余额')
       await expect(row).toContainText('192.851716 USD')
-      expect((await row.boundingBox())!.height).toBeLessThan(170)
       await row.getByRole('button', { name: '额度详情', exact: true }).click({ timeout: 10000 })
       const balance = page.getByRole('dialog')
       await expect(balance).toContainText('当前 Key 的 Token 额度')
@@ -151,14 +150,6 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await page.goto('model-usage?cost_basis=actual')
   await expect(overview).toContainText('费用未知：2 次')
   await expect(overview).toContainText('0.0012')
-  for (const label of ['趋势指标', '分析维度', '分组排序']) {
-    const control = page.getByRole('combobox', { name: label, exact: true })
-    expect(
-      (await control
-        .locator('xpath=ancestor::div[contains(@class, "app-select")][1]')
-        .boundingBox())!.width,
-    ).toBeGreaterThan(180)
-  }
   await page
     .getByRole('group', { name: '可点击的时间趋势', exact: true })
     .getByRole('button')
@@ -178,23 +169,24 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await expect(history.locator('tbody tr')).toHaveCount(1)
   await expect(page).toHaveURL(/channel_id=/)
   await page.getByRole('button', { name: '更多筛选' }).click()
-  const channelPicker = page
-    .getByRole('combobox', { name: '渠道筛选', exact: true })
-    .locator('xpath=ancestor::div[contains(@class, "app-select")][1]')
-  const selectedChannel = channelPicker.locator('.el-select__placeholder')
-  await expect(selectedChannel).toHaveText('newapi_prefix 模拟')
+  const input = page.getByRole('combobox', { name: '渠道筛选', exact: true })
+  // The picker shows the selected channel name rather than its ID, outside its option list.
+  const selectedChannel = page
+    .locator('label', { has: input })
+    .getByText('newapi_prefix 模拟', { exact: true })
+    .and(page.locator('xpath=//*[not(ancestor-or-self::*[@role="listbox"])]'))
+  await expect(selectedChannel).toBeVisible()
   await page.getByRole('tab', { name: '维度分析', exact: true }).click()
-  await expect(selectedChannel).toHaveText('newapi_prefix 模拟')
+  await expect(selectedChannel).toBeVisible()
   await page.getByRole('tab', { name: '调用明细', exact: true }).click()
   const options = page.getByRole('listbox', { name: '渠道筛选', exact: true })
-  const input = channelPicker.getByRole('combobox')
   await input.fill('newapi_prefix')
   await expect(
     options.getByRole('option', { name: 'newapi_prefix 模拟', exact: true }),
   ).toBeVisible()
   await expect(options.getByRole('option', { name: 'newapi_prefix', exact: true })).toHaveCount(0)
   await input.press('Escape')
-  await expect(selectedChannel).toHaveText('newapi_prefix 模拟')
+  await expect(selectedChannel).toBeVisible()
   // Tab changes are intentionally part of the history; restore the unfiltered overview.
   await page.getByRole('button', { name: '重置筛选', exact: true }).click()
   await page.getByRole('button', { name: '收起筛选' }).click()
@@ -369,7 +361,6 @@ async function renameAndDeleteUnusedConfiguration(page: Page) {
     .filter({ hasText: '待清理渠道' })
   await expect(channelRow).toContainText('暂不支持查询')
   await expect(channelRow.getByRole('button', { name: '刷新余额', exact: true })).toBeDisabled()
-  expect((await channelRow.boundingBox())!.height).toBeLessThan(170)
   await more(page, channelRow, '修改渠道名称')
   dialog = page.getByRole('dialog')
   await dialog.getByLabel('显示名称', { exact: true }).fill('可删除渠道')

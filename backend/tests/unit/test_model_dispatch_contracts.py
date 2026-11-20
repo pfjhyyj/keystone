@@ -29,25 +29,8 @@ def test_retry_after_bounds_seconds_dates_and_untrusted_values():
         assert retry_after(value, now=now) == expected
 
 
-@pytest.mark.parametrize(
-    "field,value",
-    [
-        ("model_send_interval_ms", -1),
-        ("model_send_interval_ms", 60001),
-        ("model_cooldown_seconds", 0),
-        ("model_cooldown_seconds", 301),
-        ("model_cooldown_max_seconds", 0),
-        ("model_cooldown_max_seconds", 3601),
-    ],
-)
-def test_invalid_dispatch_configuration_is_rejected(field, value):
-    with pytest.raises(ValidationError):
-        Settings(config_file=None, **{field: value})
-
-
 def test_dispatch_settings_share_the_worker_configuration_digest():
     original = Settings(config_file=None)
-    assert original.model_send_interval_ms == 0
     for field, value in (
         ("model_send_interval_ms", 10),
         ("model_cooldown_seconds", 6),

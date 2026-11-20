@@ -49,8 +49,8 @@ def install(monkeypatch):
 
 
 @pytest.mark.postgres
-def test_flow_normalized_input_size_limit(monkeypatch, request):
-    from pydantic import Field
+def test_flow_input_errors_are_422_without_runs_references_or_keys(monkeypatch, request):
+    from pydantic import ConfigDict, Field
     from support.flow_fixture import contracts
 
     from keystone.core.schemas import Input
@@ -58,64 +58,10 @@ def test_flow_normalized_input_size_limit(monkeypatch, request):
     from keystone.platform.flow.models import FlowRun
     from keystone.platform.flow.schemas.values import small_json
 
-    class Params(Input):
-        text: str = Field(default_factory=lambda: padding)
-
-    monkeypatch.setattr(
-        composition,
-        "FLOW_PACKAGES",
-        (
-            package_for_definitions(
-                (
-                    replace(
-                        contracts.definition,
-                        input_model=Params,
-                        file_fields=(),
-                        model_roles=(),
-                        required_permissions=(),
-                    ),
-                )
-            ),
-        ),
-    )
-    client = request.getfixturevalue("client")
-    login(client)
-    final_input = {"text": ""}
-    remaining = 65536 + 1 - len(small_json(final_input))
-    # Count UTF-8 bytes, including JSON structure, rather than Python characters.
-    padding = "界" * (remaining // 3) + "x" * (remaining % 3)
-    data = {}
-    payload = {"definition_key": contracts.definition.key, "request_key": "size", "input": data}
-    response = client.post("/api/v1/_test/review", json=payload)
-    assert response.status_code == 422, response.text
-    assert response.json()["code"] == "flow_value_too_large"
-
-    async def verify(session):
-        assert await session.scalar(select(FlowRun.id)) is None
-        assert await session.scalar(select(FileReference.file_id)) is None
-        log = await session.scalar(select(AuditLog).where(AuditLog.action == "flow.start"))
-        assert log.outcome == "failure" and log.details == {"reason": "flow_value_too_large"}
-        assert log.correlation_id == response.headers["x-request-id"]
-
-    query(client, verify)
-    payload["input"] = {"text": "small"}
-    response = client.post("/api/v1/_test/review", json=payload)
-    assert response.status_code == 202, response.text
-    assert client.post("/api/v1/_test/review", json=payload).json()["id"] == response.json()["id"]
-
-
-@pytest.mark.postgres
-def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, request):
-    from pydantic import ConfigDict, Field
-    from support.flow_fixture import contracts
-
-    from keystone.core.schemas import Input
-    from keystone.platform.files.models import FileReference
-    from keystone.platform.flow.models import FlowRun
-
     class FilesInput(Input):
         model_config = ConfigDict(serialize_by_alias=True)
         files: list[str] = Field(alias="fileIds")
+        text: str = Field(default_factory=lambda: padding)
 
     monkeypatch.setattr(
         composition,
@@ -136,149 +82,36 @@ def test_flow_file_input_errors_are_422_without_runs_or_references(monkeypatch, 
     )
     client = request.getfixturevalue("client")
     login(client)
-    identifiers = ["bad-id"]
-    payload = {
-        "definition_key": contracts.definition.key,
-        "request_key": "invalid-files",
-        "input": {"fileIds": identifiers},
-    }
-    response = client.post("/api/v1/_test/review", json=payload)
-    assert response.status_code == 422, response.text
-    assert response.json()["code"] == "flow_invalid_input"
+    remaining = 65536 + 1 - len(small_json({"files": [], "text": ""}))
+    # Count UTF-8 bytes of the normalized input, including JSON structure and defaults.
+    padding = "界" * (remaining // 3) + "x" * (remaining % 3)
+    payload = {"definition_key": contracts.definition.key, "request_key": "invalid-input"}
+    responses = {}
+    for code, data in (
+        ("flow_invalid_input", {"fileIds": ["bad-id"], "text": "small"}),
+        ("flow_value_too_large", {"fileIds": []}),
+    ):
+        response = client.post("/api/v1/_test/review", json={**payload, "input": data})
+        assert response.status_code == 422, response.text
+        assert response.json()["code"] == code
+        responses[response.headers["x-request-id"]] = code
 
     async def verify(session):
         assert await session.scalar(select(FlowRun.id)) is None
         assert await session.scalar(select(FileReference.file_id)) is None
-        log = await session.scalar(select(AuditLog).where(AuditLog.action == "flow.start"))
-        assert log.outcome == "failure" and log.details == {"reason": "flow_invalid_input"}
-        assert log.correlation_id == response.headers["x-request-id"]
+        logs = (
+            await session.scalars(select(AuditLog).where(AuditLog.action == "flow.start"))
+        ).all()
+        assert {log.correlation_id: log.details["reason"] for log in logs} == responses
+        assert all(log.outcome == "failure" and len(log.details) == 1 for log in logs)
 
     query(client, verify)
-    # The rejected request has not occupied its idempotency key.
-    payload["input"] = {"fileIds": []}
+    # The rejected requests have not occupied their idempotency key.
+    payload["input"] = {"fileIds": [], "text": "small"}
     retry = client.post("/api/v1/_test/review", json=payload)
     assert retry.status_code == 202, retry.text
-    assert retry.json()["input"] == {"files": []}
-
-
-@pytest.mark.postgres
-@pytest.mark.parametrize(
-    "result,expected", [({"amount": "7"}, "succeeded"), ({"amount": 7}, "failed")]
-)
-def test_flow_reconciliation_uses_serialized_output_contract(
-    monkeypatch, request, result, expected
-):
-    from pydantic import Field, field_serializer
-    from support.flow_fixture import contracts
-
-    from keystone.composition import execution_version
-    from keystone.core.schemas import Input
-    from keystone.platform.flow.tasks.workflows import reconcile_one
-
-    class EmptyInput(Input):
-        pass
-
-    class Output(Input):
-        amount: int = Field(alias="total")
-
-        @field_serializer("amount")
-        def serialize_amount(self, value) -> str:
-            return str(value)
-
-    monkeypatch.setattr(
-        composition,
-        "FLOW_PACKAGES",
-        (
-            package_for_definitions(
-                (
-                    replace(
-                        contracts.definition,
-                        input_model=EmptyInput,
-                        output_model=Output,
-                        file_fields=(),
-                        output_file_fields=(),
-                        model_roles=(),
-                        required_permissions=(),
-                    ),
-                )
-            ),
-        ),
-    )
-    client = request.getfixturevalue("client")
-    runtime = client.app.state.runtime
-    login(client)
-    response = client.post(
-        "/api/v1/_test/review",
-        json={"definition_key": contracts.definition.key, "request_key": "output", "input": {}},
-    )
-    assert response.status_code == 202, response.text
-    run = response.json()
-    advertised = next(iter(client.app.state.runtime.flow_definitions.values())).snapshot(
-        package_key="test", model_bindings={}
-    )["output_schema"]
-    assert advertised == run["definition_snapshot"]["output_schema"]
-
-    class Engine:
-        async def state(self, identifier):
-            return {
-                "status": "SUCCESS",
-                "result": result,
-                "version": execution_version(),
-                "name": contracts.definition.entrypoint,
-            }
-
-    client.portal.call(reconcile_one, runtime, Engine(), UUID(run["id"]))
-    done = client.get(f"/api/v1/flow-runs/{run['id']}").json()
-    assert done["status"] == expected
-    assert done["result"] == (result if expected == "succeeded" else None)
-    assert done["error_code"] == (None if expected == "succeeded" else "flow_invalid_output")
-
-
-@pytest.mark.postgres
-def test_business_model_joins_shared_migration_metadata(client):
-    from alembic import command
-    from alembic.util.exc import AutogenerateDiffsDetected
-    from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-
-    from keystone.core.migrations import migration_config
-    from keystone.model_registry import load_models
-
-    query(
-        client,
-        lambda session: session.execute(
-            text("DROP TABLE keystone.test_submissions, keystone.test_materials")
-        ),
-    )
-    metadata = load_models()
-
-    # A separate mapper registry keeps this test-only entity out of other test fixtures.
-    class ProbeBase(DeclarativeBase):
-        pass
-
-    ProbeBase.metadata = metadata
-
-    class Probe(ProbeBase):
-        __tablename__ = "test_notes_probe"
-        id: Mapped[int] = mapped_column(primary_key=True)
-
-    try:
-        config = migration_config(client.app.state.runtime.settings)
-        with pytest.raises(AutogenerateDiffsDetected) as pending:
-            command.check(config)
-        assert len(pending.value.diffs) == 1
-        assert pending.value.diffs[0][0] == "add_table"
-        assert pending.value.diffs[0][1].fullname == Probe.__table__.fullname
-
-        async def create_probe(session):
-            connection = await session.connection()
-            await connection.run_sync(Probe.__table__.create)
-            session.add(Probe(id=1))
-
-        query(client, create_probe)
-        command.check(config)
-    finally:
-        metadata.remove(Probe.__table__)
-        ProbeBase.registry.dispose()
+    assert retry.json()["input"] == {"files": [], "text": "small"}
+    assert client.post("/api/v1/_test/review", json=payload).json()["id"] == retry.json()["id"]
 
 
 @pytest.fixture

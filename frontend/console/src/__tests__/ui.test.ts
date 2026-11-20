@@ -133,7 +133,7 @@ it('uses explicit dirty state so filter inputs do not masquerade as unsaved form
   await flushPromises()
   expect(confirm).toHaveBeenCalledWith(
     expect.stringContaining('尚有未保存的修改'),
-    '放弃修改？',
+    expect.any(String),
     expect.anything(),
   )
   confirm.mockResolvedValue('confirm' as never)

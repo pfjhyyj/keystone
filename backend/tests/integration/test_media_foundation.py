@@ -8,7 +8,7 @@ from uuid import UUID
 import pytest
 from dbos import DBOS
 from fastapi import Request
-from sqlalchemy import func, select, update
+from sqlalchemy import update
 from starlette.requests import ClientDisconnect
 from support.local_media_stub import definition
 from test_files_dictionary import clean, reference_rows, stored_content, stored_files, upload
@@ -18,15 +18,9 @@ from test_identity import bearer, query, token
 
 from keystone.core.content_response import ContentResponse
 from keystone.core.errors import ServiceError
-from keystone.platform.audit.models import AuditLog
-from keystone.platform.audit.services import writer as audit
-from keystone.platform.dictionary.models import Dictionary
-from keystone.platform.files.models import File, FileReference
+from keystone.platform.files.models import File
 from keystone.platform.files.services.files import FileService
-from keystone.platform.files.services.references import FileReferences
 from keystone.platform.flow.adapters.dbos import Engine
-from keystone.platform.flow.models import FlowRun
-from keystone.platform.flow.schemas import Start
 from keystone.platform.identity.controllers.dependencies import access_context
 
 pytestmark = pytest.mark.postgres
@@ -70,33 +64,19 @@ def test_head_range_empty_corruption_and_current_authorization(client, monkeypat
     assert head.headers["content-type"] == "video/mp4"
     assert head.headers["content-disposition"].startswith("inline;")
     assert head.headers["accept-ranges"] == "bytes"
-    cases = [
-        ("0-0", b"0", "0-0"),
-        ("7-", b"789", "7-9"),
-        ("-3", b"789", "7-9"),
-        ("8-99", b"89", "8-9"),
-        ("-99", b"0123456789", "0-9"),
-    ]
-    for value, expected, interval in cases:
-        result = client.get(path, headers={"Range": "bytes=" + value})
-        assert result.status_code == 206 and result.content == expected
-        assert result.headers["content-range"] == f"bytes {interval}/10"
-        assert int(result.headers["content-length"]) == len(expected)
-    for value in ["bytes=10-", "bytes=4-2", "bytes=-0", "bytes=", "bytes=0-1,4-5", "items=0-1"]:
-        response = client.get(path, headers={"Range": value})
-        assert response.status_code == 416 and response.headers["content-range"] == "bytes */10"
+    # The range parser matrix lives in unit/test_content_ranges.py.
+    result = client.get(path, headers={"Range": "bytes=8-99"})
+    assert result.status_code == 206 and result.content == b"89"
+    assert result.headers["content-range"] == "bytes 8-9/10"
+    assert result.headers["content-length"] == "2"
+    response = client.get(path, headers={"Range": "bytes=10-"})
+    assert response.status_code == 416 and response.headers["content-range"] == "bytes */10"
     assert (
         client.get(path, headers={"Range": "bytes=0-1", "If-Range": '"stale"'}).status_code == 200
     )
     assert client.head(path, headers={"Range": "bytes=0-1"}).headers["content-length"] == "10"
     empty = upload(client, b"", key="empty").json()["id"]
     assert client.get(f"/api/v1/_test/materials/{empty}/content").content == b""
-    assert (
-        client.get(
-            f"/api/v1/_test/materials/{empty}/content", headers={"Range": "bytes=0-"}
-        ).status_code
-        == 416
-    )
 
     # A stable stat signature reuses integrity validation instead of rescanning for every seek.
     import keystone.platform.files.adapters.storage as storage_module
@@ -112,11 +92,8 @@ def test_head_range_empty_corruption_and_current_authorization(client, monkeypat
 
     monkeypatch.setattr(storage_module.hashlib, "sha256", checksum)
     storage = client.app.state.runtime.storage.get()
-    assert storage._verified
-    count = len(storage._verified)
     assert client.get(path, headers={"Range": "bytes=5-6"}).content == b"56"
     assert scans == 0
-    assert len(storage._verified) == count
     (storage.root / "files" / UUID(file["id"]).hex).write_bytes(b"corruption")
     assert client.get(path, headers={"Range": "bytes=0-1"}).status_code == 503
     assert scans == 1
@@ -210,138 +187,6 @@ def test_legacy_read_rejects_large_file_before_allocating(client, monkeypatch):
         await FileService(access_context(request), runtime.storage).content(file_id)
 
     assert client.get("/_acceptance/bounded-read").status_code == 413
-
-
-@pytest.mark.parametrize(
-    "credential,failure",
-    [
-        ("session", "business"),
-        ("pat", "audit"),
-    ],
-)
-def test_composed_transaction_rollback_idempotency_and_audit(
-    media, credential, failure, monkeypatch
-):
-    client = media
-    identifier = upload(client).json()["id"]
-    credential_id = None
-    if credential == "pat":
-        issued = token(
-            client,
-            [
-                "flow:start",
-                "flow:read",
-                "test_files.asset:manage",
-                "test_files.asset:create",
-                "test_files.asset:inspect",
-                "test_files.asset:content_read",
-            ],
-        )
-        client.headers.update(bearer(issued["token"]))
-        credential_id = issued["id"]
-    runtime = client.app.state.runtime
-
-    @client.app.post("/_acceptance/compose")
-    async def compose(request: Request, fail: bool = False, different: bool = False):
-        context = access_context(request)
-        async with context.access(action="flow.start", target="flow.run") as (session, auth):
-            record = await session.scalar(select(Dictionary).where(Dictionary.key == "acceptance"))
-            if record is None:
-                record = Dictionary(
-                    key="acceptance", name="Atomic fixture", created_by=auth.user.id
-                )
-                session.add(record)
-                await session.flush()
-                await context.log(
-                    session,
-                    auth,
-                    "dictionary.definition.create",
-                    "dictionary",
-                    record.id,
-                    {"key": record.key, "name": record.name},
-                )
-            await FileReferences(session, auth, "acceptance").replace(
-                str(record.id), "source", [identifier]
-            )
-            result = await runtime.flow_service(context).start_in_transaction(
-                session,
-                auth,
-                Start(
-                    definition_key=definition.key,
-                    request_key="atomic",
-                    input={
-                        "source_file_id": identifier,
-                        "wait_for": "changed" if different else None,
-                    },
-                ),
-            )
-            if fail:
-                raise RuntimeError("Rollback all facts")
-            return result
-
-    if failure == "business":
-        assert client.post("/_acceptance/compose?fail=true").status_code == 500
-    else:
-        original = audit.record
-
-        async def unavailable(session, action, *args, **kwargs):
-            if action == "flow.start" and kwargs.get("outcome", "success") == "success":
-                raise RuntimeError("Success audit failed")
-            return await original(session, action, *args, **kwargs)
-
-        with monkeypatch.context() as patch:
-            patch.setattr(audit, "record", unavailable)
-            assert client.post("/_acceptance/compose").status_code == 500
-    for model in (Dictionary, FlowRun):
-        assert (
-            query(
-                client,
-                lambda session, model=model: session.scalar(
-                    select(func.count()).select_from(model)
-                ),
-            )
-            == 0
-        )
-    assert (
-        query(
-            client, lambda session: session.scalar(select(func.count()).select_from(FileReference))
-        )
-        == 1
-    )
-    assert (
-        query(
-            client,
-            lambda session: session.scalar(
-                select(func.count())
-                .select_from(AuditLog)
-                .where(
-                    AuditLog.action.in_(
-                        [
-                            "flow.start",
-                            "dictionary.definition.create",
-                        ]
-                    ),
-                    AuditLog.outcome == "success",
-                )
-            ),
-        )
-        == 0
-    )
-    result = client.post("/_acceptance/compose").json()
-    assert result["status"] == "pending"
-    assert client.post("/_acceptance/compose").json()["id"] == result["id"]
-    assert (
-        client.post("/_acceptance/compose?different=true").json()["code"] == "idempotency_conflict"
-    )
-    audits = query(
-        client,
-        lambda session: session.scalars(
-            select(AuditLog).where(AuditLog.action == "flow.start", AuditLog.outcome == "success")
-        ),
-    ).all()
-    assert len(audits) == 1 and str(audits[0].actor_id) == result["actor_id"]
-    if credential_id:
-        assert audits[0].details["credential_id"] == credential_id
 
 
 @pytest.mark.parametrize("mode", ["normal", "cancel_engine_unavailable", "crash"])

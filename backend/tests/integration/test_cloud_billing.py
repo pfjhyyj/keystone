@@ -204,22 +204,17 @@ def test_bill_query_discards_results_after_config_change_or_revocation(client, m
     assert "1.23456789" not in response.text
 
 
-def test_cloud_credentials_reject_other_providers_and_ambiguous_clear(client):
-    for provider, changes in [
-        ("openrouter", {}),
-        ("volcengine", {"clear_billing_api_key": True}),
-        ("volcengine", {"billing_api_key": "other"}),
-    ]:
-        response = client.post(
-            "/api/v1/model-channels",
-            json={
-                "name": "bad",
-                "provider": provider,
-                "api_base": CHANNELS[provider].api_base,
-                "api_key": "inference",
-                "billing_credentials": KEYS,
-                **changes,
-            },
-        )
-        assert response.status_code == 422
-        assert "cloud-account-secret" not in response.text
+def test_cloud_credentials_reject_other_providers(client):
+    # Ambiguous legacy/cloud credential updates are rejected by the schema unit tests.
+    response = client.post(
+        "/api/v1/model-channels",
+        json={
+            "name": "bad",
+            "provider": "openrouter",
+            "api_base": CHANNELS["openrouter"].api_base,
+            "api_key": "inference",
+            "billing_credentials": KEYS,
+        },
+    )
+    assert response.status_code == 422
+    assert "cloud-account-secret" not in response.text

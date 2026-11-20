@@ -29,14 +29,13 @@ it.each([undefined, true])('rejects invalid storage status %s', async (storage) 
   await expect(getReadiness()).rejects.toThrow('无效的就绪响应')
 })
 
-it.each(['ready', 'unready', 'offline', 'unknown'])(
-  'reads independent Worker status %s',
-  async (status) => {
-    const value = { status, last_heartbeat_at: '2026-10-19T16:00:00Z' }
-    fakeApi(() => value)
-    expect(await getWorkerStatus()).toEqual(value)
-  },
-)
+it.each([
+  { status: 'ready', last_heartbeat_at: '2026-10-19T16:00:00Z' },
+  { status: 'offline', last_heartbeat_at: null },
+])('reads independent Worker status $status', async (value) => {
+  fakeApi(() => value)
+  expect(await getWorkerStatus()).toEqual(value)
+})
 
 it.each([
   { status: 'ready', last_heartbeat_at: null },

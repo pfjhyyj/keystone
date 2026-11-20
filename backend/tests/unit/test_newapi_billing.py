@@ -295,3 +295,17 @@ def test_different_api_bases_with_same_billing_origin_have_distinct_scopes(adapt
     assert (bindings[0].scope_origin or bindings[0].origin) != (
         bindings[1].scope_origin or bindings[1].origin
     )
+
+
+def test_standard_and_yunwu_profiles_on_one_api_base_do_not_share_a_cost_scope():
+    base = "https://relay.example/v1"
+    adapters = [Newapi(base), Yunwu(base)]
+    bindings = [adapter.binding(base) for adapter in adapters]
+    assert bindings[0].origin == bindings[1].origin
+    assert (bindings[0].scope_origin or bindings[0].origin) != (
+        bindings[1].scope_origin or bindings[1].origin
+    )
+    assert [
+        binding.snapshot("scope", adapter.provider, base)["provider"]
+        for adapter, binding in zip(adapters, bindings, strict=True)
+    ] == ["newapi", "yunwu"]

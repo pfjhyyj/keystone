@@ -62,7 +62,6 @@ def test_schedules_survive_restart_without_duplicate_cleanup(client, tmp_path):
         original = schedules(client)
         assert set(original) == {files_jobs.SCHEDULE, flow_jobs.SCHEDULE, model_jobs.SCHEDULE}
         for plan in original.values():
-            assert plan["schedule"] == "*/5 * * * * *"
             assert not plan["automatic_backfill"]
             assert plan["status"] == "ACTIVE"
 

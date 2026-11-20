@@ -50,17 +50,15 @@ def calls(client):
 
 def test_catalog_limits_follow_requested_operation_for_the_same_model(client):
     configure(client, provider="yunwu")
-    for operation, count, maximum, parameters in [
-        ("image.generate", 9, 32, ["aspect_ratio", "quality"]),
-        ("image.edit", 9, 32, ["aspect_ratio", "quality"]),
-        ("image.understand", 4, 8, []),
-    ]:
+    options = {}
+    for operation in ("image.generate", "image.understand"):
         response = client.get("/api/v1/_test/model-options", params={"operation": operation})
         assert response.status_code == 200
-        options = response.json()["items"][0]
-        assert options["max_reference_images"] == count
-        assert options["max_input_bytes"] == maximum * 1024 * 1024
-        assert options["image_parameters"] == parameters
+        options[operation] = response.json()["items"][0]
+    generate, understand = options["image.generate"], options["image.understand"]
+    for field in ("max_reference_images", "max_input_bytes"):
+        assert understand[field] < generate[field]
+    assert generate["image_parameters"] and understand["image_parameters"] == []
     assert calls(client) == []
 
 
@@ -324,7 +322,6 @@ def test_direct_result_evidence_cannot_be_read_by_another_actor(client):
 @pytest.mark.parametrize(
     "provider,base",
     [
-        ("openlux", "https://api.openlux.ai/v1"),
         ("yunwu", "https://relay.example/gateway/v1"),
         ("newapi", "https://relay.example/gateway/v1"),
     ],

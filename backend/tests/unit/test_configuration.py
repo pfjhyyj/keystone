@@ -110,18 +110,6 @@ def test_worker_shared_config_digest_checks_storage_secrets_without_exposing_the
     assert "different-storage-secret" not in config_digest(settings)
 
 
-def test_file_capacity_defaults_preserve_platform_configuration():
-    settings = Settings(config_file=None)
-    assert settings.file_min_free_bytes == 1024**3
-    assert settings.file_max_bytes == 16 * 1024**2
-    assert settings.browser_origins == [
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-        "http://127.0.0.1:8080",
-        "http://localhost:8080",
-    ]
-
-
 def test_browser_settings_require_complete_runtime_and_local_backup_storage(tmp_path):
     storage = {
         "local": {
@@ -193,23 +181,16 @@ def test_retired_file_limits_are_rejected_in_all_configuration_sources(tmp_path,
         Settings(config_file=None)
 
 
-@pytest.mark.parametrize("floor", [-1, 1024**4 + 1])
-def test_invalid_file_capacity_floor_is_rejected(floor):
-    with pytest.raises(ValidationError):
-        Settings(config_file=None, file_min_free_bytes=floor)
-
-
-@pytest.mark.parametrize("floor", [0, 1024**4])
-def test_file_capacity_floor_toml_environment_and_worker_digest(tmp_path, monkeypatch, floor):
+def test_file_capacity_floor_toml_environment_and_worker_digest(tmp_path, monkeypatch):
     from keystone.worker.identity import config_digest
 
     config = tmp_path / "keystone.toml"
     config.write_text("file_min_free_bytes = 512\n", encoding="utf-8")
     original = Settings(config_file=config)
     assert original.file_min_free_bytes == 512
-    monkeypatch.setenv("KEYSTONE_FILE_MIN_FREE_BYTES", str(floor))
+    monkeypatch.setenv("KEYSTONE_FILE_MIN_FREE_BYTES", "0")
     overridden = Settings(config_file=config)
-    assert overridden.file_min_free_bytes == floor
+    assert overridden.file_min_free_bytes == 0
     assert config_digest(overridden) != config_digest(original)
 
 

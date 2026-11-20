@@ -44,10 +44,8 @@ def test_maintenance_schedule_policies(plan, cron, lateness):
     assert plan.overlap == "coalesce"
 
 
-@pytest.mark.parametrize(
-    "plan", [RECONCILE_SCHEDULE, CLEANUP_SCHEDULE, COST_SCHEDULE, HISTORY_SCHEDULE]
-)
-async def test_maintenance_tick_accepts_lateness_boundary_and_skips_older(monkeypatch, plan):
+async def test_maintenance_tick_accepts_lateness_boundary_and_skips_older(monkeypatch):
+    plan = COST_SCHEDULE
     now = utcnow()
     workflows = {}
 

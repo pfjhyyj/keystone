@@ -13,7 +13,7 @@ from test_model_access import SECRET, channel, entry, invoke
 from test_model_access import model_configuration as model_configuration
 
 from keystone.core.time import utcnow
-from keystone.platform.model_access.models import Channel, ModelInvocation
+from keystone.platform.model_access.models import ModelInvocation
 from keystone.platform.model_access.services.costs import CostService
 
 pytestmark = pytest.mark.postgres
@@ -156,16 +156,6 @@ def test_recent_log_cap_reports_older_missing_call_as_unavailable(client, billin
     assert current.cost_check_status == "unavailable"
     assert (
         current.cost_check_reason == "cost_log_window_unavailable" and current.cost_amount is None
-    )
-
-
-def test_standard_and_yunwu_compatible_profiles_do_not_hijack_each_others_scope(client, billing):
-    original = query(client, lambda s: s.get(Channel, billing["channel_id"]))
-    other = channel(client, "yunwu", api_base=original.api_base)
-    second = query(client, lambda s: s.get(Channel, UUID(other["id"])))
-    assert original.cost_scope != second.cost_scope
-    assert (
-        original.cost_context["provider"] == "newapi" and second.cost_context["provider"] == "yunwu"
     )
 
 

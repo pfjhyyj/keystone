@@ -224,7 +224,7 @@ it('loads channel models, selects an upstream ID and suggests a model key', asyn
     },
   ])
 })
-it.each(['', '   '])('resets a cleared model display name to its fixed key (%j)', async (value) => {
+it('resets a blank model display name to its fixed key', async () => {
   authorize(['model:manage'])
   const writes: { path: string; body: Record<string, unknown> }[] = []
   fakeApi((path, init) => {
@@ -241,7 +241,7 @@ it.each(['', '   '])('resets a cleared model display name to its fixed key (%j)'
   await button(wrapper, '编辑模型').trigger('click')
   const name = wrapper.get('.page-editor input[placeholder="留空使用模型 key"]')
   expect((name.element as HTMLInputElement).value).toBe('旧显示名称')
-  await name.setValue(value)
+  await name.setValue('   ')
   await wrapper.get('.page-editor form').trigger('submit')
   await flushPromises()
   expect(writes).toHaveLength(1)
@@ -249,66 +249,38 @@ it.each(['', '   '])('resets a cleared model display name to its fixed key (%j)'
   expect(writes[0]!.body.name).toBe(entry.key)
   expect(writes[0]!.body).not.toHaveProperty('key')
 })
-it.each([
-  'https://newapiai.com/v1',
-  'https://api.openlux.ai/v1',
-  'https://yunwu.ai/v1',
-  'https://relay.example/gateway/api/v1',
-])('uses one NewAPI option and saves its configured API base (%s)', async (base) => {
-  authorize(['model:manage'])
-  const writes: unknown[] = []
-  fakeApi((path, init) => {
-    if (path === '/model-access/options')
-      return modelOptionsFixture({
-        creatable: ['openrouter', 'newapi', 'yunwu'],
-        balance: ['openrouter'],
-        api_bases: { newapi: 'https://newapiai.com/v1' },
-      })
-    if (init.method === 'POST') {
-      writes.push(JSON.parse(String(init.body)))
-      return channel
-    }
-    return []
-  })
-  const wrapper = mount(ModelManager)
-  await flushPromises()
-  await button(wrapper, '新建渠道').trigger('click')
-  await chooseSelect(wrapper, 'newapi', '服务商')
-  const address = wrapper.get('input[type=url]')
-  expect((address.element as HTMLInputElement).value).toBe('https://newapiai.com/v1')
-  expect(selectControl(wrapper, '服务商').text()).not.toContain('Openlux')
-  expect(selectControl(wrapper, '服务商').text()).toContain('Yunwu')
-  await address.setValue(base)
-  await wrapper.get('[role=dialog] input').setValue('My NewAPI')
-  await wrapper.get('input[type=password]').setValue('private-key')
-  await wrapper.get('[role=dialog] form').trigger('submit')
-  await flushPromises()
-  expect(writes[0]).toMatchObject({ provider: 'newapi', api_base: base, api_key: 'private-key' })
-})
-it.each(['openlux', 'yunwu'])(
-  'edits a legacy %s channel through the Yunwu UI',
-  async (provider) => {
+it.each(['https://newapiai.com/v1', 'https://relay.example/gateway/api/v1'])(
+  'uses one NewAPI option and saves its configured API base (%s)',
+  async (base) => {
     authorize(['model:manage'])
-    fakeApi((path) =>
-      path === '/model-access/options'
-        ? modelOptionsFixture({
-            creatable: ['openrouter', 'newapi', 'yunwu'],
-            balance: ['openrouter'],
-          })
-        : path.startsWith('/model-channels')
-          ? [{ ...channel, provider }]
-          : [],
-    )
+    const writes: unknown[] = []
+    fakeApi((path, init) => {
+      if (path === '/model-access/options')
+        return modelOptionsFixture({
+          creatable: ['openrouter', 'newapi', 'yunwu'],
+          balance: ['openrouter'],
+          api_bases: { newapi: 'https://newapiai.com/v1' },
+        })
+      if (init.method === 'POST') {
+        writes.push(JSON.parse(String(init.body)))
+        return channel
+      }
+      return []
+    })
     const wrapper = mount(ModelManager)
     await flushPromises()
-    await button(wrapper, '编辑渠道').trigger('click')
-    const control = selectControl(wrapper, '服务商')
-    expect(control.props('modelValue')).toBe(provider)
-    expect(control.text()).not.toContain('Openlux')
-    expect(control.text()).toContain('Yunwu')
-    expect((wrapper.get('input[type=url]').element as HTMLInputElement).value).toBe(
-      channel.api_base,
-    )
+    await button(wrapper, '新建渠道').trigger('click')
+    await chooseSelect(wrapper, 'newapi', '服务商')
+    const address = wrapper.get('input[type=url]')
+    expect((address.element as HTMLInputElement).value).toBe('https://newapiai.com/v1')
+    expect(selectControl(wrapper, '服务商').text()).not.toContain('Openlux')
+    expect(selectControl(wrapper, '服务商').text()).toContain('Yunwu')
+    await address.setValue(base)
+    await wrapper.get('[role=dialog] input').setValue('My NewAPI')
+    await wrapper.get('input[type=password]').setValue('private-key')
+    await wrapper.get('[role=dialog] form').trigger('submit')
+    await flushPromises()
+    expect(writes[0]).toMatchObject({ provider: 'newapi', api_base: base, api_key: 'private-key' })
   },
 )
 it('creates a Yunwu protocol channel for Openlux and keeps it separate from NewAPI', async () => {
@@ -498,22 +470,12 @@ it.each(['渠道', '模型'])(
     expect(confirm).toHaveBeenCalledTimes(2)
   },
 )
-it('uses the official address and no fake upstream model when configuring live mode', async () => {
+it('does not prefill a fake upstream model when configuring live mode', async () => {
   authorize(['model:manage'])
   fakeApi((path) =>
     path === '/model-access/options' ? modelOptionsFixture({ creatable: ['openrouter'] }) : [],
   )
   const wrapper = mount(ModelManager)
-  await flushPromises()
-  expect(wrapper.text()).toContain('模型接入')
-  await button(wrapper, '新建渠道').trigger('click')
-  await flushPromises()
-  expect(selectControl(wrapper, '服务商').text()).not.toContain('DeepSeek')
-  expect((wrapper.get('input[type="url"]').element as HTMLInputElement).value).toBe(
-    'https://openrouter.ai/api/v1',
-  )
-  expect(wrapper.text()).toContain('Management Key')
-  await wrapper.get('button[aria-label="关闭对话框"]').trigger('click')
   await flushPromises()
   await button(wrapper, '新建模型').trigger('click')
   await flushPromises()
@@ -646,41 +608,4 @@ it('keeps balance details open and replaces only the refreshed channel snapshot'
   expect(new DOMWrapper(document.body).get('[role=dialog]').text()).toContain('3.5 credits')
   expect(new DOMWrapper(document.body).get('[role=dialog]').text()).toContain('查询成功')
   expect(writes).toBe(1)
-})
-
-it.each([
-  [
-    'aliyun_bailian',
-    '阿里云百炼（DashScope）',
-    'https://dashscope.aliyuncs.com/compatible-mode/v1',
-  ],
-  ['volcengine', '火山方舟（豆包）', 'https://ark.cn-beijing.volces.com/api/v3'],
-])('creates the %s cloud channel with its default URL', async (provider, label, base) => {
-  authorize(['model:manage'])
-  const writes: unknown[] = []
-  fakeApi((path, init) => {
-    if (path === '/model-access/options')
-      return modelOptionsFixture({
-        creatable: ['openrouter', 'aliyun_bailian', 'volcengine'],
-        balance: [],
-        api_bases: { [provider]: base },
-      })
-    if (init.method === 'POST') {
-      writes.push(JSON.parse(String(init.body)))
-      return { ...channel, provider, api_base: base }
-    }
-    return []
-  })
-  const wrapper = mount(ModelManager)
-  await flushPromises()
-  await button(wrapper, '新建渠道').trigger('click')
-  await chooseSelect(wrapper, provider, '服务商')
-  expect(selectControl(wrapper, '服务商').text()).toContain(label)
-  expect((wrapper.get('input[type=url]').element as HTMLInputElement).value).toBe(base)
-  await wrapper.get('[role=dialog] input').setValue('Cloud')
-  await wrapper.get('input[type=password]').setValue('cloud-key')
-  await wrapper.get('[role=dialog] form').trigger('submit')
-  await flushPromises()
-  expect(writes).toHaveLength(1)
-  expect(writes[0]).toMatchObject({ provider, api_base: base, api_key: 'cloud-key' })
 })

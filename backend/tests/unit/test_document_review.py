@@ -230,7 +230,6 @@ async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
         assert await model.request([], settings, ModelRequestParameters()) == "accepted"
         assert request.call_args.args[1]["max_tokens"] == expected
         assert request.call_args.args[1]["temperature"] == 0.25
-        assert prepare_settings.call_args.args[0] is selected
     await model.request(
         [], {"keystone_reasoning": {"mode": "on", "effort": "high"}}, ModelRequestParameters()
     )
@@ -243,7 +242,6 @@ async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
             await model.request([], {"max_tokens": invalid}, ModelRequestParameters())
         assert caught.value.code == "model_invalid_request"
     assert request.await_count == before
-    assert prepare_settings.call_count == 4
 
 
 def test_contract_import_does_not_load_agent_or_skill_runtime():

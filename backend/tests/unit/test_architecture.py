@@ -517,12 +517,8 @@ def test_business_model_check_detects_mistakes(tmp_path, case, message):
     )
     table = "other_records" if case == "wrong_prefix" else "probe_records"
     schema = "public" if case == "wrong_schema" else "keystone"
-    extra = {
-        "service_import": "from ..services import save\n",
-        "controller_import": "from ..controllers import router\n",
-    }.get(case, "")
     (models / "record.py").write_text(
-        extra + "from keystone.core.database import Base\n"
+        "from keystone.core.database import Base\n"
         "from sqlalchemy.orm import Mapped, mapped_column\n"
         "class Record(Base):\n"
         f"    __tablename__ = {table!r}\n"
@@ -530,8 +526,7 @@ def test_business_model_check_detects_mistakes(tmp_path, case, message):
         "    id: Mapped[int] = mapped_column(primary_key=True)\n",
         encoding="utf-8",
     )
-    # Forbidden dependencies are not imported by the fake loader, letting the layer check report.
-    register = case not in {"missing_registration", "service_import", "controller_import"}
+    register = case != "missing_registration"
     setup = f"""
 import keystone.businesses
 import keystone.model_registry

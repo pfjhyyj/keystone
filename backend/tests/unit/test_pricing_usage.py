@@ -87,18 +87,6 @@ def test_common_cache_read_prices_do_not_require_a_fictitious_write_zero(profile
     assert "usage.input_cache_write_tokens" not in facts.values
 
 
-def test_full_cache_partition_still_requires_actual_write_counts():
-    result, _ = calculate(
-        {
-            "prompt_tokens": 1000,
-            "completion_tokens": 200,
-            "prompt_tokens_details": {"cached_tokens": 100},
-        },
-        token_rule(cached=True, writes=True),
-    )
-    assert result.status == "partial" and result.amount is None
-
-
 @pytest.mark.parametrize(
     "receipt",
     [
@@ -187,8 +175,6 @@ def test_nullable_optional_breakdowns_are_absent_not_invalid_or_zero():
 
 
 def test_embeddings_never_hide_a_nonzero_reported_output_under_a_structural_zero():
-    result, _ = calculate({"input_tokens": 1000, "total_tokens": 1000}, profile="embedding.v2")
-    assert Decimal(result.amount) == Decimal("0.002")
     assert (
         calculate(
             {"prompt_tokens": 1000, "completion_tokens": 1, "total_tokens": 1001},

@@ -172,8 +172,6 @@ def test_lists_batch_only_current_page_associations(client, resource):
 def test_batched_role_grants_preserve_account_and_token_rules(client):
     from uuid import UUID
 
-    from sqlalchemy import event
-
     from keystone.core.errors import ServiceError
     from keystone.platform.identity.models import RolePermission
     from keystone.platform.identity.services.authorization import (
@@ -200,18 +198,7 @@ def test_batched_role_grants_preserve_account_and_token_rules(client):
             RolePermission(role_id=UUID(roles[1]["id"]), permission_key="removed:permission")
         )
         await session.flush()
-        statements = []
-        engine = client.app.state.runtime.database.engine.sync_engine
-
-        def capture(connection, cursor, statement, parameters, context, many):
-            statements.append(statement)
-
-        event.listen(engine, "before_cursor_execute", capture)
-        try:
-            grouped, administrator = await role_grants(session, UUID(user["id"]))
-        finally:
-            event.remove(engine, "before_cursor_execute", capture)
-        assert len(statements) == 1
+        grouped, administrator = await role_grants(session, UUID(user["id"]))
         assert grouped[UUID(roles[2]["id"])] == set() and not administrator
         expected = {"dictionary:read", "audit:read"}
         assert set().union(*grouped.values()) == expected

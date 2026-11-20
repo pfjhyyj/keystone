@@ -61,8 +61,9 @@ def start(client, file_id, key="review", **overrides):
 def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_health=True):
     """Real executor; stubbed functional tests observe health at a shorter cadence.
 
-    Custom bootstraps and fast_health=False keep production polling. Cron schedules,
-    DBOS polling, lease timeouts, recovery deadlines and shutdown budgets are unchanged.
+    Custom bootstraps and fast_health=False keep production polling. File cleanup and
+    cost schedules tick every 5 seconds (support.schedules); DBOS polling, lease timeouts,
+    recovery deadlines and shutdown budgets are unchanged.
     """
     settings = client.app.state.runtime.settings
     env = {
@@ -123,7 +124,8 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
             [
                 sys.executable,
                 "-c",
-                (
+                "from support.schedules import install; install(); "
+                + (
                     "from support.model_stub import install; install(); "
                     "from support.flow_fixture import install; install(); "
                     if stub

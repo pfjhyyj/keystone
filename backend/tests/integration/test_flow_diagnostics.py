@@ -261,20 +261,10 @@ def test_source_requires_exact_manifest_and_file_metadata_without_exposing_evide
         )
 
     query(client, alias_index)
-    changes = [None, {"private": "result-secret"}]
+    # The full Manifest mutation matrix is in unit/test_flow_diagnostic_contracts.py.
     changed = deepcopy(original)
-    changed["operation"] = "image.edit"  # Known output, wrong invocation operation.
-    changed.pop("task")
-    changes.append(changed)
-    for name, value in (
-        ("checksum_sha256", "b" * 64),
-        ("size_bytes", original["outputs"][0]["size_bytes"] + 1),
-        ("content_type", "image/jpeg"),
-        ("artifact_key", f"model.{ids[1]}.1"),
-    ):
-        changed = deepcopy(original)
-        changed["outputs"][0][name] = value
-        changes.append(changed)
+    changed["outputs"][0]["checksum_sha256"] = "b" * 64
+    changes = [changed]
 
     async def replace_evidence(session, evidence):
         (await session.get(ModelInvocation, ids[1])).result_context = evidence

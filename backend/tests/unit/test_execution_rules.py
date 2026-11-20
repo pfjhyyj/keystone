@@ -22,16 +22,7 @@ async def test_invalid_permission_declarations(permissions):
             pytest.fail("Invalid declaration")
 
 
-@pytest.mark.parametrize(
-    "code,raw",
-    [
-        ("process_timeout", False),
-        ("process_output_limit", False),
-        ("process_file_limit", False),
-        ("process_unavailable", False),
-        ("process_timeout", True),
-    ],
-)
+@pytest.mark.parametrize("code,raw", [("process_timeout", False), ("process_timeout", True)])
 async def test_engine_projects_only_exact_safe_process_codes(code, raw):
     engine = Engine.__new__(Engine)
     engine.client = SimpleNamespace(

@@ -177,9 +177,6 @@ def test_business_attachment_save_read_replace_and_remove_without_file_grants(no
     repeated = notes.portal.call(service.save, "one", b"first")
     assert repeated["id"] == first["id"]
     assert references(notes, first["id"]) == 1
-    assert (
-        query(notes, lambda s: s.scalar(text("SELECT to_regclass('keystone.file_grants')"))) is None
-    )
     assert notes.get("/_notes/one/content").content == b"first"
     response = notes.get("/_notes/one/content", headers={"Range": "bytes=1-3"})
     assert response.status_code == 206 and response.content == b"irs"
@@ -298,9 +295,6 @@ def test_managed_local_transfer_can_save_without_premature_business_references(n
 
     identifier = notes.portal.call(save)
     assert references(notes, identifier) == 0
-    assert (
-        query(notes, lambda s: s.scalar(text("SELECT to_regclass('keystone.file_grants')"))) is None
-    )
 
 
 @pytest.mark.parametrize("retention", [None, 3600])

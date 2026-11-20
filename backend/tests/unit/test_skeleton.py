@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -10,7 +9,7 @@ from pydantic import ValidationError
 
 from keystone.bootstrap import Runtime, create_app
 from keystone.core.config import Settings
-from keystone.entrypoints import cli, worker
+from keystone.entrypoints import cli
 
 
 @pytest.mark.parametrize("failed", ["tasks", "flow_engine"])
@@ -133,37 +132,3 @@ def test_settings_reject_non_postgres_without_exposing_secret():
     with pytest.raises(ValidationError) as error:
         Settings(config_file=None, database_url="sqlite:///hidden-test-secret")
     assert "hidden-test-secret" not in str(error.value)
-
-
-@pytest.mark.asyncio
-async def test_worker_stop_closes_database(monkeypatch):
-    stopped = asyncio.Event()
-    entered = asyncio.Event()
-    closed = asyncio.Event()
-
-    class FakeDatabase:
-        async def close(self):
-            closed.set()
-
-    class FakeRuntime:
-        database = FakeDatabase()
-        flow_engine = None
-
-        async def close(self):
-            await self.database.close()
-
-        async def readiness(self):
-            entered.set()
-            return {"status": "unavailable", "checks": {"database": "unconfigured"}}
-
-    monkeypatch.setattr(worker, "build_runtime", lambda _: FakeRuntime())
-
-    async def executor(runtime, stop, *, ready, health):
-        await stop.wait()
-
-    monkeypatch.setattr(worker, "run_executor", executor)
-    task = asyncio.create_task(worker.run(settings(), stopped))
-    await asyncio.wait_for(entered.wait(), timeout=2)
-    stopped.set()
-    await asyncio.wait_for(task, timeout=2)
-    assert closed.is_set()

@@ -13,8 +13,9 @@ from uuid import UUID
 
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import registry
 from test_identity import (
     NEW_PASSWORD,
@@ -275,3 +276,28 @@ def test_business_writes_share_identity_lock(business):
             assert edited.status_code == 200, edited.text
 
     client.portal.call(exercise)
+
+
+def test_generated_migration_downgrades_without_touching_the_platform(business):
+    client = business.client
+    create(client)
+    config = migrations.migration_config(client.app.state.runtime.settings)
+    script = ScriptDirectory.from_config(config)
+    (child,) = script.get_heads()
+
+    def tables():
+        return query(
+            client,
+            lambda session: session.scalar(
+                text(
+                    "SELECT array[to_regclass('keystone.scaffold_notes_note') IS NOT NULL,"
+                    "to_regclass('keystone.users') IS NOT NULL]"
+                )
+            ),
+        )
+
+    command.downgrade(config, script.get_revision(child).down_revision)
+    assert tables() == [False, True]
+    command.upgrade(config, "head")
+    assert tables() == [True, True]
+    assert client.get(URL).json() == []

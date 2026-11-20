@@ -18,15 +18,18 @@ def test_platform_catalog_rejects_duplicate_declarations_even_when_equal(catalog
 
 
 def test_platform_catalog_preserves_permissions_and_freezes_audit_masks():
-    fields = {"before", "after"}
+    permissions, fields = {"records:read": "Read records"}, {"before", "after"}
     combined = combine_catalogs(
         (
-            Catalog(permissions={"records:read": "Read records"}),
+            Catalog(permissions=permissions),
             Catalog(audit_actions={"records.save": fields}),
         )
     )
+    permissions["records:write"] = "Write records"
     fields.add("secret")
     assert dict(combined.permissions) == {"records:read": "Read records"}
     assert combined.audit_actions["records.save"] == {"before", "after"}
     with pytest.raises(TypeError):
         combined.permissions["records:write"] = "Write records"
+    with pytest.raises(AttributeError):
+        combined.audit_actions["records.save"].add("secret")

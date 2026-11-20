@@ -288,8 +288,6 @@ async def test_space_loss_during_upload_stops_writing_and_releases_everything(
         records = list((tmp_path / ".capacity").glob("*.json"))
         assert len(records) == 1
         record = json.loads(records[0].read_text())
-        assert record["version"] == 4
-        assert set(record) == {"version", "amounts", "floor", "workspace"}
         assert list(record["amounts"].values()) == [3]
         state.free = 1
         yield b"b"

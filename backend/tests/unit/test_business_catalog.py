@@ -16,9 +16,6 @@ from support.business_catalog import (
 from support.business_catalog import (
     NOTES_READ as READ,
 )
-from support.business_catalog import (
-    NOTES_WRITE as WRITE,
-)
 from support.flow_packages import package_for_definitions
 
 from keystone import composition
@@ -31,12 +28,9 @@ from keystone.core.config import Settings
     [
         (("test_notes", DECLARATION), ("test_notes", DECLARATION)),
         (("identity", Catalog()),),
-        (("file", Catalog()),),
         (("invalid-key", Catalog()),),
         (("test_notes", Catalog(permissions={"user:read": "Override"})),),
         (("test_notes", Catalog(permissions={READ: " "})),),
-        (("test_notes", Catalog(permissions={"test_notes.note..draft:read": "Read"})),),
-        (("test_notes", Catalog(permissions={"test_notes.note.:read": "Read"})),),
         (("test_notes", Catalog(permissions={"test_notes.note:" + "x" * 100: "Long"})),),
         (("test_notes", Catalog(audit_actions={"identity.login": set()})),),
         (("test_notes", Catalog(audit_actions={ACTION: {"invalid-field"}})),),
@@ -47,19 +41,6 @@ def test_invalid_business_declarations_fail_at_startup(monkeypatch, declarations
     with pytest.raises(ValueError, match="business"):
         with TestClient(create_app(Settings(config_file=None))):
             pytest.fail("Invalid declarations must prevent startup")
-
-
-def test_catalog_copies_input_and_is_immutable():
-    permissions, fields = {READ: "Read"}, {"status"}
-    catalog = Catalog(permissions, {ACTION: fields})
-    permissions[WRITE] = "Write"
-    fields.add("secret")
-    assert WRITE not in catalog.permissions
-    assert catalog.audit_actions[ACTION] == {"status"}
-    with pytest.raises(TypeError):
-        catalog.permissions[WRITE] = "Write"
-    with pytest.raises(AttributeError):
-        catalog.audit_actions[ACTION].add("secret")
 
 
 @pytest.mark.parametrize("fields", ["status", b"status"])

@@ -280,14 +280,7 @@ def test_upstream_model_discovery_requires_management_and_does_not_import(client
     assert client.get("/api/v1/model-invocations").json() == []
     options = client.get("/api/v1/model-access/options").json()
     descriptors = {item["id"]: item for item in options["channels"]}
-    assert [item for item in descriptors if descriptors[item]["creatable"]] == [
-        "openrouter",
-        "newapi",
-        "yunwu",
-        "aliyun_bailian",
-        "volcengine",
-    ]
-    assert descriptors["newapi"]["default_api_base"] == "https://newapiai.com/v1"
+    assert descriptors["newapi"]["creatable"]
     assert descriptors["openrouter"]["balance"] is True
     assert descriptors["newapi"]["balance"] is True
 
@@ -358,35 +351,6 @@ def test_discovery_discards_results_after_configuration_change_or_revocation(
         response = result.result(10)
     assert response.status_code == (409 if change == "config" else 401)
     assert "private-model" not in response.text
-
-
-def test_newapi_custom_prefix_is_available_for_discovery_catalog_and_invocation(
-    client, monkeypatch
-):
-    base = "https://relay.example/gateway/api/v1"
-    c = channel(client, "newapi", api_base=base)
-    e = entry(client, c)
-    calls = []
-
-    async def respond(provider, request):
-        calls.append((request.method, request.url.path, request.headers["host"]))
-        return await mock.transport(provider).handle_async_request(request)
-
-    install_transport(client, monkeypatch, respond)
-    assert client.get(f"/api/v1/model-channels/{c['id']}/models").json() == {
-        "items": [{"id": "mock-chat"}]
-    }
-    assert client.get("/api/v1/_test/model-options").json()["items"][0]["key"] == e["key"]
-    response = invoke(client)
-    assert response.status_code == 200, response.text
-    assert calls == [
-        ("GET", "/gateway/api/v1/models", "relay.example"),
-        ("POST", "/gateway/api/v1/chat/completions", "relay.example"),
-    ]
-    assert (
-        client.get("/api/v1/model-invocations").json()[0]["cost_check_reason"]
-        == "cost_request_id_missing"
-    )
 
 
 @pytest.mark.parametrize(

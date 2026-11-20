@@ -405,8 +405,11 @@ def test_real_dbos_scheduler_queries_costs(client, billing, tmp_path):
     runtime.flow_engine = Engine(runtime.settings)
     records = tmp_path / "billing-records.json"
     records.write_text(json.dumps(billing["records"]), encoding="utf8")
+    # The first Worker stops while page 3 (holding the due receipt) is in flight.
+    hold = tmp_path / "hold-page-3"
+    hold.touch()
     code = f"""
-import json, os
+import asyncio, json, os
 import httpx2
 from keystone.platform.model_access.adapters.http import HttpClient
 original = HttpClient.transport
@@ -418,6 +421,8 @@ async def respond(request):
         }}}})
     rows = json.loads(open({str(records)!r}, encoding='utf8').read())
     page, size = int(request.url.params['p']), int(request.url.params['page_size'])
+    while page == 3 and os.path.exists({str(hold)!r}):
+        await asyncio.sleep(.05)
     return httpx2.Response(200, json={{'success': True, 'data': {{
         'items': rows[(page-1)*size:page*size], 'total': len(rows),
         'page': page, 'page_size': size
@@ -436,6 +441,7 @@ main()
     with worker(client, tmp_path, code=code) as (process, log):
         wait_for(client, process, log, checkpoint_saved)
     assert view(client, identifier)["cost_amount"] is None
+    hold.unlink()
     with worker(client, tmp_path, code=code) as (process, log):
         # The cost transaction commits before DBOS records workflow completion.
         wait_for(

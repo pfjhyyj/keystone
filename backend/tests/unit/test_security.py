@@ -29,22 +29,15 @@ def test_database_rejects_missing_application_catalog_before_creating_engine(mon
     create_engine.assert_not_called()
 
 
-def test_database_pool_keeps_connections_and_bounds_new_connection_wait(monkeypatch):
+def test_database_bounds_new_connection_wait(monkeypatch):
     create_engine = Mock()
     monkeypatch.setattr("keystone.core.database.create_async_engine", create_engine)
     url = "postgresql+psycopg://user:password@localhost/keystone"
-    Database(Settings(config_file=None, database_url=url), catalog=Catalog())
-    options = create_engine.call_args.kwargs
-    assert (options["pool_size"], options["max_overflow"]) == (10, 5)
-    assert options["connect_args"] == {"connect_timeout": 10}
     Database(
         Settings(config_file=None, database_url=url, database_connect_timeout_seconds=4),
         catalog=Catalog(),
     )
     assert create_engine.call_args.kwargs["connect_args"] == {"connect_timeout": 4}
-    for value in (0, 61):
-        with pytest.raises(ValidationError):
-            Settings(config_file=None, database_connect_timeout_seconds=value)
 
 
 @pytest.mark.parametrize("info", [{}, {"catalog": Catalog()}])

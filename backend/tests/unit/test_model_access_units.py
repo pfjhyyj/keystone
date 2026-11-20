@@ -10,7 +10,6 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import SecretStr
 from pydantic_ai.exceptions import ModelHTTPError
 
-from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
 from keystone.platform.files.adapters.storage import initialize
 from keystone.platform.model_access.adapters.credentials import KEY_FILE, ChannelCredentials
@@ -215,7 +214,6 @@ def test_upstream_error_codes_are_whitelisted_and_context_limit_is_specific(sdk_
 
 
 def test_real_transport_is_the_default_without_mode_configuration():
-    assert "model_mode" not in Settings.model_fields
     transport = gateway.InferenceClient(HttpClient()).transport("openrouter")
     assert isinstance(transport, httpx2.AsyncHTTPTransport)
     with pytest.raises(ServiceError) as unsupported:

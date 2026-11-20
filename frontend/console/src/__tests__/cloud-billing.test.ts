@@ -71,6 +71,9 @@ it.each(['aliyun_bailian', 'volcengine'])(
     await flushPromises()
     expect(writes[0]).toMatchObject({
       provider,
+      api_base: modelOptionsFixture().channels.find((item) => item.id === provider)!
+        .default_api_base,
+      api_key: 'inference-key',
       billing_credentials: {
         access_key_id: 'account-id',
         access_key_secret: 'account-secret',

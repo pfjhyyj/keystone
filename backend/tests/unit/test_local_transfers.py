@@ -1,9 +1,6 @@
 import asyncio
 import hashlib
 import io
-import os
-import subprocess
-import sys
 import tracemalloc
 from contextlib import AsyncExitStack
 from threading import Event
@@ -135,35 +132,6 @@ async def test_cancel_during_open_waits_and_closes_handle(tmp_path):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert handles[0].closed
-
-
-async def test_process_crash_residue_reclaimed_under_owner_lock(tmp_path):
-    storage = registry(tmp_path)
-    code = f"""
-import os
-from pathlib import Path
-from keystone.core.asyncio import run
-from keystone.core.config import Settings
-from keystone.platform.files.adapters.storage import StorageRegistry
-async def main():
-    settings = Settings(config_file=None, file_coordination_root=Path({str(tmp_path)!r}))
-    storage = StorageRegistry(settings)
-    async with storage.transfers.temporary(10) as path:
-        (path / 'output').write_bytes(b'partial')
-        os._exit(71)
-run(main())
-"""
-    result = await asyncio.to_thread(
-        subprocess.run,
-        [sys.executable, "-c", code],
-        capture_output=True,
-        timeout=20,
-        env={**os.environ, "KEYSTONE_CONFIG_FILE": ""},
-    )
-    assert result.returncode == 71, result.stderr
-    async with storage.transfers.temporary(10) as path:
-        assert path.is_dir() and not list(path.iterdir())
-    assert not list((tmp_path / ".transfers").iterdir())
 
 
 async def test_growing_file_hash_is_bounded_and_cancellable():

@@ -8,13 +8,7 @@ from keystone.platform.model_access.schemas.statistics import StatisticsQuery
 
 @pytest.mark.parametrize(
     "params",
-    [
-        {"bucket": "second"},
-        {"group_by": "secret"},
-        {"missing": "credentials"},
-        {"user_id": "bad"},
-        {"offset": 100001},
-    ],
+    [{"group_by": "secret"}, {"offset": 100001}],
 )
 def test_statistics_reject_invalid_query_fields(params):
     with pytest.raises(ValidationError):

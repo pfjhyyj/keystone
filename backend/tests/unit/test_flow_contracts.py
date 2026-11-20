@@ -199,35 +199,13 @@ def engine_with_error(error):
     return engine
 
 
-async def test_flow_preserves_safe_execution_errors():
-    for code in (
-        "model_not_found",
-        "model_target_changed",
-        "model_input_too_large",
-        "model_response_too_large",
-        "model_stream_incomplete",
-        "model_interrupted",
-        "model_authentication_failed",
-        "model_insufficient_credits",
-        "model_access_denied",
-        "model_invalid_request",
-        "upstream_model_not_found",
-        "model_rate_limited",
-        "model_invalid_image",
-        "model_result_source_denied",
-        "model_task_timeout",
-        "execution_not_authorized",
-        "flow_invalid_output",
-        "flow_timeout",
-    ):
-        assert (await engine_with_error(code).state(uuid4()))["error_code"] == code
-
-
-async def test_flow_never_projects_unknown_codes_or_exception_messages():
-    for error in ("unknown_code", "model_invalid_request: secret body"):
-        assert (await engine_with_error(error).state(uuid4()))[
-            "error_code"
-        ] == "flow_execution_failed"
+async def test_flow_projects_only_declared_execution_error_codes():
+    assert (await engine_with_error("model_rate_limited").state(uuid4()))[
+        "error_code"
+    ] == "model_rate_limited"
+    assert (await engine_with_error("unknown_code").state(uuid4()))[
+        "error_code"
+    ] == "flow_execution_failed"
 
 
 async def test_execution_version_is_queried_again_at_each_authorization(monkeypatch):

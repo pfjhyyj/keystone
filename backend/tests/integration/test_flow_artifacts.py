@@ -150,10 +150,9 @@ def test_run_visibility_and_file_permission_are_independent(artifacts):
     assert client.get(f"/api/v1/_test/materials/{identifier}/content").status_code == 404
 
 
-@pytest.mark.parametrize("permissions", [["test_files.asset:content_read"]])
-def test_missing_functional_permissions_cannot_probe_even_a_missing_key(artifacts, permissions):
+def test_missing_functional_permissions_cannot_probe_even_a_missing_key(artifacts):
     client, run_id, _ = artifacts
-    secret = token(client, permissions)["token"]
+    secret = token(client, ["test_files.asset:content_read"])["token"]
     with pytest.raises(ServiceError) as rejected:
         client.portal.call(
             service(client, run_id, Credential("pat", secret)).find, run_id, "missing"

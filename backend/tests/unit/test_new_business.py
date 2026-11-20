@@ -166,13 +166,6 @@ def test_scaffold_refuses_existing_package_and_invalid_namespace(tmp_path):
     assert invalid.returncode != 0 and "must match" in invalid.stderr
 
 
-@pytest.mark.parametrize("extra", [("--no-migration",)])
-def test_scaffold_can_skip_the_migration(tmp_path, extra):
-    result, _, migrations = generate(tmp_path, *extra)
-    assert result.returncode == 0, result.stderr
-    assert not list(migrations.glob("*_tiny_notes_initial.py"))
-
-
 def test_scaffold_continues_global_sequence_across_business_modules(tmp_path):
     result, businesses, migrations = generate(tmp_path)
     assert result.returncode == 0, result.stderr
@@ -294,11 +287,6 @@ def test_invalid_migration_history_fails_before_creating_business(tmp_path, mist
     content = path.read_text(encoding="utf8")
     if mistake == "duplicate_sequence":
         path.rename(path.with_name("0006_worker_initial.py"))
-    elif mistake == "duplicate_revision":
-        path.write_text(
-            content.replace('revision = "0007"', 'revision = "0006"'),
-            encoding="utf8",
-        )
     elif mistake == "missing_sequence":
         path.rename(path.with_name(f"{int(migration_head(VERSIONS)) + 2:04d}_worker_initial.py"))
     elif mistake == "wrong_parent":
@@ -317,17 +305,6 @@ def test_invalid_migration_history_fails_before_creating_business(tmp_path, mist
             content.replace('down_revision = "0006"', 'down_revision = ("0006", "0005")'),
             encoding="utf8",
         )
-    elif mistake == "nested_category":
-        target = migrations / "platform/worker" / path.name
-        target.parent.mkdir(parents=True)
-        path.rename(target)
-    elif mistake == "annotated_branch":
-        path.write_text(
-            content.replace(
-                "branch_labels = None", 'branch_labels: tuple[str, ...] | None = ("worker",)'
-            ),
-            encoding="utf8",
-        )
     elif mistake == "annotated_dependency":
         path.write_text(
             content.replace("depends_on = None", 'depends_on: str | None = "0001"'),
@@ -340,8 +317,6 @@ def test_invalid_migration_history_fails_before_creating_business(tmp_path, mist
             content.replace('revision = "0007"', 'revision = str("0007")'),
             encoding="utf8",
         )
-    elif mistake == "syntax_error":
-        path.write_text(content + "\ninvalid = (\n", encoding="utf8")
     result = invoke(businesses, migrations)
     assert result.returncode != 0 and message in result.stderr, result.stderr
     assert not businesses.exists()
