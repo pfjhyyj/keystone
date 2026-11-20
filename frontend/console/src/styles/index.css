@@ -444,9 +444,8 @@ input[type='file']::file-selector-button {
   padding-top: 14px;
   border-top: 1px solid #edf0f5;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 12px 16px;
   color: #617084;
   font-size: 12px;
 }
@@ -604,17 +603,6 @@ fieldset .el-checkbox {
 }
 .selection-list .el-button {
   flex-shrink: 0;
-}
-.confirmation {
-  margin-top: 20px;
-  padding: 16px;
-  border: 1px solid #f3d8b8;
-  background: #fffbf5;
-  border-radius: 6px;
-}
-.confirmation p {
-  color: #a16c34;
-  margin-bottom: 12px;
 }
 .known-file {
   padding: 12px 16px;
@@ -1206,17 +1194,6 @@ dd {
   background: #fff;
   z-index: 3;
 }
-.discard-confirmation {
-  background: #fff6eb;
-  border: 1px solid #e9cfaa;
-  border-radius: 6px;
-  padding: 16px;
-  margin-bottom: 18px;
-}
-.discard-confirmation p {
-  color: #74501b;
-  margin-bottom: 12px;
-}
 .row-more-trigger.el-button {
   height: 26px;
   padding: 2px 6px;
@@ -1485,4 +1462,19 @@ dd {
     border-left: 0;
     border-top: 1px solid #e4e8ed;
   }
+}
+
+.action-confirm .el-message-box__message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 50dvh;
+  overflow-y: auto;
+}
+
+.action-confirm .el-message-box__btns {
+  gap: 12px;
+}
+
+.action-confirm .el-message-box__btns .el-button + .el-button {
+  margin-left: 0;
 }

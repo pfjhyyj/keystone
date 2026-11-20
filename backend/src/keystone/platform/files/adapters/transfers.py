@@ -9,9 +9,26 @@ from threading import Event
 
 from keystone.core.errors import ServiceError
 from keystone.platform.files.adapters.capacity import Capacity, Reservation
-from keystone.platform.files.adapters.storage import blocking, opened
+from keystone.platform.files.adapters.storage import LOCAL_WRITE_CHUNK_BYTES, blocking, opened
 
 CHUNK_BYTES = 256 * 1024
+
+
+async def reserved_writes(chunks):
+    """Coalesce chunks: each reserved write takes the shared ledger lock and persists it."""
+    pending = bytearray()
+    async for chunk in chunks:
+        remaining = memoryview(chunk)
+        while remaining:
+            space = LOCAL_WRITE_CHUNK_BYTES - len(pending)
+            pending.extend(remaining[:space])
+            remaining = remaining[space:]
+            if len(pending) == LOCAL_WRITE_CHUNK_BYTES:
+                # The caller finishes writing before the generator reuses this buffer.
+                yield pending
+                pending.clear()
+    if pending:
+        yield pending
 
 
 def checksum(stream, size, cancelled=None):
@@ -57,7 +74,7 @@ async def monitor(workspace, limit):
     async def watch():
         nonlocal failure
         while True:
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
             try:
                 await blocking(workspace.capacity.check, workspace.path, limit)
             except asyncio.CancelledError:
@@ -127,16 +144,19 @@ class Transfers:
         async with self.workspace(size, destination=destination) as workspace:
             path, allocation = workspace.path / "upload", workspace.capacity
             actual, digest = 0, hashlib.sha256()
-            async with opened(path.open, "xb") as stream:
+
+            async def bounded():
+                nonlocal actual
                 async for chunk in chunks:
                     actual += len(chunk)
                     if actual > size:
                         raise ServiceError(413, "file_too_large", "上传内容超过声明大小")
-                    # The ASGI server owns incoming chunk allocation; we make no aggregate copy.
-                    for start in range(0, len(chunk), CHUNK_BYTES):
-                        part = memoryview(chunk)[start : start + CHUNK_BYTES]
-                        await blocking(allocation.write, stream, part)
-                        digest.update(part)
+                    yield chunk
+
+            async with opened(path.open, "xb") as stream:
+                async for block in reserved_writes(bounded()):
+                    await blocking(allocation.write, stream, block)
+                    digest.update(block)
             if actual != size:
                 raise ServiceError(422, "file_size_mismatch", "实际内容与预期大小不一致")
             value = digest.hexdigest()

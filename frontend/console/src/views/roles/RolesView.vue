@@ -8,6 +8,7 @@ import { useAction } from '../../composables/useAction'
 import AppDialog from '../../components/AppDialog.vue'
 import ListPager from '../../components/ListPager.vue'
 import PermissionPicker from './components/PermissionPicker.vue'
+import { confirmAction } from '../../utils/confirm'
 
 const { rows, page, loading, error: listError, reload } = usePagedList('role:read', adminApi.roles)
 const { busy, error, notice, run } = useAction()
@@ -16,7 +17,6 @@ const catalogError = ref('')
 const catalogLoading = ref(false)
 const editing = ref(false)
 const target = ref<Role | null>(null)
-const deleting = ref<Role | null>(null)
 const readOnly = ref(false)
 const form = reactive({ key: '', name: '', description: '', permissions: [] as string[] })
 const initialForm = ref('')
@@ -76,11 +76,17 @@ async function save() {
     await reload()
   })
 }
-async function remove() {
+async function remove(role: Role) {
+  if (
+    !(await confirmAction(`删除“${role.name}”？仍有用户分配或文件授权引用时，服务端会拒绝删除。`, {
+      title: '删除角色',
+      confirmText: '确认删除',
+      danger: true,
+    }))
+  )
+    return
   await run(async () => {
-    if (!deleting.value) return
-    await request(`/roles/${deleting.value.id}`, 'DELETE')
-    deleting.value = null
+    await request(`/roles/${role.id}`, 'DELETE')
     notice.value = '角色已删除。'
     await reload()
   })
@@ -101,13 +107,13 @@ onMounted(loadCatalog)
       >
     </div>
     <el-alert
-      v-if="listError || catalogError"
+      v-if="listError || catalogError || (!editing && error)"
       role="alert"
       type="error"
       show-icon
       :closable="false"
     >
-      {{ listError || catalogError }}
+      {{ listError || catalogError || error }}
       <el-button v-if="catalogError" @click="loadCatalog" native-type="button" type="primary"
         >重试权限目录</el-button
       >
@@ -165,12 +171,7 @@ onMounted(loadCatalog)
               <el-button
                 v-if="can('role:delete')"
                 :disabled="!manageable(role)"
-                @click="
-                  () => {
-                    deleting = role
-                    error = ''
-                  }
-                "
+                @click="remove(role)"
                 native-type="button"
                 type="danger"
                 link
@@ -243,15 +244,6 @@ onMounted(loadCatalog)
           }}</el-button>
         </div>
       </form>
-    </AppDialog>
-    <AppDialog v-if="deleting" title="删除角色" :busy="busy" @close="deleting = null">
-      <p>删除“{{ deleting.name }}”？仍有用户分配或文件授权引用时，服务端会拒绝删除。</p>
-      <el-alert v-if="error" role="alert" type="error" show-icon :closable="false">{{
-        error
-      }}</el-alert>
-      <el-button :disabled="busy" @click="remove" native-type="button" type="danger"
-        >确认删除</el-button
-      >
     </AppDialog>
   </section>
 </template>

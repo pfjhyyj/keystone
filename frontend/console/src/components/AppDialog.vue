@@ -16,14 +16,12 @@ const props = withDefaults(
   { width: '620px', appendToBody: false },
 )
 const emit = defineEmits<{ close: [] }>()
-const changed = ref(false),
-  confirming = ref(false)
+const changed = ref(false)
 const dirty = computed(() => props.dirty ?? changed.value)
-useUnsavedChanges(computed(() => !!props.protectChanges && !!dirty.value))
-function close() {
+const { confirmLeave } = useUnsavedChanges(computed(() => !!props.protectChanges && !!dirty.value))
+async function close() {
   if (props.busy) return
-  if (props.protectChanges && dirty.value) confirming.value = true
-  else emit('close')
+  if ((await confirmLeave()) && !props.busy) emit('close')
 }
 </script>
 <template>
@@ -57,13 +55,6 @@ function close() {
         <h1>{{ title }}</h1>
       </div>
       <el-button v-if="!$slots.footer" @click="close">取消</el-button>
-    </div>
-    <div v-if="confirming" class="discard-confirmation" role="alert">
-      <p>尚有未保存的修改，确定放弃吗？</p>
-      <div class="row-actions">
-        <el-button @click="confirming = false">继续编辑</el-button
-        ><el-button type="danger" @click="emit('close')">放弃修改</el-button>
-      </div>
     </div>
     <slot />
     <footer v-if="page && $slots.footer" class="page-editor-footer">

@@ -7,7 +7,7 @@ from threading import Event
 
 from keystone.core.errors import ServiceError
 from keystone.platform.files.adapters.storage import blocking, opened
-from keystone.platform.files.adapters.transfers import StagedUpload, checksum
+from keystone.platform.files.adapters.transfers import StagedUpload, checksum, reserved_writes
 from keystone.platform.files.schemas import Upload
 
 
@@ -58,9 +58,9 @@ class FileTransferService:
                     path = workspace.path / "input"
                     digest = hashlib.sha256()
                     async with opened(path.open, "xb") as target:
-                        async for chunk in reader.chunks():
-                            await blocking(workspace.capacity.write, target, chunk)
-                            digest.update(chunk)
+                        async for block in reserved_writes(reader.chunks()):
+                            await blocking(workspace.capacity.write, target, block)
+                            digest.update(block)
                     if digest.hexdigest() != reader.checksum:
                         raise ServiceError(503, "file_corrupt", "文件内容校验失败")
                     yield path

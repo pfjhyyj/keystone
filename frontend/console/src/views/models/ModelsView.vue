@@ -15,6 +15,7 @@ import {
 } from '../../api/models'
 import { usePagedList } from '../../composables/usePagedList'
 import { useAction } from '../../composables/useAction'
+import { confirmAction } from '../../utils/confirm'
 import AppDialog from '../../components/AppDialog.vue'
 import RowMore from '../../components/RowMore.vue'
 import ListPager from '../../components/ListPager.vue'
@@ -112,21 +113,35 @@ const selectedAction = ref<{
   id: string
   name: string
   key?: string
-  mode: 'rename' | 'delete'
 } | null>(null)
 const actionName = ref('')
-function configureAction(
+async function configureAction(
   kind: 'channel' | 'entry',
   row: Channel | ModelEntry,
   mode: 'rename' | 'delete',
 ) {
   const display = row.name || ('key' in row ? row.key : '')
+  if (mode === 'delete') {
+    if (
+      !(await confirmAction(
+        `删除“${display}”？删除后不可恢复。存在模型配置、调用记录或流程引用时会拒绝删除，可改为停用。`,
+        { title: '删除配置', confirmText: '确认删除', danger: true },
+      ))
+    )
+      return
+    await run(async () => {
+      const path = kind === 'channel' ? '/model-channels/' : '/model-entries/'
+      await request(`${path}${row.id}`, 'DELETE')
+      notice.value = '配置已删除。'
+      await (kind === 'channel' ? channels : entries).reload()
+    })
+    return
+  }
   selectedAction.value = {
     kind,
     id: row.id,
     name: display,
     key: 'key' in row ? row.key : undefined,
-    mode,
   }
   actionName.value = display
   error.value = ''
@@ -136,12 +151,9 @@ async function submitAction() {
     const action = selectedAction.value
     if (!action || !can('model:manage')) return
     const path = action.kind === 'channel' ? '/model-channels/' : '/model-entries/'
-    if (action.mode === 'rename')
-      await request(`${path}${action.id}/name`, 'PATCH', { name: actionName.value })
-    else await request(`${path}${action.id}`, 'DELETE')
+    await request(`${path}${action.id}/name`, 'PATCH', { name: actionName.value })
     selectedAction.value = null
-    notice.value =
-      action.mode === 'rename' ? '名称已修改，模型 key 和流程绑定保持不变。' : '配置已删除。'
+    notice.value = '名称已修改，模型 key 和流程绑定保持不变。'
     await (action.kind === 'channel' ? channels : entries).reload()
   })
 }
@@ -788,8 +800,8 @@ onMounted(() => {
     </AppDialog>
     <AppDialog
       v-if="selectedAction"
-      :protect-changes="selectedAction.mode === 'rename'"
-      :title="selectedAction.mode === 'rename' ? '修改名称' : '删除配置'"
+      protect-changes
+      title="修改名称"
       :busy="busy"
       @close="
         () => {
@@ -804,18 +816,8 @@ onMounted(() => {
           {{ selectedAction.name
           }}<span v-if="selectedAction.key">（{{ selectedAction.key }}）</span>
         </p>
-        <label v-if="selectedAction.mode === 'rename'"
-          >显示名称<el-input v-model="actionName" required maxlength="128"
-        /></label>
-        <p v-else>
-          确认删除此配置？删除后不可恢复。存在模型配置、调用记录或流程引用时会拒绝删除，可改为停用。
-        </p>
-        <el-button
-          :disabled="busy"
-          native-type="submit"
-          :type="selectedAction.mode === 'delete' ? 'danger' : 'primary'"
-          >{{ selectedAction.mode === 'rename' ? '保存名称' : '确认删除' }}</el-button
-        >
+        <label>显示名称<el-input v-model="actionName" required maxlength="128" /></label>
+        <el-button :disabled="busy" native-type="submit" type="primary">保存名称</el-button>
       </form>
     </AppDialog>
   </section>

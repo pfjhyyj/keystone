@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import sys
 from datetime import timedelta
 from uuid import UUID, uuid4
 
@@ -18,10 +19,12 @@ from keystone.core.database import Database
 from keystone.core.errors import ServiceError
 from keystone.core.migrations import migration_config
 from keystone.core.time import utcnow
+from keystone.entrypoints import cli
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.dictionary.services import dictionaries
 from keystone.platform.files.adapters.storage import initialize
 from keystone.platform.files.models import File
+from keystone.platform.files.services import cleanup as file_cleanup
 from keystone.platform.files.services.cleanup import cleanup
 from keystone.platform.files.services.references import FileReferences
 from keystone.platform.identity.adapters.security import Passwords
@@ -201,14 +204,86 @@ def test_volume_identity_and_abandoned_upload_recovery(client):
             .values(status="uploading", updated_at=utcnow() - timedelta(hours=2))
         )
 
+    async def stale(session):
+        await session.execute(
+            update(File)
+            .where(File.id == UUID(f["id"]))
+            .values(updated_at=utcnow() - timedelta(hours=2))
+        )
+
     query(client, abandon)
     clean(client)
     assert client.get(f"/api/v1/_test/materials/{f['id']}").json()["status"] == "failed"
+    query(client, stale)
+    clean(client)  # The hourly residue sweep finds nothing left and stays silent.
+    residue = client.get("/api/v1/audit-logs", params={"action": "file.upload.residue_cleanup"})
+    assert [r["target_id"] for r in residue.json()] == [f["id"]]
     assert upload(client).json()["id"] == f["id"]
     marker = client.app.state.runtime.storage.get().root / ".keystone-storage"
     marker.write_text("keystone:" + "1" * 64)
     assert client.get(f"/api/v1/_test/materials/{f['id']}/content").status_code == 503
     assert client.get("/api/v1/ready").status_code == 503
+
+
+def test_delete_retries_are_bounded_and_can_be_requeued(client, monkeypatch):
+    runtime = client.app.state.runtime
+    source = runtime.storage.get()
+    identifier = UUID(upload(client).json()["id"])
+    path = f"/api/v1/_test/materials/{identifier}"
+    assert client.delete(path).status_code == 202
+
+    clock = utcnow()
+    monkeypatch.setattr(file_cleanup, "utcnow", lambda: clock)
+    delete = source.delete
+    calls = []
+
+    def fail_delete(fingerprint, key):
+        calls.append(key)
+        raise ServiceError(503, "storage_unavailable", "test storage unavailable")
+
+    def state():
+        row = query(client, lambda session: session.get(File, identifier))
+        return row.status, row.delete_failures
+
+    monkeypatch.setattr(source, "delete", fail_delete)
+    with runtime.storage.lease(identifier):
+        clean(client)
+    assert calls == [] and state() == ("deleting", 0)
+
+    for attempt in range(1, 4):
+        clean(client)
+        assert len(calls) == attempt and state() == ("deleting", attempt)
+        clean(client)
+        assert len(calls) == attempt
+        clock += timedelta(minutes=5)
+
+    clean(client)
+    assert len(calls) == 3 and state() == ("deleting", 3)
+    assert client.portal.call(file_cleanup.backlog, runtime.database) == (0, None)
+    logs = client.get(
+        "/api/v1/audit-logs",
+        params={"action": "file.cleanup.failure", "target_id": str(identifier)},
+    ).json()
+    assert [(row["details"]["attempt"], row["details"]["reason"]) for row in logs] == [
+        (3, "storage_unavailable"),
+        (2, "storage_unavailable"),
+        (1, "storage_unavailable"),
+    ]
+
+    monkeypatch.setattr(source, "delete", delete)
+    other = UUID(upload(client, key="other").json()["id"])
+    assert client.delete(f"/api/v1/_test/materials/{other}").status_code == 202
+    client.portal.call(lambda: file_cleanup.cleanup(runtime.database, runtime.storage, limit=1))
+    assert query(client, lambda session: session.get(File, other)).status == "deleted"
+    assert state() == ("deleting", 3)
+
+    monkeypatch.setattr(cli, "Settings", lambda: runtime.settings)
+    args = ["keystone", "retry-file-delete", "--file-id", str(identifier)]
+    monkeypatch.setattr(sys, "argv", args)
+    cli.main()
+    assert state() == ("deleting", 0)
+    clean(client)
+    assert state() == ("deleted", 0)
 
 
 def test_dictionary_stable_keys_history_and_audit_rollback(client, monkeypatch):

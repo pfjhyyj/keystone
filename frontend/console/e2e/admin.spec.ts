@@ -157,7 +157,7 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
   await reader.goto('http://127.0.0.1:5175/console/audit')
   await expect(reader.getByRole('heading', { name: '没有此页面的访问权限' })).toBeVisible()
 
-  // Referenced roles cannot be removed; the dialog retains the server's reason.
+  // Referenced roles cannot be removed; the page keeps the server's reason.
   await page.getByRole('link', { name: '角色管理', exact: true }).click()
   await page
     .getByRole('row')
@@ -165,9 +165,8 @@ test('user, role, audit and session lifecycle against the real API', async ({ pa
     .getByRole('button', { name: '删除角色' })
     .click()
   await page.getByRole('dialog').getByRole('button', { name: '确认删除' }).click()
-  await expect(page.getByRole('dialog')).toContainText('请先解除角色分配')
-  await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toBeHidden()
+  await expect(page.getByRole('alert').filter({ hasText: '请先解除角色分配' })).toBeVisible()
 
   await page.getByRole('link', { name: '用户管理', exact: true }).click()
   alice = page.getByRole('row').filter({ hasText: 'alice' })

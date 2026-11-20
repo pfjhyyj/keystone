@@ -12,7 +12,7 @@ export function usePagedList<T>(
   const allowed = computed(() => (typeof permission === 'string' ? can(permission) : permission()))
   let generation = 0
   let disposed = false
-  async function load(preserve = false) {
+  async function load(preserve = false, fallbackPage = Math.max(0, page.value - 1)) {
     if (disposed) return
     const current = ++generation
     if (!preserve || !allowed.value) rows.value = []
@@ -23,7 +23,7 @@ export function usePagedList<T>(
     try {
       const result = await loader(page.value * 50)
       if (current !== generation || !allowed.value) return
-      if (!result.length && page.value > 0) page.value--
+      if (!result.length && page.value > 0) page.value = fallbackPage
       else rows.value = result
     } catch (reason) {
       if (current === generation)
@@ -42,7 +42,14 @@ export function usePagedList<T>(
     if (page.value) page.value = 0
     else void reload()
   }
-  watch([allowed, page], reload, { immediate: true, flush: 'sync' })
+  watch(
+    [allowed, page],
+    ([, target], [, previous = 0]) => {
+      // A forward jump can land past the end. Retry the page the user came from.
+      void load(false, target > previous ? previous : 0)
+    },
+    { immediate: true, flush: 'sync' },
+  )
   onScopeDispose(() => {
     disposed = true
     generation++

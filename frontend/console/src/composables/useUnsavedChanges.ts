@@ -1,6 +1,6 @@
 import { computed, inject, onBeforeUnmount, onMounted, type Ref } from 'vue'
 import { matchedRouteKey, onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router'
-import { ElMessageBox } from 'element-plus'
+import { confirmAction } from '../utils/confirm'
 import { sessionVersion } from '../stores/session'
 
 export function useUnsavedChanges(dirty: Ref<boolean>) {
@@ -8,16 +8,11 @@ export function useUnsavedChanges(dirty: Ref<boolean>) {
   const active = computed(() => dirty.value && version === sessionVersion.value)
   async function confirmLeave() {
     if (!active.value) return true
-    try {
-      await ElMessageBox.confirm('尚有未保存的修改，离开后将丢失。', '放弃修改？', {
-        confirmButtonText: '放弃修改',
-        cancelButtonText: '继续编辑',
-        type: 'warning',
-      })
-      return true
-    } catch {
-      return false
-    }
+    return confirmAction('尚有未保存的修改，离开后将丢失。', {
+      title: '放弃修改？',
+      confirmText: '放弃修改',
+      cancelText: '继续编辑',
+    })
   }
   function beforeUnload(event: BeforeUnloadEvent) {
     if (!active.value) return

@@ -15,6 +15,7 @@ import pytest
 from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
 from keystone.platform.files.adapters import capacity as disk
+from keystone.platform.files.adapters import transfers
 from keystone.platform.files.adapters.storage import StorageRegistry
 
 
@@ -40,6 +41,21 @@ def clean(root):
     assert not list((root / ".capacity").iterdir())
     if (root / ".transfers").exists():
         assert not list((root / ".transfers").iterdir())
+
+
+async def test_reserved_writes_splits_large_input_and_preserves_chunk_order():
+    mib = 1024 * 1024
+
+    async def chunks():
+        yield b"a" * (3 * mib)
+        yield b"b" * (2 * mib)
+        yield b"c" * (12 * mib)
+
+    blocks = [bytes(block) async for block in transfers.reserved_writes(chunks())]
+    assert [len(block) for block in blocks] == [4 * mib] * 4 + [mib]
+    assert blocks[0] == b"a" * (3 * mib) + b"b" * mib
+    assert blocks[1] == b"b" * mib + b"c" * (3 * mib)
+    assert all(block == b"c" * len(block) for block in blocks[2:])
 
 
 async def test_upload_reserves_both_copies_before_consuming_body(tmp_path, monkeypatch):
@@ -141,6 +157,7 @@ from types import SimpleNamespace
 from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
 from keystone.platform.files.adapters import capacity as disk
+from keystone.platform.files.adapters import transfers
 from keystone.platform.files.adapters.storage import StorageRegistry
 root = Path({str(root)!r})
 settings = Settings(config_file=None, file_coordination_root=root,
@@ -263,6 +280,8 @@ async def test_space_loss_during_upload_stops_writing_and_releases_everything(
 ):
     storage = registry(tmp_path)
     state = free_space(monkeypatch, 10)
+    # Account every byte so the loss lands between two reserved writes.
+    monkeypatch.setattr(transfers, "LOCAL_WRITE_CHUNK_BYTES", 1)
 
     async def chunks():
         yield b"a"

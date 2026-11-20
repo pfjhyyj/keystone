@@ -10,6 +10,7 @@ import AppDialog from '../../../components/AppDialog.vue'
 import CostSummary from '../../../components/models/CostSummary.vue'
 import FlowRunDiagnostics from './FlowRunDiagnostics.vue'
 import FlowStepDetails from './FlowStepDetails.vue'
+import { confirmAction } from '../../../utils/confirm'
 const props = defineProps<{ id: string }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 const row = ref<FlowRun | null>(null),
@@ -18,8 +19,7 @@ const row = ref<FlowRun | null>(null),
 const detailError = ref(''),
   stepError = ref(''),
   costError = ref(''),
-  loading = ref(false),
-  confirming = ref(false)
+  loading = ref(false)
 const { busy, error, notice, run } = useAction()
 const resultFacts = computed(() =>
   Object.entries(row.value?.result ?? {})
@@ -44,7 +44,6 @@ function unavailable(message: string) {
   costs.value = null
   detailError.value = message
   loading.value = false
-  confirming.value = false
   clearInterval(timer)
 }
 let generation = 0,
@@ -119,12 +118,20 @@ async function refresh() {
 }
 async function cancel() {
   if (!cancelAllowed.value || loading.value) return
+  const id = props.id
+  if (
+    !(await confirmAction(
+      '确认请求取消此流程？取消是异步请求，已发生的调用、费用和文件写入不会撤回。',
+      { title: '取消流程', confirmText: '确认取消流程', cancelText: '继续等待', danger: true },
+    ))
+  )
+    return
+  if (!alive || props.id !== id || !cancelAllowed.value || loading.value) return
   await run(async () => {
-    const value = await request<FlowRun>(`/flow-runs/${props.id}/cancel`, 'POST')
+    const value = await request<FlowRun>(`/flow-runs/${id}/cancel`, 'POST')
     if (!alive) return
     generation++
     row.value = value
-    confirming.value = false
     diagnosticRefresh.value++
     notice.value = '取消请求已受理，等待执行端确认；已发生的费用和文件写入不会撤回。'
     emit('changed')
@@ -171,28 +178,13 @@ onScopeDispose(() => {
       ><el-button
         v-if="cancelAllowed"
         :disabled="busy || loading"
-        @click="confirming = true"
+        @click="cancel"
         native-type="button"
         type="primary"
       >
         取消流程
       </el-button>
     </div>
-    <form v-if="confirming" class="confirmation" @submit.prevent="cancel">
-      <p>确认请求取消此流程？取消是异步请求，已发生的调用、费用和文件写入不会撤回。</p>
-      <div class="row-actions">
-        <el-button :disabled="busy || loading" native-type="submit" type="danger"
-          >确认取消流程</el-button
-        ><el-button
-          :disabled="busy"
-          @click="confirming = false"
-          native-type="button"
-          type="default"
-        >
-          继续等待
-        </el-button>
-      </div>
-    </form>
     <p v-if="loading" role="status">正在确认运行状态…</p>
     <template v-if="row"
       ><div class="detail-summary">

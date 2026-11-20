@@ -70,23 +70,27 @@ def test_s3_unknown_write_retry_and_late_write_cleanup(multi_client, s3):
     assert upload(client, storage_key="cloud").json()["id"] == failed["id"]
     assert upload(client, b"other", storage_key="cloud").json()["code"] == "idempotency_conflict"
     client.delete(f"/api/v1/_test/materials/{failed['id']}")
+
+    def age(delta):
+        async def change(session):
+            await session.execute(
+                update(File)
+                .where(File.id == UUID(failed["id"]))
+                .values(updated_at=utcnow() - delta)
+            )
+
+        query(client, change)
+
     s3.unavailable = True
     clean(client)
     assert client.get(f"/api/v1/_test/materials/{failed['id']}").json()["status"] == "deleting"
     s3.unavailable = False
+    age(timedelta(minutes=2))  # A failed deletion waits for the retry delay.
     clean(client)
     assert not s3.objects
     # Simulate a request accepted before a crashed writer returning after DELETE.
     s3.objects[f"/backups/business-a/files/{UUID(failed['id']).hex}"] = b"hello"
-
-    async def age(session):
-        await session.execute(
-            update(File)
-            .where(File.id == UUID(failed["id"]))
-            .values(updated_at=utcnow() - timedelta(hours=2))
-        )
-
-    query(client, age)
+    age(timedelta(hours=2))
     clean(client)
     assert not s3.objects
     assert client.get(f"/api/v1/_test/materials/{failed['id']}").json()["status"] == "deleted"

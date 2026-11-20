@@ -31,6 +31,7 @@ from keystone.platform.audit.services import writer as audit
 from keystone.platform.files.models import File, FileReference
 from keystone.platform.files.schemas import Upload
 from keystone.platform.files.services import access as file_access
+from keystone.platform.files.services import cleanup as file_cleanup
 from keystone.platform.files.services.cleanup import backlog, cleanup
 from keystone.platform.files.services.references import FileReferences
 from keystone.platform.identity.controllers.dependencies import access_context
@@ -405,6 +406,8 @@ def test_reclamation_marks_deleting_before_io_and_rejects_new_references(notes, 
         notes, lambda s: s.execute(update(File).values(completed_at=utcnow() - timedelta(hours=2)))
     )
     rt = notes.app.state.runtime
+    clock = utcnow()
+    monkeypatch.setattr(file_cleanup, "utcnow", lambda: clock)
     source = rt.storage.get()
     original = source.delete
 
@@ -426,6 +429,7 @@ def test_reclamation_marks_deleting_before_io_and_rejects_new_references(notes, 
     assert rejected.value.code == "file_unavailable"
     assert references(notes, saved["id"]) == 0
     monkeypatch.setattr(source, "delete", original)
+    clock += timedelta(minutes=5)
     notes.portal.call(lambda: cleanup(rt.database, rt.storage, unreferenced_grace_seconds=1))
     assert query(notes, lambda s: s.scalar(select(File.status))) == "deleted"
 

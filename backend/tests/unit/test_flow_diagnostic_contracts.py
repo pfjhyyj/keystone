@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from keystone.core.errors import ServiceError
 from keystone.platform.flow.schemas.diagnostics import source_invocation
+from keystone.platform.flow.workflows import diagnostics as step_diagnostics
 from keystone.platform.model_access.channels.openlux import kling
 from keystone.platform.model_access.schemas.diagnostics import diagnostic
 from keystone.platform.model_access.schemas.invocations import InvocationContext, Selection
@@ -120,3 +121,27 @@ def test_public_file_diagnostic_cannot_inherit_internal_proof_fields():
     assert set(FlowFileDiagnostic.model_fields) == {"file_id", "slot", "invocation_id"}
     with pytest.raises(ValidationError):
         FlowFileDiagnostic(file_id=uuid4(), slot="input", checksum_sha256="a" * 64)
+
+
+async def test_step_diagnostics_are_enabled_only_inside_a_recorded_step(monkeypatch):
+    saved = []
+
+    async def save(run_id, key, attempt, label, kind, state, output, error):
+        saved.append((label, dict(state["input"]), output, error))
+
+    @step_diagnostics.diagnose_step("review", project=lambda result: {"count": result})
+    async def step(run_id):
+        enabled = step_diagnostics.diagnostic_enabled()
+        if enabled:
+            step_diagnostics.diagnostic_input(size=2)
+        return 2 if enabled else 0
+
+    monkeypatch.setattr(step_diagnostics, "_save", save)
+    assert not step_diagnostics.diagnostic_enabled()
+    assert await step(uuid4()) == 0 and saved == []
+
+    dbos = SimpleNamespace(workflow_id="workflow", step_id=1, step_status=None)
+    monkeypatch.setattr(step_diagnostics, "DBOS", dbos)
+    assert await step(uuid4()) == 2
+    assert saved == [("review", {"size": 2}, {"count": 2}, None)]
+    assert not step_diagnostics.diagnostic_enabled()

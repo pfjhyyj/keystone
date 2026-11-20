@@ -22,6 +22,11 @@ _current = ContextVar("flow_step_diagnostic", default=None)
 log = logging.getLogger(__name__)
 
 
+def diagnostic_enabled():
+    """Whether this Step records diagnostics; skip building costly fields otherwise."""
+    return _current.get() is not None
+
+
 def diagnostic_input(**values):
     """Declare safe JSON fields from inside the executing Step."""
     state = _current.get()

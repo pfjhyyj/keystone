@@ -11,7 +11,7 @@ CATALOG = Catalog(
         "file.update": {"before", "status", "after", "name"},
         "file.delete.request": set(),
         "file.delete.complete": set(),
-        "file.cleanup.failure": {"reason"},
+        "file.cleanup.failure": {"reason", "attempt"},
         "file.reference": {"added", "owner", "slot"},
     },
 )

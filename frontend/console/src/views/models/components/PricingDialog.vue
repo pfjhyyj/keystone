@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElForm, ElFormItem, ElMessageBox, ElRadioButton, ElRadioGroup } from 'element-plus'
+import { ElForm, ElFormItem, ElRadioButton, ElRadioGroup } from 'element-plus'
 import { operationLabels, money, type ModelEntry } from '../../../api/models'
 import {
   pricingApi,
@@ -19,6 +19,7 @@ import {
 } from '../../../api/pricing'
 import AppDialog from '../../../components/AppDialog.vue'
 import AppSelect from '../../../components/AppSelect.vue'
+import { confirmAction } from '../../../utils/confirm'
 import { useAction } from '../../../composables/useAction'
 
 const props = defineProps<{ entry: ModelEntry }>()
@@ -728,15 +729,13 @@ async function selectTemplate(next: Exclude<Template, 'json'>) {
     }
   }
   if (e.template === 'tier' && next === 'token') {
-    try {
-      await ElMessageBox.confirm(
+    if (
+      !(await confirmAction(
         '将删除全部高档，仅保留第一档单价；隐式和显式两种缓存模式的高档都会删除。未保存的阶梯草稿无法恢复。',
-        '确认转换为 Token 单价？',
-        { confirmButtonText: '确认转换', cancelButtonText: '保留阶梯草稿', type: 'warning' },
-      )
-    } catch {
+        { title: '确认转换为 Token 单价？', confirmText: '确认转换', cancelText: '保留阶梯草稿' },
+      ))
+    )
       return
-    }
     e.tiers = []
     if (e.modes) {
       e.modes.implicit.tiers = []

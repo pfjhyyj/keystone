@@ -1,4 +1,5 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import * as confirmation from '../utils/confirm'
+import { DOMWrapper, flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 import { ElDatePicker } from 'element-plus'
 import UsersView from '../views/users/UsersView.vue'
@@ -22,6 +23,39 @@ describe('user administration', () => {
     await flushPromises()
     expect(wrapper.findComponent(UserRolesDialog).props('user').id).toBe(user.id)
   })
+  it('confirms account changes and shows a rejected operation on the page', async () => {
+    authorize(['user:read', 'user:update'])
+    const confirm = vi
+      .spyOn(confirmation, 'confirmAction')
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    const writes: string[] = []
+    fakeApi((path, init) => {
+      if (init.method === 'PUT') {
+        writes.push(path)
+        return new Response(JSON.stringify({ detail: '账户状态变更被拒绝' }), { status: 409 })
+      }
+      return [user]
+    })
+    const wrapper = mount(UsersView)
+    await flushPromises()
+    async function deactivate() {
+      await wrapper.get('.row-more-trigger').trigger('click')
+      await flushPromises()
+      await new DOMWrapper(document.body)
+        .findAll('button')
+        .find((button) => button.text() === '停用')!
+        .trigger('click')
+      await flushPromises()
+    }
+    await deactivate()
+    expect(writes).toEqual([])
+    await deactivate()
+    expect(writes).toEqual([`/users/${user.id}/active`])
+    expect(wrapper.text()).toContain('账户状态变更被拒绝')
+    expect(wrapper.get('.el-tag').text()).toBe('启用')
+    expect(confirm).toHaveBeenCalledTimes(2)
+  })
   it('hides mutation controls from readers and never requests role data', async () => {
     authorize(['user:read'])
     const paths: string[] = []
@@ -36,6 +70,51 @@ describe('user administration', () => {
     expect(wrapper.text()).not.toContain('新建用户')
     expect(wrapper.text()).not.toContain('重置密码')
     expect(paths.every((path) => path.startsWith('/users?'))).toBe(true)
+  })
+  it('jumps to the requested user page and returns directly from an empty page', async () => {
+    authorize(['user:read'])
+    const offsets: number[] = []
+    fakeApi((path) => {
+      const offset = Number(new URLSearchParams(path.split('?')[1]).get('offset'))
+      offsets.push(offset)
+      return offset < 150
+        ? Array.from({ length: 50 }, (_, index) => ({
+            ...user,
+            id: String(offset + index + 1),
+            display_name: `用户 ${offset + index + 1}`,
+          }))
+        : []
+    })
+    const wrapper = mount(UsersView)
+    try {
+      await flushPromises()
+      const pager = wrapper.get('.list-pager')
+      const input = pager.get<HTMLInputElement>('input[aria-label="跳转页码"]')
+      const jump = async (value: string) => {
+        await input.setValue(value)
+        await pager.get('form').trigger('submit')
+        await flushPromises()
+      }
+
+      for (const invalid of ['0', '2.5', '2002']) {
+        await jump(invalid)
+        expect(input.attributes('aria-invalid')).toBe('true')
+      }
+      expect(offsets).toEqual([0])
+
+      await jump('3')
+      expect(offsets).toEqual([0, 100])
+      expect(pager.text()).toContain('第 3 页')
+      expect(wrapper.text()).toContain('用户 101')
+      expect(input.element.value).toBe('')
+
+      await jump('2001')
+      expect(offsets).toEqual([0, 100, 100000, 100])
+      expect(pager.text()).toContain('第 3 页')
+      expect(wrapper.text()).toContain('用户 101')
+    } finally {
+      wrapper.unmount()
+    }
   })
   it('creates only model fields, prevents repeated submit and clears password on failure', async () => {
     authorize(['user:read', 'user:create'])
@@ -257,6 +336,7 @@ describe('roles and audit', () => {
     expect(checks[1]!.attributes('disabled')).toBeDefined()
   })
   it('shows role reference conflict without optimistic removal', async () => {
+    vi.spyOn(confirmation, 'confirmAction').mockResolvedValue(true)
     authorize(['role:read', 'role:delete', 'user:read'])
     fakeApi((path, init) =>
       init.method === 'DELETE'
@@ -273,12 +353,8 @@ describe('roles and audit', () => {
       .findAll('tbody button')
       .find((button) => button.text() === '删除角色')!
       .trigger('click')
-    await wrapper
-      .findAll('[role=dialog] button')
-      .find((button) => button.text() === '确认删除')!
-      .trigger('click')
     await flushPromises()
-    expect(wrapper.get('[role=dialog]').text()).toContain('角色仍被文件授权引用')
+    expect(wrapper.text()).toContain('角色仍被文件授权引用')
     expect(wrapper.get('tbody').text()).toContain('Reader')
   })
   it('accepts string target IDs, distinguishes anonymous actors, escapes details', async () => {

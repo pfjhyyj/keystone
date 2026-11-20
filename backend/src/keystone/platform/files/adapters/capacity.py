@@ -144,10 +144,14 @@ class Capacity:
         except (OSError, ValueError, KeyError, TypeError):
             raise invalid() from None
 
-    def live(self):
-        """Under the ledger lock, reclaim only owners whose OS lock is free."""
+    def live(self, *, reclaim=True):
+        """Under the ledger lock, reclaim only owners whose OS lock is free.
+
+        Hot write/check paths skip the orphan scratch sweep; reserve() still runs it.
+        """
         directory = self.directory()
-        self.reclaim_scratch()
+        if reclaim:
+            self.reclaim_scratch()
         records = {}
         for path in sorted(directory.glob("*.lease")):
             identifier = path.stem
@@ -290,13 +294,20 @@ class Reservation:
             (directory / f"{self.identifier}.{suffix}").unlink(missing_ok=True)
 
     def check(self, path, limit):
+        if self.closed:
+            raise invalid()
+        # Only this owner writes its scratch; scanning it needs no shared ledger lock.
+        try:
+            size = scratch_size(path)
+        except OSError as error:
+            raise io_error(error) from None
+        if size > limit:
+            raise ServiceError(413, "file_temporary_limit", "文件超过临时空间配额")
         with self.capacity.locked():
             if self.closed:
                 raise invalid()
-            if scratch_size(path) > limit:
-                raise ServiceError(413, "file_temporary_limit", "文件超过临时空间配额")
             # External tools own their writes, so keep their full promise charged.
-            self.capacity.check(self.roots, self.capacity.live(), floor_only=True)
+            self.capacity.check(self.roots, self.capacity.live(reclaim=False), floor_only=True)
 
     def write(self, stream, data):
         with self.capacity.locked():
@@ -305,7 +316,7 @@ class Reservation:
             device = str(os.fstat(stream.fileno()).st_dev)
             if device not in self.amounts or len(data) > self.amounts[device]:
                 raise ServiceError(413, "file_temporary_limit", "写入超过已预留容量")
-            self.capacity.check(self.roots, self.capacity.live())
+            self.capacity.check(self.roots, self.capacity.live(reclaim=False))
             try:
                 written = stream.write(data)
                 stream.flush()

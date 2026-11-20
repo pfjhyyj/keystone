@@ -9,6 +9,7 @@ import RowMore from '../../components/RowMore.vue'
 import AppDialog from '../../components/AppDialog.vue'
 import ListPager from '../../components/ListPager.vue'
 import UserRolesDialog from './components/UserRolesDialog.vue'
+import { confirmAction } from '../../utils/confirm'
 const query = ref(''),
   applied = ref('')
 const {
@@ -32,7 +33,29 @@ function close() {
   error.value = ''
 }
 onScopeDispose(close)
-function open(value: NonNullable<typeof mode.value>, user: ManagedUser | null = null) {
+async function open(value: NonNullable<typeof mode.value>, user: ManagedUser | null = null) {
+  if ((value === 'active' || value === 'revoke') && user) {
+    const message =
+      value === 'revoke'
+        ? `撤销“${user.username}”的全部会话和个人令牌？该用户需要重新登录；账户本身保持不变。`
+        : user.is_active
+          ? `停用“${user.username}”？将撤销该用户全部会话和个人令牌。`
+          : `启用“${user.username}”？此前撤销的凭据不会恢复。`
+    if (
+      !(await confirmAction(message, {
+        title: titles[value],
+        confirmText:
+          value === 'revoke' ? '确认撤销全部凭据' : user.is_active ? '确认停用账户' : '启用账户',
+        danger: value === 'revoke' || user.is_active,
+      }))
+    )
+      return
+    close()
+    mode.value = value
+    target.value = user
+    await submit()
+    return
+  }
   close()
   mode.value = value
   target.value = user
@@ -110,9 +133,14 @@ function submit() {
         >刷新</el-button
       >
     </form>
-    <el-alert v-if="listError" role="alert" type="error" show-icon :closable="false">{{
-      listError
-    }}</el-alert>
+    <el-alert
+      v-if="listError || ((mode === 'active' || mode === 'revoke') && error)"
+      role="alert"
+      type="error"
+      show-icon
+      :closable="false"
+      >{{ listError || error }}</el-alert
+    >
     <el-alert v-if="notice" role="status" type="success" show-icon :closable="false">{{
       notice
     }}</el-alert>
@@ -209,7 +237,7 @@ function submit() {
       @change="page = $event"
     />
     <AppDialog
-      v-if="mode"
+      v-if="mode && mode !== 'active' && mode !== 'revoke'"
       :title="titles[mode]"
       :protect-changes="['create', 'edit', 'password'].includes(mode)"
       :busy="busy"
@@ -247,42 +275,19 @@ function submit() {
               minlength="8"
               maxlength="128" /></label
         ></template>
-        <p v-if="mode === 'active'">
-          {{
-            target?.is_active
-              ? '停用会撤销该用户全部会话和个人令牌。'
-              : '启用不会恢复此前撤销的凭据。'
-          }}
-        </p>
-        <p v-if="mode === 'revoke'">
-          撤销该用户全部会话和个人令牌，用户需要重新登录；账户本身保持不变。
-        </p>
         <el-alert v-if="error" role="alert" type="error" show-icon :closable="false">{{
           error
         }}</el-alert>
         <div class="form-actions">
-          <el-button
-            :disabled="busy"
-            native-type="submit"
-            :type="
-              mode === 'revoke' || (mode === 'active' && target?.is_active) ? 'danger' : 'primary'
-            "
-            >{{
-              busy
-                ? '正在保存…'
-                : mode === 'revoke'
-                  ? '确认撤销全部凭据'
-                  : mode === 'active'
-                    ? target?.is_active
-                      ? '确认停用账户'
-                      : '启用账户'
-                    : mode === 'password'
-                      ? '重置密码'
-                      : mode === 'create'
-                        ? '创建用户'
-                        : '保存展示名'
-            }}</el-button
-          >
+          <el-button :disabled="busy" native-type="submit" type="primary">{{
+            busy
+              ? '正在保存…'
+              : mode === 'password'
+                ? '重置密码'
+                : mode === 'create'
+                  ? '创建用户'
+                  : '保存展示名'
+          }}</el-button>
         </div>
       </form></AppDialog
     >

@@ -10,7 +10,7 @@ import {
   sessionVersion,
 } from '../../stores/session'
 import { useAction } from '../../composables/useAction'
-import { ElMessageBox } from 'element-plus'
+import { confirmAction } from '../../utils/confirm'
 import PermissionPicker from '../roles/components/PermissionPicker.vue'
 const route = useRoute(),
   router = useRouter()
@@ -78,15 +78,15 @@ async function createToken() {
 async function revokeToken(id: string) {
   const token = tokens.value.find((item) => item.id === id)
   if (!token || busy.value) return
-  try {
-    await ElMessageBox.confirm(
-      `撤销“${token.name}”后，使用该令牌的脚本将无法继续访问。`,
-      '撤销个人令牌？',
-      { confirmButtonText: '确认撤销令牌', cancelButtonText: '保留令牌', type: 'warning' },
-    )
-  } catch {
+  if (
+    !(await confirmAction(`撤销“${token.name}”后，使用该令牌的脚本将无法继续访问。`, {
+      title: '撤销个人令牌？',
+      confirmText: '确认撤销令牌',
+      cancelText: '保留令牌',
+      danger: true,
+    }))
+  )
     return
-  }
   await run(async () => {
     await request(`/auth/tokens/${id}`, 'DELETE')
     revealed.value = ''

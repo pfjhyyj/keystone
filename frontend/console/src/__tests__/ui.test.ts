@@ -118,6 +118,7 @@ it('prevents closing a pending dialog and enables closing after completion', asy
 })
 
 it('uses explicit dirty state so filter inputs do not masquerade as unsaved form changes', async () => {
+  const confirm = vi.spyOn(ElMessageBox, 'confirm').mockRejectedValue('cancel')
   const wrapper = mount(AppDialog, {
     props: { title: '权限', protectChanges: true, dirty: false },
     slots: { default: '<input aria-label="筛选权限" />' },
@@ -129,7 +130,17 @@ it('uses explicit dirty state so filter inputs do not masquerade as unsaved form
   await wrapper.setProps({ dirty: true })
   await wrapper.get('button[aria-label="关闭对话框"]').trigger('click')
   expect(wrapper.emitted('close')).toHaveLength(1)
-  expect(wrapper.get('.discard-confirmation').text()).toContain('尚有未保存的修改')
+  await flushPromises()
+  expect(confirm).toHaveBeenCalledWith(
+    expect.stringContaining('尚有未保存的修改'),
+    '放弃修改？',
+    expect.anything(),
+  )
+  confirm.mockResolvedValue('confirm' as never)
+  await wrapper.get('button[aria-label="关闭对话框"]').trigger('click')
+  await flushPromises()
+  expect(wrapper.emitted('close')).toHaveLength(2)
+  confirm.mockRestore()
 })
 
 it('sends only selected PAT permissions and clears the revealed secret when leaving its tab', async () => {

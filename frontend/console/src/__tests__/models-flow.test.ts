@@ -1,3 +1,4 @@
+import * as confirmation from '../utils/confirm'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
   config,
@@ -445,6 +446,11 @@ it.each(['渠道', '模型'])('renames %s from the list using only the display n
 it.each(['渠道', '模型'])(
   'confirms deleting %s and keeps referenced rows when the API refuses',
   async (kind) => {
+    const approval = deferred<boolean>()
+    const confirm = vi
+      .spyOn(confirmation, 'confirmAction')
+      .mockReturnValueOnce(approval.promise)
+      .mockResolvedValue(true)
     authorize(['model:manage'])
     const deletes: string[] = []
     let referenced = true
@@ -475,14 +481,21 @@ it.each(['渠道', '模型'])(
       'click',
     )
     expect(deletes).toEqual([])
-    await wrapper.get('[role=dialog] form').trigger('submit')
+    approval.resolve(true)
     await flushPromises()
-    expect(wrapper.get('[role=dialog]').text()).toContain('只能停用，不能删除')
+    expect(wrapper.text()).toContain('只能停用，不能删除')
     referenced = false
-    await wrapper.get('[role=dialog] form').trigger('submit')
+    await wrapper
+      .get(`#configuration-${kind === '渠道' ? 'channels' : 'models'} .row-more-trigger`)
+      .trigger('click')
+    await flushPromises()
+    await button(new DOMWrapper(document.body) as unknown as VueWrapper, `删除${kind}`).trigger(
+      'click',
+    )
     await flushPromises()
     expect(wrapper.find('[role=dialog]').exists()).toBe(false)
     expect(deletes).toHaveLength(2)
+    expect(confirm).toHaveBeenCalledTimes(2)
   },
 )
 it('uses the official address and no fake upstream model when configuring live mode', async () => {
@@ -528,6 +541,8 @@ it('keeps run state when steps fail and never fetches unauthorized costs', async
   expect(wrapper.text()).not.toContain('取消流程')
 })
 it('requires explicit cancel confirmation and waits for execution-side cancellation', async () => {
+  const approval = deferred<boolean>()
+  vi.spyOn(confirmation, 'confirmAction').mockReturnValueOnce(approval.promise)
   authorize(['flow:read', 'flow:cancel'])
   const writes: string[] = []
   fakeApi((path, init) => {
@@ -541,7 +556,7 @@ it('requires explicit cancel confirmation and waits for execution-side cancellat
   await flushPromises()
   await button(wrapper, '取消流程').trigger('click')
   expect(writes).toEqual([])
-  await wrapper.get('.confirmation').trigger('submit')
+  approval.resolve(true)
   await flushPromises()
   expect(writes).toEqual([`/flow-runs/${id}/cancel`])
   expect(wrapper.text()).toContain('取消处理中')

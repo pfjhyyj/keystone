@@ -117,6 +117,7 @@ def main() -> None:
             "init-admin",
             "init-storage",
             "recover-model-calls",
+            "retry-file-delete",
             "retire-worker",
             "reactivate-worker",
             "prune-history",
@@ -125,6 +126,7 @@ def main() -> None:
     )
     parser.add_argument("--username", help="Initial administrator login name")
     parser.add_argument("--worker-id", help="Fixed identity for retire-worker or reactivate-worker")
+    parser.add_argument("--file-id", type=UUID, help="File ID for retry-file-delete")
     parser.add_argument("--display-name", default="管理员")
     parser.add_argument("--owner-id", type=UUID, help="Browser workspace owner's Keystone user ID")
     parser.add_argument("--workspace-name", help="Display name for the browser workspace")
@@ -164,6 +166,11 @@ def main() -> None:
             parser.error("Worker lifecycle commands require --worker-id")
     elif args.worker_id:
         parser.error("--worker-id is only valid with worker lifecycle commands")
+    if args.command == "retry-file-delete":
+        if args.file_id is None:
+            parser.error("retry-file-delete requires --file-id")
+    elif args.file_id is not None:
+        parser.error("--file-id is only valid with retry-file-delete")
     if args.non_interactive and args.command != "init":
         parser.error("--non-interactive is only valid with init")
     if args.command == "recover-model-calls" and not args.confirm_api_stopped:
@@ -228,6 +235,22 @@ def main() -> None:
                     api_stopped=args.confirm_api_stopped,
                 )
             )
+            return
+        if args.command == "retry-file-delete":
+            from keystone.platform.files.services.cleanup import retry_delete
+
+            async def requeue():
+                database = Database(settings, catalog=build_catalog())
+                try:
+                    checks = await database.readiness(expected_heads(settings))
+                    if any(value != "ok" for value in checks.values()):
+                        raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
+                    await retry_delete(database, args.file_id)
+                finally:
+                    await database.close()
+
+            run_async(requeue())
+            print(f"File deletion requeued: {args.file_id}")
             return
         if args.command in {"retire-worker", "reactivate-worker"}:
             from keystone.worker.lifecycle import change_worker

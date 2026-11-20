@@ -33,7 +33,7 @@ keystone.toml 的 file_storages 显式声明源，file_default_storage 仅影响
 
 业务上传路由可接收原始二进制，复用 Upload 参数： name、content_type、expected_size，可选 storage_key、request_key、checksum_sha256。options 返回 max_file_bytes、storage_keys、default_storage。name 最多 255 字符，禁止控制字符和路径分隔符。
 
-本地正文按 256 KiB 块写受限临时文件、增量校验，通过后才登记/重试 File，再写正式对象并确认 active。中断清理临时文件，正式写入失败保留原 File/键；崩溃残留由取得同一 OS 槽锁的下次操作清理，不开放半文件或分片续传。
+本地正文按 256 KiB 读取、合并为 4 MiB 记账写入受限临时文件并增量校验，通过后才登记/重试 File，再写正式对象并确认 active。中断清理临时文件，正式写入失败保留原 File/键；崩溃残留由取得同一 OS 槽锁的下次操作清理，不开放半文件或分片续传。
 
 流式上传预留临时与正式副本容量，内存上传在正式写入前预留；磁盘低水位、物理预留和单文件/工作区上限同时生效，不设置文件数量和临时合计额度。具体参数见[配置](../operations/configuration.md#2-应用参数)。S3 仍为 64 MiB 内存上限、30 秒存储超时，不随本地扩容改变。
 
@@ -73,11 +73,13 @@ upload_referenced 在上传完成事务内登记固定 owner/slot，不暴露 OR
 
 keystone.files.cleanup 按[维护计划](../execution.md#4-持久计划)触发、启动立即扫描，使用 keystone-files-maintenance 串行队列，同类活动合并；无存储时禁用，不补停机时间片。
 
-每轮最多 20 个候选，共享于 deleting、1 小时未更新的 uploading/failed、每小时复核的 S3 deleted 墓碑，以及显式启用后的超期无引用 active 文件。取得文件锁后复查状态、引用及期限；活跃写入跳过，过期 uploading 标 failed，failed 保留以便原键重试，残留最多每小时重试。
+每轮最多 20 个候选，共享于 deleting、1 小时未更新的 uploading/failed、每小时复核的 S3 deleted 墓碑，以及显式启用后的超期无引用 active 文件。取得文件锁后复查状态、引用及期限；活跃写入跳过，过期 uploading 标 failed，failed 保留以便原键重试，残留最多每小时重试。deleting 优先于周期复核；仅实际删除残留时记 file.upload.residue_cleanup。
 
 无引用回收默认关闭；file_unreferenced_grace_seconds 设置后，仅扫描已知 completed_at 且超过宽限期的 active 文件。先锁 File 行复查并提交 deleting 和 system 受理审计，再删除内容；引用先提交则跳过，deleting 先提交则拒绝新增引用。disabled 和完成时间未知的存量始终跳过，读取不刷新宽限期。启用前核对所有调用方、存量引用；旧授权不能当作保留关系。
 
 删除成功后同事务写 deleted、deleted_at 和完成审计；外部删除后确认失败仍为 deleting，后续幂等确认。请求记用户，维护记 system。
+
+每个 deleting 文件自动尝试最多 3 次。存储删除失败后至少间隔 1 分钟才重新入选，占用中文件跳过且不计次数。第三次失败后保留 deleting 和带尝试次数的失败审计，退出自动扫描和积压统计。存储恢复后，运维可按失败审计中的文件 ID 执行 `keystone retry-file-delete --file-id <文件 UUID>`，由 Worker 继续清理。
 
 S3 的迟到 PUT 不能靠本地锁排除。重试只写同一校验内容；deleted/failed 保留精确 object_key 与原源配置，Worker 对残留重删，不恢复状态或授权。无桶扫描、版本或 multipart 清理；这些由桶策略管理。
 
