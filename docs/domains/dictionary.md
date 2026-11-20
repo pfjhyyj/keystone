@@ -122,7 +122,7 @@ sequenceDiagram
 
 两张表、进程内 Service 和普通事务即可完成，不增加缓存、专用 Worker 或 Flow。
 
-## 7. 当前实现约定
+## 6. 当前实现约定
 
 代码位于 backend/src/keystone/platform/dictionary/。
 
@@ -147,7 +147,7 @@ sequenceDiagram
 
 可信业务使用 options、resolve、validate_selection。校验和编辑均先锁父字典行，保存与停用按事务顺序生效；previous_id 取自锁定的原业务记录，不能由客户端提供。
 
-### 7.1 控制台
+### 6.1 控制台
 
 /console/dictionary 要求 read，manage 控制编辑。目录、选项各按 50 条分页，切换父字典清空旧编辑并丢弃迟到响应。key/value 创建后只读，编辑表单始终提交 description/sort_order。
 

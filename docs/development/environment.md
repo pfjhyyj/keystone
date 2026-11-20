@@ -4,11 +4,7 @@
 
 ## 开发配置
 
-- `backend/keystone.toml`：本机 API、Worker 和 CLI 共用。默认使用本机 55432 端口与 `.data/files` 目录。
-- `frontend/console/.env`：仅在更改 API 地址时需要，可设置 `KEYSTONE_API_PROXY`；默认代理 `http://127.0.0.1:8000`。
-- `deploy/.env`：可选，仅用于覆盖 PostgreSQL 密码、宿主端口或镜像。例如复制示例后使用 `docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --wait`；改密码或端口时同步修改后端数据库 URL。
-
-`keystone init` 一次完成完整业务结构、Flow 执行结构、存储和管理员初始化，无需单独执行迁移命令。`KEYSTONE_INITIAL_ADMIN_PASSWORD` 仅供非交互初始化使用，本机默认交互输入；已有用户时不重置密码。模型表初始为空，`init` 不创建渠道、模型或调用记录。渠道 API Key 在控制台手动录入并加密保存，保存立即生效，无需模型秘密环境变量或重启。
+本机 API、Worker 和 CLI 共用 `backend/keystone.toml`，前端与依赖 Compose 的可选覆盖文件及读取规则见[配置说明](../operations/configuration.md)。`keystone init` 一次完成迁移、存储和管理员初始化，不创建模型配置，命令参数见[运维命令](../operations/deployment.md#22-运维命令)。
 
 ## 前端目录约定
 
@@ -16,9 +12,7 @@
 
 表格在工作区内使用原生横向滚动，操作列在窄屏保留可访问性，不改变后端固定 50 条的分页语义；`ListPager` 支持输入页码跳转，跳过末页时回到原页。低频和危险行操作集中到 `RowMore`，危险操作和放弃修改统一使用 `utils/confirm.ts` 的 `confirmAction` 确认，同一时间只开一个确认框。`AppDialog` 的 `protectChanges` 可保护原生输入，使用组件选择器的复杂表单还应传入 `dirty`；`useUnsavedChanges` 保护路由离开和页面关闭，身份或权限变更时仍允许清理旧界面。
 
-控制台源码按页面归属组织：
-
-工程根目录保留 Dockerfile 和 Vite、TypeScript 等工具配置；镜像运行配置放在 `frontend/console/docker/`，当前包含 `nginx.conf`，本机开发使用 Vite，无需启动 Nginx。
+工程根目录保留 Dockerfile 和 Vite、TypeScript 等工具配置；镜像运行配置放在 `frontend/console/docker/`（`nginx.conf`），本机开发使用 Vite，无需启动 Nginx。控制台源码按页面归属组织：
 
 ```text
 src/
@@ -57,34 +51,6 @@ src/
 
 ## 开发检查
 
-编写业务 Flow 时参照[业务 Flow 开发约定与示例](flow.md)，其中包含输出验收、
-执行上限、工具摘要和按需读回的具体实现及接入方法。
+业务 Flow 参照[Flow 开发约定与示例](flow.md)，模块结构遵循 [MVC + Service 规范](business.md#模块分层与代码规范)；结构及相对导入检查包含在单元测试中，脚手架执行同一规则。
 
-模块结构遵循 [MVC + Service 规范](business.md#模块分层与代码规范)。新增实现归入明确职责目录，模块根目录仅保留包说明与权限/审计声明；Flow 定义使用 schemas/definitions.py。结构及相对导入检查包含在单元测试中，脚手架也执行同一规则，具体覆盖见[后端测试说明](../../backend/tests/README.md)。
-
-完成 README 的依赖安装后，从仓库根目录执行：
-
-```bash
-(cd frontend/console && pnpm exec playwright install chromium)
-# 独立测试实例预建入口库；每个用例继续创建随机隔离库。
-docker compose -f tests/postgres/compose.yaml up -d --wait
-export KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone_test:isolated-test-only@127.0.0.1:55433/keystone_test'
-backend/.venv/bin/python scripts/check.py
-```
-
-测试按 `unit/`、`integration/`、`support/` 分层：
-
-```bash
-cd backend
-.venv/bin/python -m pytest tests/unit                              # 不连接数据库
-KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone_test:isolated-test-only@127.0.0.1:55433/keystone_test' \
-  .venv/bin/python -m pytest tests/integration --require-postgres
-```
-
-只运行非数据库检查时使用 `scripts/check.py --unit`。需要验证 Dockerfile、完整测试栈及备份恢复时使用 `scripts/check.py --deploy`；完整容器栈定义在 `tests/deploy/compose.yaml`，只供隔离测试，不参与默认开发启动。数据库不可达时，`scripts/check.py` 全量和 `pytest --require-postgres` 会在启动阶段直接报错；默认 `pytest` 会统一跳过 integration，仅运行 unit。`scripts/check.py` 默认最多用 8 个 `pytest-xdist` worker 并行跑后端测试，可用 `KEYSTONE_TEST_WORKERS=1` 改为串行。测试目录和夹具约定见[后端测试](../../backend/tests/README.md)。
-
-按组件验证使用 `scripts/check.py --scope frontend|backend|browser`。前端范围仅执行格式、单元测试、类型和构建，不依赖 PostgreSQL 或 uv；后端范围执行 Python 格式、单元／集成测试和打包；浏览器范围单独启动隔离 API、Worker 和 Chromium，仍必须连接专用测试库。`--unit` 仅接受 full／backend 范围，`--deploy` 仅接受完整范围。浏览器排查可直接运行 `backend/.venv/bin/python frontend/console/e2e/run.py admin.spec.ts`，不重复后端全量测试。浏览器测试只在失败时截图，成功路径的布局和协议以断言验证。
-
-本仓库不配置 GitHub Actions CI。提交前按改动范围手动运行上述本地检查；每次检查独立记录结果与耗时，后端另输出最慢的 20 项。
-
-Worker 状态与排障见[运维说明](../operations/deployment.md#worker-健康检查排障)，媒体专项验收见[测试说明](../../backend/tests/README.md#本地媒体专项验收)。
+统一检查入口、组件范围、测试库准备和分层约定见[后端测试](../../backend/tests/README.md#运行)，媒体专项验收见[本地媒体专项验收](../../backend/tests/README.md#本地媒体专项验收)，Worker 状态与排障见[运维说明](../operations/deployment.md#worker-健康检查排障)。

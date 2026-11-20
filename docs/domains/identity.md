@@ -62,7 +62,7 @@ User、Role 保留 created_at/by、updated_at/by；关联表只保留 created_at
 
 撤销只填写尚未撤销记录，不覆盖原撤销时间，也不物理删除。管理员重置要求 user:reset_password 和目标管理范围，已包含全部凭据撤销，无需另有 user:credentials；独立撤销操作仍要求该权限。本人改密成功后清除 Cookie 并重新登录，泄露的 PAT 需另外撤销。
 
-控制台在现有 API 请求上每五分钟最多发起一次续期检查，从空闲转为活跃时可以立即检查。请求成功后，平台复查 Cookie 会话和 CSRF。近期有用户操作或该账号有未请求取消的 Flow 正在运行时，可以续期。待改密、过期和已撤销的会话以及 PAT 不参与续期。延长幅度不足一小时（短会话为配置期限的一半）时只同步 Cookie 的剩余期限。续期写入审计，空闲轮询沿用原到期时间。
+控制台在现有 API 请求上每五分钟最多发起一次续期检查，从空闲转为活跃时可以立即检查。请求成功后，平台复查 Cookie 会话和 CSRF。近期有用户操作或该账号有未请求取消的 Flow 正在运行时，可以续期。待改密、过期和已撤销的会话以及 PAT 不参与续期。续期判断在身份共享锁下完成；新到期时间比当前晚至少一小时（短会话为配置期限的一半）时才取身份排他锁延长并写入审计，否则不写库、只同步 Cookie 的剩余期限。无近期操作也无运行中 Flow 的空闲轮询沿用原到期时间。会话没有绝对期限，见 [8](#8-目标与当前实现差异)。
 
 管理员创建或重置用户时提供初始密码并线下安全交付，用户首次登录须改密。初始化命令由首位管理员自行设置密码，无需再改一次。
 
@@ -382,7 +382,7 @@ AccessContext.access() 默认使用 PostgreSQL 事务级共享身份锁；身份
 | POST /roles；PUT /roles/{id}；DELETE /roles/{id} | role:create/update/delete 及可授予范围 |
 | PUT /users/{user_id}/roles/{role_id} | role:assign 及目标范围，逐项 assigned=true/false |
 
-初始化使用 keystone init-admin --username <name> [--display-name <name>]，隐藏输入并确认密码，已有任何用户时拒绝。
+初始化使用 keystone init-admin --username <name> [--display-name <name>]，隐藏输入并确认密码，已有任何用户时拒绝。`keystone init` 在迁移和存储初始化后，若尚无用户也会创建管理员（默认 admin，密码取 KEYSTONE_INITIAL_ADMIN_PASSWORD 或交互输入）。
 
 ### 7.2 控制台
 
@@ -397,3 +397,9 @@ Auth/User/Role/Token Service 共用 AccessContext，它在 SQLAlchemy 标准事�
 各模块复用同一身份访问实现；上下文按请求或执行创建，用户和凭据状态随该上下文隔离。
 
 Authorization.role_ids 来自同次角色联表查询，包含空权限角色，不跨事务缓存。用户/角色列表先分页，再按当前页 ID 批量读取关联，避免逐行查询。通用分层见[架构规范](../development/business.md#模块分层与代码规范)。
+
+## 8. 目标与当前实现差异
+
+| 项 | 当前实现 |
+|---|---|
+| 会话无绝对期限 | 续期只以近期操作或运行中的 Flow 为条件，不限制自登录起的总时长；账号有运行中 Flow 时，控制台空闲轮询会持续续期 |

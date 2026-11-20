@@ -4,7 +4,7 @@
 
 ## 业务执行接入
 
-所有 Flow 都由业务 Service 通过 start_in_transaction 在身份事务内受理。调用方授权业务对象与精确文件 ID；平台不提供通用发起 API 或业务入口开关。
+所有 Flow 都由业务 Service 通过 start_in_transaction 在身份事务内受理（[受理契约](../domains/flow.md#3-受理与幂等)）。调用方授权业务对象与精确文件 ID；平台不提供业务入口开关。
 
 | 装配入口 | 使用场景与约束 |
 |---|---|
@@ -127,11 +127,11 @@ async def generate_images(run_id):
 
 ## 3. 单次操作与执行观测
 
-Workflow 使用普通 Python 组合 DBOS Step，不登记实际用量统计或预留工具次数。模型调用通过 FlowModel/FlowContext 使用原身份和稳定调用 ID；次数、token、状态和费用从实际调用记录统计，模型未知结果不自动重发。DBOS 历史记录步骤、工具执行及重试，业务日志使用 run_id、节点、状态和耗时关联。
+Workflow 使用普通 Python 组合 DBOS Step；统计来源与单次上限见[执行统计](../domains/flow.md#6-执行统计与单次操作限制)。业务日志使用 run_id、节点、状态和耗时关联。
 
 工具和业务 Service 在每次新副作用前授权，发布时复核对象版本和原任务归属。模型输入/响应、工具返回 DTO、单文件和每个工作区仍须有界；文件引用与产物采用稳定键，不依赖额度记账实现幂等。
 
-ctx.workspace(max_bytes=...) 返回统一临时目录，单文件使用 directory / "output" 等目录内路径。ctx.run_process(output=..., output_limit=...) 只允许当前 Task 活跃工作区内的文件路径。进程保持超时和输出上限，取消后等待子进程和原生 I/O 完成再清理。并发由实际资源和执行队列控制，不使用每 Run 操作许可。
+ctx.workspace(max_bytes=...) 返回统一临时目录，单文件使用 directory / "output" 等目录内路径。ctx.run_process(output=..., output_limit=...) 只允许当前 Task 活跃工作区内的文件路径。进程保持超时和输出上限，取消后等待子进程和原生 I/O 完成再清理。
 
 Agent 示例保留单次输出参数、输出修正次数和流程超时，并设置 request_limit=100；不使用 None 关闭请求次数上限。工具仅读取已授权文件与有界片段，不返回任意路径或原始异常。
 
@@ -153,4 +153,4 @@ inspect_document 返回摘要，read_document 仅接受本次输入，按 Unicod
 
 在 `@DBOS.step` 下使用 `@diagnose_step(名称, project=...)` 启用阶段记录。用 `diagnostic_input` 声明可以公开给诊断人员的 JSON 字段，用 `project` 选择相同范围的输出。用 `diagnostic_attachment` 开放已归属本次运行的文件。构造诊断字段代价较高时，先用 `diagnostic_enabled()` 判断当前 Step 是否在记录。错误默认使用公开错误码和固定说明，只有确认消息安全的业务错误码才可以加入 `safe_codes`。诊断记录失败时保留原执行结果，工作流应把诊断文件纳入已有的运行保留策略。
 
-FlowDefinition.queue 默认 keystone-flows；额外队列在 composition.FLOW_QUEUES 中用现有 QueueDefinition 声明。队列名固定到 Run 快照，API 与 Worker 使用同一声明。timeout_seconds 默认 3600，范围 1～86400，不接受 None。
+额外 Flow 队列在 composition.FLOW_QUEUES 中用现有 QueueDefinition 声明，API 与 Worker 使用同一声明；默认队列与超时见 [FlowDefinition](../domains/flow.md#flowdefinition)。

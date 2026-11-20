@@ -146,10 +146,16 @@ outcome 不是状态机；重试成功追加新记录，不把原 failure 改成
 
 ### 7.1 控制台查询
 
-GET /api/v1/audit-logs 与 /console/audit 当前要求 audit:read。支持时间、Actor、action、目标和 outcome 筛选，每页默认 50 条，只读详情，无编辑、删除或导出。
+GET /api/v1/audit-logs 与 /console/audit 按 [3.3](#33-查询与历史保留) 同时要求内置管理员和 audit:read；授予非管理员角色的 audit:read 当前对列表无效，见 [8](#8-目标与当前实现差异)。支持时间、Actor、action、目标和 outcome 筛选，每页默认 50 条，只读详情，无编辑、删除或导出。
 
 since/until 含端点且须带时区；缺 until 使用数据库当前时间，缺 since 使用 until 前 30 天，范围最多 366 天。提交查询固定时间窗口，翻页与刷新沿用，重新查询/重置才更新范围。actor_id 为 UUID，target_id 为字符串；JSON 作为文本展示，不补查对象。
 
 ### 代码组织
 
 AuditLog 位于 models/audit_log.py。writer 不依赖 AccessContext；query、controllers/logs.py 和 schemas/logs.py 按[统一分层](../development/business.md#模块分层与代码规范)组织。
+
+## 8. 目标与当前实现差异
+
+| 项 | 当前实现 |
+|---|---|
+| 非管理员 audit:read 当前无效 | audit:read 可分配给任意角色，控制台也按该权限显示审计入口，但查询还要求内置管理员，非管理员访问返回 403/administrator_required。是否放开或限制该权限的分配尚未决定 |

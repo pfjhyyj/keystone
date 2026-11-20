@@ -107,14 +107,12 @@ backend/.venv/bin/python scripts/check.py --scope backend
 backend/.venv/bin/python scripts/check.py --scope frontend
 ```
 
-后台执行按[任务类型](../execution.md#1-选择执行入口)选择 Task 或 Flow；人工决定和业务结论由业务 Service 保存。
-
 ## 模块分层与代码规范
 
 | 层 | 负责 | 不承担 |
 |---|---|---|
 | Controller | HTTP、身份提取、传输、响应 | ORM、业务授权/事务 |
-| Service | 用例、规则、授权、事务、审计、领域查询 | Request/Response、DBOS/FlowContext、SDK 协议 |
+| Service | 用例、规则、授权、事务、审计、领域查询 | Request/Response、DBOS/Worker/FlowContext、SDK 协议 |
 | Model | 单实体、约束、索引、关系 | 调度和业务用例 |
 | Schema | 输入契约、显式白名单投影 | 数据库、Service/ORM/SDK/执行器 |
 | Adapter | SDK、协议、存储和许可的技术协调 | 业务授权/事务、反向调用 Service/ORM |
@@ -163,7 +161,7 @@ businesses/<namespace>/
 
 生成的是“本人所有”的最小资源示例：独立的 `owner_id` 由服务端固定为当前用户，列表和编辑均按它过滤，管理员也不能直接操作他人的对象。`created_by` 只记录创建事实，不承担对象归属。企业共享、角色范围或可转交资源应在业务 Service 中明确实现自己的策略，并相应修改范围测试；功能权限不能替代对象检查。
 
-接入前明确每项权限的业务含义，遵循[RBAC 接入约定](../domains/identity.md#44-rbac-接入约定目标及当前差异)。企业共享资源直接按业务读取权限开放，列表、统计和关联文件共用权限；不再通过固定角色 ID 或逐文件共享附加一套岗位资格。摄影师批次分配、个人记录归属等必要条件由业务显式校验，不扩为通用属性策略。验证新成员读取历史资源及相同权限组合的一致性。
+接入前明确每项权限的业务含义，遵循[RBAC 接入约定](../domains/identity.md#44-rbac-接入约定目标及当前差异)。企业共享资源直接按业务读取权限开放，列表、统计和关联文件共用权限；不通过固定角色 ID 或逐文件共享附加一套岗位资格。摄影师批次分配、个人记录归属等必要条件由业务显式校验，不扩为通用属性策略。验证新成员读取历史资源及相同权限组合的一致性。
 
 创建要求 `title`，`content` 默认为空；PATCH 只更新显式提交的字段，省略字段保持原值，显式 `null` 和空标题返回 422，空正文表示清空正文。空对象 PATCH 仍验证功能权限和对象归属，但不修改数据或增加成功审计。
 
@@ -196,7 +194,7 @@ CATALOG = Catalog(
 - 审计字段必须是集合，只声明允许保存的字段；启动时校验，审计写入时再次校验。
 - 白名单也检查嵌套字段。脚手架只记录标题、正文字数和 UTF-8 内容的 SHA-256，不将完整正文复制到审计；长正文的合法保存不能因审计超过 8 KiB 而失败。修改业务字段时同时维护摘要、白名单与测试。
 - 新增权限只在下次发布后生效；管理员自动获得新权限，普通角色和已有个人令牌不会自动扩大。
-- 修改 `catalog.py` 后重新发布 API 和 Worker，不支持热加载。
+- `catalog.py` 只声明权限和审计，不加载执行器或注册 Flow；修改后重新发布 API 和 Worker，不支持热加载。
 
 ## 接入实体与迁移
 
@@ -209,17 +207,7 @@ from .note import Note as Note
 
 模型须加入 model_registry.load_models()，见[快速接入](#生成与装配)。
 
-脚手架基于完整迁移历史的当前 head 生成 `backend/migrations/versions/NNNN_<namespace>_initial.py`，含建表与逆序回滚；序号全局连续，保持同一线性链。当前 head 与命名细则见[迁移说明](../../backend/migrations/README.md)。
-
-生成前校验平铺路径、命名、重复序号/revision、序号连续性和线性依赖，支持带类型注解的静态元数据，失败时不写业务文件。若已有 `<namespace>_initial` 迁移，拒绝再生成初始建表；仅补回代码可使用 `--no-migration`。后续手工增量迁移遵循同一规则，并行开发在合并前处理尚未发布的编号冲突。完整历史和命名规范见[迁移说明](../../backend/migrations/README.md)。生成后评审字段、约束和索引，按快速接入步骤初始化并检查。
-
-`keystone init` 会升级到当前 head 并应用 DBOS 迁移，重复执行保留已有数据和密码；`keystone check` 验证数据库、迁移版本和存储。
-
-约定：
-
-- 迁移只追加，不修改已发布迁移；不导入运行时 ORM 模型建表，也不调用 `create_all`。
-- 测试使用随机隔离 PostgreSQL 库验证迁移结果与 ORM 一致；业务模型检查还会校验单实体文件、导出、表名前缀和反向依赖。
-- 删除业务表同样通过新迁移完成，不能删除历史迁移“清理”。
+脚手架基于完整迁移历史的当前 head 生成 `backend/migrations/versions/NNNN_<namespace>_initial.py`，含建表与逆序回滚；编号、生成前校验、只追加和手工增量规则见[迁移说明](../../backend/migrations/README.md#后续变更与脚手架)。生成后评审字段、约束和索引，按快速接入步骤执行 `keystone init`（升级到 head 并应用 DBOS 迁移，重复执行保留数据和密码）与 `keystone check`（验证数据库、迁移版本和存储）。
 
 ## 接入 HTTP
 
@@ -272,23 +260,11 @@ async def create(self, data: NoteCreate):
 4. 若接入 Flow：契约校验、发起幂等、取消、结果采用和文件引用。
 5. 若增加前端：Vitest 覆盖页面状态与请求参数；需要时再加 Playwright。
 
-可以参考 `backend/tests/integration/test_business_integration.py` 的装配方式。Flow 的测试夹具位于 `backend/tests/support/flow_fixture/`，不要把测试夹具放进生产 `businesses/`。
-
-test_scaffold_business.py 用临时生成模块、真实 API 和随机库验证装配、迁移、授权及审计回滚；test_identity_locks.py 验证真实锁等待和取消，不以模板断言或 mock 数据库替代。
-
-从仓库根目录运行相关检查（先按[测试说明](../../backend/tests/README.md)准备专用测试库）：
-
-```bash
-backend/.venv/bin/python -m pytest backend/tests/unit/test_new_business.py backend/tests/unit/test_http_routes.py backend/tests/integration/test_scaffold_business.py backend/tests/integration/test_identity_locks.py --require-postgres
-```
-
-Windows 将解释器路径替换为 `backend/.venv/Scripts/python.exe`。统一后端验证使用 `backend/.venv/bin/python scripts/check.py --scope backend`。
+可以参考 `backend/tests/integration/test_business_integration.py` 的装配方式。Flow 的测试夹具位于 `backend/tests/support/flow_fixture/`，不要把测试夹具放进生产 `businesses/`。专用测试库准备、定向运行和相关用例覆盖见[后端测试](../../backend/tests/README.md)。
 
 ## 接入 Flow / Agent（可选）
 
-需要独立受理、查询、取消及输入/结果契约时使用 Flow；普通后台执行使用 Task，同步业务直接调用 Service。
-
-最小步骤：
+适用场景见[执行入口](../execution.md#1-选择执行入口)。最小步骤：
 
 1. 在业务包的 `schemas/` 中声明 `FlowDefinition`（key/revision、输入输出模型、入口、所需权限、文件路径和模型角色）与 `FlowPackage`，保持轻量导入；模块根目录只放 `__init__.py` 与 `catalog.py`。
 2. 在 `workflows/` 中用 `@DBOS.workflow(name=definition.entrypoint)` 注册稳定入口；步骤使用平台的 `safe_step` 错误边界，Agent 使用 `DBOSDurability`。
@@ -296,9 +272,7 @@ Windows 将解释器路径替换为 `backend/.venv/Scripts/python.exe`。统一�
 4. 权限必须已声明；文件路径在启动时按 Schema 编译；模型角色须声明 model:invoke 权限，发起时在业务 input 外提交 model_bindings。
 5. 在测试中通过 `ExecutionIdentity`、`reconcile_one` 和 Worker 子进程验证执行与恢复。
 
-Flow 只保存运行记录、权限和结果协调；业务结论、实体和采用动作仍归业务自己保存。详细边界见[Flow 开发](flow.md)和[Flow 领域](../domains/flow.md)。
-
-业务 Service 在自己的身份事务中调用 `start_in_transaction`，一起保存业务受理记录和 Run。调用方授权业务对象并确定精确输入文件，Flow 负责原用户/PAT、契约、固定模型及幂等检查；平台不提供通用 Flow 发起 API。
+Flow 只保存运行记录、权限和结果协调；业务结论、实体和采用动作仍归业务自己保存。业务 Service 在自己的身份事务中调用 `start_in_transaction`，一起保存业务受理记录和 Run；受理契约见[Flow 领域](../domains/flow.md#3-受理与幂等)。
 
 业务执行守卫和 Worker 服务绑定使用 composition 的显式 `EXECUTION_GUARD` / `WORKFLOW_BINDINGS`，契约与调用时机见[Flow 开发](flow.md#业务执行接入)。不必替换平台的 FlowService、ExecutionIdentity 或 Worker 主入口。
 
@@ -328,7 +302,7 @@ console 可直接承载业务页面，优先按现有 `views/<页面>/` 结构�
 
 ### 模块目录与后台任务
 
-目录和依赖以[分层规范](#模块分层与代码规范)为准。只创建实际使用的七类目录；根目录保留 __init__.py/catalog.py，纯业务判断就近放 services/，不预建 policies/runtime 或通用插件层。
+目录和依赖以[分层规范](#模块分层与代码规范)为准。一级目录只按需使用 controllers、schemas、models、services、adapters、tasks、workflows，不预建空目录；根目录只保留 __init__.py 与轻量 catalog.py，纯业务判断就近放 services/，不预建 policies/runtime 或通用插件层。
 
 后台任务接入：
 
@@ -344,9 +318,3 @@ API 的业务 Controller 在授权后通过注入的 Runtime 调用 `await runti
 业务需要 FlowService 时由装配层注入 runtime.flow_service(identity)，自行装配须显式提供 execution_version 来源，不反向导入 composition/bootstrap。普通 Service 不导入执行 Context。
 
 新业务由装配层注入 runtime.managed_files(identity)，先授权对象再使用文件；保存后同事务登记业务关系、引用和审计。读取需排队时先进入 files.read_transfer()，再完成业务授权并读取。临时文件经 files.transfer() 使用 materialize_file/upload_file，物化后另取上传作用域；等待 I/O 和清理后退出，路径/传输对象不进入检查点。完整接口见[文件参考](../reference/files.md)。
-
-### Flow 与业务操作
-
-FlowDefinition/ModelRole/FlowPackage 放轻量 schemas，通过 FLOW_PACKAGES 装配。模型选择在 input 外，受理后固定；契约见[Flow](../domains/flow.md)，示例和业务守卫见[Flow 开发](flow.md)。
-
-人工决定、结果版本和引用由业务 Service 保存，批准与后续独立 Flow 可在同一业务事务受理；不增加通用人工等待。

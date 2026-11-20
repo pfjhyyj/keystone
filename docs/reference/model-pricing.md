@@ -4,7 +4,7 @@
 
 ## 价格来源与适用范围
 
-ModelEntry.pricing 为 inherit/override/disabled，pricing_revision 单调递增。覆盖规则按 operation/delivery 精确绑定，默认继承内置目录；未命中即缺价格，disabled 与有效零价分别表达。
+ModelEntry.pricing 为 inherit/override/disabled，新条目默认 inherit/revision=0，pricing_revision 单调递增。覆盖规则按 operation/delivery 精确绑定，默认继承内置目录；未命中即缺价格，disabled 与有效零价分别表达。
 
 规则按 provider、规范化 api_base、精确上游模型、operation/delivery 解析，不按名称前缀或角色猜测。中转站和 ep-* 不继承直连厂商价格。改绑目标/操作重新校验覆盖，改名不改价格。
 
@@ -126,8 +126,6 @@ partial 的已知项仅放 detail，不作为总额。估价与 cost_* 互不覆
 
 图片/异步在确认生成时保存数量与事件，不等下载；下载失败、取消、部分文件取回不抹去生成量。同 task_id 重复终态不计次，未知数量不填请求 n。估价失败不回滚真实调用/用量/产物、不覆盖推理错误或重发；数据库失败沿原未知结果保护。
 
-新条目默认 inherit/revision=0；调用登记时冻结完整价格快照，恢复沿用同一快照与计量事实。
-
 ## 接口与展示
 
 三项均要求 model:manage：
@@ -140,16 +138,19 @@ partial 的已知项仅放 detail，不作为总额。估价与 cost_* 互不覆
 
 合法规则但本次漏计量可 partial；非法或未装配字段拒绝保存。审计仅变更、规则哈希、revision、绑定摘要，不存示例正文。
 
-编辑页支持继承/自定义/关闭、单价/多档阶梯（最多 6 档，按完整输入上限逐档递增）/闲忙时/按次/按张及高级 JSON，同一计算器预览；另显示只读的 NewAPI 风格表达式，不回写、不执行。按缓存模式分支的参考价（如百炼显式缓存）在表单中切换“隐式缓存／显式缓存”分别填价，两侧共用阶梯分界、各自持有计价分区与单价；两侧模板、系数或阶梯不一致时退回高级 JSON，不猜测合并方式。闲忙时以收到完整响应的本地整点划分 [开始, 结束)，结束整点不算闲时，跨零点则结束于次日，其余为忙时，并可叠加同一套阶梯；试算示例写入 context.pricing_hour。厂商若按请求开始时间计费，结果可能不同。同一交付方式下计量 profile 完全相同的操作（如文本生成、结构化文本、图片理解）合并为一组，价格只填一次，保存时仍为每个操作各写一条相同的规则；已保存规则或参考价在组内不一致时分开显示并提示，可手动“分别设置”或“合并设置”。显示币种、来源、核对时间、适用操作和缺项，不用 0 占位。
+编辑页支持继承/自定义/关闭、单价/阶梯（最多 6 档，按完整输入上限递增）/闲忙时/按次/按张及高级 JSON，均由同一计算器预览；另显示只读的 NewAPI 风格表达式，不回写、不执行。
+
+- 按缓存模式分支的参考价（如百炼显式缓存）分侧填价，共用阶梯分界、各持分区与单价；两侧模板、系数或阶梯不一致时退回高级 JSON，不猜测合并。
+- 闲忙时按收到完整响应的本地整点划分 [开始, 结束)，跨零点结束于次日，可叠加阶梯；试算写入 context.pricing_hour。厂商按请求开始时间计费时结果可能不同。
+- 同一交付方式下计量 profile 相同的操作合并填价，保存时每个操作各写一条相同规则；已有规则不一致时分开显示，可手动分别或合并设置。
+- 显示币种、来源、核对时间、适用操作和缺项，不用 0 占位。
 
 新界面主要显示预估，实扣独立区域。统计 cost_basis=estimated|actual，旧客户端默认 actual，新界面显式 estimated；一次聚合只用一种口径，币种分组。预估状态与实扣 cost_status/source 不混传，未知覆盖不从分母消失，有效 0 计已估价。公开仅白名单分项/来源，不暴露内部地址、秘密或结果证据。
 
 云月账单不进入调用/Flow 汇总；启用估价不自动移除余额、停用实扣补查或要求云账务凭据。
 
-## 代码与验证
+## 代码组织
 
 `schemas/pricing.py` 放规则/快照/事实/结果 DTO；`services/pricing_calculator.py` 的 validate_rule、estimate 为纯函数；`channels/<id>/pricing.py` 放本渠道参考数据，通过 SPEC 汇总；`channels/shared/metering.py` 放共用计量 profile 声明，渠道通过 SPEC 注册 profile，`adapters/inference/pricing.py` 负责归一化与计量装配。`services/pricing.py`、`services/entries.py` 管价格授权与 revision，`services/` 的 runtime/image_tasks/image_results/recovery 保存原调用事实，statistics 管口径与覆盖。
 
-新增渠道遵循[添加渠道](model-access.md#添加渠道)：在 `channels/<id>/` 导出 SPEC 并在 `channels/__init__.py` 注册一项，复用已有配置字段时不改迁移或前端供应商分支。新的额外字段仍需数据库/必要迁移和请求、保存、校验支持，SPEC 不是任意字段免迁移机制。billing 与协议不得互相导入，计量/价格数据也不能依赖运行时 adapter host；SPEC 可组合两者。渠道 ID 和历史计量/价格版本保持稳定，legacy 不提供 UI 新建但仍保留历史解析。
-
-单元验证分区不重计、32000/32001 档位、零/缺失/冲突、精度/溢出、树边界和时间来源；真实 PostgreSQL/DBOS 验证登记快照、调价竞争、迁移、权限、恢复及取消不重发。HTTP 用本地协议桩，不发送付费请求，不以手造计量声称协议已支持。
+新增渠道及其计量/价格数据按[添加渠道](model-access.md#添加渠道)接入；渠道 ID 和历史计量/价格版本保持稳定。

@@ -2,56 +2,43 @@
 
 | 目录 | 边界 |
 |---|---|
-| unit/ | 无数据库的契约、规则、架构及本地进程/文件语义 |
-| integration/ | 真实 PostgreSQL、DBOS、授权/事务、并发、取消与恢复 |
+| unit/ | 无数据库的契约、规则矩阵、架构检查及本地进程/文件语义 |
+| integration/ | 真实 PostgreSQL、DBOS、授权/事务、并发、取消、迁移与恢复 |
 | support/ | 协议桩、测试业务、共享装配、断言和 AST 检查；不作为测试收集 |
 
-模型、S3 和媒体协议使用本地确定性替身，不访问付费服务。崩溃恢复使用真实子进程退出/重启，保留实际请求数、调用/文件 ID、原身份、用量/费用及清理断言。
+模型、云账务、S3 和媒体协议使用本地确定性替身，不访问付费服务或真实账户。崩溃恢复使用真实子进程退出/重启，保留实际请求数、调用/文件 ID、原身份、用量/费用及清理断言。
 
 ## 运行
 
-在仓库根目录启动专用测试实例：
+完成 README 的依赖安装后，在仓库根目录启动专用测试实例并执行统一检查：
 
 ```bash
+(cd frontend/console && pnpm exec playwright install chromium)
 docker compose -f tests/postgres/compose.yaml up -d --wait
 export KEYSTONE_TEST_DATABASE_URL='postgresql+psycopg://keystone_test:isolated-test-only@127.0.0.1:55433/keystone_test'
-backend/.venv/bin/python scripts/check.py
+backend/.venv/bin/python scripts/check.py      # Windows：backend/.venv/Scripts/python.exe
 ```
 
-快速检查使用 `scripts/check.py --unit`；后端单独运行：
+| 选项 | 范围 |
+|---|---|
+| `--unit` | 部分检查，跳过数据库与浏览器；仅用于 full/backend 范围 |
+| `--scope frontend` | 格式、单元测试、类型和构建，不依赖 PostgreSQL 或 uv |
+| `--scope backend` | Python 格式、unit/integration 和打包 |
+| `--scope browser` | 隔离 API、Worker 和 Chromium，仍连接专用测试库；可直接运行 `backend/.venv/bin/python frontend/console/e2e/run.py admin.spec.ts` 排查 |
+| `--deploy` | 另验证 Dockerfile、`tests/deploy/compose.yaml` 容器栈及备份恢复；仅用于完整范围 |
 
-```bash
-cd backend
-.venv/bin/python -m pytest tests/unit
-.venv/bin/python -m pytest tests/integration --require-postgres
-```
+后端单独运行：`cd backend && .venv/bin/python -m pytest tests/unit`，或 `tests/integration --require-postgres`。`--require-postgres` 和统一全量入口在测试库不可用时失败；普通 pytest 跳过 integration，unit 不探测数据库。每例创建并移除随机 keystone_test_* 库，不能指向开发/业务库。
 
-`--require-postgres` 和统一全量入口在测试库不可用时失败；普通 pytest 会跳过 postgres 用例，unit 不探测数据库。测试每例创建并移除随机 keystone_test_* 库，不能指向开发/业务库。
-
-统一入口最多 8 路 xdist，KEYSTONE_TEST_WORKERS=1 可串行排查；全量小批分配，保持长恢复用例的调度公平。专用实例默认端口 55433、max_connections=512，容量预检按每路 48 加 16 个保留连接计算；不足时失败，不悄悄降并发或跳过测试。容器部署/恢复检查另用 tests/deploy/compose.yaml。
+统一入口最多 8 路 xdist，`KEYSTONE_TEST_WORKERS=1` 可串行排查；专用实例默认 max_connections=512，容量预检按每路 48 加 16 个保留连接计算，不足时失败，不悄悄降并发或跳过。仓库不配置 CI，提交前按改动范围手动运行；每次检查记录结果与耗时，后端另输出最慢的 20 项。浏览器测试只在失败时截图。
 
 ## 组织与断言
 
-- 同一规则的输入矩阵放 unit；真实授权、事务、锁或失败窗口留在 integration。相同字段的纯校验不重复启动数据库/Worker。
-- 图片中转的供应商/编辑/响应格式矩阵在 unit 验证 SDK 报文；Worker 保留代表性完整链路和各持久化失败窗口。费用凭据冲突通过真实媒体 API/SQL 核对；协议准入、异步任务查询/下载重试及结果证据校验通过真实授权/SQL/SDK Service 验证，不为这些规则重复启动 Worker。Flow 的 DBOS 初始化仅用于执行器和历史检查，发送中取消用明确屏障同步。
-- 合并相同装配和数据构造，保留每个独立保证的断言。共享辅助函数放 support，unit 不导入 integration。
-- `support.flow_packages` 提供轻量快照、install_package 和关联断言。安装后立即清理制品缓存，测试间由全局夹具再次清理；契约模块导入不加载执行器。
-- `support.flow_engine.flow_engine` 显式初始化测试 DBOS Schema 与历史客户端；复用 Flow 配置的执行器测试须请求该夹具，普通授权/事务用例不依赖它。结构化输出的供应商报文矩阵在真实 SDK 单元测试中核对，Worker 用例覆盖代表性路由和自定义 API 地址；执行前撤销模型能力在真实身份与 SQL Service 层验证。
-- `test_flow.worker()` 启动真实执行器。fast_health 只缩短依赖/心跳观察周期为 0.2 秒；DBOS 队列、持久计划、身份锁、恢复期限及关闭预算不变。验证默认周期使用 fast_health=False，自定义无桩启动保持默认。
-- 并发使用事件、门闩和明确状态，不依赖短 sleep 的偶然顺序。反复取消须等待原生 I/O/进程/文件清理。
-- 领域终态、调用收尾与 DBOS 检查点完成是独立事实；需要 Workflow 完成时等待 SUCCESS，取消中的步骤历史可以暂缺，保留真实发送位置。
-- `test_model_flow_migrations.py` 使用原始隔离库验证模型/Flow 完整基线、默认值与约束、含数据的升级/回滚；不导入自动升级 head 的应用夹具。回滚只发生在测试库。
-- 架构检查递归覆盖平台/业务、相对导入、嵌套任务与例外绕过；脚手架输出遵守相同规范。只有 `model_access` 可增加顶层 `channels/`，按纯 adapter 下层约束检查，不得依赖 Service、ORM/数据库、HTTP controller、DBOS、身份权限、`core.errors` 或 runtime adapter host；其他模块不得直接引用渠道实现。渠道 billing 与协议同目录但禁止双向导入，SPEC 可组合本渠道实现；跨渠道专属引用禁止，复用放 shared。负向用例覆盖包级/相对导入和 shared，另验证 Provider 校验懒加载注册表、历史 ID 可解析且不加载 adapter host。定向运行：`cd backend && .venv/bin/python -m pytest tests/unit/test_architecture.py`。
-- `test_operations.py` 使用真实身份、领域表、DBOS 原生客户端和 Worker，验证状态明细认证、积压口径、预览与清理、终态 Run 的 PAT 引用、未知调用、活动父任务及历史分叉保护，以及自动清理默认关闭/显式启用。`test_business_flow_hooks.py` 验证业务入口限制、原身份先行的执行守卫、依赖故障暂缓和准入后的 Runtime 绑定。
-- `test_scaffold_business.py` 在临时目录生成本人资源模块及追加迁移，显式装配目录、模型和路由，在随机库初始化并检查 ORM 一致，通过真实 HTTP 验证部分更新、对象范围、PAT 交集、撤权、审计摘要与事务回滚。`test_identity_locks.py` 验证真实共享/排他锁的有界等待、取消后清理、身份变更失败不落库及重试；不以 mock 替代数据库锁语义。
-
-`test_relay_image_contracts.py` 用真实 SDK 校验两站共用的 JSON/multipart 报文、默认值、超时、请求摘要和有界下载。`test_relay_images.py` 使用真实 PostgreSQL/DBOS Worker 验证九图编辑、加密结果恢复、unknown 不重发及原 Token 实际费用核对；全部 HTTP 为确定性协议桩，不触发付费生成。
-
-`unit/test_cloud_billing_contracts.py` 验证官方 RPC/HMAC-SHA256 签名向量、签名目标、账务响应白名单、币种、精度、错误和分页；`integration/test_cloud_billing.py` 使用真实隔离库验证账务凭据加密、审计不含秘密、余额快照、管理权限与查询期间配置变化／撤权。全部云 HTTP 均为确定性协议桩，不查询真实账户或发起付费调用。
-
-`unit/test_dashscope_discovery.py` 验证原生目录分页、业务空间域名、响应投影及错误边界；`integration/test_aliyun_discovery.py` 验证真实数据库中的业务空间保存、权限、配置变更／撤权后的结果丢弃，以及基线中的业务空间默认值与约束。HTTP 使用确定性协议桩，不调用付费模型。
-
-`unit/test_model_discovery.py` 覆盖火山方舟固定 GET 地址、推理 Key、ID 投影、列表大小及错误脱敏；`integration/test_model_access.py` 的火山方舟用例验证管理权限和只读查询不创建条目或调用记录。控制台 `volcengine-discovery.test.ts` 覆盖目录刷新和手填接入点保留；测试均使用 HTTP 协议桩，不调用付费模型。
+- 同一规则的输入矩阵放 unit；真实授权、事务、锁或失败窗口留在 integration。相同字段的纯校验不重复启动数据库/Worker，供应商报文矩阵在真实 SDK 单元测试中核对，Worker 用例只保留代表性完整链路和持久化失败窗口。
+- 按领域命名测试文件（如 `test_<领域>.py`、`test_<领域>_contracts.py`），新用例优先放入已有领域文件；共享辅助函数放 support，unit 不导入 integration。合并相同装配和数据构造，保留每个独立保证的断言。
+- Flow 快照与安装使用 `support.flow_packages`；需要 DBOS 执行器或历史客户端的用例请求 `support.flow_engine.flow_engine`，普通授权/事务用例不依赖它。`test_flow.worker()` 启动真实执行器，fast_health 只缩短依赖/心跳观察周期。
+- 并发使用事件、门闩和明确状态，不依赖短 sleep。反复取消须等待原生 I/O/进程/文件清理。领域终态、调用收尾与 DBOS 检查点完成是独立事实。
+- 迁移测试使用原始隔离库验证完整基线、约束及含数据的升级/回滚，不导入自动升级 head 的应用夹具。
+- 架构检查（`unit/test_architecture.py`）递归覆盖平台/业务分层、相对导入和渠道 adapter 约束，脚手架输出遵守相同规范；锁、事务与身份语义不以 mock 替代数据库。
 
 ## 本地媒体专项验收
 

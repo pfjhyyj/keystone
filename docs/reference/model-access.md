@@ -6,13 +6,15 @@
 
 新建可选 OpenRouter、NewAPI、Yunwu、阿里云百炼和火山方舟；已有 openlux 内部标识保留，界面归 Yunwu 类。DeepSeek 仅保留声明。`deepseek`、`openrouter`、`aliyun_bailian`、`newapi`、`openlux`、`yunwu`、`volcengine` 的 ID 全部保持不变；Openlux、DeepSeek 为 `creatable=False` 的 legacy 声明，不在 UI 提供新建，但历史渠道、回执和快照仍须解析，不能删除注册项或重写 ID。模型能力由代码协议和条目 operations 决定，不由模型列表推断。
 
-| 渠道 | 地址/能力限制 |
+能力范围见[渠道能力](../domains/model-access.md#33-渠道能力)，本表只列地址与协议差异。
+
+| 渠道 | 地址与协议差异 |
 |---|---|
-| OpenRouter | 固定 https://openrouter.ai/api/v1；文本、向量、结构化、识图、同步图片 |
-| NewAPI | 默认 https://newapiai.com/v1，可配置 HTTPS 站点及路径前缀；通用兼容文本/向量，媒体按验证站点 |
-| Yunwu / Openlux | https://yunwu.ai/v1、https://api.openlux.ai/v1；同步 GPT Image，Openlux 另有原生 Kling 图片 |
+| OpenRouter | 固定 https://openrouter.ai/api/v1 |
+| NewAPI | 默认 https://newapiai.com/v1，可配置 HTTPS 站点及路径前缀 |
+| Yunwu / Openlux | https://yunwu.ai/v1、https://api.openlux.ai/v1 |
 | 百炼 | 固定 https://dashscope.aliyuncs.com/compatible-mode/v1；北京按量付费，未指定 reasoning 时保持 enable_thinking=false；显式设置按型号与操作校验，见[请求级思考](../domains/model-access.md#64-请求级思考控制) |
-| 方舟 | 固定 https://ark.cn-beijing.volces.com/api/v3；北京按量付费，接受 Model ID 或 ep-* 接入点；尚无向量/图片生成/视频 |
+| 方舟 | 固定 https://ark.cn-beijing.volces.com/api/v3；北京按量付费，接受 Model ID 或 ep-* 接入点 |
 
 百炼支持标准 /embeddings，模型须支持指定维度及 float 输出。两家云渠道保存真实用量和请求 ID，单次实扣 unavailable，不从公开价格或月账单摊分。
 
@@ -70,15 +72,15 @@ GET /api/v1/model-channels/{id}/bills?period=YYYY-MM&offset=0 要求 model:manag
 
 费用只接受可信响应或精确原请求查询，时间/模型/token 相似均不能代替 ID。回执由适配器尽早保存，硬中断前未保存编号时不保证找回。相同真实 Token 的重复 Channel 共用范围；不能因同账户而用另一 Key 查询历史。
 
-Yunwu/Openlux 在 2026-10-21/22 的只读探针确认 Key 参数、分页和金额口径：
+Yunwu/Openlux 以原调用 Key 作查询参数分页读取日志：
 
 ```http
 GET https://api.openlux.ai/api/log/token?key=<原调用API_KEY>&start_timestamp=<开始秒>&end_timestamp=<结束秒>&p=1&page_size=20
 ```
 
-解析 data.items 和分页，other 可为 JSON 字符串。仅 Bearer 的探针未成功；request_id 参数不保证服务端过滤，日志 id 不稳定，均不能作幂等键或水位。x-oneapi-request-id 与本协议 x-api-request-id 不同。
+解析 data.items 和分页，other 可为 JSON 字符串。不支持仅 Bearer 鉴权；request_id 参数不保证服务端过滤，日志 id 不稳定，均不能作幂等键或水位。x-oneapi-request-id 与本协议 x-api-request-id 不同。
 
-每轮先校验 /api/status：quota_per_unit=500000，Openlux 为 USD；旧 Yunwu 为 CUSTOM 且 exchange_rate=1，保存 yunwu_credits。仅 type=2、非负整数 quota，校验模型名；样本 1328/500000=0.002656 USD。口径变化 blocked/cost_policy_changed，不套当前比例重解释旧调用。其他兼容站点按显式声明保存本站额度，不推断美元。
+每轮先校验 /api/status：quota_per_unit=500000，Openlux 为 USD；旧 Yunwu 为 CUSTOM 且 exchange_rate=1，保存 yunwu_credits。仅 type=2、非负整数 quota，校验模型名。口径变化 blocked/cost_policy_changed，不套当前比例重解释旧调用。其他兼容站点按显式声明保存本站额度，不推断美元。
 
 凭据执行时解密，任务/检查点只传 ID、范围和有界页位置。Key 查询串、完整 URL、原始 HTTP 错误和日志账号/IP/content 不进日志或 DBOS，只保存规范证据。仅访问代码允许的 HTTPS origin/路径/方法，不跳转。
 
@@ -132,7 +134,7 @@ NewAPI 自定义 api_base 为完整 HTTPS 前缀，拒绝内嵌凭据、查询�
 | 发送后取消事实收尾 | 最多 5 秒 |
 | 余额刷新 | HTTP 10 秒，本进程 2，同渠道会话锁串行 |
 
-ModelDispatchScope 保存 next_send_at、blocked_until、updated_at，站点/Token HMAC 为键。model_send_interval_ms 默认 0、范围 0～60000；冷却默认 5 秒（1～300），上限默认 300（1～3600，且≥默认）。发送间隔和冷却期间释放全局与凭据级推理许可，等待结束后重新准入并复查授权、固定目标和发送资格。不预领未来槽，不持事务 sleep；异步任务 GET 同样受节奏，CDN 使用取回限制。
+ModelDispatchScope 保存 next_send_at、blocked_until、updated_at，站点/Token HMAC 为键。model_send_interval_ms 默认 0、范围 0～60000；冷却默认 5 秒（1～300），上限默认 300（1～3600，且≥默认）。发送间隔和冷却期间释放全局与凭据级推理许可，等待结束后重新准入并复查授权、固定目标和发送资格；自开始准入起等待最多 55 秒，剩余时间不足以等到下次发送时返回 429/model_dispatch_delayed，不登记调用。不预领未来槽，不持事务 sleep；异步任务 GET 同样受节奏，CDN 使用取回限制。
 
 余额外部请求不持事务，写回复查原配置；持锁连接失效不换连接提交。响应保存失败可能遗留 running，返回 model_result_unavailable，不重发。
 
@@ -173,7 +175,7 @@ Manifest 可保留 TaskReceipt，以便生成成功后重新取原产物；摘�
 
 可选 aspect_ratio 为 1:1、16:9、9:16、4:3、3:4，quality 为 low/medium/high，默认 1:1/medium；resolution 为 1K/2K/4K，转换成符合比例、16 倍数及像素/边长限制的 size，输出 png/jpeg/webp。OpenRouter 不接受这组新增控制；请求摘要使用完整的当前 DTO。
 
-仅该协议发送协调及 SDK 总窗口为 600 秒，建议图片 Flow timeout_seconds 至少 900 秒覆盖下载/保存，旧快照不自动延长。
+该协议宿主操作与 SDK 超时为 600 秒（其他协议默认 60 秒），发送前准入与协调等待计入其中，节奏等待仍受上述 55 秒上限。建议图片 Flow timeout_seconds 至少 900 秒覆盖下载/保存，旧快照不自动延长。
 
 b64_json（含匹配 MIME 的 data URI）验证后形成 Manifest。URL 回应先加密存 ImageDownloadReceipt，绑定渠道/调用/操作/摘要；最多两份、每 URL 3072 字符，证据/Manifest 最多 16 KiB。本地取回凭据最长 1 小时，上游可更早失效。
 
@@ -181,7 +183,7 @@ b64_json（含匹配 MIME 的 data URI）验证后形成 Manifest。URL 回应�
 
 费用仍以原 Token 的 x-api-request-id 精确匹配日志，响应体 id、usage.cost、余额差不作本渠道实扣。缺回执 unavailable，缺日志 pending，口径/模型冲突 blocked，生成失败也可保存查实费用。
 
-依据：[OpenRouter 结构化](https://openrouter.ai/docs/guides/features/structured-outputs)、[图片理解](https://openrouter.ai/docs/guides/overview/multimodal/image-understanding)、[图片生成](https://openrouter.ai/docs/guides/overview/multimodal/image-generation)、[云雾结构化](https://lrbebhrbp1.apifox.cn/api-417728203)、[识图](https://lrbebhrbp1.apifox.cn/api-417728221)、[Openlux Kling](https://doc.openlux.ai/api/docs/public/specs/platform/kling)、[NewAPI 图片说明](https://github.com/QuantumNous/new-api-docs-v1/blob/main/content/docs/en/plugins/usage.mdx)。协议桩不代表任意兼容站点均已线上验证。
+依据：[OpenRouter 结构化](https://openrouter.ai/docs/guides/features/structured-outputs)、[图片理解](https://openrouter.ai/docs/guides/overview/multimodal/image-understanding)、[图片生成](https://openrouter.ai/docs/guides/overview/multimodal/image-generation)、[云雾结构化](https://lrbebhrbp1.apifox.cn/api-417728203)、[识图](https://lrbebhrbp1.apifox.cn/api-417728221)、[Openlux Kling](https://doc.openlux.ai/api/docs/public/specs/platform/kling)、[NewAPI 图片说明](https://github.com/QuantumNous/new-api-docs-v1/blob/main/content/docs/en/plugins/usage.mdx)。
 
 ## 接口与控制台
 
@@ -249,5 +251,3 @@ keystone recover-model-calls --confirm-api-stopped
 InvocationContext 的 workflow_id 长 1～512，step_id 为 0～2³¹−1 整数，保存原发送位置，异步查询不覆盖。image_sources_in_transaction 每批最多 100，在同 Run 与当前可见记录内核对 Manifest 和登记字节元数据，只返回确认来源。
 
 Flow 批量绑定按全部 Entry→全部 Channel、ID 去重排序。恢复不重新解析 key，不新增执行/交付/取消状态机；视频须具体协议验证后另接。代码、目录、锁文件和资源变化影响 execution_version，旧回执格式及在途运行保留原制品，发布见[部署](../operations/deployment.md#3-更新与恢复)。
-
-验证使用本地协议桩及真实 PostgreSQL/DBOS，覆盖能力一致、登记先发送、固定选择、原结果恢复、未知不重发、取消及共享核对。仅 Yunwu/Openlux 已记录的探针属于上游实测，其余本地回归不声称已完成付费线上验收。

@@ -4,50 +4,7 @@ Task 是可独立投递的后台作业，DBOS 保存输入、队列、状态和�
 
 ## 核心主流程总览
 
-主动提交，入队持久化后即可返回：
-
-```mermaid
-sequenceDiagram
-    actor U as 请求方
-    participant A as 业务/API 入口
-    participant D as DBOS
-    participant W as Worker
-    U->>A: 发起后台处理请求
-    A->>A: 校验请求，确定已注册任务和输入
-    A->>D: 提交任务
-    D->>D: 持久保存并入队
-    D-->>A: 入队成功
-    A-->>U: 返回已受理
-    D->>W: 调度后台任务
-    W->>W: 执行任务函数，详见下方共用执行图
-    W-->>D: 框架记录执行状态和结果
-```
-
-任务可在响应前开始，提交响应不等待执行完成。enqueue_task 返回 ExecutionRef/任务 ID，它是入队回执，是否对外展示由业务决定。
-
-定时执行，前提是计划已登记：
-
-```mermaid
-sequenceDiagram
-    participant W as Worker
-    participant D as DBOS
-    D->>D: 计划到期，将定时入口入队
-    D->>W: 调度本次定时任务
-    W->>W: 执行任务函数，详见下方共用执行图
-    W-->>D: 框架记录执行状态和结果
-```
-
-共用执行过程：
-
-```mermaid
-sequenceDiagram
-    participant D as DBOS / Worker
-    participant T as 已注册任务函数
-    D->>T: 调用任务函数并传入参数
-    T->>T: 执行任务逻辑
-    T-->>D: 返回结果
-    D->>D: 保存原生执行状态和结果
-```
+主动提交：业务/API 入口校验请求、确定已注册任务和输入后持久入队，入队成功即返回已受理，不等待执行；enqueue_task 返回的 ExecutionRef/任务 ID 是入队回执，是否对外展示由业务决定。定时执行：已登记计划到期时由 DBOS 将定时入口入队。两者之后均由 Worker 领取并调用已注册任务函数，DBOS 保存原生状态与结果。
 
 | 阶段 | 持久事实 |
 |---|---|
@@ -140,7 +97,7 @@ Agent 使用 DBOSDurability 原生模型检查点，I/O 工具显式建 Step，�
 
 原版本恢复原执行，只读操作可明确有界重试，模型发送不隐藏重试。检查点不保证第三方 exactly-once；未知结果和费用待办按领域规则处理。
 
-安全步骤的幂等声明、3 秒起步退避、分类与取消见 [Flow 重试契约](domains/flow.md#73-平台步骤重试)。物理盘不足按 [文件容量契约](domains/files.md#51-文件容量与临时目录)立即失败；文件操作无数量槽位，也无临时总额等待队列。
+安全步骤的幂等声明、3 秒起步退避、分类与取消见 [Flow 重试契约](domains/flow.md#73-平台步骤重试)。物理盘不足按 [文件容量契约](domains/files.md#51-文件容量与临时目录)立即失败。
 
 ## 6. 当前任务与事实
 
@@ -173,11 +130,7 @@ Worker 顺序：取得宿主/固定身份锁 → 校验登记、制品和配置 
 
 DBOS 执行线程池通过锁定版本 3.2.0 支持的 `DBOS(config={"max_executor_threads": 32, ...})` 固定为每 Worker 最多 32 个执行线程；它不是异步 Workflow 并发上限，也不限制全部 SDK 后台线程。
 
-**内部队列限制尚未实现**：3.2.0 的 `_dbos_internal_queue` 是 SDK 私有内存队列，公共 `register_queue` 拒绝内部保留名称，Queue 动态配置仅支持数据库队列，`DBOSConfig` 没有内部队列并发配置。因此当前不能通过受支持 API 保证内部队列每 Worker 并发 ≤ 2；不修改 SDK 私有属性、不 monkeypatch，也不以线程池大小代替队列保证。上表维护业务队列仍为原有 1/1；监听业务队列列表不排除 SDK 内部队列。
-
-新增 Worker 不增加全局预算。DBOS 两级并发与 API/Worker 的模型、账务 HTTP 共享容量分别生效，见[配置](operations/configuration.md)。
-
-实际 HTTP 跨 API/Worker 共用容量和真实 Token 范围锁，不能用本地 Semaphore 替代全局约束。
+新增 Worker 不增加全局预算。DBOS 两级并发与 API/Worker 的模型、账务 HTTP 共享容量分别生效，见[配置](operations/configuration.md)；HTTP 跨进程共用容量和真实 Token 范围锁，不能用本地 Semaphore 替代全局约束。
 
 ### 7.3 多 Worker、恢复与发布
 
@@ -187,7 +140,7 @@ DBOS 执行线程池通过锁定版本 3.2.0 支持的 `DBOS(config={"max_execut
 
 缩容先排空，再持原身份锁核实 DBOS 在途/待恢复执行及 running 调用已清空，最后退役；查询失败或截断不算清空，未分配共享任务不随退役取消。
 
-不混跑新旧制品，代码/目录/声明/资源变化均影响执行版本，保留原制品和身份完成在途。命令见[部署](operations/deployment.md)与[备份恢复](operations/backup-restore.md)。
+不混跑新旧制品，代码/目录/声明/资源变化均影响执行版本，保留原制品和身份完成在途；不删除 DBOS 记录或未知调用来绕过恢复与容量规则。命令见[部署](operations/deployment.md)与[备份恢复](operations/backup-restore.md)。
 
 ### 7.4 健康状态
 
@@ -196,3 +149,9 @@ API readiness 检查数据库、迁移和存储，不自动建表。Worker 分�
 模型协议只返回结果/回执，不调度 DBOS 或保存领域状态，原任务等待和费用核对由宿主执行设施组织，见[模型分层](reference/model-access.md#代码与接口边界)。
 
 SDK 语义参考：[确定性](https://docs.dbos.dev/python/tutorials/workflow-tutorial#determinism)、[Step](https://docs.dbos.dev/python/tutorials/step-tutorial)、[队列](https://docs.dbos.dev/python/tutorials/queue-tutorial)、[计划](https://docs.dbos.dev/python/tutorials/scheduled-workflows)；行为以项目锁定版本及原生集成验证为准。
+
+## 目标与当前实现差异
+
+| 目标 | 当前实现 |
+|---|---|
+| SDK 内部队列每 Worker 并发 ≤ 2 | 未实现。锁定 DBOS 3.2.0 的 `_dbos_internal_queue` 是 SDK 私有内存队列：公共 `register_queue` 拒绝保留名称，Queue 动态配置仅支持数据库队列，`DBOSConfig` 无内部队列并发配置。不修改私有属性、不 monkeypatch，也不以执行线程池大小代替队列保证；[队列预算](#72-队列预算)只约束业务队列。 |

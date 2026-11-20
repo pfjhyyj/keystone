@@ -8,7 +8,7 @@ OpenDAL 0.47.10 支持多个 filesystem/S3 源，每个 File 只有一份不可�
 
 keystone.toml 的 file_storages 显式声明源，file_default_storage 仅影响新请求；原幂等请求省略源时沿用原源。filesystem 身份来自 .keystone-storage，迁移或恢复须保留标记；S3 身份由 driver、endpoint、bucket、region、prefix 组成，凭据轮换不改变身份。源消失或身份改变即失败，不回退默认源。
 
-配置任一源都须提供 KEYSTONE_FILE_COORDINATION_ROOT，API/Worker 共用同宿主可靠本地卷与标记。LocalLeases 协调请求键、写入和清理，不兼容时立即返回 409/file_busy。普通读取不持文件锁。不支持多宿主或 NFS 协调，本地锁也不能证明远端请求已停止。init-storage 初始化本地卷/源，不创建 S3 bucket。
+配置任一源都须提供 KEYSTONE_FILE_COORDINATION_ROOT，API/Worker 共用同宿主可靠本地卷与标记。LocalLeases 协调请求键、写入和清理，不兼容时立即返回 409/file_busy。不支持多宿主或 NFS 协调，本地锁也不能证明远端请求已停止。init-storage 初始化本地卷/源，不创建 S3 bucket。
 
 默认源和协调卷影响 ready，辅助源故障只标该源 unavailable。S3 就绪探针超时 2 秒，可能需要前缀 ListBucket 权限，只验证连通性；Worker 在数据库可用时继续处理其他源。
 
@@ -19,13 +19,12 @@ keystone.toml 的 file_storages 显式声明源，file_default_storage 仅影响
 | 接口 | 用途 |
 |---|---|
 | upload / upload_body / upload_stream | 保存受控内容，稳定 request_key 按来源用户隔离；不自动创建业务引用 |
-| edit_in_transaction | 在业务事务中改名/启停并写文件审计 |
-| metadata_in_transaction | 在调用方已授权的事务中取得安全元数据，可按需锁行；不提交事务 |
 | content / open_content | 有界字节或流读取，检查可用状态、存储身份与完整性 |
 | transfer | 本地物化、临时工作区和保存；owner/slot 可省略，业务引用随后同事务登记 |
 | read_transfer | 不取数量许可的异步操作作用域；业务授权后调用 transfer.open_content(file_id) |
+| *_in_transaction | 见[引用与事务接口](#引用与事务接口) |
 
-普通读取由业务授权一次即可；read_transfer 不再等待文件名额，授权和精确 ID 解析位于实际读取前。Service 不返回 HTTP Response，业务 Controller 可复用 ContentResponse 处理 Range/HEAD。local_file 只供可信本地集成，不能进入普通 HTTP 响应。
+read_transfer 的授权和精确 ID 解析位于实际读取前。Service 不返回 HTTP Response，业务 Controller 可复用 ContentResponse 处理 Range/HEAD。local_file 只供可信本地集成，不能进入普通 HTTP 响应。
 
 业务在文件保存后复查当前保存资格，同事务更新自己的关系、FileReferences 和成功审计。FileReferences.replace/release 仅维护调用方已授权的精确关系，不检查 FileGrant，不把引用当作读取权。保存失败不撤销文件事实，已知原请求使用原键重试。
 
@@ -33,7 +32,7 @@ keystone.toml 的 file_storages 显式声明源，file_default_storage 仅影响
 
 业务上传路由可接收原始二进制，复用 Upload 参数： name、content_type、expected_size，可选 storage_key、request_key、checksum_sha256。options 返回 max_file_bytes、storage_keys、default_storage。name 最多 255 字符，禁止控制字符和路径分隔符。
 
-本地正文按 256 KiB 读取、合并为 4 MiB 记账写入受限临时文件并增量校验，通过后才登记/重试 File，再写正式对象并确认 active。中断清理临时文件，正式写入失败保留原 File/键；崩溃残留由取得同一 OS 槽锁的下次操作清理，不开放半文件或分片续传。
+本地正文按 256 KiB 读取、合并为 4 MiB 记账写入受限临时文件并增量校验，通过后才登记/重试 File，再写正式对象并确认 active。中断清理临时文件，正式写入失败保留原 File/键；进程崩溃留下的临时目录在其所有者 OS 锁释放后，由下次容量预留回收。不开放半文件或分片续传。
 
 流式上传预留临时与正式副本容量，内存上传在正式写入前预留；磁盘低水位、物理预留和单文件/工作区上限同时生效，不设置文件数量和临时合计额度。具体参数见[配置](../operations/configuration.md#2-应用参数)。S3 仍为 64 MiB 内存上限、30 秒存储超时，不随本地扩容改变。
 
@@ -44,8 +43,6 @@ keystone.toml 的 file_storages 显式声明源，file_default_storage 仅影响
 业务内容路由先授权对象，Files 检查 active、存储身份和大小。首次或 stat 身份改变时分块核验 SHA-256，最多缓存 1024 个已验证身份；核验失败返回 503。受管 active 内容不可外部覆盖。
 
 GET 支持单区间 bytes=start-end、start-、-suffix；多区间或不可满足返回 416。HEAD 忽略 Range；强 ETag 为内容哈希，If-Range 不匹配返回完整 200。音视频 inline，其他 attachment，保留 sandbox、nosniff、no-store。每个请求独立授权，已准入传输可完成。
-
-读取不持文件锁，接受并发回收造成打开或下载失败；清理与写入继续互斥。数据库事务不跨传输，断开或取消先完成 I/O、关闭句柄，再释放容量。
 
 FileService.content 默认最多 64 MiB，显式 max_bytes 必须非负；内部 content 超限在读取前返回 file_too_large，引用错误为 file_reference_invalid。Flow 错误由调用方转换。
 
@@ -73,15 +70,9 @@ upload_referenced 在上传完成事务内登记固定 owner/slot，不暴露 OR
 
 keystone.files.cleanup 按[维护计划](../execution.md#4-持久计划)触发、启动立即扫描，使用 keystone-files-maintenance 串行队列，同类活动合并；无存储时禁用，不补停机时间片。
 
-每轮最多 20 个候选，共享于 deleting、1 小时未更新的 uploading/failed、每小时复核的 S3 deleted 墓碑，以及显式启用后的超期无引用 active 文件。取得文件锁后复查状态、引用及期限；活跃写入跳过，过期 uploading 标 failed，failed 保留以便原键重试，残留最多每小时重试。deleting 优先于周期复核；仅实际删除残留时记 file.upload.residue_cleanup。
+每轮最多 20 个候选，deleting 优先，其余按更新时间轮转；失败候选刷新更新时间，单个损坏对象不能占满批次。状态转换、重试上限、残留核查次数和积压口径见[文件设计](../domains/files.md#33-清理与残留)。system 审计包括回收受理或运维重排的 file.delete.request、file.delete.complete、废弃上传的 file.upload.failure 和 file.cleanup.failure（删除失败含 attempt）；仅实际删除残留时记 file.upload.residue_cleanup。
 
-无引用回收默认关闭；file_unreferenced_grace_seconds 设置后，仅扫描已知 completed_at 且超过宽限期的 active 文件。先锁 File 行复查并提交 deleting 和 system 受理审计，再删除内容；引用先提交则跳过，deleting 先提交则拒绝新增引用。disabled 和完成时间未知的存量始终跳过，读取不刷新宽限期。启用前核对所有调用方、存量引用；旧授权不能当作保留关系。
-
-删除成功后同事务写 deleted、deleted_at 和完成审计；外部删除后确认失败仍为 deleting，后续幂等确认。请求记用户，维护记 system。
-
-每个 deleting 文件自动尝试最多 3 次。存储删除失败后至少间隔 1 分钟才重新入选，占用中文件跳过且不计次数。第三次失败后保留 deleting 和带尝试次数的失败审计，退出自动扫描和积压统计。存储恢复后，运维可按失败审计中的文件 ID 执行 `keystone retry-file-delete --file-id <文件 UUID>`，由 Worker 继续清理。
-
-S3 的迟到 PUT 不能靠本地锁排除。重试只写同一校验内容；deleted/failed 保留精确 object_key 与原源配置，Worker 对残留重删，不恢复状态或授权。无桶扫描、版本或 multipart 清理；这些由桶策略管理。
+retry_delete 只接受 delete_failures = 3 的 deleting，复查无引用后清零次数，否则返回 409/file_delete_not_exhausted。
 
 ## 临时空间与本地定位
 
@@ -89,7 +80,15 @@ FileService.transfer() 返回作用域内有效的 FileTransferService。materia
 
 workspace 提供受限临时目录 Path，单文件在目录内选择路径；上限由调用方的 max_bytes 决定，范围 0～2 TiB，不向 HTTP 开放。
 
-容量账本 v4 在 OS 所有者记录 amounts/floor/workspace，全局短锁下汇总各文件系统未写承诺。随机所有者 ID 同时标识临时目录；顺序刷盘扣减未写承诺，外部工具保持保守预留至作用域退出。崩溃只以 OS 锁释放回收，损坏 live 记录拒绝，不靠 PID/时间推断。
+容量账本 v4 在 OS 所有者记录 amounts/floor/workspace，不含固定槽号，全局短锁下汇总各文件系统未写承诺。随机所有者 ID 同时标识临时目录；顺序刷盘扣减未写承诺，外部工具保持保守预留至作用域退出。崩溃只以 OS 锁释放回收：死亡所有者的目录先清理，再移除元数据；损坏 live 记录拒绝新预留，不靠 PID/时间推断。旧固定槽目录仅在原槽锁空闲后清理，活动旧格式导致新写入拒绝，新旧进程不得混跑。
+
+| 错误 | 行为 |
+|---|---|
+| file_capacity_full，含 ENOSPC/配额不足、空间已被预留 | 立即失败并退出本次资源作用域，不进入平台自动重试白名单 |
+| file_capacity_busy，容量账本短锁超时 | 幂等步骤可在退出全部相关资源后有限重试 |
+| file_capacity_unavailable、存储身份变化、内容损坏 | 明确失败，不自动重试 |
+| file_scope_busy | 同一传输作用域并发或递归操作，属于使用错误，不重试 |
+| file_temporary_limit / file_too_large | 本次目录或文件超限，不重试 |
 
 local_file(file_id) 接受已获业务授权的本地文件，作用域内返回 LocalFile(path, size_bytes, checksum_sha256)。共享文件锁保持到作用域退出，与清理 Worker 的排他锁互斥；本地完整性检查不申请文件数量许可。业务负责用户操作或维护资格，路径只在作用域内供可信代码使用。
 
