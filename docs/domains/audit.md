@@ -10,7 +10,7 @@
 | ModelInvocation | 每次模型尝试的状态、用量和费用 |
 | 应用日志 | 堆栈、网络错误、调试及维护任务结果 |
 
-不逐次审计普通读取、SQL 或自动步骤。全局审计仅供具备 audit:read 的内置管理员；未来业务历史使用独立的业务权限和对象范围，可复用审计存储。
+不逐次审计普通读取、SQL 或自动步骤。全局审计仅供具备 audit:read 的用户；未来业务历史使用独立的业务权限和对象范围，可复用审计存储。
 
 ## 2. 领域模型
 
@@ -76,7 +76,7 @@ sequenceDiagram
     participant D as PostgreSQL
     U->>S: 提交时间范围、筛选条件和分页
     S->>D: 开始短身份事务，读取当前授权
-    S->>S: 检查内置管理员身份、audit:read 和查询范围
+    S->>S: 检查 audit:read 和查询范围
     alt 身份或权限不满足，或范围不合法
         S->>D: 回滚
         S-->>U: 返回受控拒绝
@@ -89,7 +89,7 @@ sequenceDiagram
     end
 ```
 
-全局查询同时要求当前内置管理员身份和 audit:read，PAT 还须包含该权限；普通角色即使有 audit:read 也不放行。时间、操作者和目标等筛选只缩小查询范围，不构成权限隔离，也不授予目标或文件访问权。
+全局查询要求当前有效权限包含 audit:read，PAT 还须包含该权限。时间、操作者和目标等筛选只缩小查询范围，不构成权限隔离，也不授予目标或文件访问权。
 
 查询直接投影历史 ID 与安全快照，不补查当前业务对象。未来业务历史由业务服务限定已授权对象、操作范围和返回字段，不能靠客户端任意填写 target/action 隔离。
 
@@ -146,7 +146,7 @@ outcome 不是状态机；重试成功追加新记录，不把原 failure 改成
 
 ### 7.1 控制台查询
 
-GET /api/v1/audit-logs 与 /console/audit 按 [3.3](#33-查询与历史保留) 同时要求内置管理员和 audit:read；授予非管理员角色的 audit:read 当前对列表无效，见 [8](#8-目标与当前实现差异)。支持时间、Actor、action、目标和 outcome 筛选，每页默认 50 条，只读详情，无编辑、删除或导出。
+GET /api/v1/audit-logs 与 /console/audit 按 [3.3](#33-查询与历史保留) 要求 audit:read。支持时间、Actor、action、目标和 outcome 筛选，每页默认 50 条，只读详情，无编辑、删除或导出。
 
 since/until 含端点且须带时区；缺 until 使用数据库当前时间，缺 since 使用 until 前 30 天，范围最多 366 天。提交查询固定时间窗口，翻页与刷新沿用，重新查询/重置才更新范围。actor_id 为 UUID，target_id 为字符串；JSON 作为文本展示，不补查对象。
 
@@ -156,6 +156,4 @@ AuditLog 位于 models/audit_log.py。writer 不依赖 AccessContext；query、c
 
 ## 8. 目标与当前实现差异
 
-| 项 | 当前实现 |
-|---|---|
-| 非管理员 audit:read 当前无效 | audit:read 可分配给任意角色，控制台也按该权限显示审计入口，但查询还要求内置管理员，非管理员访问返回 403/administrator_required。是否放开或限制该权限的分配尚未决定 |
+当前无已知差异。

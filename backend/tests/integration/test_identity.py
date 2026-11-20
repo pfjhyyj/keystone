@@ -199,18 +199,16 @@ def test_batched_role_grants_preserve_account_and_token_rules(client):
             RolePermission(role_id=UUID(roles[1]["id"]), permission_key="removed:permission")
         )
         await session.flush()
-        grouped, administrator = await role_grants(session, UUID(user["id"]))
-        assert grouped[UUID(roles[2]["id"])] == set() and not administrator
+        grouped = await role_grants(session, UUID(user["id"]))
+        assert grouped[UUID(roles[2]["id"])] == set()
         expected = {"dictionary:read", "audit:read"}
         assert set().union(*grouped.values()) == expected
-        assert await role_grants(session, UUID(unassigned["id"])) == ({}, False)
-        admin_roles, administrator = await role_grants(session, UUID(admin["id"]))
-        assert administrator and set().union(*admin_roles.values()) == set(
-            PLATFORM_CATALOG.permissions
-        )
+        assert await role_grants(session, UUID(unassigned["id"])) == {}
+        admin_roles = await role_grants(session, UUID(admin["id"]))
+        assert set().union(*admin_roles.values()) == set(PLATFORM_CATALOG.permissions)
 
         target = await session.get(User, UUID(user["id"]))
-        assert await load_authorization_for_target(session, target) == (expected, False)
+        assert await load_authorization_for_target(session, target) == expected
         forced = await load_authorization(session, target.id)
         assert forced.permissions == set()
         with pytest.raises(ServiceError) as denied:
@@ -252,7 +250,6 @@ def test_batched_role_grants_preserve_account_and_token_rules(client):
         pat.user_id = UUID(admin["id"])
         await session.flush()
         restricted_admin = await load_authorization(session, pat.user_id, pat_id=pat.id)
-        assert restricted_admin.administrator
         restricted_admin.require("dictionary:read")
         with pytest.raises(ServiceError):
             restricted_admin.require("user:create")
@@ -260,7 +257,7 @@ def test_batched_role_grants_preserve_account_and_token_rules(client):
         await session.flush()
         with pytest.raises(ServiceError):
             await load_authorization(session, target.id)
-        assert await load_authorization_for_target(session, target) == (expected, False)
+        assert await load_authorization_for_target(session, target) == expected
 
     query(client, exercise)
 
@@ -274,7 +271,7 @@ def test_login_csrf_cookie_and_forced_password_change(client):
     )
     admin = login(client)
     assert client.cookies.get("keystone_session").startswith("ks_")
-    assert client.get("/api/v1/auth/me").json()["is_administrator"] is True
+    assert "is_administrator" not in client.get("/api/v1/auth/me").json()
     user = create_user(client)
     session_secret = client.cookies.get("keystone_session")
     client.headers["X-CSRF-Token"] = "wrong"
@@ -478,19 +475,17 @@ def test_current_grants_pat_intersection_and_management_boundaries(client):
     )
     assert client.get("/api/v1/users", headers=bearer(personal["token"])).status_code == 200
     assert client.delete(f"/api/v1/roles/{reader['id']}").json()["code"] == "role_in_use"
-    # All ordinary permissions do not grant the administrator's special identity.
-    full_role = role(client, "ordinary-full", list(PLATFORM_CATALOG.permissions))
-    assert assign(client, user["id"], full_role["id"]).status_code == 204
     admin_role = next(r for r in client.get("/api/v1/roles").json() if r["key"] == "admin")
     login(client, "alice", NEW_PASSWORD)
-    assert (
-        client.post(
-            f"/api/v1/users/{admin['id']}/password", json={"password": NEW_PASSWORD}
-        ).status_code
-        == 403
-    )
     assert assign(client, user["id"], admin_role["id"]).status_code == 403
     assert assign(client, admin["id"], reader["id"]).status_code == 403
+    # Holding every permission is all the admin role means; there is no extra identity.
+    login(client)
+    full_role = role(client, "ordinary-full", list(PLATFORM_CATALOG.permissions))
+    assert assign(client, user["id"], full_role["id"]).status_code == 204
+    login(client, "alice", NEW_PASSWORD)
+    assert assign(client, admin["id"], reader["id"]).status_code == 204
+    assert assign(client, user["id"], admin_role["id"]).status_code == 204
 
 
 def test_reset_revokes_all_credentials_and_requires_change(client):
@@ -580,25 +575,25 @@ def test_reset_audit_failure_rolls_back_password_and_all_credential_revocations(
     login(client, "alice", NEW_PASSWORD)
 
 
-def test_global_audit_requires_builtin_admin_and_pat_scope(client):
+def test_global_audit_requires_permission_and_pat_scope(client):
     login(client)
     allowed = token(client, ["audit:read"])
     limited = token(client, ["user:read"])
     assert client.get("/api/v1/audit-logs", headers=bearer(allowed["token"])).status_code == 200
     assert client.get("/api/v1/audit-logs", headers=bearer(limited["token"])).status_code == 403
     user = create_user(client)
-    ordinary = role(client, "ordinary-all", list(PLATFORM_CATALOG.permissions))
-    assert assign(client, user["id"], ordinary["id"]).status_code == 204
+    reader = role(client, "audit-reader", ["audit:read"])
+    assert assign(client, user["id"], reader["id"]).status_code == 204
     login(client, "alice")
     client.post(
         "/api/v1/auth/password", json={"current_password": PASSWORD, "password": NEW_PASSWORD}
     )
     login(client, "alice", NEW_PASSWORD)
-    ordinary_pat = token(client, ["audit:read"])
-    for headers in ({}, bearer(ordinary_pat["token"])):
-        response = client.get("/api/v1/audit-logs", headers=headers)
-        assert response.status_code == 403
-        assert response.json()["code"] == "administrator_required"
+    reader_pat = token(client, ["audit:read"])
+    narrowed = token(client, [])
+    for headers in ({}, bearer(reader_pat["token"])):
+        assert client.get("/api/v1/audit-logs", headers=headers).status_code == 200
+    assert client.get("/api/v1/audit-logs", headers=bearer(narrowed["token"])).status_code == 403
 
 
 def test_audit_transaction_rollback_actor_and_deleted_target(client, monkeypatch):
@@ -719,6 +714,44 @@ def test_scope_union_unknown_permissions_expiry_and_immutable_fields(client):
         ),
     )
     assert client.get("/api/v1/auth/me").status_code == 401
+
+
+def test_admin_role_is_editable_and_recoverable_offline(client):
+    from keystone.platform.identity.services.initialize import reset_admin_role
+
+    login(client)
+    admin_role = next(r for r in client.get("/api/v1/roles").json() if r["key"] == "admin")
+    assert admin_role["all_permissions"] is True
+    path = f"/api/v1/roles/{admin_role['id']}"
+    everything = {"name": "all", "permissions": [], "all_permissions": True}
+    both = {**everything, "key": "both", "permissions": ["user:read"]}
+    assert client.post("/api/v1/roles", json=both).status_code == 422
+    created = client.post("/api/v1/roles", json={**everything, "key": "all"})
+    assert created.status_code == 201
+    assert created.json()["permissions"] == sorted(PLATFORM_CATALOG.permissions)
+    narrow = token(client, ["role:create", "role:update", "user:read"])
+    denied = client.post(
+        "/api/v1/roles", json={**everything, "key": "escalate"}, headers=bearer(narrow["token"])
+    )
+    assert denied.status_code == 403
+
+    limited = {"name": "管理员", "permissions": ["user:read"], "all_permissions": False}
+    assert client.put(path, json=limited).json()["permissions"] == ["user:read"]
+    assert client.get("/api/v1/roles").status_code == 403
+    database = client.app.state.runtime.database
+    assert client.portal.call(reset_admin_role, database) is True
+    assert client.portal.call(reset_admin_role, database) is False
+    restored = next(r for r in client.get("/api/v1/roles").json() if r["key"] == "admin")
+    assert restored["all_permissions"] and restored["permissions"] == created.json()["permissions"]
+    logs = client.get(
+        "/api/v1/audit-logs",
+        params={"action": "identity.role.update", "target_id": admin_role["id"]},
+    ).json()
+    assert [(row["actor_type"], row["details"].get("source")) for row in logs] == [
+        ("system", "cli"),
+        ("user", None),
+    ]
+    assert client.delete(path).json()["code"] == "builtin_role"
 
 
 def test_concurrent_last_admin_protection(client):

@@ -18,8 +18,6 @@ onScopeDispose(() => {
 })
 function blockedReason(role: Role) {
   if (!can('role:read') || !can('role:assign')) return '当前账号没有角色分配权限'
-  if (role.key === 'admin' && !identity.value?.is_administrator)
-    return '只有管理员可分配或解除管理员角色'
   if (role.permissions.some((permission) => !can(permission))) return '超出当前账号可授予的权限范围'
   return ''
 }

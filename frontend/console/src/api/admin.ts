@@ -14,6 +14,7 @@ export interface Role {
   key: string
   name: string
   description: string
+  all_permissions: boolean
   permissions: string[]
 }
 export interface Permission {

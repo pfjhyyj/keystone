@@ -77,6 +77,7 @@ rg --fixed-strings '替换为调用记录 UUID 或 X-Request-ID' .artifacts/logs
 | `recover-model-calls` | `--confirm-api-stopped` | 停止全部 API 后收尾普通 API 调用，见[第 4.3 节](#43-api-调用的离线收尾) |
 | `retire-worker` / `reactivate-worker` | `--worker-id ID` | 退役或重新启用固定 Worker 身份，见[第 4.4 节](#44-故障恢复与缩容退役) |
 | `retry-file-delete` | `--file-id UUID` | 重新排队已停止自动重试的文件删除，见[文件清理积压](#文件清理积压) |
+| `reset-admin-role` | — | 把内置 admin 角色恢复为全部权限并写 system 审计，用于角色被改到无人能管理身份时；已是全部权限时不改动 |
 | `prune-history` | `[--apply] [--history-offset N]` | 预览或删除一批过期历史，见[手动预览与执行](#手动预览与执行) |
 | `register-browser-workspace` | `--owner-id UUID --workspace-name NAME --volume VOLUME` | 为已有用户登记浏览器空间并写系统审计，输出空间 ID；卷须预先创建，命令不创建卷，同一卷只能登记一次（`browser_volume_registered`） |
 

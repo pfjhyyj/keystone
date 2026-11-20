@@ -51,7 +51,7 @@ class RoleService:
                 if permission in catalog:
                     permissions[role_id].add(permission)
             return [
-                role_view(role, catalog if role.key == ADMIN_KEY else permissions[role.id])
+                role_view(role, catalog if role.all_permissions else permissions[role.id])
                 for role in roles
             ]
 
@@ -65,12 +65,13 @@ class RoleService:
             target="identity.role",
             target_id=identifier,
         ) as (session, auth):
-            auth.grantable(data.permissions)
+            # An all-permissions role stores no rows and also covers later declarations.
+            stored = set() if data.all_permissions else data.permissions
+            requested = set(auth.declared_permissions) if data.all_permissions else stored
+            auth.grantable(requested)
             previous = set()
             if identifier:
                 role = await self.context.existing(session, Role, identifier)
-                if role.key == ADMIN_KEY:
-                    raise ServiceError(409, "builtin_role", "内置管理员角色不可编辑")
                 previous = set(
                     await session.scalars(
                         select(RolePermission.permission_key).where(
@@ -78,27 +79,30 @@ class RoleService:
                         )
                     )
                 )
-                auth.grantable((previous & auth.declared_permissions) | data.permissions)
+                auth.grantable((await role_permissions(session, role)) | requested)
                 details = {
                     "before": {
                         "name": role.name,
                         "description": role.description,
+                        "all_permissions": role.all_permissions,
                         "permissions": sorted(previous),
                     },
                     "after": {
                         "name": data.name,
                         "description": data.description,
-                        "permissions": sorted(data.permissions),
+                        "all_permissions": data.all_permissions,
+                        "permissions": sorted(stored),
                     },
                 }
                 if details["before"] == details["after"]:
                     return await self.role_view(session, role)
                 role.name, role.description = data.name, data.description
+                role.all_permissions = data.all_permissions
                 self.context.touch(role, auth)
                 await session.execute(
                     delete(RolePermission).where(
                         RolePermission.role_id == identifier,
-                        RolePermission.permission_key.in_(previous - data.permissions),
+                        RolePermission.permission_key.in_(previous - stored),
                     )
                 )
             else:
@@ -108,6 +112,7 @@ class RoleService:
                     key=data.key,
                     name=data.name,
                     description=data.description,
+                    all_permissions=data.all_permissions,
                     created_by=auth.user.id,
                     updated_by=auth.user.id,
                 )
@@ -116,11 +121,12 @@ class RoleService:
                 details = {
                     "key": role.key,
                     "name": role.name,
-                    "permissions": sorted(data.permissions),
+                    "all_permissions": role.all_permissions,
+                    "permissions": sorted(stored),
                 }
             session.add_all(
                 RolePermission(role_id=role.id, permission_key=p, created_by=auth.user.id)
-                for p in sorted(data.permissions - previous)
+                for p in sorted(stored - previous)
             )
             await self.context.log(session, auth, action, "identity.role", role.id, details)
             return await self.role_view(session, role)
@@ -143,7 +149,7 @@ class RoleService:
                     )
                 )
             )
-            auth.grantable(permissions & auth.declared_permissions)
+            auth.grantable(await role_permissions(session, role))
             if await session.scalar(
                 select(UserRole.user_id).where(UserRole.role_id == identifier).limit(1)
             ):
@@ -154,7 +160,11 @@ class RoleService:
                 "identity.role.delete",
                 "identity.role",
                 role.id,
-                {"key": role.key, "permissions": sorted(permissions)},
+                {
+                    "key": role.key,
+                    "all_permissions": role.all_permissions,
+                    "permissions": sorted(permissions),
+                },
             )
             await session.delete(role)
 
@@ -171,8 +181,6 @@ class RoleService:
             role = await self.context.existing(session, Role, role_id)
             await manageable(session, auth, user)
             auth.grantable(await role_permissions(session, role))
-            if role.key == ADMIN_KEY and not auth.administrator:
-                raise ServiceError(403, "administrator_required", "只有内置管理员可分配管理员角色")
             existing = await session.get(UserRole, (user_id, role_id))
             if assigned and existing is None:
                 session.add(UserRole(user_id=user_id, role_id=role_id, created_by=auth.user.id))

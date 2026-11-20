@@ -7,7 +7,6 @@ export interface User {
 export interface Identity {
   user: User
   permissions: string[]
-  is_administrator: boolean
   credential_kind: 'session' | 'pat'
   csrf_token: string | null
 }

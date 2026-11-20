@@ -113,9 +113,6 @@ onBeforeUnmount(clearForms)
   <section v-if="identity" class="account-page" aria-label="账户">
     <div class="heading">
       <h1>个人中心</h1>
-      <el-tag disable-transitions effect="plain">{{
-        identity.is_administrator ? '内置管理员' : '平台账户'
-      }}</el-tag>
     </div>
     <el-alert v-if="error || sessionError" type="error" :closable="false" show-icon>{{
       error || sessionError
@@ -136,9 +133,6 @@ onBeforeUnmount(clearForms)
           ><el-descriptions-item label="用户 ID"
             ><code>{{ identity.user.id }}</code></el-descriptions-item
           ><el-descriptions-item label="登录名">{{ identity.user.username }}</el-descriptions-item
-          ><el-descriptions-item label="账户类型">{{
-            identity.is_administrator ? '内置管理员' : '平台账户'
-          }}</el-descriptions-item
           ><el-descriptions-item label="当前权限"
             >{{ identity.permissions.length }} 项功能权限</el-descriptions-item
           ></el-descriptions

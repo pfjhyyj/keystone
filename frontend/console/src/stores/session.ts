@@ -19,7 +19,6 @@ export const ready = computed(
   () => !!identity.value && !identity.value.user.password_change_required,
 )
 export const can = (permission: string) => ready.value && permissions.value.includes(permission)
-export const canReadAudit = () => !!identity.value?.is_administrator && can('audit:read')
 export const SESSION_EVENT = 'keystone:session'
 type Pending = { epoch: number; promise: Promise<void> }
 let refreshing: Pending | null = null
@@ -30,7 +29,6 @@ const signature = (value: Identity | null) =>
       value.user.id,
       value.user.password_change_required,
       [...value.permissions].sort(),
-      value.is_administrator,
       value.credential_kind,
       value.csrf_token,
     ],

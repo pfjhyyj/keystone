@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from pydantic import Field, StringConstraints
+from pydantic import Field, StringConstraints, model_validator
 
 from keystone.core.schemas import Input
 
@@ -11,6 +11,13 @@ class RoleUpdate(Input):
     name: Name
     description: str = Field(default="", max_length=1000)
     permissions: set[str] = Field(max_length=100)
+    all_permissions: bool = False
+
+    @model_validator(mode="after")
+    def exclusive_grants(self):
+        if self.all_permissions and self.permissions:
+            raise ValueError("all_permissions excludes an explicit permission list")
+        return self
 
 
 class RoleCreate(RoleUpdate):
@@ -29,6 +36,7 @@ def role_view(role, permissions):
         "key",
         "name",
         "description",
+        "all_permissions",
         "created_at",
         "created_by",
         "updated_at",

@@ -166,7 +166,6 @@ describe('user administration', () => {
   })
   it('explains assignment scope, shows assigned roles and changes only the selected assignment', async () => {
     authorize(['role:read', 'role:assign', 'user:read'])
-    identity.value = { ...identity.value!, is_administrator: false }
     const writes: unknown[] = []
     fakeApi((path, init) => {
       if (init.method === 'PUT') {
@@ -174,7 +173,14 @@ describe('user administration', () => {
         return {}
       }
       return [
-        { ...role, id: 'administrator', key: 'admin', name: '管理员' },
+        {
+          ...role,
+          id: 'administrator',
+          key: 'admin',
+          name: '管理员',
+          all_permissions: true,
+          permissions: ['audit:read', 'user:read'],
+        },
         { ...role, id: 'auditor', name: '审计员', permissions: ['audit:read'] },
         role,
       ]
@@ -182,7 +188,7 @@ describe('user administration', () => {
     const wrapper = mount(UserRolesDialog, { props: { user: { ...user, role_ids: [role.id] } } })
     await flushPromises()
     const items = wrapper.findAll('.selection-list li')
-    expect(items[0]!.text()).toContain('只有管理员可分配或解除管理员角色')
+    expect(items[0]!.text()).toContain('超出当前账号可授予的权限范围')
     expect(items[0]!.get('button').attributes('disabled')).toBeDefined()
     expect(items[1]!.text()).toContain('超出当前账号可授予的权限范围')
     expect(items[1]!.get('button').attributes('disabled')).toBeDefined()
@@ -216,27 +222,26 @@ describe('user administration', () => {
 })
 
 describe('roles and audit', () => {
-  it('requires builtin administrator identity for audit navigation and requests', async () => {
-    authorize(['audit:read'])
-    identity.value = { ...identity.value!, is_administrator: false }
+  it('gates audit navigation and requests by audit:read alone', async () => {
+    authorize([])
     fakeApi(() => [])
     const wrapper = mount(AuditView)
     await flushPromises()
     const audit = navigation.find((item) => item.path === '/audit')!
     expect(canNavigate(audit)).toBe(false)
     expect(globalThis.fetch).not.toHaveBeenCalled()
-    identity.value = { ...identity.value!, is_administrator: true }
+    authorize(['audit:read'])
     await flushPromises()
     expect(canNavigate(audit)).toBe(true)
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
     wrapper.unmount()
   })
-  it('discards audit rows when administrator identity is revoked', async () => {
+  it('discards audit rows when audit:read is revoked', async () => {
     authorize(['audit:read'])
     const late = deferred<unknown>()
     fakeApi(() => late.promise)
     const wrapper = mount(AuditView)
-    identity.value = { ...identity.value!, is_administrator: false }
+    identity.value = { ...identity.value!, permissions: [] }
     late.resolve([{ id: 'private-audit', action: 'private-action' }])
     await flushPromises()
     expect(wrapper.text()).not.toContain('private-action')
@@ -306,7 +311,7 @@ describe('roles and audit', () => {
       }
     },
   )
-  it('locks built-in role and prevents granting absent permissions', async () => {
+  it('keeps the built-in role undeletable and prevents granting absent permissions', async () => {
     authorize(['role:read', 'role:create', 'role:update', 'role:delete', 'user:read'])
     fakeApi((path) =>
       path === '/permissions'
@@ -314,16 +319,14 @@ describe('roles and audit', () => {
             { key: 'user:read', name: '读取用户' },
             { key: 'audit:read', name: '读取审计' },
           ]
-        : [{ ...role, key: 'admin' }, role],
+        : [{ ...role, key: 'admin', all_permissions: true }, role],
     )
     const wrapper = mount(RolesView)
     await flushPromises()
-    expect(
-      wrapper
-        .findAll('tbody tr')[0]!
-        .findAll('.row-actions button')
-        .every((button) => button.attributes('disabled') !== undefined),
-    ).toBe(true)
+    const [edit, remove] = wrapper.findAll('tbody tr')[0]!.findAll('.row-actions button')
+    expect(wrapper.findAll('tbody tr')[0]!.text()).toContain('全部权限')
+    expect(edit!.attributes('disabled')).toBeUndefined()
+    expect(remove!.attributes('disabled')).toBeDefined()
     await wrapper.get('.heading button').trigger('click')
     const checks = wrapper.findAll('.permission-table input[type=checkbox]')
     expect(checks[0]!.attributes('disabled')).toBeUndefined()

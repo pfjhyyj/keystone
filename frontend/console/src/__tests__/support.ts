@@ -36,7 +36,6 @@ export function authorize(permissions: string[]) {
       password_change_required: false,
     },
     permissions,
-    is_administrator: true,
     credential_kind: 'session',
     csrf_token: 'test-csrf',
   }
@@ -71,6 +70,7 @@ export const role = {
   key: 'reader',
   name: 'Reader',
   description: '',
+  all_permissions: false,
   permissions: ['user:read'],
 }
 export function deferred<T>() {

@@ -126,7 +126,6 @@ class AuthService:
             return {
                 "user": user_view(auth.user, roles),
                 "permissions": sorted(auth.permissions),
-                "is_administrator": auth.administrator,
                 "credential_kind": auth.kind,
             }
 

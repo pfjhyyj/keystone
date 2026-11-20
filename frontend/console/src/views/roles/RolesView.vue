@@ -18,13 +18,19 @@ const catalogLoading = ref(false)
 const editing = ref(false)
 const target = ref<Role | null>(null)
 const readOnly = ref(false)
-const form = reactive({ key: '', name: '', description: '', permissions: [] as string[] })
+const form = reactive({
+  key: '',
+  name: '',
+  description: '',
+  all_permissions: false,
+  permissions: [] as string[],
+})
 const initialForm = ref('')
 const fingerprint = computed(() =>
   JSON.stringify({ ...form, permissions: [...form.permissions].sort() }),
 )
 const formDirty = computed(() => !readOnly.value && fingerprint.value !== initialForm.value)
-const manageable = (role: Role) => role.key !== 'admin' && role.permissions.every(can)
+const manageable = (role: Role) => role.permissions.every(can)
 const canSave = computed(
   () =>
     !readOnly.value &&
@@ -33,7 +39,9 @@ const canSave = computed(
     !catalogError.value &&
     can(target.value ? 'role:update' : 'role:create') &&
     (!target.value || manageable(target.value)) &&
-    form.permissions.every(can),
+    (form.all_permissions
+      ? catalog.value.every((item) => can(item.key))
+      : form.permissions.every(can)),
 )
 
 async function loadCatalog() {
@@ -55,6 +63,7 @@ function open(role: Role | null = null, view = false) {
     key: role?.key ?? '',
     name: role?.name ?? '',
     description: role?.description ?? '',
+    all_permissions: role?.all_permissions ?? false,
     permissions: [...(role?.permissions ?? [])],
   })
   initialForm.value = fingerprint.value
@@ -66,7 +75,8 @@ async function save() {
     const body = {
       name: form.name,
       description: form.description,
-      permissions: [...form.permissions],
+      all_permissions: form.all_permissions,
+      permissions: form.all_permissions ? [] : [...form.permissions],
     }
     if (target.value) await request(`/roles/${target.value.id}`, 'PUT', body)
     else await request('/roles', 'POST', { ...body, key: form.key })
@@ -137,7 +147,7 @@ onMounted(loadCatalog)
           <template #default="{ row: role }"
             ><strong>{{ role.name }}</strong>
             <p>{{ role.key }}</p>
-            <small v-if="role.key === 'admin'">内置角色，不可编辑或删除</small></template
+            <small v-if="role.key === 'admin'">内置角色，不可删除</small></template
           >
         </el-table-column>
         <el-table-column label="说明" min-width="180">
@@ -152,7 +162,9 @@ onMounted(loadCatalog)
               :disabled="catalogLoading || !!catalogError"
               :aria-label="`查看${role.name}的权限`"
               @click="open(role, true)"
-              >{{ role.permissions.length }} 项权限</el-button
+              >{{
+                role.all_permissions ? '全部权限' : `${role.permissions.length} 项权限`
+              }}</el-button
             >
           </template>
         </el-table-column>
@@ -170,7 +182,7 @@ onMounted(loadCatalog)
               >
               <el-button
                 v-if="can('role:delete')"
-                :disabled="!manageable(role)"
+                :disabled="role.key === 'admin' || !manageable(role)"
                 @click="remove(role)"
                 native-type="button"
                 type="danger"
@@ -224,7 +236,10 @@ onMounted(loadCatalog)
             maxlength="1000"
             type="textarea"
         /></label>
-        <div class="role-permissions-field">
+        <el-checkbox v-model="form.all_permissions" :disabled="busy || readOnly"
+          >拥有全部权限（含以后新增的权限）</el-checkbox
+        >
+        <div v-if="readOnly || !form.all_permissions" class="role-permissions-field">
           <PermissionPicker
             v-model="form.permissions"
             :catalog="catalog"

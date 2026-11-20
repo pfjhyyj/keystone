@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory, type Router, type RouterHistory } from 'vue-router'
 import { h } from 'vue'
-import { can, canReadAudit, ensureSession, identity, refreshSession } from '../stores/session'
+import { can, ensureSession, identity, refreshSession } from '../stores/session'
 
 export const navigation = [
   { path: '/', label: '管理总览', permissions: [] },
@@ -18,7 +18,6 @@ export const navigation = [
   { path: '/flows', label: 'Flow 运行', permissions: ['flow:read', 'flow:diagnose'] },
 ]
 export function canNavigate(item: (typeof navigation)[number]) {
-  if (item.path === '/audit') return canReadAudit()
   return !item.permissions.length || item.permissions.some(can)
 }
 export function loginDestination(value: unknown, router: Router) {

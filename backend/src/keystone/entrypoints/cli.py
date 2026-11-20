@@ -118,6 +118,7 @@ def main() -> None:
             "init-storage",
             "recover-model-calls",
             "retry-file-delete",
+            "reset-admin-role",
             "retire-worker",
             "reactivate-worker",
             "prune-history",
@@ -251,6 +252,22 @@ def main() -> None:
 
             run_async(requeue())
             print(f"File deletion requeued: {args.file_id}")
+            return
+        if args.command == "reset-admin-role":
+            from keystone.platform.identity.services.initialize import reset_admin_role
+
+            async def restore():
+                database = Database(settings, catalog=build_catalog())
+                try:
+                    checks = await database.readiness(expected_heads(settings))
+                    if any(value != "ok" for value in checks.values()):
+                        raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
+                    return await reset_admin_role(database)
+                finally:
+                    await database.close()
+
+            changed = run_async(restore())
+            print("Admin role restored" if changed else "Admin role already has all permissions")
             return
         if args.command in {"retire-worker", "reactivate-worker"}:
             from keystone.worker.lifecycle import change_worker

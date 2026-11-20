@@ -43,7 +43,6 @@ class Authorization:
     user: User
     credential: LoginSession | PersonalAccessToken | None
     kind: str
-    administrator: bool
     permissions: set[str]
     declared_permissions: frozenset[str]
     role_ids: frozenset[UUID]
@@ -61,7 +60,7 @@ class Authorization:
 
 async def role_permissions(session, role):
     catalog = permission_catalog(session)
-    if role.key == ADMIN_KEY:
+    if role.all_permissions:
         return set(catalog)
     return (
         set(
@@ -83,7 +82,7 @@ async def load_authorization(session, user_id: UUID, *, pat_id: UUID | None = No
         pat is None or pat.user_id != user_id or pat.revoked_at or pat.expires_at <= utcnow()
     ):
         raise ServiceError(401, "authentication_required", "凭据已失效")
-    roles, administrator = await role_grants(session, user_id)
+    roles = await role_grants(session, user_id)
     grants = set().union(*roles.values())
     if pat is not None:
         grants &= set(pat.permissions)
@@ -93,7 +92,6 @@ async def load_authorization(session, user_id: UUID, *, pat_id: UUID | None = No
         user,
         pat,
         "pat" if pat else "trusted",
-        administrator,
         grants,
         frozenset(permission_catalog(session)),
         frozenset(roles),
@@ -117,48 +115,42 @@ async def authenticate(session, credential):
 
 
 async def manageable(session, auth, target):
-    current = await load_authorization_for_target(session, target)
-    if current[1] and not auth.administrator:
-        raise ServiceError(403, "administrator_required", "只有内置管理员可管理管理员账户")
-    auth.grantable(current[0])
+    auth.grantable(await load_authorization_for_target(session, target))
 
 
 async def load_authorization_for_target(session, target):
     # Disabled/forced-change targets still retain their role scope for management checks.
-    roles, administrator = await role_grants(session, target.id)
-    return set().union(*roles.values()), administrator
+    return set().union(*(await role_grants(session, target.id)).values())
 
 
 async def role_grants(session, user_id):
     """Load current role grants in one query; credential/account restrictions belong to callers."""
     catalog = permission_catalog(session)
     rows = await session.execute(
-        select(Role.id, Role.key, RolePermission.permission_key)
+        select(Role.id, Role.all_permissions, RolePermission.permission_key)
         .join(UserRole, UserRole.role_id == Role.id)
         .outerjoin(RolePermission, RolePermission.role_id == Role.id)
         .where(UserRole.user_id == user_id)
     )
-    roles, administrator = {}, False
-    for role_id, key, permission in rows:
+    roles = {}
+    for role_id, everything, permission in rows:
         grants = roles.setdefault(role_id, set())
-        if key == ADMIN_KEY:
-            administrator = True
+        if everything:
             grants.update(catalog)
         elif permission in catalog:
             grants.add(permission)
-    return roles, administrator
+    return roles
 
 
 async def protect_last_admin(session, user):
-    _, admin = await load_authorization_for_target(session, user)
-    if not admin or not user.is_active:
-        return
-    other = await session.scalar(
+    # The admin role is only a lockout guard; it grants nothing beyond its permissions.
+    holders = (
         select(User.id)
         .join(UserRole)
         .join(Role)
-        .where(Role.key == ADMIN_KEY, User.is_active.is_(True), User.id != user.id)
-        .limit(1)
+        .where(Role.key == ADMIN_KEY, User.is_active.is_(True))
     )
-    if other is None:
+    if not user.is_active or await session.scalar(holders.where(User.id == user.id)) is None:
+        return
+    if await session.scalar(holders.where(User.id != user.id).limit(1)) is None:
         raise ServiceError(409, "last_administrator", "必须保留至少一位启用的管理员")

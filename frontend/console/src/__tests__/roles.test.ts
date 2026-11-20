@@ -113,7 +113,12 @@ it('saves the full selected set from a filtered editor and resets filters on reo
   await wrapper.get('[role=dialog] form').trigger('submit')
   await flushPromises()
   expect(bodies).toEqual([
-    { name: 'Reader', description: '', permissions: ['user:read', 'flow:read', 'file:inspect'] },
+    {
+      name: 'Reader',
+      description: '',
+      all_permissions: false,
+      permissions: ['user:read', 'flow:read', 'file:inspect'],
+    },
   ])
   await button(wrapper, '配置权限').trigger('click')
   expect(wrapper.getComponent(PermissionPicker).findAll('tbody tr')).toHaveLength(catalog.length)
