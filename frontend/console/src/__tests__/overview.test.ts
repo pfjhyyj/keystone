@@ -20,6 +20,13 @@ it('shows backlog counts and preserves unknown observations', async () => {
                 oldest_pending_age_seconds: 120,
               },
               files: {
+                status: 'ok',
+                pending: 0,
+                oldest_pending_at: null,
+                oldest_pending_age_seconds: null,
+                exhausted: 2,
+              },
+              model_costs: {
                 status: 'unknown',
                 pending: null,
                 oldest_pending_at: null,
@@ -32,6 +39,7 @@ it('shows backlog counts and preserves unknown observations', async () => {
   await flushPromises()
   expect(wrapper.text()).toContain('4 项')
   expect(wrapper.text()).toContain('120 秒')
+  expect(wrapper.text()).toContain('2 项已停止自动重试')
   expect(wrapper.text()).toContain('无法确认')
 })
 

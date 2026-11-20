@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Event
 
+import psycopg
 import pytest
 from alembic import command
 from fastapi.testclient import TestClient
@@ -366,6 +367,13 @@ def test_active_cookie_session_renews_and_expired_sessions_stay_expired(client):
     extended = query(client, expiry)
     assert extended > soon + timedelta(days=2)
     assert client.get(path, headers=active).status_code == 200
+    assert query(client, expiry) == extended
+    # A keepalive that need not extend never waits behind shared identity readers.
+    url = client.app.state.runtime.settings.database_url.get_secret_value()
+    with psycopg.connect(url.replace("postgresql+psycopg://", "postgresql://", 1)) as reader:
+        reader.execute("SELECT pg_advisory_lock_shared(73190421)")
+        kept = client.get(path, headers=active)
+    assert kept.status_code == 200 and "set-cookie" in kept.headers
     assert query(client, expiry) == extended
 
     query(client, lambda session: set_expiry(session, soon))

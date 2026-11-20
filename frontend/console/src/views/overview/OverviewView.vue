@@ -228,6 +228,8 @@ onScopeDispose(() => {
                 : '无'
             }}<template v-if="item.oldest_pending_age_seconds !== null"
               >（距今 {{ item.oldest_pending_age_seconds }} 秒）</template
+            ><template v-if="item.exhausted"
+              >；{{ item.exhausted }} 项已停止自动重试，需人工处理</template
             ></span
           >
         </el-descriptions-item>

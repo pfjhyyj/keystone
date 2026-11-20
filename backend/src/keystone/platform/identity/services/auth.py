@@ -19,7 +19,25 @@ from keystone.platform.identity.services.authorization import identity_lock
 from keystone.platform.identity.services.credentials import revoke_user_credentials
 
 
+def renewed_expiry(context, token):
+    now = utcnow()
+    if token.expires_at <= now:
+        raise ServiceError(401, "authentication_required", "凭据已失效")
+    lifetime = timedelta(hours=context.settings.session_hours)
+    expires_at = now + lifetime
+    # Limit writes during keepalive checks while extending shorter existing sessions.
+    if expires_at - token.expires_at >= min(timedelta(hours=1), lifetime / 2):
+        return expires_at
+    return None
+
+
 async def renew_session(context, *, active, has_active_work):
+    # Decide under the shared identity lock; only an actual extension takes the exclusive one.
+    async with context.access(session_only=True) as (session, auth):
+        if not active and not await has_active_work(session, auth.user.id):
+            return None
+        if renewed_expiry(context, auth.credential) is None:
+            return auth.credential.expires_at
     action = "identity.session.renew"
     async with context.access(identity_write=True, session_only=True, action=action) as (
         session,
@@ -27,15 +45,9 @@ async def renew_session(context, *, active, has_active_work):
     ):
         if not active and not await has_active_work(session, auth.user.id):
             return None
-        now = utcnow()
         token = auth.credential
-        if token.expires_at <= now:
-            raise ServiceError(401, "authentication_required", "凭据已失效")
-
-        lifetime = timedelta(hours=context.settings.session_hours)
-        expires_at = now + lifetime
-        # Limit writes during keepalive checks while extending shorter existing sessions.
-        if expires_at - token.expires_at >= min(timedelta(hours=1), lifetime / 2):
+        expires_at = renewed_expiry(context, token)
+        if expires_at is not None:
             token.expires_at = expires_at
             await context.log(session, auth, action, "identity.session", token.id)
         return token.expires_at

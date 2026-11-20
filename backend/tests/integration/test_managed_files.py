@@ -320,7 +320,7 @@ def test_reclamation_requires_opt_in_completion_grace_and_no_references(notes, r
         lambda s: s.execute(update(File).where(File.id == rows[4]["id"]).values(status="disabled")),
     )
     rt = notes.app.state.runtime
-    pending, _ = notes.portal.call(
+    pending, _, _ = notes.portal.call(
         lambda: backlog(rt.database, unreferenced_grace_seconds=retention)
     )
     assert pending == (1 if retention else 0)

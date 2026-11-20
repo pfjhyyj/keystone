@@ -19,6 +19,7 @@ export interface WorkerStatus {
       pending: number | null
       oldest_pending_at: string | null
       oldest_pending_age_seconds: number | null
+      exhausted?: number
     }
   >
   status: 'ready' | 'unready' | 'offline' | 'unknown'
@@ -119,6 +120,8 @@ export async function getWorkerStatus(): Promise<WorkerStatus> {
             : !Number.isInteger(item.pending) ||
               Number(item.pending) < 0 ||
               !timestamp(item.oldest_pending_at) ||
+              (item.exhausted !== undefined &&
+                (!Number.isInteger(item.exhausted) || Number(item.exhausted) < 0)) ||
               !(
                 item.oldest_pending_age_seconds === null ||
                 (Number.isInteger(item.oldest_pending_age_seconds) &&

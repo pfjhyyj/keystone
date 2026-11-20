@@ -211,14 +211,25 @@ def test_volume_identity_and_abandoned_upload_recovery(client):
             .values(updated_at=utcnow() - timedelta(hours=2))
         )
 
+    def checks():
+        row = query(client, lambda session: session.get(File, UUID(f["id"])))
+        return row.residue_checks, row.updated_at
+
     query(client, abandon)
     clean(client)
     assert client.get(f"/api/v1/_test/materials/{f['id']}").json()["status"] == "failed"
-    query(client, stale)
-    clean(client)  # The hourly residue sweep finds nothing left and stays silent.
+    for count in (2, 3):
+        query(client, stale)
+        clean(client)  # Later residue checks find nothing left and stay silent.
+        assert checks()[0] == count
     residue = client.get("/api/v1/audit-logs", params={"action": "file.upload.residue_cleanup"})
     assert [r["target_id"] for r in residue.json()] == [f["id"]]
+    query(client, stale)
+    exhausted = checks()
+    clean(client)  # A failed upload stops being rescanned once its checks are spent.
+    assert checks() == exhausted
     assert upload(client).json()["id"] == f["id"]
+    assert checks()[0] == 0
     marker = client.app.state.runtime.storage.get().root / ".keystone-storage"
     marker.write_text("keystone:" + "1" * 64)
     assert client.get(f"/api/v1/_test/materials/{f['id']}/content").status_code == 503
@@ -259,7 +270,11 @@ def test_delete_retries_are_bounded_and_can_be_requeued(client, monkeypatch):
 
     clean(client)
     assert len(calls) == 3 and state() == ("deleting", 3)
-    assert client.portal.call(file_cleanup.backlog, runtime.database) == (0, None)
+    assert client.portal.call(file_cleanup.backlog, runtime.database) == (
+        0,
+        None,
+        {"exhausted": 1},
+    )
     logs = client.get(
         "/api/v1/audit-logs",
         params={"action": "file.cleanup.failure", "target_id": str(identifier)},

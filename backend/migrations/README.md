@@ -15,8 +15,9 @@
 | `0007_worker_initial.py` / `0007` | Worker | worker_registrations、worker_heartbeats |
 | `0008_browser_initial.py` / `0008` | 浏览器 | browser_workspaces、browser_runs |
 | `0009_files_delete_failures.py` / `0009` | 文件 | files.delete_failures |
+| `0010_files_residue_checks.py` / `0010` | 文件 | files.residue_checks |
 
-九份迁移依序维护 20 张领域表，唯一 head 为 `0009`。Files 基线直接创建可空的 `completed_at` 和回收索引；`0009` 追加删除失败计数及 0～3 约束，升级时已有待删除记录从 0 次开始。模型接入基线直接包含火山方舟、百炼业务空间和费用预估字段及约束。
+十份迁移依序维护 20 张领域表，唯一 head 为 `0010`。Files 基线直接创建可空的 `completed_at` 和回收索引；`0009` 追加删除失败计数，`0010` 追加失败上传与 S3 删除墓碑的迟到残留检查计数，两者均为非空、默认 0、约束 0～3，升级时已有记录从 0 次开始。模型接入基线直接包含火山方舟、百炼业务空间和费用预估字段及约束。
 
 模型接入基线包含渠道凭据密文、操作声明（含 `text.embed`）、调用归属、费用与回执、受限结果证据、发送间隔/冷却表、NewAPI 渠道类型、可修改的模型显示名称，以及 Run 关联调用表达式索引。显示名称为空时按固定 key 展示；改名不改变 key、选择或历史调用。条目 `operations` 默认仅 `text.generate`，调用 `operation` 默认 `text.generate`、`result_context` 可空，不按模型名推断媒体能力。Flow 基线只保存运行快照、状态与协调字段，调用及用量统计使用实际模型记录。Worker 基线包含固定身份登记、心跳及其约束和索引。
 
@@ -33,8 +34,8 @@ Alembic 连接固定 `search_path=public`，只管理 `keystone` schema。DBOS �
 ## 后续变更与脚手架
 
 - 文件使用 `NNNN_<module>_<change>.py` 和小写 snake_case，直接放在 `versions/`，Worker 使用 `worker` 前缀；不增加模块目录、迁移分支或版本表。
-- `revision` 与文件序号使用相同四位字符串。序号从 `0001` 连续递增，`down_revision` 指向前一个 revision，实际执行由 Alembic 原生依赖决定。已发布迁移不重写、不复用 revision，后续只追加。
-- 下一份新业务迁移示例为 `0010_notes_initial.py`，`revision = "0010"`、`down_revision = "0009"`。未发布的并行变更在合并前解决序号冲突；达到 `9999` 时先调整规范。
+- `revision` 与文件序号使用相同四位字符串。序号从 `0001` 连续递增，`down_revision` 指向前一个 revision，实际执行由 Alembic 原生依赖决定。已发布迁移不重写、不复用 revision，后续只追加；删除表也通过新迁移完成，不删除历史迁移。
+- 下一份新业务迁移示例为 `0011_notes_initial.py`，`revision = "0011"`、`down_revision = "0010"`。未发布的并行变更在合并前解决序号冲突；达到 `9999` 时先调整规范。
 
 `scripts/new_business.py` 校验从 `0001` 开始的连续链，并按下一序号生成迁移；空目录从 `0001` 开始。它只读取静态字面量元数据，支持普通及带类型注解的赋值；在写业务文件前检查平铺路径、命名、重复序号/revision、序号连续性和线性依赖。子目录、重复声明、动态元数据、分支和额外依赖均拒绝，不导入或执行历史迁移。
 

@@ -301,7 +301,7 @@ class FileService:
                     return view(file)
                 if file.status not in {"failed", "uploading"}:
                     raise ServiceError(409, "upload_unavailable", "该文件不能重试上传")
-                file.status = "uploading"
+                file.status, file.residue_checks = "uploading", 0
                 self.identity.touch(file, auth)
             else:
                 file = File(

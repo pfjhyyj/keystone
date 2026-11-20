@@ -13,10 +13,27 @@ from keystone.platform.files.services.references import require_unreferenced
 
 MAX_DELETE_FAILURES = 3
 DELETE_RETRY_DELAY = timedelta(minutes=1)
+MAX_RESIDUE_CHECKS = 3
 
 
 def pending_delete():
     return (File.status == "deleting") & (File.delete_failures < MAX_DELETE_FAILURES)
+
+
+def exhausted_delete():
+    return (File.status == "deleting") & (File.delete_failures >= MAX_DELETE_FAILURES)
+
+
+def residue_due(cutoff, remote_keys):
+    # A timed-out PUT may land after failure or deletion; a few late checks cover it.
+    return (
+        (File.residue_checks < MAX_RESIDUE_CHECKS)
+        & (File.updated_at < cutoff)
+        & (
+            (File.status == "failed")
+            | ((File.status == "deleted") & File.storage_key.in_(remote_keys))
+        )
+    )
 
 
 async def retry_delete(database, identifier):
@@ -51,17 +68,20 @@ def expired_unreferenced(grace_seconds):
 
 
 async def backlog(database, *, unreferenced_grace_seconds=None):
+    """Pending work plus exhausted deletions for operators; residue checks are not backlog."""
     cutoff = utcnow() - timedelta(hours=1)
     async with database.transaction() as session:
-        return (
+        pending, oldest = (
             await session.execute(
                 select(func.count(), func.min(File.updated_at)).where(
                     pending_delete()
-                    | (File.status.in_(["uploading", "failed"]) & (File.updated_at < cutoff))
+                    | ((File.status == "uploading") & (File.updated_at < cutoff))
                     | expired_unreferenced(unreferenced_grace_seconds)
                 )
             )
         ).one()
+        exhausted = await session.scalar(select(func.count()).where(exhausted_delete()))
+        return pending, oldest, {"exhausted": exhausted}
 
 
 async def cleanup(database, storage, *, limit=20, unreferenced_grace_seconds=None):
@@ -79,12 +99,8 @@ async def cleanup(database, storage, *, limit=20, unreferenced_grace_seconds=Non
                         & ((File.delete_failures == 0) | (File.updated_at <= retry_cutoff))
                     )
                     | expired_unreferenced(unreferenced_grace_seconds)
-                    | (File.status.in_(["uploading", "failed"]) & (File.updated_at < cutoff))
-                    | (
-                        (File.status == "deleted")
-                        & File.storage_key.in_(remote_keys)
-                        & (File.updated_at < cutoff)
-                    )
+                    | ((File.status == "uploading") & (File.updated_at < cutoff))
+                    | residue_due(cutoff, remote_keys)
                 )
                 # Requested deletions go first; recurring residue sweeps cannot starve them.
                 .order_by(File.status != "deleting", File.updated_at, File.id)
@@ -99,6 +115,11 @@ async def cleanup(database, storage, *, limit=20, unreferenced_grace_seconds=Non
                     if file.status == "deleting" and (
                         file.delete_failures >= MAX_DELETE_FAILURES
                         or (file.delete_failures and file.updated_at > retry_cutoff)
+                    ):
+                        continue
+                    if (
+                        file.status in {"failed", "deleted"}
+                        and file.residue_checks >= MAX_RESIDUE_CHECKS
                     ):
                         continue
                     # Reference creation locks this same row. Recheck after admission,
@@ -151,6 +172,7 @@ async def cleanup(database, storage, *, limit=20, unreferenced_grace_seconds=Non
                     async with database.transaction() as session:
                         file = await policy.locked(session, identifier)
                         if file.status == status:
+                            file.residue_checks = min(file.residue_checks + 1, MAX_RESIDUE_CHECKS)
                             file.updated_at, file.updated_by = utcnow(), None
                             if removed:
                                 await audit.record(
@@ -202,6 +224,9 @@ async def cleanup(database, storage, *, limit=20, unreferenced_grace_seconds=Non
                     if file.status in {"failed", "deleting", "deleted"}:
                         # Rotate failed candidates so one broken object cannot starve the batch.
                         file.updated_at, file.updated_by = utcnow(), None
+                    if file.status in {"failed", "deleted"}:
+                        # A failed check still counts, so residue sweeps stay bounded.
+                        file.residue_checks = min(file.residue_checks + 1, MAX_RESIDUE_CHECKS)
                     await audit.record(
                         session,
                         "file.cleanup.failure",

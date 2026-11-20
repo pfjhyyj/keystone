@@ -27,8 +27,9 @@ class PlatformStatus:
         async def observe(probe):
             try:
                 async with asyncio.timeout(3):
-                    pending, oldest = await probe()
+                    pending, oldest, *details = await probe()
                 return {
+                    **(details[0] if details else {}),
                     "status": "ok",
                     "pending": pending,
                     "oldest_pending_at": oldest.isoformat() if oldest else None,

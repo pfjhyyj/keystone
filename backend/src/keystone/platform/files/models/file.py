@@ -16,6 +16,7 @@ class File(Base):
         ),
         CheckConstraint("(status = 'deleted') = (deleted_at IS NOT NULL)", name="file_deleted_at"),
         CheckConstraint("delete_failures BETWEEN 0 AND 3", name="file_delete_failures"),
+        CheckConstraint("residue_checks BETWEEN 0 AND 3", name="file_residue_checks"),
         CheckConstraint("size_bytes IS NULL OR size_bytes >= 0", name="file_size"),
         CheckConstraint(
             "status NOT IN ('active','disabled') OR "
@@ -38,6 +39,7 @@ class File(Base):
     object_key: Mapped[str] = mapped_column(String(64), unique=True)
     status: Mapped[str] = mapped_column(String(16))
     delete_failures: Mapped[int] = mapped_column(server_default="0")
+    residue_checks: Mapped[int] = mapped_column(server_default="0")
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
