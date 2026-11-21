@@ -50,7 +50,7 @@ cd backend
 uv run --locked keystone-worker
 ```
 
-默认一个 Worker，文件清理、Flow 协调和自动查费自动运行。扩容、退役与故障恢复按需查阅[部署说明](docs/operations/deployment.md#4-多-worker-部署与发布)。
+默认一个 Worker，文件清理、Flow 协调和自动查费自动运行。扩容、退役与故障恢复按需查阅[部署说明](docs/operations/deployment.md#4-多-worker-部署与发布)；容器化部署见[单宿主 Compose](docs/operations/deployment.md#23-单宿主-compose)。
 
 ### 3. 另开终端启动控制台
 

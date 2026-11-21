@@ -7,6 +7,7 @@
 | [backend/keystone.toml.example](../../backend/keystone.toml.example) → `backend/keystone.toml` | 本机 API、Worker、CLI | 需要，与开发数据库默认值一致 |
 | [frontend/console/.env.example](../../frontend/console/.env.example) → `frontend/console/.env` | Vite 的 `KEYSTONE_API_PROXY` | 可选，默认代理本机 8000 端口 |
 | [deploy/.env.example](../../deploy/.env.example) → `deploy/.env` | PostgreSQL 密码、宿主端口等覆盖 | 可选，默认启动不需要复制 |
+| [deploy/stack/.env.example](../../deploy/stack/.env.example)、[keystone.toml.example](../../deploy/stack/keystone.toml.example) → 同目录 `.env`、`keystone.toml` | [单宿主 Compose](deployment.md#23-单宿主-compose) 的镜像、秘密与应用配置 | 仅该部署方式需要 |
 
 ## 1. 读取方式
 

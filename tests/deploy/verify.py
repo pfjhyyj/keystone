@@ -1,7 +1,7 @@
 """Real images + disposable Compose projects; test-only HTTP transport injection.
 
 Run from the repository root with backend/.venv/bin/python tests/deploy/verify.py.
-The complete stack is a test fixture, separate from development dependency Compose.
+The stack fixture extends deploy/stack/compose.yaml; development dependencies stay separate.
 Use PostgreSQL and tar directly, not a backup framework.
 """
 
@@ -99,6 +99,8 @@ class Deployment:
                 "KEYSTONE_ENV": "test",
                 "KEYSTONE_INITIAL_ADMIN_PASSWORD": PASSWORD,
                 "KEYSTONE_BROWSER_ORIGINS": json.dumps([self.origin]),
+                "KEYSTONE_BACKEND_IMAGE": images["backend"],
+                "KEYSTONE_CONSOLE_IMAGE": images["console"],
             }
         )
         # No deploy/.env, development ports, existing volumes or mutable image tags.
@@ -152,7 +154,7 @@ class Deployment:
         ]
         self.override.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    def compose(self, *args, extra=None, **kwargs):
+    def compose(self, *args, **kwargs):
         cmd = [
             "docker",
             "compose",
@@ -165,8 +167,6 @@ class Deployment:
             "-f",
             str(self.override),
         ]
-        if extra:
-            cmd += ["-f", str(extra)]
         return command([*cmd, *args], self.log, env=self.environment, **kwargs)
 
     def up(self):
@@ -334,31 +334,32 @@ def exercise(source, restored, checks):
     passed("development Compose contains only PostgreSQL and needs no application configuration")
 
     source.compose("up", "-d", "--wait", "postgres")
-    failure = source.directory / "failure.json"
-    failure.write_text(
-        json.dumps({"services": {"init": {"command": ["python", "-c", "raise SystemExit(23)"]}}}),
-        encoding="utf-8",
-    )
     result = source.compose(
         "up",
         "-d",
         "--no-build",
         "--pull",
         "never",
-        "api",
-        "worker",
-        "console",
-        extra=failure,
+        "--wait",
+        "--wait-timeout",
+        "90",
         check=False,
     )
     assert result.returncode != 0
-    assert not (
-        {"api", "worker", "console"}
-        & set(source.compose("ps", "--status", "running", "--services").stdout.split())
-    )
-    passed("failed migration blocks API, Worker and console")
+    assert "init" not in source.compose("ps", "-a", "--services").stdout.split()
+    assert "console" not in source.compose("ps", "--status", "running", "--services").stdout.split()
+    for service in ("api", "worker"):
+        health = command(
+            ["docker", "inspect", "-f", "{{.State.Health.Status}}", source.container(service)],
+            source.log,
+        ).stdout.strip()
+        assert health != "healthy", (service, health)
+    source.compose("stop", "api", "worker")
+    passed("up never migrates; without init API and Worker stay unready and console waits")
+    init = ("run", "--rm", "--no-deps", "init", "keystone", "init", "--non-interactive")
+    source.compose(*init)
     source.up()
-    source.compose("run", "--rm", "--no-deps", "init")
+    source.compose(*init)
     for service in ("api", "worker"):
         assert source.compose("exec", "-T", service, "id", "-u").stdout.strip() == "10001"
     passed("empty-volume cold start, repeatable migrations/storage init, non-root processes")

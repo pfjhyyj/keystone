@@ -1,8 +1,8 @@
 # 部署与维护
 
-日常启动见[Quickstart](../../README.md#quickstart)。本页维护构建、发布、运维命令、Worker 运维和历史清理；deploy/compose.yaml 只启动 PostgreSQL，不启动应用或执行迁移。
+日常启动见[Quickstart](../../README.md#quickstart)。本页维护构建、发布、运维命令、Worker 运维和历史清理；deploy/compose.yaml 只启动开发用 PostgreSQL，单宿主应用栈见 [2.3 节](#23-单宿主-compose)。
 
-[构建与初始化](#1-构建镜像) · [运维命令](#22-运维命令) · [更新与恢复](#3-更新与恢复) · [Worker 管理](#4-多-worker-部署与发布) · [健康排障](#worker-健康检查排障) · [历史清理](#历史保留与清理)
+[构建与初始化](#1-构建镜像) · [运维命令](#22-运维命令) · [单宿主 Compose](#23-单宿主-compose) · [更新与恢复](#3-更新与恢复) · [Worker 管理](#4-多-worker-部署与发布) · [健康排障](#worker-健康检查排障) · [历史清理](#历史保留与清理)
 
 ## 1. 构建镜像
 
@@ -21,7 +21,7 @@ docker build -t keystone-browser-chromium:local ./deploy/browser/runtime
 | 控制台 | `frontend/console/Dockerfile` | Nginx（镜像默认命令） |
 | 浏览器运行时 | `deploy/browser/runtime/Dockerfile` | `browser-runtime`（供 OpenSandbox 创建沙箱） |
 
-API 与 Worker 使用同一份代码、锁文件和镜像，分别启动进程。控制台镜像包含编译后的 Vue 静态文件及 `/api` 反向代理；后端镜像只含 API、Worker 与 CLI 代码。浏览器运行时镜像只在启用 Browser 模块时需要，必须预先分发到 OpenSandbox 所用的 Docker 宿主，并通过 `browser_runtime_image` 固定版本或摘要。每个工程的 `.dockerignore` 仅允许构建所需源码和配置进入上下文，不读取或打包实际 `keystone.toml`、`.env`；构建不执行初始化、不创建模型配置。Dockerfile 和测试容器验证使用独立的 `tests/deploy/compose.yaml`，不改变本机开发启动方式。
+API 与 Worker 使用同一份代码、锁文件和镜像，分别启动进程。控制台镜像包含编译后的 Vue 静态文件及 `/api` 反向代理；后端镜像只含 API、Worker 与 CLI 代码。浏览器运行时镜像只在启用 Browser 模块时需要，必须预先分发到 OpenSandbox 所用的 Docker 宿主，并通过 `browser_runtime_image` 固定版本或摘要。每个工程的 `.dockerignore` 仅允许构建所需源码和配置进入上下文，不读取或打包实际 `keystone.toml`、`.env`；构建不执行初始化、不创建模型配置。容器验证使用 `tests/deploy/compose.yaml`，它继承 `deploy/stack/compose.yaml` 并改为本地构建和测试配置，不改变本机开发启动方式。
 
 ## 2. 运行配置与初始化
 
@@ -80,6 +80,30 @@ rg --fixed-strings '替换为调用记录 UUID 或 X-Request-ID' .artifacts/logs
 | `reset-admin-role` | — | 把内置 admin 角色恢复为全部权限并写 system 审计，用于角色被改到无人能管理身份时；已是全部权限时不改动 |
 | `prune-history` | `[--apply] [--history-offset N]` | 预览或删除一批过期历史，见[手动预览与执行](#手动预览与执行) |
 | `register-browser-workspace` | `--owner-id UUID --workspace-name NAME --volume VOLUME` | 为已有用户登记浏览器空间并写系统审计，输出空间 ID；卷须预先创建，命令不创建卷，同一卷只能登记一次（`browser_volume_registered`） |
+
+### 2.3 单宿主 Compose
+
+`deploy/stack/compose.yaml` 在一台宿主上运行 PostgreSQL、API、单个 Worker 和控制台，使用第 1 节预先构建的固定镜像，不在部署时构建。`up` 不执行迁移：init 服务只在显式运行时启动，未初始化时 Worker 拒绝启动、API 的 ready 保持 503，控制台等待 API 就绪。
+
+```bash
+cd deploy/stack
+cp .env.example .env                    # 填写镜像、POSTGRES_PASSWORD
+cp keystone.toml.example keystone.toml  # 填写 HTTPS browser_origins 等
+docker compose up -d --wait postgres
+docker compose run --rm init            # 首次安装与每次升级各显式执行一次
+docker compose up -d --wait
+```
+
+| 项 | 约定 |
+|---|---|
+| 配置 | keystone.toml 只读挂载到 init/API/Worker；Compose 固定 env=production、数据库地址和监听地址；秘密放 .env |
+| 入口 | 控制台默认只监听 127.0.0.1:8080，由宿主上的 HTTPS 反向代理对外；production 要求 browser_origins 为 HTTPS |
+| 卷 | postgres_data 为数据库，file_data 同时承载协调目录和本地文件，均按[联合备份](backup-restore.md)处理 |
+| 主机与 Worker 身份 | 容器 hostname 固定为 KEYSTONE_HOST_ID，Worker 身份固定为 KEYSTONE_WORKER_ID，重建容器不改变；增加 Worker 时按[第 4.1 节](#41-共同条件与增加实例)另加固定身份服务 |
+| 停止 | Worker 的 stop_grace_period 默认 60s，须大于 worker_shutdown_seconds 并留出收尾时间 |
+| 日志 | json-file，单文件 50 MB、保留 5 个 |
+
+升级时先按[第 3 节](#3-更新与恢复)停写、排空并停止全部应用服务（`docker compose stop api worker console`），备份后更新 .env 中的镜像，再执行 `docker compose run --rm init` 和 `docker compose up -d --wait`。Compose 健康检查只在宿主内可见，unhealthy 不会自动重启容器；存活告警须由外部监控读取 `/api/v1/ready`、`keystone-worker --check` 或容器健康状态。
 
 ## 3. 更新与恢复
 

@@ -1,0 +1,108 @@
+# Application stack on one host: PostgreSQL, API, Worker and console from prebuilt images.
+# Migrations never run on `up`; run `docker compose run --rm init` explicitly, see
+# docs/operations/deployment.md. TLS terminates in front of the console port.
+name: keystone-stack
+
+x-backend: &backend
+  image: ${KEYSTONE_BACKEND_IMAGE:?Set KEYSTONE_BACKEND_IMAGE to a fixed backend image tag or digest}
+  # Worker admission compares the host identity; keep it stable across container recreation.
+  hostname: ${KEYSTONE_HOST_ID:-keystone-host}
+  environment: &backend-environment
+    KEYSTONE_ENV: production
+    KEYSTONE_DATABASE_URL: postgresql+psycopg://keystone:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/keystone
+    KEYSTONE_HOST: 0.0.0.0
+    KEYSTONE_PORT: 8000
+  volumes:
+    - file_data:/data/files
+    - type: bind
+      source: ${KEYSTONE_CONFIG_PATH:-./keystone.toml}
+      target: /app/keystone.toml
+      read_only: true
+      bind:
+        create_host_path: false
+  init: true
+  logging: &logging
+    driver: json-file
+    options:
+      max-size: 50m
+      max-file: "5"
+
+services:
+  postgres:
+    image: ${KEYSTONE_POSTGRES_IMAGE:-postgres:17.11-alpine}
+    environment:
+      POSTGRES_DB: keystone
+      POSTGRES_USER: keystone
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keystone -d keystone"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    logging: *logging
+    restart: unless-stopped
+
+  init:
+    <<: *backend
+    profiles: ["init"]
+    environment:
+      <<: *backend-environment
+      KEYSTONE_INITIAL_ADMIN_PASSWORD: ${KEYSTONE_INITIAL_ADMIN_PASSWORD:-}
+    command: ["keystone", "init"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *backend
+    command: ["keystone-api"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/ready', timeout=5)"]
+      interval: 10s
+      timeout: 6s
+      retries: 3
+    restart: unless-stopped
+
+  worker:
+    <<: *backend
+    environment:
+      <<: *backend-environment
+      KEYSTONE_WORKER_ID: ${KEYSTONE_WORKER_ID:-keystone-worker}
+    command: ["keystone-worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Must exceed worker_shutdown_seconds plus time for fact settlement and file I/O.
+    stop_grace_period: ${KEYSTONE_WORKER_STOP_GRACE:-60s}
+    healthcheck:
+      test: ["CMD", "keystone-worker", "--check"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  console:
+    image: ${KEYSTONE_CONSOLE_IMAGE:?Set KEYSTONE_CONSOLE_IMAGE to a fixed console image tag or digest}
+    ports:
+      - "${KEYSTONE_CONSOLE_BIND:-127.0.0.1}:${KEYSTONE_CONSOLE_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    logging: *logging
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  file_data:
