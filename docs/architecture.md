@@ -6,21 +6,108 @@ Keystone 是单企业内的分层模块化单体。业务与平台共用工程�
 
 ## 1. 架构视图
 
-### 1.1 逻辑分层
+### 1.1 能力视图
 
-![Keystone 逻辑分层](diagrams/architecture-layers.svg)
+```mermaid
+flowchart TB
+  biz["<b>业务</b><br/>业务对象、规则与页面（控制台承载）<br/>独立前端通过 API 接入"]
+  orch["<b>编排与治理</b><br/>Flow：持久运行 · 取消 · 恢复<br/>Task 队列 · 定时计划 · Worker<br/>身份 · 角色 · PAT、审计、字典"]
+  model["<b>模型接入</b><br/>多渠道 · 文本与图片操作<br/>用量 · 费用 · 实扣核对"]
+  conn["<b>外部系统连接</b><br/>文件：本地 / S3<br/>浏览器空间：无开放接口系统的交互<br/>消息渠道：统一接口，多渠道适配<br/>外部事件入口<br/>业务系统适配：由业务实现"]
+  infra["<b>基础设施</b><br/>配置 · 连接 · 锁 · 日志 · 重试<br/>PostgreSQL、本地协调卷"]
+  ext["外部系统"]
+
+  biz --> orch & model & conn
+  orch & model & conn --> infra
+  ext -. HTTP 事件 .-> conn
+```
+
+能力视图按职责划分，与目录不一一对应，例如文件、浏览器和模型接入都属于 platform/；代码分层见 1.2 和[接入规范](development/business.md#模块分层与代码规范)。业务按需直接组合各项平台能力。
+
+目标与当前实现差异：
+
+| 能力 | 当前实现 | 目标 |
+|---|---|---|
+| 部署编排 | deploy/compose.yaml 只启动 PostgreSQL | 一套 Compose 启动 API、Worker、控制台并显式迁移；进程存活由外部检测 |
+| 消息渠道 | 未实现 | 平台模块，按模型接入方式声明多渠道适配，统一消息、交互卡片和回调 |
+| 外部事件入口 | 未实现 | 鉴权、幂等、有界地接收外部事件并受理为业务 Flow |
+| 业务系统适配 | 凭据加密和有界 HTTP 仅在模型接入与 core 内部使用 | 不建统一接口，由业务模块按对象模型实现，平台按需开放公共部件 |
+| 费用汇总 | 单次调用的用量、预估费用和实扣，按用户查询 | 按业务或 Flow 汇总并超阈值告警 |
+
+各项设计时在对应领域文档确定契约。
+
+### 1.2 逻辑分层
+
+```mermaid
+flowchart TB
+  entry["<b>入口适配与执行编排</b><br/>HTTP Controller<br/>Task / Workflow、命令处理"]
+  biz["<b>业务模块 Service</b><br/>业务规则与对象授权<br/>组合公共能力、保存结果"]
+  platform["<b>平台 Service</b><br/>身份与权限、审计、字典<br/>文件、模型接入<br/>Flow、浏览器"]
+
+  pg[("PostgreSQL（必需）<br/>结构化数据、执行状态")]
+  fs[("文件存储（至少一个后端）<br/>本地文件系统 / S3 等")]
+
+  entry --> biz
+  biz --> platform
+  platform --> pg
+  platform --> fs
+```
 
 入口处理请求和执行编排，Service 管理规则与数据；PostgreSQL 保存结构化数据和执行状态，文件存储适配本地文件系统、S3 等后端。
 
-### 1.2 进程运行关系
+### 1.3 进程运行关系
 
-![Keystone 进程运行结构](diagrams/architecture-runtime.svg)
+```mermaid
+flowchart TB
+  user["业务用户<br/>浏览器"]
+  ops["部署运维人员"]
+
+  subgraph procs["独立进程 · 共用制品 · 公共配置一致"]
+    api["API 进程 · keystone-api<br/>HTTP 请求、同步业务操作"]
+    worker["Worker 进程 · keystone-worker<br/>DBOS 执行器：任务、流程、定时维护<br/>每个 Worker 的 worker_id 唯一"]
+    cli["CLI 进程 · keystone<br/>按需执行，通常完成后退出"]
+  end
+
+  subgraph data["持久数据"]
+    pg[("PostgreSQL<br/>keystone：领域数据、Run、待办<br/>dbos：队列、执行状态、检查点")]
+    vol[("本地协调卷<br/>跨进程锁、容量记录、凭据加密密钥")]
+  end
+
+  user -- HTTP --> api
+  ops -- 执行命令 --> cli
+  api -- 持久入队或保存 Run/待办 --> pg
+  worker -- 领取执行、保存检查点 --> pg
+  cli --> pg
+  procs -. 锁与密钥 .-> vol
+```
 
 API、Worker、CLI 独立启动，共用代码，公共配置保持一致，进程专属参数分别设置；每个 Worker 使用不同的 worker_id。Service 是各进程内的对象；DBOS 在 Worker 内运行，API 与 Worker 通过持久数据衔接执行，不通过内部 HTTP 调用。
 
-### 1.3 外部依赖
+### 1.4 外部依赖
 
-![Keystone 外部依赖](diagrams/architecture-dependencies.svg)
+```mermaid
+flowchart LR
+  backend["Keystone 后端<br/>API / Worker / CLI"]
+
+  subgraph required["数据、存储与协调（必需）"]
+    pg[("PostgreSQL<br/>领域数据、DBOS 状态")]
+    vol[("本地协调卷<br/>锁、容量记录、加密密钥")]
+  end
+
+  subgraph storage["文件存储（至少一种，可同时使用）"]
+    local[("本地文件系统")]
+    s3[("S3 兼容存储")]
+  end
+
+  subgraph upstream["上游接口（按需）"]
+    llm["模型供应商 API<br/>文本、向量、图片"]
+    bill["账务接口<br/>费用、余额、账单查询"]
+  end
+
+  backend --> required
+  backend --> storage
+  backend -.-> upstream
+```
 
 当前部署需要 PostgreSQL、本地协调卷和至少一个文件存储后端（本地文件系统或 S3，可同时配置）；模型、账务接口按业务需要接入。
 
@@ -67,6 +154,7 @@ DBOS 同时支持定时触发。提交成功不等于执行完成，业务结果
 - 每次独立操作检查当前身份、功能和对象范围；PAT 为当前权限与原范围交集，Flow 使用原用户/原 PAT。
 - 业务变更与成功审计同事务，失败/拒绝审计在回滚后独立尝试；跨模块原子操作由上层协调同一身份事务，被调 Service 不另开事务、不自行提交；外部 HTTP、文件和进程 I/O 不持长业务事务。
 - 模型发送前唯一登记，SDK 不隐藏重试，未知结果不换 ID 重发。生成、文件保存和业务提交分别确认，已发生事实受限保存。
+- 有副作用的外部写入不隐藏重试；结果未知时，仅在对方支持幂等键或可按原请求查询时用原标识重试或确认，否则交由业务决定。
 - 取消和撤权阻止新操作；反复取消也须等待已启动 I/O、进程及文件清理完成后再释放句柄/许可，终态按事实确认。等待、并发、批次、输出和重试有界。
 
 ## 5. 开发与部署
