@@ -29,6 +29,8 @@ def upgrade():
         sa.Column("status", sa.String(length=16), nullable=False),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("delete_failures", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("residue_checks", sa.Integer(), server_default="0", nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -56,6 +58,8 @@ def upgrade():
             name="file_complete",
         ),
         sa.CheckConstraint("size_bytes IS NULL OR size_bytes >= 0", name="file_size"),
+        sa.CheckConstraint("delete_failures BETWEEN 0 AND 3", name="file_delete_failures"),
+        sa.CheckConstraint("residue_checks BETWEEN 0 AND 3", name="file_residue_checks"),
         sa.ForeignKeyConstraint(
             ["owner_id"],
             ["keystone.users.id"],

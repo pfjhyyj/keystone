@@ -46,6 +46,7 @@ def upgrade():
         sa.Column("key", sa.String(length=64), nullable=False),
         sa.Column("name", sa.String(length=128), nullable=False),
         sa.Column("description", sa.String(length=1000), nullable=False),
+        sa.Column("all_permissions", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
