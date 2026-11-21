@@ -66,6 +66,7 @@ def test_s3_unknown_write_retry_and_late_write_cleanup(multi_client, s3):
     assert upload(client, storage_key="cloud").status_code == 503
     failed = stored_files(client)[0]
     assert failed["status"] == "failed" and s3.objects
+    (late_key,) = s3.objects
     s3.fail_put = False
     assert upload(client, storage_key="cloud").json()["id"] == failed["id"]
     assert upload(client, b"other", storage_key="cloud").json()["code"] == "idempotency_conflict"
@@ -89,7 +90,7 @@ def test_s3_unknown_write_retry_and_late_write_cleanup(multi_client, s3):
     clean(client)
     assert not s3.objects
     # Simulate a request accepted before a crashed writer returning after DELETE.
-    s3.objects[f"/backups/business-a/files/{UUID(failed['id']).hex}"] = b"hello"
+    s3.objects[late_key] = b"hello"
     age(timedelta(hours=2))
     clean(client)
     assert not s3.objects

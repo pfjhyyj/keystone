@@ -196,7 +196,7 @@ def test_find_never_treats_an_unusable_registered_file_as_absent(artifacts, chan
     identifier = put(client, run_id)
     assert client.portal.call(host._artifact, run_id, "report") == identifier
     rt = client.app.state.runtime
-    path = rt.storage.get().root / "files" / UUID(identifier).hex
+    (path,) = (rt.storage.get().root / "files").rglob(f"{UUID(identifier).hex}*")
     if change == "disabled":
         query(
             client,

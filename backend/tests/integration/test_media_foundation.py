@@ -94,7 +94,8 @@ def test_head_range_empty_corruption_and_current_authorization(client, monkeypat
     storage = client.app.state.runtime.storage.get()
     assert client.get(path, headers={"Range": "bytes=5-6"}).content == b"56"
     assert scans == 0
-    (storage.root / "files" / UUID(file["id"]).hex).write_bytes(b"corruption")
+    (stored,) = (storage.root / "files").rglob(f"{UUID(file['id']).hex}*")
+    stored.write_bytes(b"corruption")
     assert client.get(path, headers={"Range": "bytes=0-1"}).status_code == 503
     assert scans == 1
 

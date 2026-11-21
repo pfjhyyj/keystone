@@ -478,7 +478,7 @@ def test_memory_upload_reserves_destination_before_truncating_existing_file(tmp_
     storage = registry(tmp_path)
     state = free_space(monkeypatch, 100)
     source = storage.get()
-    fingerprint, key = source.fingerprint(), "files/" + "a" * 32
+    fingerprint, key = source.fingerprint(), "files/20261121/" + "a" * 32 + ".MOV"
     source.write(fingerprint, key, b"old")
     state.free = 0
     with pytest.raises(ServiceError) as rejected:

@@ -1,5 +1,8 @@
 """Storage drivers and configuration contracts without domain transactions."""
 
+import hashlib
+from uuid import UUID
+
 import pytest
 from pydantic import ValidationError
 from support.storage_support import cloud_config
@@ -8,6 +11,7 @@ from support.storage_support import s3 as s3
 from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
 from keystone.core.storage_config import StorageConfig
+from keystone.platform.files.adapters.keys import content_suffix, new_object_key
 from keystone.platform.files.adapters.storage import Storage, StorageRegistry, initialize
 
 
@@ -83,6 +87,19 @@ async def test_initialize_uses_explicit_coordination_and_content_directories(tmp
     assert await registry.readiness() == ("ok", {"local": "ok"})
 
 
+@pytest.mark.parametrize(
+    ("name", "content_type", "suffix"),
+    [
+        ("camera.MOV", "video/quicktime", ".MOV"),
+        ("报告", "application/pdf", ".pdf"),
+        ("archive.tar gz", "image/png", ".png"),
+        ("notes", "application/x-unknown", ".bin"),
+    ],
+)
+def test_content_suffix_keeps_safe_name_suffix_then_falls_back(name, content_type, suffix):
+    assert content_suffix(name, content_type) == suffix
+
+
 @pytest.mark.parametrize("driver", ["filesystem", "s3"])
 def test_real_opendal_storage_contract(tmp_path, s3, driver):
     initialize(tmp_path / "local")
@@ -92,11 +109,20 @@ def test_real_opendal_storage_contract(tmp_path, s3, driver):
         else cloud_config(s3)
     )
     storage = Storage(config)
-    fingerprint, key, other = storage.fingerprint(), "files/" + "1" * 32, "files/" + "2" * 32
+    fingerprint, legacy = storage.fingerprint(), "files/" + "1" * 32
+    identifier = UUID(hex="2" * 32)
+    key = new_object_key(identifier, "camera.MOV", "video/quicktime")
+    assert key.endswith(f"/{identifier.hex}.MOV")
+    date = key.split("/")[1]
+    assert len(date) == 8 and date.isdecimal()
     storage.ready()
-    for target in (key, other):
+    for target in (key, legacy):
         storage.write(fingerprint, target, b"hello")
-    assert storage.read(fingerprint, key, 5) == b"hello"
+        assert storage.read(fingerprint, target, 5) == b"hello"
+        if driver == "filesystem":
+            checksum = hashlib.sha256(b"hello").hexdigest()
+            with storage.open_local(fingerprint, target, 5, checksum) as stream:
+                assert stream.read() == b"hello"
     with pytest.raises(ServiceError):
         storage.read(fingerprint, key, 4)
     for unsafe in ("files/../secret", "files/" + "z" * 32, "/files/" + "1" * 32):
@@ -104,7 +130,7 @@ def test_real_opendal_storage_contract(tmp_path, s3, driver):
             storage.delete(fingerprint, unsafe)
     storage.delete(fingerprint, key)
     storage.delete(fingerprint, key)
-    assert storage.read(fingerprint, other, 5) == b"hello"
+    assert storage.read(fingerprint, legacy, 5) == b"hello"
     if driver == "s3":
         assert all(auth.startswith("AWS4-HMAC-SHA256 ") for _, _, auth in s3.calls)
         assert "/backups/business-a/" in next(iter(s3.objects))

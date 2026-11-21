@@ -290,7 +290,7 @@ def test_managed_local_transfer_can_save_without_premature_business_references(n
                     )
         with service.files.transfer() as transfer:
             async with transfer.materialize_file(stored["id"]) as path:
-                assert path.read_bytes() == b"data"
+                assert path.read_bytes() == b"data" and path.name == "input.bin"
         return stored["id"]
 
     identifier = notes.portal.call(save)

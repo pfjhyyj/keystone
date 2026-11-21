@@ -13,6 +13,7 @@ from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
+from keystone.platform.files.adapters.keys import new_object_key
 from keystone.platform.files.adapters.storage import blocking, opened
 from keystone.platform.files.adapters.transfers import CHUNK_BYTES, StagedUpload
 from keystone.platform.files.models import File
@@ -312,7 +313,7 @@ class FileService:
                     upload_key=key,
                     upload_digest=original,
                     storage_key=storage_key,
-                    object_key=f"files/{identifier.hex}",
+                    object_key=new_object_key(identifier, data.name, data.content_type),
                     storage_fingerprint=fingerprint,
                     status="uploading",
                     created_by=auth.user.id,

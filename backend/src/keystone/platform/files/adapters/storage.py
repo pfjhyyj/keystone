@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import json
 import os
-import re
 from collections import OrderedDict
 from contextlib import ExitStack, asynccontextmanager, nullcontext
 from pathlib import Path
@@ -15,6 +14,7 @@ from keystone.core import local_leases as leases
 from keystone.core.asyncio import blocking as blocking
 from keystone.core.errors import ServiceError
 from keystone.core.storage_config import StorageConfig
+from keystone.platform.files.adapters.keys import OBJECT_KEY
 
 LOCAL_WRITE_CHUNK_BYTES = 4 * 1024 * 1024
 
@@ -67,7 +67,7 @@ class Storage:
 
     def operator(self, fingerprint, key):
         self.check(fingerprint)
-        if not re.fullmatch(r"files/[0-9a-f]{32}", key):
+        if not OBJECT_KEY.fullmatch(key):
             raise leases.unavailable()
         if self.config.driver == "filesystem":
             if not (self.root / key).resolve().is_relative_to(self.root):
@@ -98,9 +98,11 @@ class Storage:
             from keystone.platform.files.adapters.transfers import StagedUpload
 
             op = self.operator(fingerprint, key)
-            if self.config.driver == "filesystem" and self.capacity is not None:
-                self._write_local(key, data)
-                return
+            if self.config.driver == "filesystem":
+                (self.root / key).parent.mkdir(parents=True, exist_ok=True)
+                if self.capacity is not None:
+                    self._write_local(key, data)
+                    return
             if isinstance(data, StagedUpload):
                 raise leases.unavailable()
             op.write(key, data)

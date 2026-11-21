@@ -6,6 +6,7 @@ from pathlib import Path
 from threading import Event
 
 from keystone.core.errors import ServiceError
+from keystone.platform.files.adapters.keys import content_suffix
 from keystone.platform.files.adapters.storage import blocking, opened
 from keystone.platform.files.adapters.transfers import StagedUpload, checksum, reserved_writes
 from keystone.platform.files.schemas import Upload
@@ -55,7 +56,8 @@ class FileTransferService:
                 identifier, max_bytes=self._files.identity.settings.file_max_bytes
             ) as reader:
                 async with transfers.workspace(reader.size) as workspace:
-                    path = workspace.path / "input"
+                    suffix = content_suffix(reader.name, reader.content_type)
+                    path = workspace.path / f"input{suffix}"
                     digest = hashlib.sha256()
                     async with opened(path.open, "xb") as target:
                         async for block in reserved_writes(reader.chunks()):

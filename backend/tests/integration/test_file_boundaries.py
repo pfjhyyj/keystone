@@ -39,6 +39,7 @@ def test_public_file_transfer_owns_workspace_and_preserves_referenced_upload_ide
                 with pytest.raises(ServiceError) as busy:
                     await reader.upload_file(path, **options)
                 assert busy.value.code == "file_scope_busy" and path.read_bytes() == b"hello"
+                assert path.name == "input.txt"
                 with service.transfer() as writer:
                     first = await writer.upload_file(path, **options)
                     assert (await writer.upload_file(path, **options))["id"] == first["id"]
