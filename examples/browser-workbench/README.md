@@ -1,6 +1,6 @@
 # 浏览器工作台示例
 
-这个示例包含独立前端、Chromium 镜像和本机 Compose 配置。它复用 Keystone 的身份、浏览器空间权限和运行接口，可作为自建工作台的起点。[浏览器领域设计](../../docs/domains/browser.md)
+这个示例包含独立前端、Chromium 镜像和本机 Compose 配置。它复用 Keystone 的身份、浏览器空间权限和运行接口，可作为自建工作台的起点。[浏览器领域设计](../../docs/domains/environments/browser.md)
 
 在仓库根目录运行以下 PowerShell 命令。需要支持 Compose `include` 的 Docker Compose，以及 Linux Docker Engine 或 Docker Desktop 的 Linux 容器环境。宿主需要允许 Chromium 使用用户命名空间沙箱。[Chromium 容器沙箱说明](https://playwright.dev/docs/docker)
 

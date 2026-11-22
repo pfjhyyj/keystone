@@ -21,4 +21,4 @@ docker build -t keystone-browser-chromium:<version> deploy/browser/runtime
 3. 更新 `KEYSTONE_BROWSER_RUNTIME_IMAGE`，重启 API 使新配置生效。
 4. 打开原浏览器空间，分别验证标签页恢复、登录复用和画面连接。
 
-不要在不停止旧运行的情况下直接删除旧镜像。镜像升级可能触发站点重新验证，验收边界见[浏览器领域](../../docs/domains/browser.md#53-运行复用与环境变更)。
+不要在不停止旧运行的情况下直接删除旧镜像。镜像升级可能触发站点重新验证，验收边界见[浏览器领域](../../docs/domains/environments/browser.md#3-镜像与运行)。
