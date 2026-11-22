@@ -7,13 +7,13 @@ from keystone.bootstrap import create_app
 from keystone.composition import build_catalog
 from keystone.core.asyncio import new_event_loop, run
 from keystone.core.config import Settings
+from keystone.core.credentials import KEY_FILE
 from keystone.core.database import Database
 from keystone.core.errors import ServiceError
 from keystone.core.migrations import expected_heads
 from keystone.entrypoints.cli import initialize
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.identity.models import User
-from keystone.platform.model_access.adapters.credentials import KEY_FILE
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 
 pytestmark = pytest.mark.postgres

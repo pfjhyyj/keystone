@@ -762,7 +762,7 @@ def test_inflight_completion_after_user_revocation_and_channel_disable(client, m
 
 def test_missing_key_file_never_sends(client):
     entry(client, channel(client))
-    from keystone.platform.model_access.adapters.credentials import KEY_FILE
+    from keystone.core.credentials import KEY_FILE
 
     (client.app.state.runtime.settings.file_coordination_root / KEY_FILE).unlink()
     assert invoke(client).json()["code"] == "model_credential_unavailable"
@@ -770,7 +770,7 @@ def test_missing_key_file_never_sends(client):
 
 
 def test_channel_credentials_are_write_only_and_missing_master_key_is_not_replaced(client):
-    from keystone.platform.model_access.adapters.credentials import KEY_FILE
+    from keystone.core.credentials import KEY_FILE
     from keystone.platform.model_access.models import Channel
 
     row = channel(client)

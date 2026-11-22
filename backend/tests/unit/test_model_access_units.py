@@ -10,9 +10,10 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import SecretStr
 from pydantic_ai.exceptions import ModelHTTPError
 
+from keystone.core.credentials import KEY_FILE
 from keystone.core.errors import ServiceError
 from keystone.platform.files.adapters.storage import initialize
-from keystone.platform.model_access.adapters.credentials import KEY_FILE, ChannelCredentials
+from keystone.platform.model_access.adapters.credentials import ChannelCredentials
 from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.adapters.inference import client as gateway
 from keystone.platform.model_access.adapters.inference.client import (
