@@ -36,7 +36,7 @@
 - 运行按常驻模式创建，显式使用 `timeout=None`，由闲置检查回收。刷新前端、断线或重启 Keystone API 时，客户端重新授权并连接仍在运行的原会话。noVNC 在前端本地缩放画面，前端尺寸变化时保持远端窗口布局。[OpenSandbox Python SDK](https://github.com/opensandbox-group/OpenSandbox/blob/release-1.2.0/docs/sdks/python.md) · [noVNC 客户端 API](https://novnc.com/noVNC/docs/API.html)
 - 重建时复用原空间卷、Chromium 档案路径和运行用户。如果 Chromium 使用系统密钥环，部署需同时保留空间解密所需的环境。部署固定镜像版本，浏览器安全更新按正常发布流程进行。即使空间可读，浏览器版本、操作系统或网络环境变化也可能触发站点复验，原标签页恢复与登录复用须分别验证。[Chromium Linux 密钥存储](https://chromium.googlesource.com/chromium/src/+/8462c68e/components/os_crypt/sync/key_storage_linux.h) · [浏览器指纹](https://developer.mozilla.org/en-US/docs/Glossary/Fingerprinting)
 
-启用时在 API 和 Worker 中设置相同的 `KEYSTONE_OPENSANDBOX_URL`、`KEYSTONE_OPENSANDBOX_KEY` 和 `KEYSTONE_BROWSER_RUNTIME_IMAGE`（三项必须同时设置，并纳入 API/Worker 一致的配置校验），让 OpenSandbox 通过专用网络访问沙箱，使用 `[proxy] resolve_internal = true`，并通过同一 HTTPS 入口提供应用和 API。OpenSandbox 需要建卷权限，运行镜像预分发到 OpenSandbox 宿主。生产部署应限制浏览器的出站访问。每人环境上限控制卷数量，宿主磁盘由部署监控，备份受 Files 容量限制。
+启用时在 API 和 Worker 中设置相同的 `KEYSTONE_OPENSANDBOX_URL`、`KEYSTONE_OPENSANDBOX_KEY` 和 `KEYSTONE_BROWSER_RUNTIME_IMAGE`（三项必须同时设置，并纳入 API/Worker 一致的配置校验），让 OpenSandbox 通过专用网络访问沙箱，使用 `[proxy] resolve_internal = true`，并通过同一 HTTPS 入口提供应用和 API。OpenSandbox 需要建卷权限，运行镜像预分发到 OpenSandbox 宿主。生产部署应限制浏览器的出站访问。卷数量由声明的环境 key 和用户数限定，宿主磁盘由部署监控，备份受 Files 容量限制。
 
 ## 4. 备份与恢复
 
