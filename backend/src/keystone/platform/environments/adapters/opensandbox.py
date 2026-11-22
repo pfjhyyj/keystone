@@ -64,7 +64,9 @@ class OpenSandbox:
             raise RuntimeUnavailable
         return data
 
-    async def create(self, session_id, environment_id, volume, *, purpose="interactive"):
+    async def create(
+        self, session_id, environment_id, volume, *, purpose="interactive", initialize=False
+    ):
         control = self._control_headers(session_id)
         response = await self._request(
             "POST",
@@ -77,6 +79,7 @@ class OpenSandbox:
                 "env": {
                     "KEYSTONE_BROWSER_CONTROL": control["X-Keystone-Browser-Control"],
                     "EXECD_ACCESS_TOKEN": control["X-EXECD-ACCESS-TOKEN"],
+                    **({"KEYSTONE_BROWSER_INITIALIZE_PROFILE": "1"} if initialize else {}),
                 },
                 "timeout": None,
                 "resourceLimits": {"cpu": "2", "memory": "2Gi"},
@@ -87,7 +90,11 @@ class OpenSandbox:
                 "volumes": [
                     {
                         "name": "browser-profile",
-                        "pvc": {"claimName": volume, "deleteOnSandboxTermination": False},
+                        "pvc": {
+                            "claimName": volume,
+                            "createIfNotExists": True,
+                            "deleteOnSandboxTermination": False,
+                        },
                         "mountPath": "/data/profile",
                         "readOnly": False,
                     }

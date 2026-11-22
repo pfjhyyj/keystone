@@ -12,6 +12,7 @@ from keystone.core.execution.version import artifact_version
 from keystone.platform.audit.catalog import CATALOG as AUDIT_CATALOG
 from keystone.platform.dictionary.catalog import CATALOG as DICTIONARY_CATALOG
 from keystone.platform.environments.catalog import CATALOG as ENVIRONMENTS_CATALOG
+from keystone.platform.environments.schemas.keys import environment_keys
 from keystone.platform.files.catalog import CATALOG as FILES_CATALOG
 from keystone.platform.flow.catalog import CATALOG as FLOW_CATALOG
 from keystone.platform.flow.schemas.packages import build_packages, execution_manifest
@@ -35,6 +36,8 @@ PLATFORM_CATALOG = combine_catalogs(
 # Import each business's lightweight CATALOG here and add (namespace, CATALOG).
 BUSINESS_CATALOGS: tuple[tuple[str, Catalog], ...] = ()
 FLOW_PACKAGES = ()
+# Add (namespace, (EnvironmentKey(...), ...)) for each business that uses environments.
+BUSINESS_ENVIRONMENT_KEYS = ()
 FLOW_QUEUES: tuple[QueueDefinition, ...] = ()
 # Explicit trusted factories; API never imports business execution modules.
 EXECUTION_GUARD = None
@@ -201,6 +204,10 @@ def build_history_retention(runtime):
 
 def build_catalog():
     return merge_catalogs(PLATFORM_CATALOG, BUSINESS_CATALOGS)
+
+
+def build_environment_keys():
+    return environment_keys(BUSINESS_ENVIRONMENT_KEYS)
 
 
 def build_model_clients(settings, database):

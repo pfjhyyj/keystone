@@ -1,15 +1,17 @@
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 
 from keystone.core.errors import ServiceError
 from keystone.platform.audit.services.writer import Actor, record
 from keystone.platform.environments.adapters.opensandbox import CreateRejected, RuntimeUnavailable
 from keystone.platform.environments.models import Environment, EnvironmentSession
 from keystone.platform.environments.schemas import OCCUPIED, EnvironmentView, SessionView
+from keystone.platform.environments.schemas.keys import DEFAULT
 from keystone.platform.environments.services.backups import BrowserBackups
 
 
@@ -42,8 +44,8 @@ def _view(run):
 
 
 class EnvironmentService:
-    def __init__(self, context, runtime, controls, files):
-        self.context, self.runtime, self.controls = context, runtime, controls
+    def __init__(self, context, runtime, controls, files, keys):
+        self.context, self.runtime, self.controls, self.keys = context, runtime, controls, keys
         self.backups = BrowserBackups(context, runtime, files)
 
     def _require_runtime(self):
@@ -77,38 +79,108 @@ class EnvironmentService:
             raise ServiceError(404, "environment_session_not_found", "交互环境会话不存在")
         return row
 
+    def _view_environment(self, environment, run=None):
+        declared = self.keys.get(environment.key)
+        return EnvironmentView(
+            id=environment.id,
+            kind=environment.kind,
+            key=environment.key,
+            name=declared.name if declared else environment.key,
+            session=_view(run) if run else None,
+            backup_at=environment.backup_at,
+            backup_failed=environment.backup_failed,
+            backup_enabled=self.backups.enabled,
+        )
+
     async def listing(self, offset, limit):
         async with self.context.access("environment:use", session_only=True) as (session, auth):
+            # The default environment is listed before its first use and shifts later pages.
+            placeholder, first_page = None, offset == 0
+            if self.runtime is not None and not await session.scalar(
+                select(Environment.id).where(
+                    Environment.owner_id == auth.user.id,
+                    Environment.kind == "chromium",
+                    Environment.key == DEFAULT.key,
+                )
+            ):
+                placeholder = EnvironmentView(
+                    id=None,
+                    kind="chromium",
+                    key=DEFAULT.key,
+                    name=DEFAULT.name,
+                    backup_enabled=self.backups.enabled,
+                )
+                if first_page:
+                    limit -= 1
+                else:
+                    offset -= 1
             environments = await session.scalars(
                 select(Environment)
                 .where(Environment.owner_id == auth.user.id)
-                .order_by(Environment.name, Environment.id)
+                .order_by(Environment.kind, Environment.key, Environment.id)
                 .offset(offset)
                 .limit(limit)
             )
-            results = []
+            results = [placeholder] if placeholder and first_page else []
             for environment in environments:
                 run = await self._latest_session(session, environment.id)
-                results.append(
-                    EnvironmentView(
-                        id=environment.id,
-                        name=environment.name,
-                        kind=environment.kind,
-                        session=_view(run) if run else None,
-                        backup_at=environment.backup_at,
-                        backup_failed=environment.backup_failed,
-                        backup_enabled=self.backups.enabled,
-                    )
-                )
+                results.append(self._view_environment(environment, run))
             return results
+
+    async def ensure(self, kind, key):
+        """Return the caller's environment for a declared key, creating it on first use."""
+        declared = self.keys.get(key)
+        if declared is None or kind not in declared.kinds:
+            raise ServiceError(404, "environment_key_not_declared", "交互环境未声明")
+        async with self.context.access("environment:use", session_only=True) as (session, auth):
+            identifier = uuid4()
+            created = await session.scalar(
+                insert(Environment)
+                .values(
+                    id=identifier,
+                    owner_id=auth.user.id,
+                    kind=kind,
+                    key=key,
+                    volume=f"keystone-environment-{identifier}",
+                    state_initialization_pending=True,
+                )
+                .on_conflict_do_nothing(constraint="uq_environment_owner_kind_key")
+                .returning(Environment.id)
+            )
+            if created is not None:
+                await self.context.log(
+                    session,
+                    auth,
+                    "environment.create",
+                    "environment",
+                    created,
+                    {"kind": kind, "key": key},
+                )
+            environment = await session.scalar(
+                select(Environment).where(
+                    Environment.owner_id == auth.user.id,
+                    Environment.kind == kind,
+                    Environment.key == key,
+                )
+            )
+            run = await self._latest_session(session, environment.id)
+            return self._view_environment(environment, run)
 
     async def _save(self, row, actor, state, *, sandbox_id=None, delete_sent=False, audit=True):
         # Completion records external facts even if the original session is revoked meanwhile.
         async with self.context.database.transaction() as session:
+            # Lock the environment before the session row, matching the request paths.
+            environment = None
+            if state == "ready":
+                environment = await session.get(
+                    Environment, row.environment_id, with_for_update=True
+                )
             current = await session.get(EnvironmentSession, row.id, with_for_update=True)
             if current.state != row.state:
                 return current
             current.state = state
+            if environment is not None:
+                environment.state_initialization_pending = False
             if sandbox_id is not None:
                 current.sandbox_id = sandbox_id
             if delete_sent:
@@ -169,22 +241,31 @@ class EnvironmentService:
             try:
                 async with asyncio.timeout(20):
                     sandbox_id = await self.runtime.create(
-                        run.id, environment_id, environment.volume
+                        run.id,
+                        environment_id,
+                        environment.volume,
+                        initialize=environment.state_initialization_pending,
                     )
                     run = await self._save(
                         run, actor, "starting", sandbox_id=sandbox_id, audit=False
                     )
                 restored_from = None
-                if self.backups.enabled:
-                    state = await self.runtime.wait_profile(sandbox_id, run.id)
-                    if state == "missing":
-                        restored_from = await self.backups.restore(
-                            environment_id, run.id, sandbox_id
-                        )
-                    elif state != "present":
+                state = await self.runtime.wait_profile(sandbox_id, run.id)
+                if state == "missing":
+                    # A pending environment initializes itself; others never start empty.
+                    if environment.state_initialization_pending:
                         raise ServiceError(
-                            409, "environment_volume_invalid", "交互环境卷无法读取，未覆盖原内容"
+                            409, "environment_initialization_failed", "交互环境初始化失败"
                         )
+                    if not self.backups.enabled:
+                        raise ServiceError(
+                            409, "environment_state_missing", "交互环境卷缺失，且未启用备份"
+                        )
+                    restored_from = await self.backups.restore(environment_id, run.id, sandbox_id)
+                elif state != "present":
+                    raise ServiceError(
+                        409, "environment_volume_invalid", "交互环境卷无法读取，未覆盖原内容"
+                    )
                 await self.runtime.wait_ready(sandbox_id, run.id)
             except CreateRejected:
                 return _view(await self._save(run, actor, "failed"))

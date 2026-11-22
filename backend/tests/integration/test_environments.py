@@ -31,7 +31,8 @@ class BackupRuntime:
         self.restores = 0
         self.keys = []
 
-    async def create(self, run, workspace, volume, *, purpose="interactive"):
+    async def create(self, run, workspace, volume, *, purpose="interactive", initialize=False):
+        assert not initialize
         identifier = str(run)
         self.purposes.append(purpose)
         self.sandboxes.add(identifier)
@@ -89,7 +90,13 @@ def test_backup_replacement_and_restore_only_when_volume_is_missing(client, tmp_
     app.storage = StorageRegistry(settings)
     app.storage.initialize()
     workspace = client.portal.call(
-        register_environment, app.database, UUID(owner["id"]), "备份空间", "browser-backup-test"
+        register_environment,
+        app.database,
+        app.environment_keys,
+        UUID(owner["id"]),
+        "chromium",
+        "default",
+        "browser-backup-test",
     )
     root = "/api/v1/environments"
     path = f"{root}/{workspace}"
@@ -147,7 +154,7 @@ class Runtime:
         self.connected = False
         self.stops = []
 
-    async def create(self, run, workspace, volume, *, purpose="interactive"):
+    async def create(self, run, workspace, volume, *, purpose="interactive", initialize=False):
         self.create_count += 1
         self.created = run, workspace, volume
         self.started.set()
@@ -198,11 +205,24 @@ def test_unknown_create_reuses_reservation_and_stop_drains_control(client):
     owner = login(client)
     outsider = create_user(client)
     database = client.app.state.runtime.database
+    keys = client.app.state.runtime.environment_keys
     workspace = client.portal.call(
-        register_environment, database, UUID(owner["id"]), "工作空间", "browser-test-volume"
+        register_environment,
+        database,
+        keys,
+        UUID(owner["id"]),
+        "chromium",
+        "default",
+        "browser-test-volume",
     )
     other = client.portal.call(
-        register_environment, database, UUID(outsider["id"]), "其他空间", "other-test-volume"
+        register_environment,
+        database,
+        keys,
+        UUID(outsider["id"]),
+        "chromium",
+        "default",
+        "other-test-volume",
     )
     runtime = Runtime()
     client.app.state.opensandbox = runtime
@@ -243,3 +263,59 @@ def test_unknown_create_reuses_reservation_and_stop_drains_control(client):
         assert stopped.json()["state"] == "stopped", stopped.text
         assert not runtime.connected
         assert len(runtime.stops) == 1
+
+
+class FirstUseRuntime:
+    def __init__(self):
+        self.initialized = set()
+        self.creates = []
+        self.sandboxes = {}
+
+    async def create(self, run, environment, volume, *, purpose="interactive", initialize=False):
+        self.creates.append((volume, initialize))
+        if initialize:
+            self.initialized.add(volume)
+        self.sandboxes[str(run)] = volume
+        return str(run)
+
+    async def wait_profile(self, sandbox, run):
+        return "present" if self.sandboxes[sandbox] in self.initialized else "missing"
+
+    async def wait_ready(self, sandbox, run):
+        assert self.sandboxes[sandbox] in self.initialized
+
+    async def exists(self, sandbox):
+        return sandbox in self.sandboxes
+
+    async def quit_browser(self, sandbox, run):
+        pass
+
+    async def delete(self, sandbox):
+        self.sandboxes.pop(sandbox, None)
+
+
+def test_default_environment_is_created_on_first_use_and_initialized_once(client):
+    login(client)
+    runtime = FirstUseRuntime()
+    client.app.state.opensandbox = runtime
+    root = "/api/v1/environments"
+
+    [placeholder] = client.get(root).json()
+    assert placeholder["id"] is None and placeholder["key"] == "default"
+    assert client.post(root, json={"kind": "chromium", "key": "missing"}).status_code == 404
+
+    first = client.post(root, json={"kind": "chromium", "key": "default"}).json()
+    again = client.post(root, json={"kind": "chromium", "key": "default"}).json()
+    assert first["id"] == again["id"] and first["name"] == "默认环境"
+    assert [item["id"] for item in client.get(root).json()] == [first["id"]]
+
+    path = f"{root}/{first['id']}"
+    opened = client.post(path + "/open").json()
+    assert opened["state"] == "ready"
+    assert client.post(f"{path}/sessions/{opened['id']}/stop").json()["state"] == "stopped"
+    # After the first ready, a lost volume is never initialized again.
+    runtime.initialized.clear()
+    missing = client.post(path + "/open")
+    assert missing.status_code == 409
+    assert missing.json()["code"] == "environment_state_missing"
+    assert [initialize for _, initialize in runtime.creates] == [True, False]

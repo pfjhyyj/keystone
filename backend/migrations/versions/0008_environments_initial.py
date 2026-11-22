@@ -19,11 +19,18 @@ def upgrade():
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("owner_id", sa.Uuid(), sa.ForeignKey("keystone.users.id"), nullable=False),
         sa.Column("kind", sa.String(32), nullable=False),
-        sa.Column("name", sa.String(128), nullable=False),
+        sa.Column("key", sa.String(64), nullable=False),
         sa.Column("volume", sa.String(128), unique=True, nullable=False),
+        sa.Column(
+            "state_initialization_pending",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.false(),
+        ),
         sa.Column("backup_at", sa.DateTime(timezone=True)),
         sa.Column("backup_failed", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.CheckConstraint("kind IN ('chromium')", name="ck_environment_kind"),
+        sa.UniqueConstraint("owner_id", "kind", "key", name="uq_environment_owner_kind_key"),
         schema="keystone",
     )
     op.create_index(

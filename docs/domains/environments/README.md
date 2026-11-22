@@ -290,9 +290,8 @@ sequenceDiagram
 | 目标 | 当前实现 |
 | --- | --- |
 | 环境类型与提供方按代码声明，支持多种类型 | 模块 `platform/environments`、`Environment` / `EnvironmentSession` 与 `environment:*` 权限已就位，`kind` 只有 `chromium`，提供方固定为 OpenSandbox |
-| 环境按 (owner_id, kind, key) 唯一，key 由业务声明；托管型首次使用时自动创建，待初始化环境首次打开时建卷并初始化 | 环境没有 key，只能由部署者用 `register-environment` 登记，卷须预先创建；没有待初始化标记 |
 | API 与 Worker 共同装配，控制权保存在会话上，按会话行锁和代次协调 | 只在单个 API 进程装配，画面准入和停止在进程内串行化，控制连接只在内存 |
-| 公共与类型专属动作，业务 Flow 在 Worker 中调用 | 无自动操作接口 |
+| 公共与类型专属动作，业务 Flow 在 Worker 中调用；Flow 以原身份按 key 取得环境 | 无自动操作接口；按 key 取得环境只开放给登录会话 |
 | Worker 计划执行闲置结束，业务可声明活动保护 | 会话只在用户停止时结束 |
 | 画面协议按类型声明，前端按协议选择组件 | 只有 noVNC |
 | 安卓容器：OpenSandbox 可运行安卓镜像（binder 或 KVM）、scrcpy 画面、卷持久化 | 未验证 |

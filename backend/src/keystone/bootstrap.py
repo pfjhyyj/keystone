@@ -58,6 +58,7 @@ class Runtime:
     worker_identity: WorkerIdentity | None = None
     worker_lease: object | None = None
     execution_guard: Callable | None = None
+    environment_keys: Mapping = field(default_factory=dict)
     history_offset: int = 0
     tasks: TaskClient | None = None
 
@@ -165,6 +166,7 @@ def build_runtime(settings: Settings) -> Runtime:
         execution_version,
         flow_packages=flow_package_owners(),
         execution_guard=composition.EXECUTION_GUARD,
+        environment_keys=composition.build_environment_keys(),
     )
     if settings.database_url:
         from keystone.platform.flow.adapters.dbos import Engine

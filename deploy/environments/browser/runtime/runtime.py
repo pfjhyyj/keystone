@@ -40,6 +40,8 @@ def main():
     if sys.argv[1:] not in ([], ["--maintenance"]):
         raise SystemExit("Unknown browser runtime mode")
     maintenance = sys.argv[1:] == ["--maintenance"]
+    # Keystone allows this only for an environment that has never been ready.
+    initialize = os.environ.pop("KEYSTONE_BROWSER_INITIALIZE_PROFILE", None) == "1"
     restored = PROFILE / "restored"
     profile = None
     if MARKER.is_file() and not MARKER.is_symlink():
@@ -78,6 +80,9 @@ def main():
         for path in PROFILE.iterdir():
             if staging(path):
                 shutil.rmtree(path)
+        if initialize and not maintenance:
+            MARKER.touch(exist_ok=False)
+            profile = PROFILE
     children = []
     chrome = None
     display = proxy = None

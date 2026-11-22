@@ -13,20 +13,11 @@ $composeFile = 'examples/browser-workbench/compose.yaml'
 
 docker build -t keystone-browser-chromium:local deploy/environments/browser/runtime
 docker pull opensandbox/execd:release-1.2.0
-docker volume create keystone-browser-profile
-docker run --rm -v keystone-browser-profile:/data/profile keystone-browser-chromium:local --init-profile
 docker compose -f $composeFile run --build --rm api keystone init
 docker compose -f $composeFile up -d --build
 ```
 
-后续启动时沿用同一个 OpenSandbox 密钥、备份密钥和空间卷。备份密钥应由部署方保存在配置系统或独立密钥库中；丢失后无法解密已有备份。打开 [本机工作台](http://127.0.0.1:8080/workbench/)，用刚设置的管理员账号登录，从「我的空间」空状态复制用户 ID，再登记浏览器空间：
-
-```powershell
-$ownerId = '替换为用户 UUID'
-docker compose -f $composeFile run --rm api keystone register-environment --owner-id $ownerId --environment-name '工作浏览器' --volume keystone-browser-profile
-```
-
-回到工作台点「刷新」和「打开浏览器」，在画面里的 Chromium 地址栏输入目标网址。关闭工作台后可以重新连接原运行。若端口已被占用，可设置 `WORKBENCH_HTTP_PORT` 或 `KEYSTONE_POSTGRES_PORT`；如通过反向代理访问，再设置实际入口的 `KEYSTONE_BROWSER_ORIGINS`。
+后续启动时沿用同一个 OpenSandbox 密钥和备份密钥。备份密钥应由部署方保存在配置系统或独立密钥库中；丢失后无法解密已有备份。打开 [本机工作台](http://127.0.0.1:8080/workbench/)，用刚设置的管理员账号登录，选中「默认环境」并点「打开浏览器」：第一次使用时自动创建环境和空间卷，在画面里的 Chromium 地址栏输入目标网址。关闭工作台后可以重新连接原运行。若端口已被占用，可设置 `WORKBENCH_HTTP_PORT` 或 `KEYSTONE_POSTGRES_PORT`；如通过反向代理访问，再设置实际入口的 `KEYSTONE_BROWSER_ORIGINS`。
 
 连接画面后，可点「粘贴文本」，把本机的文字粘贴到弹窗并点「发送到剪贴板」，再在远程 Chromium 中按 `Ctrl+V` 或右键粘贴。支持中文和多行文字；文件和图片不通过此入口传输。
 

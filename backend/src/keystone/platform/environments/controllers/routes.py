@@ -7,6 +7,7 @@ from keystone.core.errors import ServiceError
 from keystone.core.http import Page
 from keystone.core.time import utcnow
 from keystone.platform.environments.adapters.opensandbox import RuntimeUnavailable
+from keystone.platform.environments.schemas.environments import EnvironmentRequest
 from keystone.platform.environments.services.environments import EnvironmentService
 from keystone.platform.identity.controllers.dependencies import (
     access_context,
@@ -22,12 +23,18 @@ def _service(connection, context):
         connection.app.state.opensandbox,
         connection.app.state.environment_controls,
         connection.app.state.runtime.managed_files(context),
+        connection.app.state.runtime.environment_keys,
     )
 
 
 @router.get("")
 async def environments(request: Request, page: Page):
     return await _service(request, access_context(request)).listing(page.offset, page.limit)
+
+
+@router.post("")
+async def ensure_environment(request: Request, data: EnvironmentRequest):
+    return await _service(request, access_context(request)).ensure(data.kind, data.key)
 
 
 @router.post("/{environment_id}/open")

@@ -130,7 +130,8 @@ def main() -> None:
     parser.add_argument("--file-id", type=UUID, help="File ID for retry-file-delete")
     parser.add_argument("--display-name", default="管理员")
     parser.add_argument("--owner-id", type=UUID, help="Environment owner's Keystone user ID")
-    parser.add_argument("--environment-name", help="Display name for the environment")
+    parser.add_argument("--kind", help="Environment kind, default chromium")
+    parser.add_argument("--key", help="Declared environment key, default default")
     parser.add_argument("--volume", help="Existing named Docker volume for the environment")
     parser.add_argument("--apply", action="store_true", help="Delete one eligible history batch")
     parser.add_argument(
@@ -148,14 +149,10 @@ def main() -> None:
     )
     args = parser.parse_args()
     if args.command == "register-environment":
-        if not args.owner_id or not args.environment_name or not args.volume:
-            parser.error(
-                "register-environment requires --owner-id, --environment-name, and --volume"
-            )
-    elif args.owner_id or args.environment_name or args.volume:
-        parser.error(
-            "--owner-id, --environment-name, and --volume only apply to register-environment"
-        )
+        if not args.owner_id or not args.volume:
+            parser.error("register-environment requires --owner-id and --volume")
+    elif args.owner_id or args.volume or args.kind or args.key:
+        parser.error("--owner-id, --volume, --kind, and --key only apply to register-environment")
     if args.apply and args.command != "prune-history":
         parser.error("--apply only applies to prune-history")
     if not 0 <= args.history_offset <= 1_000_000_000 or (
@@ -197,8 +194,10 @@ def main() -> None:
                 try:
                     return await register_environment(
                         runtime.database,
+                        runtime.environment_keys,
                         args.owner_id,
-                        args.environment_name,
+                        args.kind or "chromium",
+                        args.key or "default",
                         args.volume,
                     )
                 finally:

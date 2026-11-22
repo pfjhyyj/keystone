@@ -41,7 +41,9 @@ async function request(path, method = 'GET', body) {
   return data
 }
 
-const selected = () => workspaces.find(({ id }) => id === selectedId)
+// Environments are identified by kind and key; the default one has no ID before first use.
+const slot = (workspace) => workspace.kind + ':' + workspace.key
+const selected = () => workspaces.find((workspace) => slot(workspace) === selectedId)
 const workspacePath = (workspace) => '/environments/' + encodeURIComponent(workspace.id)
 const runPath = (workspace) =>
   workspacePath(workspace) + '/sessions/' + encodeURIComponent(workspace.session.id)
@@ -60,12 +62,12 @@ function drawWorkspaces() {
     button.type = 'button'
     button.className = 'workspace-item'
     button.textContent = workspace.name
-    button.setAttribute('aria-pressed', String(workspace.id === selectedId))
+    button.setAttribute('aria-pressed', String(slot(workspace) === selectedId))
     button.disabled = busy
     button.onclick = () => {
-      if (selectedId === workspace.id) return
+      if (selectedId === slot(workspace)) return
       disconnect()
-      selectedId = workspace.id
+      selectedId = slot(workspace)
       render()
     }
     list.append(button)
@@ -94,7 +96,7 @@ function render() {
   element('open').textContent = state === 'ready' ? '连接画面' : '打开浏览器'
   element('check').hidden = !['starting', 'stopping', 'review'].includes(state)
   element('stop').hidden = !run?.can_stop || !identity?.permissions.includes('environment:stop')
-  element('backup').hidden = !workspace?.backup_enabled ||
+  element('backup').hidden = !workspace?.id || !workspace.backup_enabled ||
     !identity?.permissions.includes('environment:stop') ||
     (state != null && !['stopped', 'failed'].includes(state))
   const backupStatus = element('backup-status')
@@ -205,7 +207,7 @@ async function refresh() {
   const previous = selected()?.session
   const next = await request('/environments')
   workspaces = next
-  if (!selected()) selectedId = workspaces[0]?.id
+  if (!selected()) selectedId = workspaces[0] && slot(workspaces[0])
   const current = selected()?.session
   if ((viewer || connecting) && (previous?.id !== current?.id || current?.state !== 'ready')) {
     disconnect()
@@ -277,6 +279,10 @@ element('logout').onclick = () => void run(async () => {
 element('open').onclick = () => void run(async () => {
   const workspace = selected()
   try {
+    if (!workspace.id) {
+      const { kind, key } = workspace
+      Object.assign(workspace, await request('/environments', 'POST', { kind, key }))
+    }
     workspace.session = await request(workspacePath(workspace) + '/open', 'POST')
   } catch (error) {
     await refresh()

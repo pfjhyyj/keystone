@@ -19,10 +19,18 @@ class SessionView(BaseModel):
 
 
 class EnvironmentView(BaseModel):
-    id: UUID
+    """`id` is empty for a declared environment that has not been used yet."""
+
+    id: UUID | None
     kind: EnvironmentKind
+    key: str
     name: str
-    session: SessionView | None
+    session: SessionView | None = None
     backup_at: datetime | None = None
     backup_failed: bool = False
     backup_enabled: bool = False
+
+
+class EnvironmentRequest(BaseModel):
+    kind: EnvironmentKind
+    key: str

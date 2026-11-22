@@ -79,7 +79,7 @@ rg --fixed-strings '替换为调用记录 UUID 或 X-Request-ID' .artifacts/logs
 | `retry-file-delete` | `--file-id UUID` | 重新排队已停止自动重试的文件删除，见[文件清理积压](#文件清理积压) |
 | `reset-admin-role` | — | 把内置 admin 角色恢复为全部权限并写 system 审计，用于角色被改到无人能管理身份时；已是全部权限时不改动 |
 | `prune-history` | `[--apply] [--history-offset N]` | 预览或删除一批过期历史，见[手动预览与执行](#手动预览与执行) |
-| `register-environment` | `--owner-id UUID --environment-name NAME --volume VOLUME` | 把已有卷登记为指定用户的浏览器交互环境并写系统审计，输出环境 ID；卷须预先创建，命令不创建卷，同一卷只能登记一次（`environment_volume_registered`） |
+| `register-environment` | `--owner-id UUID --volume VOLUME [--kind chromium] [--key default]` | 把已有卷导入为指定用户、类型和已声明 key 的交互环境并写系统审计，输出环境 ID；导入环境视为已初始化。卷须预先创建，同一卷或同一用户的同一环境只能登记一次（`environment_volume_registered`）。新环境无需登记，首次使用时自动创建 |
 
 ### 2.3 单宿主 Compose
 
