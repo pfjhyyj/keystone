@@ -87,6 +87,7 @@ Worker 的 enqueue_task 还检查绑定是否启用。Workflow 层保持确定�
 | keystone.model_access.reconcile_costs | `0 * * * * *` | 1 分钟 | 45 秒 |
 | keystone.history.retention（启用时） | `0 0 * * * *` | 1 小时 | 300 秒 |
 | keystone.environments.idle_stop（配置提供方时） | `0 * * * * *` | 1 分钟 | 45 秒 |
+| keystone.messaging.dispatch | `*/5 * * * * *` | 5 秒 | 10 秒 |
 
 队列预算见[第 7.2 节](#72-队列预算)。
 
@@ -108,6 +109,7 @@ Agent 使用 DBOSDurability 原生模型检查点，I/O 工具显式建 Step，�
 | 文件清理 | 引用、删除、存储锁、失败待办 | 有界轮次及观测 |
 | Flow 协调 | 原授权/契约、取消、结果/引用、终态 | 观察、幂等投递/取消、同步 |
 | 交互环境闲置结束 | 行锁、操作租约、控制权、系统审计 | 有界批次，提供方调用在单个 Step 内 |
+| 消息发送 | 截止、领取（跳过已锁行）、发送、结果记录 | 有界批次，不去重的渠道不重发 |
 
 没有待办是正常结束，不证明所有业务均已完成；领域终态也不证明 DBOS 检查点已结束。
 
@@ -130,6 +132,7 @@ Worker 顺序：取得宿主/固定身份锁 → 校验登记、制品和配置 
 | keystone-system | 2 | 2 |
 | keystone-history-maintenance | 1 | 1 |
 | keystone-environments-maintenance | 1 | 1 |
+| keystone-messaging | 1 | 1 |
 
 DBOS 执行线程池通过锁定版本 3.2.0 支持的 `DBOS(config={"max_executor_threads": 32, ...})` 固定为每 Worker 最多 32 个执行线程；它不是异步 Workflow 并发上限，也不限制全部 SDK 后台线程。
 

@@ -21,6 +21,7 @@ from keystone.platform.files.models import File
 from keystone.platform.files.tasks import workflows as files_jobs
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.tasks import workflows as flow_jobs
+from keystone.platform.messaging.tasks import workflows as messaging_jobs
 from keystone.platform.model_access.tasks import workflows as model_jobs
 
 pytestmark = [pytest.mark.postgres, pytest.mark.usefixtures("flow_engine")]
@@ -60,7 +61,12 @@ def test_schedules_survive_restart_without_duplicate_cleanup(client, tmp_path):
             lambda: client.get("/api/v1/worker/status").json()["status"] == "ready",
         )
         original = schedules(client)
-        assert set(original) == {files_jobs.SCHEDULE, flow_jobs.SCHEDULE, model_jobs.SCHEDULE}
+        assert set(original) == {
+            files_jobs.SCHEDULE,
+            flow_jobs.SCHEDULE,
+            model_jobs.SCHEDULE,
+            messaging_jobs.SCHEDULE,
+        }
         for plan in original.values():
             assert not plan["automatic_backfill"]
             assert plan["status"] == "ACTIVE"

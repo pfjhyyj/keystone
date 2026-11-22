@@ -11,7 +11,7 @@
 | [身份](domains/identity.md) · [审计](domains/audit.md) · [字典](domains/dictionary.md) | 授权、操作记录与业务选项 |
 | [文件](domains/files.md) · [模型接入](domains/model-access.md) · [Flow](domains/flow.md) | 文件生命周期、模型调用与持久流程 |
 | [交互环境](domains/environments/README.md) | 浏览器、手机容器与真机的会话、画面、控制权与自动操作；各类型细节见目录内文档 |
-| [消息渠道](domains/messaging.md) | IM 通知与交互卡片（设计中） |
+| [消息渠道](domains/messaging.md) | IM 通知、交互卡片与入站命令（群机器人推送已实现） |
 
 ## 开发
 

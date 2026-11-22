@@ -11,7 +11,16 @@ from support.ast_support import imports
 from support.module_checks import check_core_dependencies, check_module_layers
 
 ROOT = Path(__file__).parents[2] / "src" / "keystone"
-DOMAINS = ("audit", "dictionary", "environments", "files", "flow", "identity", "model_access")
+DOMAINS = (
+    "audit",
+    "dictionary",
+    "environments",
+    "files",
+    "flow",
+    "identity",
+    "messaging",
+    "model_access",
+)
 LAYERS = ("controllers", "services", "models", "schemas")
 
 

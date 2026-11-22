@@ -35,6 +35,7 @@ from keystone.platform.identity.controllers.dependencies import (
     access_context,
 )
 from keystone.platform.identity.services.login_limits import LoginLimiter
+from keystone.platform.messaging.controllers import router as messaging_router
 from keystone.platform.model_access.adapters.clients import ModelClients
 from keystone.platform.model_access.controllers import router as models_router
 from keystone.platform.model_access.services.invocations import InvocationService
@@ -79,6 +80,16 @@ class Runtime:
 
     def managed_files(self, identity):
         return FileService(identity, self.storage)
+
+    def messaging_vault(self):
+        from keystone.core.credentials import CredentialVault
+        from keystone.platform.messaging.services.channels import credential_unavailable
+
+        return CredentialVault(
+            self.settings.file_coordination_root,
+            unavailable=credential_unavailable,
+            stored=composition.credentials_stored,
+        )
 
     def environment_automation(self, identity):
         from keystone.platform.environments.services.automation import EnvironmentAutomation
@@ -236,4 +247,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(environments_router)
     app.include_router(models_router)
     app.include_router(flow_router)
+    app.include_router(messaging_router)
     return app

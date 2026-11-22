@@ -12,8 +12,8 @@ def unavailable():
 
 
 class ChannelCredentials(CredentialVault):
-    def __init__(self, root):
-        super().__init__(root, unavailable=unavailable)
+    def __init__(self, root, *, stored=None):
+        super().__init__(root, unavailable=unavailable, stored=stored)
 
     def scope(self, origin, secret):
         """Keyed opaque identity: duplicate Channels share a scope without exposing keys."""
