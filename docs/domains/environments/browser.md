@@ -11,7 +11,7 @@
 | 专属动作 | 打开地址；公共动作的点击、输入经 CDP 在容器内执行 |
 | 范围 | 页面域名 |
 | 备份 | 支持，见[第 4 节](#4-备份与恢复) |
-| 旁路通道 | noVNC 剪贴板与文件传输关闭 |
+| 旁路通道 | 允许经前端把文本发送到远程剪贴板；文件与图片不传输 |
 
 仓库在 [`examples/browser-workbench`](../../../examples/browser-workbench/README.md) 提供独立的参考前端和本机运行示例，参考前端通过同一 HTTPS 入口复用 Identity 的会话 Cookie。见[身份会话协议](../identity.md#7-最小实现约定)。
 
@@ -23,7 +23,7 @@
 
 ## 3. 镜像与运行
 
-运行镜像从 [`deploy/browser/runtime`](../../../deploy/browser/README.md) 构建，提供：
+运行镜像从 [`deploy/environments/browser/runtime`](../../../deploy/environments/browser/README.md) 构建，提供：
 
 - Chromium、虚拟显示和 VNC 画面端点；
 - 就绪检查：容器已创建、Chromium 窗口已显示、档案单例套接字及画面端口可用，分别确认；
@@ -36,7 +36,7 @@
 - 运行按常驻模式创建，显式使用 `timeout=None`，由闲置检查回收。刷新前端、断线或重启 Keystone API 时，客户端重新授权并连接仍在运行的原会话。noVNC 在前端本地缩放画面，前端尺寸变化时保持远端窗口布局。[OpenSandbox Python SDK](https://github.com/opensandbox-group/OpenSandbox/blob/release-1.2.0/docs/sdks/python.md) · [noVNC 客户端 API](https://novnc.com/noVNC/docs/API.html)
 - 重建时复用原空间卷、Chromium 档案路径和运行用户。如果 Chromium 使用系统密钥环，部署需同时保留空间解密所需的环境。部署固定镜像版本，浏览器安全更新按正常发布流程进行。即使空间可读，浏览器版本、操作系统或网络环境变化也可能触发站点复验，原标签页恢复与登录复用须分别验证。[Chromium Linux 密钥存储](https://chromium.googlesource.com/chromium/src/+/8462c68e/components/os_crypt/sync/key_storage_linux.h) · [浏览器指纹](https://developer.mozilla.org/en-US/docs/Glossary/Fingerprinting)
 
-启用时在 API 和 Worker 中设置相同的 `KEYSTONE_BROWSER_RUNTIME_URL`、`KEYSTONE_BROWSER_RUNTIME_KEY` 和 `KEYSTONE_BROWSER_RUNTIME_IMAGE`（三项必须同时设置，并纳入 API/Worker 一致的配置校验），让 OpenSandbox 通过专用网络访问沙箱，使用 `[proxy] resolve_internal = true`，并通过同一 HTTPS 入口提供应用和 API。OpenSandbox 需要建卷权限，运行镜像预分发到 OpenSandbox 宿主。生产部署应限制浏览器的出站访问。每人环境上限控制卷数量，宿主磁盘由部署监控，备份受 Files 容量限制。
+启用时在 API 和 Worker 中设置相同的 `KEYSTONE_OPENSANDBOX_URL`、`KEYSTONE_OPENSANDBOX_KEY` 和 `KEYSTONE_BROWSER_RUNTIME_IMAGE`（三项必须同时设置，并纳入 API/Worker 一致的配置校验），让 OpenSandbox 通过专用网络访问沙箱，使用 `[proxy] resolve_internal = true`，并通过同一 HTTPS 入口提供应用和 API。OpenSandbox 需要建卷权限，运行镜像预分发到 OpenSandbox 宿主。生产部署应限制浏览器的出站访问。每人环境上限控制卷数量，宿主磁盘由部署监控，备份受 Files 容量限制。
 
 ## 4. 备份与恢复
 
@@ -128,7 +128,7 @@ OpenSandbox 按空间记录的卷名创建替代卷。Keystone 先占用空间�
 
 - 用一个真实站点手动验证。分别测试刷新前端、同版本重建浏览器和升级镜像。刷新后应接回原页，后两项分别记录页面恢复和登录复用结果。站点会话失效时可在同一入口重新验证。
 - Chromium 关闭最后一个窗口后在原沙箱重开；异常退出重试一次，再次失败时沙箱关闭且可用原空间重新打开。
-- 自动段的域名越界、CDP 不暴露到容器外、noVNC 剪贴板与文件传输关闭。
+- 自动段的域名越界、CDP 不暴露到容器外、只有文本能经剪贴板传入。
 - 恢复验收使用临时空间和本地假登录页：保存测试账号和 Cookie，备份后删除容器和原卷，断开外网，从备份恢复到新卷；检查同一空间 ID、保存的账号能填充、测试站点能读到 Cookie。再验证错误备份、缺少密钥和旧写入者状态不明时不会切换绑定。
 - 通用验收见[交互环境](README.md#9-验收)。
 
@@ -138,7 +138,6 @@ OpenSandbox 按空间记录的卷名创建替代卷。Keystone 先占用空间�
 
 | 目标 | 当前实现 |
 | --- | --- |
-| 按类型声明关闭剪贴板等旁路通道 | 未核对当前镜像与 noVNC 设置 |
 | 运行镜像提供带鉴权的动作入口，实现打开地址与公共动作 | 运行镜像只提供画面、停止、检查和备份 |
 | Chromium 关窗重开、异常退出重试一次 | Chromium 退出后不重开，就绪检查失败，需停止后重新启动 |
 | 备份记录兼容信息（镜像摘要、Chromium 版本与档案路径、运行 UID），只恢复到兼容版本 | 仅记录 `backup_at`、`backup_failed` 和文件引用；恢复只校验档案格式与密钥认证，版本兼容由部署固定镜像保证 |

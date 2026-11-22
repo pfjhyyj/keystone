@@ -6,48 +6,48 @@ from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from keystone.core.errors import ServiceError
 from keystone.core.http import Page
 from keystone.core.time import utcnow
-from keystone.platform.browser.adapters.opensandbox import RuntimeUnavailable
-from keystone.platform.browser.services.browser import BrowserService
+from keystone.platform.environments.adapters.opensandbox import RuntimeUnavailable
+from keystone.platform.environments.services.environments import EnvironmentService
 from keystone.platform.identity.controllers.dependencies import (
     access_context,
     socket_access_context,
 )
 
-router = APIRouter(prefix="/api/v1/browser-workspaces", tags=["browser"])
+router = APIRouter(prefix="/api/v1/environments", tags=["environments"])
 
 
 def _service(connection, context):
-    return BrowserService(
+    return EnvironmentService(
         context,
-        connection.app.state.browser_runtime,
-        connection.app.state.browser_controls,
+        connection.app.state.opensandbox,
+        connection.app.state.environment_controls,
         connection.app.state.runtime.managed_files(context),
     )
 
 
 @router.get("")
-async def workspaces(request: Request, page: Page):
+async def environments(request: Request, page: Page):
     return await _service(request, access_context(request)).listing(page.offset, page.limit)
 
 
-@router.post("/{workspace_id}/open")
-async def open_browser(request: Request, workspace_id: UUID):
-    return await _service(request, access_context(request)).open(workspace_id)
+@router.post("/{environment_id}/open")
+async def open_environment(request: Request, environment_id: UUID):
+    return await _service(request, access_context(request)).open(environment_id)
 
 
-@router.post("/{workspace_id}/backup")
-async def backup_browser(request: Request, workspace_id: UUID):
-    return await _service(request, access_context(request)).backup(workspace_id)
+@router.post("/{environment_id}/backup")
+async def backup_environment(request: Request, environment_id: UUID):
+    return await _service(request, access_context(request)).backup(environment_id)
 
 
-@router.post("/{workspace_id}/runs/{run_id}/stop")
-async def stop_browser(request: Request, workspace_id: UUID, run_id: UUID):
-    return await _service(request, access_context(request)).stop(workspace_id, run_id)
+@router.post("/{environment_id}/sessions/{session_id}/stop")
+async def stop_session(request: Request, environment_id: UUID, session_id: UUID):
+    return await _service(request, access_context(request)).stop(environment_id, session_id)
 
 
-@router.post("/{workspace_id}/runs/{run_id}/check")
-async def check_browser(request: Request, workspace_id: UUID, run_id: UUID):
-    return await _service(request, access_context(request)).check(workspace_id, run_id)
+@router.post("/{environment_id}/sessions/{session_id}/check")
+async def check_session(request: Request, environment_id: UUID, session_id: UUID):
+    return await _service(request, access_context(request)).check(environment_id, session_id)
 
 
 async def _relay(socket, upstream, control, verify, expiry):
@@ -94,18 +94,18 @@ async def _relay(socket, upstream, control, verify, expiry):
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
-@router.websocket("/{workspace_id}/runs/{run_id}/screen")
-async def screen(socket: WebSocket, workspace_id: UUID, run_id: UUID):
+@router.websocket("/{environment_id}/sessions/{session_id}/screen")
+async def screen(socket: WebSocket, environment_id: UUID, session_id: UUID):
     socket.state.request_id = uuid4().hex
     code = 1000
     accepted = False
     try:
         service = _service(socket, socket_access_context(socket))
-        async with service.control(workspace_id, run_id) as (control, sandbox_id, _):
-            async with service.runtime.stream(sandbox_id, run_id) as upstream:
+        async with service.control(environment_id, session_id) as (control, sandbox_id, _):
+            async with service.runtime.stream(sandbox_id, session_id) as upstream:
 
                 async def verify():
-                    return await service.stream_authorized(workspace_id, run_id)
+                    return await service.stream_authorized(environment_id, session_id)
 
                 async with asyncio.timeout(3):
                     _, expiry = await verify()

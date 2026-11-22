@@ -7,7 +7,7 @@ services:
   opensandbox:
     image: opensandbox/server:release-1.2.0
     environment:
-      OPENSANDBOX_SERVER_API_KEY: ${KEYSTONE_BROWSER_RUNTIME_KEY:?set the OpenSandbox API key}
+      OPENSANDBOX_SERVER_API_KEY: ${KEYSTONE_OPENSANDBOX_KEY:?set the OpenSandbox API key}
       SANDBOX_CONFIG_PATH: /etc/opensandbox/config.toml
     networks:
       - default
@@ -25,8 +25,8 @@ services:
       KEYSTONE_DATABASE_URL: ${KEYSTONE_DATABASE_URL:-postgresql+psycopg://keystone:keystone_local_only@postgres:5432/keystone}
       KEYSTONE_FILE_COORDINATION_ROOT: /data/files/coordination
       KEYSTONE_FILE_STORAGES: '{"local":{"driver":"filesystem","root":"/data/files/content"}}'
-      KEYSTONE_BROWSER_RUNTIME_URL: http://opensandbox:8090
-      KEYSTONE_BROWSER_RUNTIME_KEY: ${KEYSTONE_BROWSER_RUNTIME_KEY:?set the OpenSandbox API key}
+      KEYSTONE_OPENSANDBOX_URL: http://opensandbox:8090
+      KEYSTONE_OPENSANDBOX_KEY: ${KEYSTONE_OPENSANDBOX_KEY:?set the OpenSandbox API key}
       KEYSTONE_BROWSER_RUNTIME_IMAGE: ${KEYSTONE_BROWSER_RUNTIME_IMAGE:-keystone-browser-chromium:local}
       KEYSTONE_BROWSER_BACKUP_KEY: ${KEYSTONE_BROWSER_BACKUP_KEY:-}
       KEYSTONE_FILE_MAX_BYTES: ${KEYSTONE_FILE_MAX_BYTES:-268435456}

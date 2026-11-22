@@ -118,8 +118,8 @@ def test_browser_settings_require_complete_runtime_and_local_backup_storage(tmp_
         }
     }
     runtime = {
-        "browser_runtime_url": "http://opensandbox:8090",
-        "browser_runtime_key": "runtime-secret",
+        "opensandbox_url": "http://opensandbox:8090",
+        "opensandbox_key": "runtime-secret",
         "browser_runtime_image": "keystone-browser:test",
     }
     Settings(
@@ -135,8 +135,8 @@ def test_browser_settings_require_complete_runtime_and_local_backup_storage(tmp_
             config_file=None,
             file_coordination_root=tmp_path / "coordination",
             file_storages=storage,
-            browser_runtime_url="http://opensandbox:8090",
-            browser_runtime_key="runtime-secret",
+            opensandbox_url="http://opensandbox:8090",
+            opensandbox_key="runtime-secret",
         )
     with pytest.raises(ValidationError, match="OpenSandbox"):
         Settings(
@@ -153,7 +153,7 @@ def test_browser_settings_require_complete_runtime_and_local_backup_storage(tmp_
             browser_backup_key="a" * 63,
             **runtime,
         )
-    with pytest.raises(ValidationError, match="configured browser runtime"):
+    with pytest.raises(ValidationError, match="browser backup requires OpenSandbox"):
         Settings(
             config_file=None,
             file_coordination_root=tmp_path / "coordination",

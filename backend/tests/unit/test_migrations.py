@@ -60,7 +60,7 @@ def test_module_paths_and_global_sequence_follow_the_native_revision_chain():
         "model_access",
         "flow",
         "worker",
-        "browser",
+        "environments",
     )
     assert len(chain) == len(modules)
     assert len(script.get_heads()) == 1 and len(script.get_bases()) == 1

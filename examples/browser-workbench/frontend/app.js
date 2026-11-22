@@ -22,7 +22,7 @@ async function request(path, method = 'GET', body) {
     method,
     cache: 'no-store',
     credentials: 'same-origin',
-    signal: AbortSignal.timeout(/^\/browser-workspaces\/.+\/(open|stop|backup)$/.test(path) ? 220000 : 30000),
+    signal: AbortSignal.timeout(/^\/environments\/.+\/(open|stop|backup)$/.test(path) ? 220000 : 30000),
     headers: {
       'X-Keystone-Request': '1',
       ...(identity?.csrf_token ? { 'X-CSRF-Token': identity.csrf_token } : {}),
@@ -42,9 +42,9 @@ async function request(path, method = 'GET', body) {
 }
 
 const selected = () => workspaces.find(({ id }) => id === selectedId)
-const workspacePath = (workspace) => '/browser-workspaces/' + encodeURIComponent(workspace.id)
+const workspacePath = (workspace) => '/environments/' + encodeURIComponent(workspace.id)
 const runPath = (workspace) =>
-  workspacePath(workspace) + '/runs/' + encodeURIComponent(workspace.run.id)
+  workspacePath(workspace) + '/sessions/' + encodeURIComponent(workspace.session.id)
 
 function showNotice(message = '', tone = 'error') {
   element('notice').textContent = message
@@ -74,7 +74,7 @@ function drawWorkspaces() {
 
 function render() {
   const workspace = selected()
-  const run = workspace?.run
+  const run = workspace?.session
   const state = run?.state
   const passwordRequired = identity?.user.password_change_required
   element('login').hidden = Boolean(identity)
@@ -93,9 +93,9 @@ function render() {
     ['starting', 'stopping', 'review'].includes(state)
   element('open').textContent = state === 'ready' ? '连接画面' : '打开浏览器'
   element('check').hidden = !['starting', 'stopping', 'review'].includes(state)
-  element('stop').hidden = !run?.can_stop || !identity?.permissions.includes('browser:stop')
+  element('stop').hidden = !run?.can_stop || !identity?.permissions.includes('environment:stop')
   element('backup').hidden = !workspace?.backup_enabled ||
-    !identity?.permissions.includes('browser:stop') ||
+    !identity?.permissions.includes('environment:stop') ||
     (state != null && !['stopped', 'failed'].includes(state))
   const backupStatus = element('backup-status')
   backupStatus.hidden = !workspace?.backup_enabled
@@ -202,11 +202,11 @@ async function connect(workspace, retry = true) {
 }
 
 async function refresh() {
-  const previous = selected()?.run
-  const next = await request('/browser-workspaces')
+  const previous = selected()?.session
+  const next = await request('/environments')
   workspaces = next
   if (!selected()) selectedId = workspaces[0]?.id
-  const current = selected()?.run
+  const current = selected()?.session
   if ((viewer || connecting) && (previous?.id !== current?.id || current?.state !== 'ready')) {
     disconnect()
   }
@@ -277,15 +277,15 @@ element('logout').onclick = () => void run(async () => {
 element('open').onclick = () => void run(async () => {
   const workspace = selected()
   try {
-    workspace.run = await request(workspacePath(workspace) + '/open', 'POST')
+    workspace.session = await request(workspacePath(workspace) + '/open', 'POST')
   } catch (error) {
     await refresh()
     throw error
   }
-  if (workspace.run.restored_from) {
-    showNotice(`已从 ${backupDate.format(new Date(workspace.run.restored_from))} 的备份恢复浏览器空间。`, 'success')
+  if (workspace.session.restored_from) {
+    showNotice(`已从 ${backupDate.format(new Date(workspace.session.restored_from))} 的备份恢复浏览器空间。`, 'success')
   }
-  if (workspace.run.state === 'ready') await connect(workspace)
+  if (workspace.session.state === 'ready') await connect(workspace)
 })
 element('backup').onclick = () => void run(async () => {
   try {
@@ -302,15 +302,15 @@ element('stop').onclick = () => {
   if (!window.confirm('停止会关闭浏览器窗口并保留浏览器空间。确定停止？')) return
   void run(async () => {
     const workspace = selected()
-    workspace.run = await request(runPath(workspace) + '/stop', 'POST')
-    if (workspace.run.state !== 'ready') disconnect()
+    workspace.session = await request(runPath(workspace) + '/stop', 'POST')
+    if (workspace.session.state !== 'ready') disconnect()
     await refresh()
   })
 }
 element('check').onclick = () => void run(async () => {
   const workspace = selected()
-  workspace.run = await request(runPath(workspace) + '/check', 'POST')
-  if (workspace.run.state === 'review') {
+  workspace.session = await request(runPath(workspace) + '/check', 'POST')
+  if (workspace.session.state === 'review') {
     showNotice('暂时无法确认原运行，请稍后重新检查或联系部署管理员。')
   }
 })

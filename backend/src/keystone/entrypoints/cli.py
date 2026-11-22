@@ -122,16 +122,16 @@ def main() -> None:
             "retire-worker",
             "reactivate-worker",
             "prune-history",
-            "register-browser-workspace",
+            "register-environment",
         ],
     )
     parser.add_argument("--username", help="Initial administrator login name")
     parser.add_argument("--worker-id", help="Fixed identity for retire-worker or reactivate-worker")
     parser.add_argument("--file-id", type=UUID, help="File ID for retry-file-delete")
     parser.add_argument("--display-name", default="管理员")
-    parser.add_argument("--owner-id", type=UUID, help="Browser workspace owner's Keystone user ID")
-    parser.add_argument("--workspace-name", help="Display name for the browser workspace")
-    parser.add_argument("--volume", help="Existing named Docker volume for the browser workspace")
+    parser.add_argument("--owner-id", type=UUID, help="Environment owner's Keystone user ID")
+    parser.add_argument("--environment-name", help="Display name for the environment")
+    parser.add_argument("--volume", help="Existing named Docker volume for the environment")
     parser.add_argument("--apply", action="store_true", help="Delete one eligible history batch")
     parser.add_argument(
         "--history-offset", type=int, default=0, help="Continue a maintenance history scan"
@@ -147,14 +147,14 @@ def main() -> None:
         help="Confirm all API processes are stopped and will stay stopped during recovery",
     )
     args = parser.parse_args()
-    if args.command == "register-browser-workspace":
-        if not args.owner_id or not args.workspace_name or not args.volume:
+    if args.command == "register-environment":
+        if not args.owner_id or not args.environment_name or not args.volume:
             parser.error(
-                "register-browser-workspace requires --owner-id, --workspace-name, and --volume"
+                "register-environment requires --owner-id, --environment-name, and --volume"
             )
-    elif args.owner_id or args.workspace_name or args.volume:
+    elif args.owner_id or args.environment_name or args.volume:
         parser.error(
-            "--owner-id, --workspace-name, and --volume only apply to register-browser-workspace"
+            "--owner-id, --environment-name, and --volume only apply to register-environment"
         )
     if args.apply and args.command != "prune-history":
         parser.error("--apply only applies to prune-history")
@@ -189,16 +189,16 @@ def main() -> None:
             return
         if not settings.database_url:
             raise RuntimeError("Database is not configured")
-        if args.command == "register-browser-workspace":
-            from keystone.platform.browser.services.registration import register_workspace
+        if args.command == "register-environment":
+            from keystone.platform.environments.services.registration import register_environment
 
             async def register():
                 runtime = build_runtime(settings)
                 try:
-                    return await register_workspace(
+                    return await register_environment(
                         runtime.database,
                         args.owner_id,
-                        args.workspace_name,
+                        args.environment_name,
                         args.volume,
                     )
                 finally:

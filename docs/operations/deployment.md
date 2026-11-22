@@ -11,7 +11,7 @@
 ```bash
 docker build -t keystone-backend:local ./backend
 docker build -t keystone-console:local ./frontend/console
-docker build -t keystone-browser-chromium:local ./deploy/browser/runtime
+docker build -t keystone-browser-chromium:local ./deploy/environments/browser/runtime
 ```
 
 | 镜像 | Dockerfile | 运行命令 |
@@ -19,9 +19,9 @@ docker build -t keystone-browser-chromium:local ./deploy/browser/runtime
 | 后端 API | `backend/Dockerfile` | `keystone-api`（镜像默认命令） |
 | 后端 Worker | 同一个后端镜像 | `keystone-worker` |
 | 控制台 | `frontend/console/Dockerfile` | Nginx（镜像默认命令） |
-| 浏览器运行时 | `deploy/browser/runtime/Dockerfile` | `browser-runtime`（供 OpenSandbox 创建沙箱） |
+| 浏览器运行时 | `deploy/environments/browser/runtime/Dockerfile` | `browser-runtime`（供 OpenSandbox 创建沙箱） |
 
-API 与 Worker 使用同一份代码、锁文件和镜像，分别启动进程。控制台镜像包含编译后的 Vue 静态文件及 `/api` 反向代理；后端镜像只含 API、Worker 与 CLI 代码。浏览器运行时镜像只在启用 Browser 模块时需要，必须预先分发到 OpenSandbox 所用的 Docker 宿主，并通过 `browser_runtime_image` 固定版本或摘要。每个工程的 `.dockerignore` 仅允许构建所需源码和配置进入上下文，不读取或打包实际 `keystone.toml`、`.env`；构建不执行初始化、不创建模型配置。容器验证使用 `tests/deploy/compose.yaml`，它继承 `deploy/stack/compose.yaml` 并改为本地构建和测试配置，不改变本机开发启动方式。
+API 与 Worker 使用同一份代码、锁文件和镜像，分别启动进程。控制台镜像包含编译后的 Vue 静态文件及 `/api` 反向代理；后端镜像只含 API、Worker 与 CLI 代码。浏览器运行时镜像只在启用交互环境的浏览器类型时需要，必须预先分发到 OpenSandbox 所用的 Docker 宿主，并通过 `browser_runtime_image` 固定版本或摘要。每个工程的 `.dockerignore` 仅允许构建所需源码和配置进入上下文，不读取或打包实际 `keystone.toml`、`.env`；构建不执行初始化、不创建模型配置。容器验证使用 `tests/deploy/compose.yaml`，它继承 `deploy/stack/compose.yaml` 并改为本地构建和测试配置，不改变本机开发启动方式。
 
 ## 2. 运行配置与初始化
 
@@ -79,7 +79,7 @@ rg --fixed-strings '替换为调用记录 UUID 或 X-Request-ID' .artifacts/logs
 | `retry-file-delete` | `--file-id UUID` | 重新排队已停止自动重试的文件删除，见[文件清理积压](#文件清理积压) |
 | `reset-admin-role` | — | 把内置 admin 角色恢复为全部权限并写 system 审计，用于角色被改到无人能管理身份时；已是全部权限时不改动 |
 | `prune-history` | `[--apply] [--history-offset N]` | 预览或删除一批过期历史，见[手动预览与执行](#手动预览与执行) |
-| `register-browser-workspace` | `--owner-id UUID --workspace-name NAME --volume VOLUME` | 为已有用户登记浏览器空间并写系统审计，输出空间 ID；卷须预先创建，命令不创建卷，同一卷只能登记一次（`browser_volume_registered`） |
+| `register-environment` | `--owner-id UUID --environment-name NAME --volume VOLUME` | 把已有卷登记为指定用户的浏览器交互环境并写系统审计，输出环境 ID；卷须预先创建，命令不创建卷，同一卷只能登记一次（`environment_volume_registered`） |
 
 ### 2.3 单宿主 Compose
 

@@ -1,4 +1,4 @@
-"""Browser workspaces and runs.
+"""Interactive environments and sessions.
 
 Revision ID: 0008
 Revises: 0007
@@ -15,28 +15,30 @@ depends_on = None
 
 def upgrade():
     op.create_table(
-        "browser_workspaces",
+        "environments",
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("owner_id", sa.Uuid(), sa.ForeignKey("keystone.users.id"), nullable=False),
+        sa.Column("kind", sa.String(32), nullable=False),
         sa.Column("name", sa.String(128), nullable=False),
         sa.Column("volume", sa.String(128), unique=True, nullable=False),
         sa.Column("backup_at", sa.DateTime(timezone=True)),
         sa.Column("backup_failed", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.CheckConstraint("kind IN ('chromium')", name="ck_environment_kind"),
         schema="keystone",
     )
     op.create_index(
-        "ix_keystone_browser_workspaces_owner_id",
-        "browser_workspaces",
+        "ix_keystone_environments_owner_id",
+        "environments",
         ["owner_id"],
         schema="keystone",
     )
     op.create_table(
-        "browser_runs",
+        "environment_sessions",
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column(
-            "workspace_id",
+            "environment_id",
             sa.Uuid(),
-            sa.ForeignKey("keystone.browser_workspaces.id"),
+            sa.ForeignKey("keystone.environments.id"),
             nullable=False,
         ),
         sa.Column("purpose", sa.String(16), nullable=False),
@@ -49,30 +51,30 @@ def upgrade():
         ),
         sa.CheckConstraint(
             "state IN ('starting', 'ready', 'stopping', 'review', 'stopped', 'failed')",
-            name="ck_browser_run_state",
+            name="ck_environment_session_state",
         ),
         sa.CheckConstraint(
-            "purpose IN ('browse', 'backup')",
-            name="ck_browser_run_purpose",
+            "purpose IN ('interactive', 'backup')",
+            name="ck_environment_session_purpose",
         ),
         schema="keystone",
     )
     op.create_index(
-        "uq_browser_run_occupied",
-        "browser_runs",
-        ["workspace_id"],
+        "uq_environment_session_occupied",
+        "environment_sessions",
+        ["environment_id"],
         schema="keystone",
         unique=True,
         postgresql_where=sa.text("state IN ('starting', 'ready', 'stopping', 'review')"),
     )
     op.create_index(
-        "ix_browser_run_history",
-        "browser_runs",
-        ["workspace_id", "created_at", "id"],
+        "ix_environment_session_history",
+        "environment_sessions",
+        ["environment_id", "created_at", "id"],
         schema="keystone",
     )
 
 
 def downgrade():
-    op.drop_table("browser_runs", schema="keystone")
-    op.drop_table("browser_workspaces", schema="keystone")
+    op.drop_table("environment_sessions", schema="keystone")
+    op.drop_table("environments", schema="keystone")

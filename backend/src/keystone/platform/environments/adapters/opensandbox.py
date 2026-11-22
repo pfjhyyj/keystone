@@ -27,11 +27,15 @@ class OpenSandbox:
             base_url=self.url, headers=self.headers, timeout=8, trust_env=False
         )
 
-    def _control_headers(self, run_id):
+    def _control_headers(self, session_id):
         key = self.headers["OPEN-SANDBOX-API-KEY"].encode()
         return {
-            "X-Keystone-Browser-Control": hmac.digest(key, str(run_id).encode(), "sha256").hex(),
-            "X-EXECD-ACCESS-TOKEN": hmac.digest(key, f"execd:{run_id}".encode(), "sha256").hex(),
+            "X-Keystone-Browser-Control": hmac.digest(
+                key, str(session_id).encode(), "sha256"
+            ).hex(),
+            "X-EXECD-ACCESS-TOKEN": hmac.digest(
+                key, f"execd:{session_id}".encode(), "sha256"
+            ).hex(),
         }
 
     async def close(self):
@@ -60,8 +64,8 @@ class OpenSandbox:
             raise RuntimeUnavailable
         return data
 
-    async def create(self, run_id, workspace_id, volume, *, purpose="browse"):
-        control = self._control_headers(run_id)
+    async def create(self, session_id, environment_id, volume, *, purpose="interactive"):
+        control = self._control_headers(session_id)
         response = await self._request(
             "POST",
             "/v1/sandboxes",
@@ -77,8 +81,8 @@ class OpenSandbox:
                 "timeout": None,
                 "resourceLimits": {"cpu": "2", "memory": "2Gi"},
                 "metadata": {
-                    "keystone_run": str(run_id),
-                    "keystone_workspace": str(workspace_id),
+                    "keystone_session": str(session_id),
+                    "keystone_environment": str(environment_id),
                 },
                 "volumes": [
                     {
@@ -94,12 +98,12 @@ class OpenSandbox:
             raise CreateRejected
         return self._id(self._data(response).get("id"))
 
-    async def find(self, run_id, workspace_id):
+    async def find(self, session_id, environment_id):
         response = await self._request(
             "GET",
             "/v1/sandboxes",
             params={
-                "metadata": f"keystone_run={run_id}&keystone_workspace={workspace_id}",
+                "metadata": f"keystone_session={session_id}&keystone_environment={environment_id}",
                 "pageSize": 2,
             },
         )
@@ -112,8 +116,8 @@ class OpenSandbox:
         item = items[0]
         metadata = item.get("metadata") if isinstance(item, dict) else None
         if not isinstance(metadata, dict) or (
-            metadata.get("keystone_run") != str(run_id)
-            or metadata.get("keystone_workspace") != str(workspace_id)
+            metadata.get("keystone_session") != str(session_id)
+            or metadata.get("keystone_environment") != str(environment_id)
         ):
             raise RuntimeUnavailable
         return self._id(item.get("id"))
@@ -129,28 +133,28 @@ class OpenSandbox:
         # Proxy to execd on the sandbox network; the two runtime services only listen on loopback.
         return f"/v1/sandboxes/{self._id(sandbox_id)}/proxy/44772/proxy/{port}/{suffix}"
 
-    async def ready(self, sandbox_id, run_id):
+    async def ready(self, sandbox_id, session_id):
         response = await self._request(
             "GET",
             self._proxy(sandbox_id, 6081, "health"),
-            headers=self._control_headers(run_id),
+            headers=self._control_headers(session_id),
         )
         if response.status_code != 200:
             return False
         return self._data(response).get("status") == "ready"
 
-    async def wait_ready(self, sandbox_id, run_id):
+    async def wait_ready(self, sandbox_id, session_id):
         async with asyncio.timeout(8):
-            while not await self.ready(sandbox_id, run_id):
+            while not await self.ready(sandbox_id, session_id):
                 await asyncio.sleep(0.4)
 
-    async def wait_profile(self, sandbox_id, run_id):
+    async def wait_profile(self, sandbox_id, session_id):
         async with asyncio.timeout(8):
             while True:
                 response = await self._request(
                     "GET",
                     self._proxy(sandbox_id, 6081, "profile"),
-                    headers=self._control_headers(run_id),
+                    headers=self._control_headers(session_id),
                 )
                 if response.status_code == 200:
                     state = self._data(response).get("status")
@@ -160,9 +164,9 @@ class OpenSandbox:
                 await asyncio.sleep(0.4)
 
     @asynccontextmanager
-    async def backup(self, sandbox_id, run_id, key, limit):
+    async def backup(self, sandbox_id, session_id, key, limit):
         headers = {
-            **self._control_headers(run_id),
+            **self._control_headers(session_id),
             "X-Keystone-Browser-Backup-Key": key,
             "X-Keystone-Browser-Backup-Limit": str(limit),
         }
@@ -179,12 +183,12 @@ class OpenSandbox:
         except (ValueError, httpx2.HTTPError):
             raise RuntimeUnavailable from None
 
-    async def restore(self, sandbox_id, run_id, key, size, chunks):
+    async def restore(self, sandbox_id, session_id, key, size, chunks):
         response = await self._request(
             "POST",
             self._proxy(sandbox_id, 6081, "restore"),
             headers={
-                **self._control_headers(run_id),
+                **self._control_headers(session_id),
                 "X-Keystone-Browser-Backup-Key": key,
                 "Content-Type": "application/octet-stream",
                 "Content-Length": str(size),
@@ -198,11 +202,11 @@ class OpenSandbox:
             raise RuntimeUnavailable
         return True
 
-    async def quit_browser(self, sandbox_id, run_id):
+    async def quit_browser(self, sandbox_id, session_id):
         response = await self._request(
             "POST",
             self._proxy(sandbox_id, 6081, "stop"),
-            headers=self._control_headers(run_id),
+            headers=self._control_headers(session_id),
         )
         if response.status_code != 204:
             raise RuntimeUnavailable
@@ -216,7 +220,7 @@ class OpenSandbox:
                 await asyncio.sleep(0.25)
 
     @asynccontextmanager
-    async def stream(self, sandbox_id, run_id):
+    async def stream(self, sandbox_id, session_id):
         url = urlsplit(self.url)
         ws = urlunsplit(
             (
@@ -230,7 +234,7 @@ class OpenSandbox:
         try:
             async with connect(
                 ws,
-                additional_headers={**self.headers, **self._control_headers(run_id)},
+                additional_headers={**self.headers, **self._control_headers(session_id)},
                 open_timeout=3,
                 close_timeout=1,
                 max_size=8 * 1024 * 1024,

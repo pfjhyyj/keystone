@@ -286,7 +286,7 @@ sequenceDiagram
 
 | 目标 | 当前实现 |
 | --- | --- |
-| 交互环境模块，`Environment` / `EnvironmentSession`，权限 `environment:*` | 只有浏览器：`platform/browser`，`BrowserWorkspace` / `BrowserRun`，权限 `browser:use`、`browser:stop` |
+| 环境类型与提供方按代码声明，支持多种类型 | 模块 `platform/environments`、`Environment` / `EnvironmentSession` 与 `environment:*` 权限已就位，`kind` 只有 `chromium`，提供方固定为 OpenSandbox |
 | 托管型用户自助新建，每人数量上限，待初始化环境首次打开时建卷并初始化 | 只有部署者登记命令，卷须预先创建；没有待初始化标记和数量上限 |
 | API 与 Worker 共同装配，控制权保存在会话上，按会话行锁和代次协调 | 只在单个 API 进程装配，画面准入和停止在进程内串行化，控制连接只在内存 |
 | 公共与类型专属动作，业务 Flow 在 Worker 中调用 | 无自动操作接口 |

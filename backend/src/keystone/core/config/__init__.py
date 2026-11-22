@@ -8,7 +8,7 @@ from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict, TomlConfigSettingsSource
 from sqlalchemy.engine import make_url
 
-from keystone.core.config.browser import BrowserRuntimeSettings
+from keystone.core.config.environments import EnvironmentSettings
 from keystone.core.config.execution import ExecutionSettings
 from keystone.core.config.files import FileSettings, normalize_file_paths
 from keystone.core.config.identity import IdentitySettings
@@ -24,7 +24,7 @@ class Settings(
     ModelAccessSettings,
     IdentitySettings,
     MaintenanceSettings,
-    BrowserRuntimeSettings,
+    EnvironmentSettings,
 ):
     model_config = SettingsConfigDict(
         env_prefix="KEYSTONE_",

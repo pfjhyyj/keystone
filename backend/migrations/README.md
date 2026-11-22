@@ -13,7 +13,7 @@
 | `0005_model_access_initial.py` / `0005` | 模型接入与费用 | model_channels、model_entries、model_invocations、model_dispatch_scopes |
 | `0006_flow_initial.py` / `0006` | Flow | flow_runs |
 | `0007_worker_initial.py` / `0007` | Worker | worker_registrations、worker_heartbeats |
-| `0008_browser_initial.py` / `0008` | 浏览器 | browser_workspaces、browser_runs |
+| `0008_environments_initial.py` / `0008` | 交互环境 | environments、environment_sessions |
 
 八份迁移依序维护 20 张领域表，唯一 head 为 `0008`。身份基线的角色直接包含非空、默认 false 的全部权限标记，内置 admin 角色由初始化写入该标记。Files 基线直接创建可空的 `completed_at`、回收索引，以及删除失败计数和失败上传与 S3 删除墓碑的迟到残留检查计数，两者均为非空、默认 0、约束 0～3。模型接入基线直接包含火山方舟、百炼业务空间和费用预估字段及约束。
 

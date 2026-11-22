@@ -19,10 +19,10 @@ from keystone.core.http import install_errors, validate_http_routes
 from keystone.core.migrations import expected_heads
 from keystone.model_registry import load_models
 from keystone.platform.audit.controllers import router as audit_router
-from keystone.platform.browser.adapters.opensandbox import OpenSandbox
-from keystone.platform.browser.controllers.routes import router as browser_router
-from keystone.platform.browser.services.browser import BrowserControls
 from keystone.platform.dictionary.controllers import router as dictionary_router
+from keystone.platform.environments.adapters.opensandbox import OpenSandbox
+from keystone.platform.environments.controllers.routes import router as environments_router
+from keystone.platform.environments.services.environments import EnvironmentControls
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.files.services.files import FileService
 from keystone.platform.files.services.references import FileReferenceService
@@ -184,21 +184,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.runtime = runtime
         app.state.passwords = Passwords()
         app.state.login_limiter = LoginLimiter()
-        browser_runtime = None
+        opensandbox = None
         try:
-            if settings.browser_runtime_url:
-                browser_runtime = OpenSandbox(
-                    settings.browser_runtime_url,
-                    settings.browser_runtime_key.get_secret_value(),
+            if settings.opensandbox_url:
+                opensandbox = OpenSandbox(
+                    settings.opensandbox_url,
+                    settings.opensandbox_key.get_secret_value(),
                     settings.browser_runtime_image,
                 )
-            app.state.browser_runtime = browser_runtime
-            app.state.browser_controls = BrowserControls()
+            app.state.opensandbox = opensandbox
+            app.state.environment_controls = EnvironmentControls()
             yield
         finally:
             try:
-                if browser_runtime is not None:
-                    await browser_runtime.close()
+                if opensandbox is not None:
+                    await opensandbox.close()
             finally:
                 await runtime.close()
 
@@ -224,8 +224,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(identity_router)
     app.include_router(audit_router)
-    app.include_router(browser_router)
     app.include_router(dictionary_router)
+    app.include_router(environments_router)
     app.include_router(models_router)
     app.include_router(flow_router)
     return app

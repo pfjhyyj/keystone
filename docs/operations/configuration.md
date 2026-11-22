@@ -28,8 +28,8 @@
 | `database_connect_timeout_seconds` | `KEYSTONE_DATABASE_CONNECT_TIMEOUT_SECONDS` | 默认 10，范围 1–60；业务连接池新建连接的等待上限，超时在事务开始前返回 `database_connection_busy` |
 | `host` / `port` | `KEYSTONE_HOST` / `KEYSTONE_PORT` | `127.0.0.1` / `8000` |
 | `browser_origins` | `KEYSTONE_BROWSER_ORIGINS` | 精确的浏览器来源数组；生产要求 HTTPS |
-| `browser_runtime_url` / `browser_runtime_key` / `browser_runtime_image` | `KEYSTONE_BROWSER_RUNTIME_URL` / `KEYSTONE_BROWSER_RUNTIME_KEY` / `KEYSTONE_BROWSER_RUNTIME_IMAGE` | 可选模块；OpenSandbox 地址、API Key 和固定运行镜像，三者必须同时配置 |
-| `browser_backup_key` | `KEYSTONE_BROWSER_BACKUP_KEY` | 可选；32 字节十六进制备份密钥。设置后启用浏览器空间备份，且 `file_default_storage` 必须是本地 `filesystem` |
+| `opensandbox_url` / `opensandbox_key` / `browser_runtime_image` | `KEYSTONE_OPENSANDBOX_URL` / `KEYSTONE_OPENSANDBOX_KEY` / `KEYSTONE_BROWSER_RUNTIME_IMAGE` | 可选的[交互环境](../domains/environments/README.md)；OpenSandbox 地址、API Key 和固定的浏览器运行镜像，三者必须同时配置 |
+| `browser_backup_key` | `KEYSTONE_BROWSER_BACKUP_KEY` | 可选；32 字节十六进制备份密钥。设置后启用浏览器环境备份，且 `file_default_storage` 必须是本地 `filesystem` |
 | `log_level` | `KEYSTONE_LOG_LEVEL` | `INFO` |
 | `session_hours` / `pat_max_days` | `KEYSTONE_SESSION_HOURS` / `KEYSTONE_PAT_MAX_DAYS` | 72 小时 / 90 天 |
 | 历史保留与自动清理 | `KEYSTONE_HISTORY_CLEANUP_ENABLED` 等 | 自动删除默认关闭；见[历史清理](deployment.md#历史保留与清理) |
@@ -52,7 +52,7 @@
 
 嵌套环境变量用双下划线 `__` 分隔层级，例如 `KEYSTONE_FILE_STORAGES__LOCAL__ROOT=/data/files` 只覆盖 `local` 源的根目录。源名称以小写字母开头，可包含数字、单下划线和连字符，不能含连续双下划线；环境变量中的名称使用大写。通过环境变量覆盖数组使用 JSON，例如 `KEYSTONE_BROWSER_ORIGINS='["https://console.example.com"]'`。
 
-`browser_backup_key` 由部署方保存在 Keystone 配置之外的安全位置；不要从备份文件、数据库或空间卷推导，轮换时不覆盖仍被旧备份引用的密钥。运行镜像见 [`deploy/browser`](../../deploy/browser/README.md)。
+`browser_backup_key` 由部署方保存在 Keystone 配置之外的安全位置；不要从备份文件、数据库或空间卷推导，轮换时不覆盖仍被旧备份引用的密钥。运行镜像见 [`deploy/environments/browser`](../../deploy/environments/browser/README.md)。
 
 ## 3. 配置变更
 
