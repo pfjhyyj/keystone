@@ -259,7 +259,7 @@ sequenceDiagram
 | --- | --- | --- |
 | 运行镜像 / 接入代理 | 实现类型声明的动作。每个动作有超时，返回大小有上限 | 站点或应用流程、结果判断 |
 | 交互环境 Service 与 Adapter | 控制权准入、动作登记与派发、范围核对、超时、审计和会话核对 | 业务动作集合、目标和结果语义 |
-| 业务 Service / Flow | 取得控制权时声明允许的动作和范围，设定步数与时长上限、结果字段白名单、敏感操作的人工确认，以及固定流程或 Agent 的决策 | 直接访问提供方、CDP、adb 或动作入口 |
+| 业务 Service / Flow | 每个动作声明允许的范围，设定步数与时长上限、结果字段白名单、敏感操作的人工确认，以及固定流程或 Agent 的决策 | 直接访问提供方、CDP、adb 或动作入口 |
 
 必须成立的性质：
 
@@ -267,6 +267,27 @@ sequenceDiagram
 - 动作完成后核对当前范围（浏览器为页面域名，安卓为前台应用包名），超出声明范围即结束本次持有并报告，由业务决定后续。
 - 界面内容只作为数据进入模型，不改变任务的目标、范围或权限。模型调用遵循[模型接入](../model-access.md)的登记与恢复规则。
 - 登录态按环境隔离。访问陌生目标的任务使用不保存其他登录的环境。快照、结果和审计不保存 Cookie、站点或应用凭据、调试会话或完整界面正文；截图只作为有界结果返回，是否经 Files 保存由业务决定。
+
+### 7.1 业务接入接口
+
+业务在 Flow Step 中通过 `runtime.environment_automation(identity)` 使用，`identity` 为 Flow 原身份，可以是 PAT；权限与归属按[第 3 节](#3-职责与授权)复查。
+
+| 调用 | 语义 |
+| --- | --- |
+| `acquire(kind, key, owner)` | 按 key 取得本人环境，必要时首次创建并打开会话，以 `owner`（FlowRun ID）取得自动持有，返回含会话与代次的 grant。同一 owner 重复调用续用原持有（Worker 重启后恢复），他人持有时返回 `environment_in_use` |
+| `act(grant, sequence, name, arguments, domains=..., timeout_seconds=15)` | 以第 `sequence` 号发送一个动作，返回只含状态、地址、标题、元素、文本或截图的结果。序号每次新持有从 1 起，必须连续；业务按 Step 位置确定序号，重放时已登记的序号返回 `environment_action_unknown`，不再发送 |
+| `renew(grant)` | 长时间思考或等待前续期，持有期限 60 秒 |
+| `release(grant)` | 交还输入；仍有结果未知的动作时保留到该动作截止 |
+
+| 错误码 | 含义 |
+| --- | --- |
+| `environment_action_unknown` | 发送结果未知或该序号已登记；先用快照核对，无法确认则交给用户 |
+| `environment_action_sequence` | 序号不连续 |
+| `environment_control_lost` | 持有已结束、被结束会话或被他人取得 |
+| `environment_scope_violation` | 动作后页面离开声明的范围，本次持有已结束 |
+| `environment_action_unsupported` | 类型不支持该动作 |
+
+动作本身的状态（如 `stale` 表示引用不属于最近一次快照、`invalid` 表示参数不合法）在结果的 `state` 中返回，由业务判断。
 
 ## 8. 接入型设备
 
@@ -290,8 +311,7 @@ sequenceDiagram
 | 目标 | 当前实现 |
 | --- | --- |
 | 环境类型与提供方按代码声明，支持多种类型 | 模块 `platform/environments`、`Environment` / `EnvironmentSession` 与 `environment:*` 权限已就位，`kind` 只有 `chromium`，提供方固定为 OpenSandbox |
-| API 与 Worker 共同装配，控制权保存在会话上，按行锁和代次协调 | 已实现人工画面持有、操作租约和 Worker 装配；自动持有的授予、续期与动作序号随自动操作实现 |
-| 公共与类型专属动作，业务 Flow 在 Worker 中调用；Flow 以原身份按 key 取得环境 | 无自动操作接口；按 key 取得环境只开放给登录会话 |
+| 公共与类型专属动作 | 浏览器动作已实现；安卓动作随安卓类型实现 |
 | Worker 计划执行闲置结束，业务可声明活动保护 | 闲置结束已实现；业务活动检查尚未装配，有效的自动持有仍会阻止闲置结束 |
 | 画面协议按类型声明，前端按协议选择组件 | 只有 noVNC |
 | 安卓容器：OpenSandbox 可运行安卓镜像（binder 或 KVM）、scrcpy 画面、卷持久化 | 未验证 |

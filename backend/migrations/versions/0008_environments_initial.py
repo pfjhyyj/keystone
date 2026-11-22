@@ -69,6 +69,8 @@ def upgrade():
         sa.Column(
             "control_generation", sa.BigInteger(), server_default=sa.text("0"), nullable=False
         ),
+        sa.Column("control_sequence", sa.BigInteger(), server_default=sa.text("0"), nullable=False),
+        sa.Column("control_busy_until", sa.DateTime(timezone=True)),
         sa.CheckConstraint(
             "state IN ('starting', 'ready', 'stopping', 'review', 'stopped', 'failed')",
             name="ck_environment_session_state",

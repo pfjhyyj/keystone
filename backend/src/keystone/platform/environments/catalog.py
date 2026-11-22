@@ -13,6 +13,7 @@ CATALOG = Catalog(
         "environment.session.check": {"environment_id", "state"},
         "environment.session.result": {"environment_id", "state"},
         "environment.connection.open": {"environment_id"},
+        "environment.automation.acquire": {"environment_id"},
         "environment.backup": {"state"},
         "environment.restore": {"backup_at"},
     },

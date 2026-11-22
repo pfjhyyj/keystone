@@ -218,6 +218,22 @@ class OpenSandbox:
         if response.status_code != 204:
             raise RuntimeUnavailable
 
+    async def action(self, sandbox_id, session_id, name, arguments, timeout_seconds):
+        """Run one bounded action; any transport failure leaves its outcome unknown."""
+        response = await self._request(
+            "POST",
+            self._proxy(sandbox_id, 6082, f"actions/{name}"),
+            headers=self._control_headers(session_id),
+            json={"arguments": arguments, "timeout_seconds": timeout_seconds},
+            timeout=timeout_seconds + 5,
+        )
+        if response.status_code != 200 or len(response.content) > 4 * 1024 * 1024:
+            raise RuntimeUnavailable
+        data = self._data(response)
+        if not isinstance(data.get("state"), str):
+            raise RuntimeUnavailable
+        return data
+
     async def delete(self, sandbox_id):
         response = await self._request("DELETE", f"/v1/sandboxes/{self._id(sandbox_id)}")
         if response.status_code not in {200, 202, 204, 404}:

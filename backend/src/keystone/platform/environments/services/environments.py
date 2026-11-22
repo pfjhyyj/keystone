@@ -53,9 +53,11 @@ def _busy():
 
 
 class EnvironmentService:
-    def __init__(self, context, runtime, files, keys):
+    def __init__(self, context, runtime, files, keys, *, session_only=True):
+        # Console requests require a login session; automation runs as the Flow's identity.
         self.context, self.runtime, self.keys = context, runtime, keys
-        self.backups = BrowserBackups(context, runtime, files)
+        self.session_only = session_only
+        self.backups = BrowserBackups(context, runtime, files, session_only=session_only)
 
     def _require_runtime(self):
         if self.runtime is None:
@@ -103,7 +105,10 @@ class EnvironmentService:
         )
 
     async def listing(self, offset, limit):
-        async with self.context.access("environment:use", session_only=True) as (session, auth):
+        async with self.context.access("environment:use", session_only=self.session_only) as (
+            session,
+            auth,
+        ):
             # The default environment is listed before its first use and shifts later pages.
             placeholder, first_page = None, offset == 0
             if self.runtime is not None and not await session.scalar(
@@ -142,7 +147,10 @@ class EnvironmentService:
         declared = self.keys.get(key)
         if declared is None or kind not in declared.kinds:
             raise ServiceError(404, "environment_key_not_declared", "交互环境未声明")
-        async with self.context.access("environment:use", session_only=True) as (session, auth):
+        async with self.context.access("environment:use", session_only=self.session_only) as (
+            session,
+            auth,
+        ):
             identifier = uuid4()
             created = await session.scalar(
                 insert(Environment)
@@ -191,7 +199,7 @@ class EnvironmentService:
         action = "environment.session.open"
         async with self.context.access(
             "environment:use",
-            session_only=True,
+            session_only=self.session_only,
             action=action,
             target="environment",
             target_id=environment_id,
@@ -280,7 +288,10 @@ class EnvironmentService:
         self._require_runtime()
         if not self.backups.enabled:
             raise ServiceError(503, "environment_backup_unconfigured", "交互环境备份未配置")
-        async with self.context.access("environment:use", session_only=True) as (session, auth):
+        async with self.context.access("environment:use", session_only=self.session_only) as (
+            session,
+            auth,
+        ):
             auth.require("environment:stop")
             environment = await self._environment(session, auth, environment_id, lock=True)
             run = await self._latest_session(session, environment_id)
@@ -335,7 +346,7 @@ class EnvironmentService:
         action = "environment.session.check"
         async with self.context.access(
             "environment:use",
-            session_only=True,
+            session_only=self.session_only,
             action=action,
             target="environment_session",
             target_id=session_id,
@@ -390,7 +401,7 @@ class EnvironmentService:
         action = "environment.session.stop"
         async with self.context.access(
             "environment:use",
-            session_only=True,
+            session_only=self.session_only,
             action=action,
             target="environment_session",
             target_id=session_id,
@@ -449,7 +460,7 @@ class EnvironmentService:
         action = None if connection else "environment.connection.open"
         async with self.context.access(
             "environment:use",
-            session_only=True,
+            session_only=self.session_only,
             action=action,
             target="environment_session",
             target_id=session_id,

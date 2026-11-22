@@ -80,6 +80,13 @@ class Runtime:
     def managed_files(self, identity):
         return FileService(identity, self.storage)
 
+    def environment_automation(self, identity):
+        from keystone.platform.environments.services.automation import EnvironmentAutomation
+
+        return EnvironmentAutomation(
+            identity, self.opensandbox, self.managed_files(identity), self.environment_keys
+        )
+
     def model_service(self, identity):
         from keystone.platform.model_access.services.entries import ModelEntryService
         from keystone.platform.model_access.services.runtime import ModelRuntime

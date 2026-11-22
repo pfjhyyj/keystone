@@ -16,8 +16,9 @@ SLOT = "latest_backup"
 
 
 class BrowserBackups:
-    def __init__(self, context, runtime, files):
+    def __init__(self, context, runtime, files, *, session_only=True):
         self.context, self.runtime, self.files = context, runtime, files
+        self.session_only = session_only
 
     @property
     def enabled(self):
@@ -50,7 +51,9 @@ class BrowserBackups:
                         ),
                         chunks,
                     )
-                async with self.context.access("environment:use", session_only=True) as (
+                async with self.context.access(
+                    "environment:use", session_only=self.session_only
+                ) as (
                     session,
                     auth,
                 ):
@@ -95,7 +98,10 @@ class BrowserBackups:
 
     async def restore(self, environment_id, session_id, sandbox_id):
         async with asyncio.timeout(150):
-            async with self.context.access("environment:use", session_only=True) as (session, auth):
+            async with self.context.access("environment:use", session_only=self.session_only) as (
+                session,
+                auth,
+            ):
                 environment = await session.scalar(
                     select(Environment).where(
                         Environment.id == environment_id,

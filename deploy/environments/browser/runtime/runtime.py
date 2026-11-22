@@ -9,12 +9,14 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from time import monotonic, sleep
 
 from cryptography.exceptions import InvalidTag
 
+import actions
 from archive import BLOCK, MAX_ARCHIVE, export, restore
 
 PROFILE = Path("/data/profile")
@@ -135,11 +137,15 @@ def main():
         chrome = start(
             "chromium", f"--user-data-dir={profile}", "--no-first-run", "--start-maximized",
             "--disable-dev-shm-usage", "--disable-background-mode", "--restore-last-session",
+            # CDP stays on the container loopback; only the authenticated action server uses it.
+            "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=9222",
         )
 
     try:
         if profile is not None and not maintenance:
             start_browser()
+        if not maintenance:
+            threading.Thread(target=actions.serve, args=(token,), daemon=True).start()
         window_seen = False
 
         class Control(BaseHTTPRequestHandler):

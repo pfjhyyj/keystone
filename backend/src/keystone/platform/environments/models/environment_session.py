@@ -51,3 +51,6 @@ class EnvironmentSession(Base):
     control_kind: Mapped[str | None] = mapped_column(String(16))
     control_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     control_generation: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
+    # Automation registers each action before sending it; an unknown outcome is never resent.
+    control_sequence: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
+    control_busy_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

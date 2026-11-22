@@ -4,6 +4,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from functools import partial
 from threading import Event
 from uuid import UUID, uuid4
 
@@ -11,10 +12,11 @@ import pytest
 from fastapi import WebSocketDisconnect
 from pydantic import SecretStr
 from sqlalchemy import update
-from test_identity import ORIGIN, create_user, login
+from test_identity import ORIGIN, create_user, login, token
 from test_identity import client as client
 
 from keystone.core.config import Settings
+from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.environments.adapters.opensandbox import RuntimeUnavailable
 from keystone.platform.environments.models import EnvironmentSession
@@ -22,6 +24,8 @@ from keystone.platform.environments.services.idle import stop_idle
 from keystone.platform.environments.services.registration import register_environment
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.files.services.references import registered_file_ids
+from keystone.platform.identity.schemas.credentials import Credential
+from keystone.platform.identity.services.access import AccessContext
 
 pytestmark = pytest.mark.postgres
 
@@ -293,6 +297,12 @@ class FirstUseRuntime:
     async def exists(self, sandbox):
         return sandbox in self.sandboxes
 
+    async def ready(self, sandbox, run):
+        return sandbox in self.sandboxes
+
+    async def close(self):
+        pass
+
     async def quit_browser(self, sandbox, run):
         pass
 
@@ -416,3 +426,73 @@ def test_screen_hold_is_shared_across_processes_and_released_on_close(client):
     while client.portal.call(holder) != (None, None):
         assert time.monotonic() < deadline
         time.sleep(0.05)
+
+
+class ActingRuntime(FirstUseRuntime):
+    def __init__(self):
+        super().__init__()
+        self.actions = []
+        self.url = "https://portal.example.com/home"
+        self.fail = False
+
+    async def action(self, sandbox, run, name, arguments, timeout_seconds):
+        self.actions.append((name, arguments))
+        if self.fail:
+            raise RuntimeUnavailable
+        if name == "open":
+            self.url = arguments["url"]
+        return {"state": "ok", "url": self.url, "cookies": "never returned"}
+
+
+def test_automation_holds_registers_actions_and_enforces_scope(client):
+    login(client)
+    runtime = ActingRuntime()
+    client.app.state.opensandbox = runtime
+    app = client.app.state.runtime
+    app.opensandbox = runtime
+    secret = token(client, ["environment:use"])["token"]
+    identity = AccessContext(app.database, app.settings, Credential("pat", secret))
+    automation = app.environment_automation(identity)
+    flow, other = uuid4(), uuid4()
+    act = partial(automation.act, domains=("example.com",))
+
+    def fails(code, *call):
+        with pytest.raises(ServiceError) as error:
+            client.portal.call(*call)
+        assert error.value.code == code
+
+    grant = client.portal.call(automation.acquire, "chromium", "default", flow)
+    assert client.portal.call(automation.acquire, "chromium", "default", flow) == grant
+    fails("environment_in_use", automation.acquire, "chromium", "default", other)
+
+    # The screen cannot take input while automation holds the session.
+    path = f"/api/v1/environments/{grant.environment_id}/sessions/{grant.session_id}"
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(path + "/screen", headers={"Origin": ORIGIN}):
+            pytest.fail("Screen took input during automation")
+    assert client.post(path + "/stop").json()["code"] == "environment_in_use"
+
+    result = client.portal.call(act, grant, 1, "snapshot", None)
+    assert result == {"state": "ok", "url": "https://portal.example.com/home"}
+    fails("environment_action_unknown", act, grant, 1, "snapshot", None)
+    fails("environment_action_sequence", act, grant, 3, "snapshot", None)
+
+    # A lost outcome keeps the hold busy; the same number is never sent again.
+    runtime.fail = True
+    fails("environment_action_unknown", act, grant, 2, "click", {"ref": "s1e1"})
+    runtime.fail = False
+    sent = len(runtime.actions)
+    fails("environment_action_unknown", act, grant, 2, "click", {"ref": "s1e1"})
+    assert len(runtime.actions) == sent
+    client.portal.call(act, grant, 3, "read", None)
+
+    fails("environment_scope_violation", act, grant, 4, "open", {"url": "https://elsewhere.test/"})
+    fails("environment_control_lost", act, grant, 5, "snapshot", None)
+
+    # After the hold ends the user can take over the same session.
+    with client.websocket_connect(path + "/screen", headers={"Origin": ORIGIN}):
+        pass
+    grant = client.portal.call(automation.acquire, "chromium", "default", other)
+    client.portal.call(automation.release, grant)
+    with client.websocket_connect(path + "/screen", headers={"Origin": ORIGIN}):
+        pass
