@@ -56,6 +56,19 @@ def upgrade():
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
+        sa.Column(
+            "last_activity_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column("operation_until", sa.DateTime(timezone=True)),
+        sa.Column("control_owner", sa.Uuid()),
+        sa.Column("control_kind", sa.String(16)),
+        sa.Column("control_until", sa.DateTime(timezone=True)),
+        sa.Column(
+            "control_generation", sa.BigInteger(), server_default=sa.text("0"), nullable=False
+        ),
         sa.CheckConstraint(
             "state IN ('starting', 'ready', 'stopping', 'review', 'stopped', 'failed')",
             name="ck_environment_session_state",
@@ -63,6 +76,12 @@ def upgrade():
         sa.CheckConstraint(
             "purpose IN ('interactive', 'backup')",
             name="ck_environment_session_purpose",
+        ),
+        sa.CheckConstraint(
+            "(control_owner IS NULL) = (control_kind IS NULL)"
+            " AND (control_owner IS NULL) = (control_until IS NULL)"
+            " AND (control_kind IS NULL OR control_kind IN ('human', 'automation'))",
+            name="ck_environment_session_control",
         ),
         schema="keystone",
     )

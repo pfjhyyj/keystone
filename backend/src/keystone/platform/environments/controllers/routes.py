@@ -21,7 +21,6 @@ def _service(connection, context):
     return EnvironmentService(
         context,
         connection.app.state.opensandbox,
-        connection.app.state.environment_controls,
         connection.app.state.runtime.managed_files(context),
         connection.app.state.runtime.environment_keys,
     )
@@ -57,12 +56,13 @@ async def check_session(request: Request, environment_id: UUID, session_id: UUID
     return await _service(request, access_context(request)).check(environment_id, session_id)
 
 
-async def _relay(socket, upstream, control, verify, expiry):
+async def _relay(socket, upstream, verify, expiry):
     loop = asyncio.get_running_loop()
     deadline = loop.time() + min(5, (expiry - utcnow()).total_seconds())
 
     def allowed():
-        return not control.stop.is_set() and loop.time() < deadline
+        # Renewal every 2s rechecks the hold; a stop or lost hold ends forwarding within 5s.
+        return loop.time() < deadline
 
     async def input_frames():
         while allowed():
@@ -87,10 +87,7 @@ async def _relay(socket, upstream, control, verify, expiry):
                 _, expiry = await verify()
             deadline = loop.time() + min(5, (expiry - utcnow()).total_seconds())
 
-    tasks = [
-        asyncio.create_task(task())
-        for task in (input_frames, output_frames, reauthorize, control.stop.wait)
-    ]
+    tasks = [asyncio.create_task(task()) for task in (input_frames, output_frames, reauthorize)]
     try:
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
@@ -112,17 +109,15 @@ async def screen(socket: WebSocket, environment_id: UUID, session_id: UUID):
             async with service.runtime.stream(sandbox_id, session_id) as upstream:
 
                 async def verify():
-                    return await service.stream_authorized(environment_id, session_id)
+                    return await service.renew(environment_id, session_id, control)
 
                 async with asyncio.timeout(3):
                     _, expiry = await verify()
-                if control.stop.is_set():
-                    return
                 await socket.accept(
                     subprotocol="binary" if "binary" in socket.scope["subprotocols"] else None
                 )
                 accepted = True
-                await _relay(socket, upstream, control, verify, expiry)
+                await _relay(socket, upstream, verify, expiry)
     except ServiceError:
         code = 1008
     except (RuntimeUnavailable, TimeoutError, KeyError):

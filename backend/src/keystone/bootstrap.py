@@ -22,7 +22,6 @@ from keystone.platform.audit.controllers import router as audit_router
 from keystone.platform.dictionary.controllers import router as dictionary_router
 from keystone.platform.environments.adapters.opensandbox import OpenSandbox
 from keystone.platform.environments.controllers.routes import router as environments_router
-from keystone.platform.environments.services.environments import EnvironmentControls
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.files.services.files import FileService
 from keystone.platform.files.services.references import FileReferenceService
@@ -59,19 +58,24 @@ class Runtime:
     worker_lease: object | None = None
     execution_guard: Callable | None = None
     environment_keys: Mapping = field(default_factory=dict)
+    opensandbox: OpenSandbox | None = None
     history_offset: int = 0
     tasks: TaskClient | None = None
 
     async def close(self):
         try:
-            if self.tasks is not None:
-                await self.tasks.close()
+            if self.opensandbox is not None:
+                await self.opensandbox.close()
         finally:
             try:
-                if self.flow_engine is not None:
-                    await self.flow_engine.close()
+                if self.tasks is not None:
+                    await self.tasks.close()
             finally:
-                await self.database.close()
+                try:
+                    if self.flow_engine is not None:
+                        await self.flow_engine.close()
+                finally:
+                    await self.database.close()
 
     def managed_files(self, identity):
         return FileService(identity, self.storage)
@@ -168,6 +172,13 @@ def build_runtime(settings: Settings) -> Runtime:
         execution_guard=composition.EXECUTION_GUARD,
         environment_keys=composition.build_environment_keys(),
     )
+    if settings.opensandbox_url:
+        # Shared by API requests and Worker maintenance; both reach the same provider.
+        runtime.opensandbox = OpenSandbox(
+            settings.opensandbox_url,
+            settings.opensandbox_key.get_secret_value(),
+            settings.browser_runtime_image,
+        )
     if settings.database_url:
         from keystone.platform.flow.adapters.dbos import Engine
 
@@ -186,23 +197,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.runtime = runtime
         app.state.passwords = Passwords()
         app.state.login_limiter = LoginLimiter()
-        opensandbox = None
         try:
-            if settings.opensandbox_url:
-                opensandbox = OpenSandbox(
-                    settings.opensandbox_url,
-                    settings.opensandbox_key.get_secret_value(),
-                    settings.browser_runtime_image,
-                )
-            app.state.opensandbox = opensandbox
-            app.state.environment_controls = EnvironmentControls()
+            app.state.opensandbox = runtime.opensandbox
             yield
         finally:
-            try:
-                if opensandbox is not None:
-                    await opensandbox.close()
-            finally:
-                await runtime.close()
+            await runtime.close()
 
     app = FastAPI(title="Keystone", version=__version__, lifespan=lifespan)
     app.add_middleware(BrowserSessionRenewal, has_active_work=FlowService.has_running_work)

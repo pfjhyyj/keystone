@@ -28,7 +28,7 @@
 | `database_connect_timeout_seconds` | `KEYSTONE_DATABASE_CONNECT_TIMEOUT_SECONDS` | 默认 10，范围 1–60；业务连接池新建连接的等待上限，超时在事务开始前返回 `database_connection_busy` |
 | `host` / `port` | `KEYSTONE_HOST` / `KEYSTONE_PORT` | `127.0.0.1` / `8000` |
 | `browser_origins` | `KEYSTONE_BROWSER_ORIGINS` | 精确的浏览器来源数组；生产要求 HTTPS |
-| `opensandbox_url` / `opensandbox_key` / `browser_runtime_image` | `KEYSTONE_OPENSANDBOX_URL` / `KEYSTONE_OPENSANDBOX_KEY` / `KEYSTONE_BROWSER_RUNTIME_IMAGE` | 可选的[交互环境](../domains/environments/README.md)；OpenSandbox 地址、API Key 和固定的浏览器运行镜像，三者必须同时配置 |
+| `opensandbox_url` / `opensandbox_key` / `browser_runtime_image` | `KEYSTONE_OPENSANDBOX_URL` / `KEYSTONE_OPENSANDBOX_KEY` / `KEYSTONE_BROWSER_RUNTIME_IMAGE` | 可选的[交互环境](../domains/environments/README.md)；OpenSandbox 地址、API Key 和固定的浏览器运行镜像，三者必须同时配置；API 与 Worker 共用 |
 | `browser_backup_key` | `KEYSTONE_BROWSER_BACKUP_KEY` | 可选；32 字节十六进制备份密钥。设置后启用浏览器环境备份，且 `file_default_storage` 必须是本地 `filesystem` |
 | `log_level` | `KEYSTONE_LOG_LEVEL` | `INFO` |
 | `session_hours` / `pat_max_days` | `KEYSTONE_SESSION_HOURS` / `KEYSTONE_PAT_MAX_DAYS` | 72 小时 / 90 天 |
@@ -56,7 +56,7 @@
 
 ## 3. 配置变更
 
-执行、预算和文件配置进入 Worker 公共配置校验，API/Worker 必须一致，修改时停止全部旧进程后统一发布（见[更新与恢复](deployment.md#3-更新与恢复)）；固定身份不参与。本地媒体可设置 `file_max_bytes = 17179869184`（16 GiB），容量预留与错误语义见[文件容量](../domains/files.md#51-文件容量与临时目录)。不要手动清理协调目录下的 `.capacity`、`.locks` 或受管 `files`。默认 Nginx API 正文上限为 16 MiB；接入大文件业务时只给实际上传/内容路由设置正文上限、传输期限及 `proxy_request_buffering off` / `proxy_buffering off`，与后端限制一致。实际 NAS 吞吐及容量须部署时实测。
+执行、预算、文件和交互环境提供方配置进入 Worker 公共配置校验，API/Worker 必须一致，修改时停止全部旧进程后统一发布（见[更新与恢复](deployment.md#3-更新与恢复)）；固定身份不参与。本地媒体可设置 `file_max_bytes = 17179869184`（16 GiB），容量预留与错误语义见[文件容量](../domains/files.md#51-文件容量与临时目录)。不要手动清理协调目录下的 `.capacity`、`.locks` 或受管 `files`。默认 Nginx API 正文上限为 16 MiB；接入大文件业务时只给实际上传/内容路由设置正文上限、传输期限及 `proxy_request_buffering off` / `proxy_buffering off`，与后端限制一致。实际 NAS 吞吐及容量须部署时实测。
 
 模型渠道和凭据在控制台手动配置，步骤见 [README](../../README.md#模型配置手动)，保存后无需重启；加密密钥首次保存时写入协调目录。渠道与查费方式见[模型实现参考](../reference/model-access.md#渠道与模型列表)。
 

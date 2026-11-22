@@ -39,6 +39,9 @@ def config_digest(settings):
         "pat_retention_days",
         "audit_retention_days",
         "maintenance_retention_days",
+        "opensandbox_url",
+        "opensandbox_key",
+        "browser_runtime_image",
     )
 
     def serialize(value):

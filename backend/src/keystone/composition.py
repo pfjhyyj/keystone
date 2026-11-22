@@ -99,12 +99,13 @@ def register_maintenance(runtime, health):
     # Always register guarded entrypoints: persisted ticks may arrive before a
     # disabled plan is paused. No runtime handles or credentials enter inputs.
     from keystone.core.execution import history as history_jobs
+    from keystone.platform.environments.tasks import workflows as environment_jobs
     from keystone.platform.files.tasks import workflows as files_jobs
     from keystone.platform.flow.tasks import workflows as flow_jobs
     from keystone.platform.model_access.tasks import workflows as model_jobs
 
     bindings, installers = [], []
-    for module in (files_jobs, flow_jobs, model_jobs):
+    for module in (files_jobs, flow_jobs, model_jobs, environment_jobs):
         tasks, install = module.register(runtime, health)
         bindings.extend(tasks)
         installers.append(install)
@@ -127,6 +128,7 @@ def register_maintenance(runtime, health):
         QueueDefinition(files_jobs.QUEUE, 1, 1),
         QueueDefinition(flow_jobs.QUEUE, 1, 1),
         QueueDefinition(history_jobs.QUEUE, 1, 1),
+        QueueDefinition(environment_jobs.QUEUE, 1, 1),
     )
     queues = queue_budgets(
         bindings,
@@ -136,6 +138,7 @@ def register_maintenance(runtime, health):
             flow_jobs.RECONCILE_SCHEDULE,
             model_jobs.COST_SCHEDULE,
             history_jobs.HISTORY_SCHEDULE,
+            environment_jobs.IDLE_STOP_SCHEDULE,
         ),
         other_entrypoints=(
             definition.entrypoint for definition in runtime.flow_definitions.values()

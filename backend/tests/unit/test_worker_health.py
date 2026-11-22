@@ -81,6 +81,7 @@ def runtime(monkeypatch):
         database=SimpleNamespace(close=AsyncMock()),
         flow_engine=SimpleNamespace(close=AsyncMock()),
         tasks=SimpleNamespace(close=AsyncMock()),
+        opensandbox=None,
         storage=object(),
         readiness=AsyncMock(return_value={"status": "ready", "checks": {"database": "ok"}}),
         observations=[],

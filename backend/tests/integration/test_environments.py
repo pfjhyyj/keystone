@@ -1,18 +1,24 @@
 import asyncio
 import hashlib
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from threading import Event
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import WebSocketDisconnect
 from pydantic import SecretStr
+from sqlalchemy import update
 from test_identity import ORIGIN, create_user, login
 from test_identity import client as client
 
 from keystone.core.config import Settings
+from keystone.core.time import utcnow
 from keystone.platform.environments.adapters.opensandbox import RuntimeUnavailable
+from keystone.platform.environments.models import EnvironmentSession
+from keystone.platform.environments.services.idle import stop_idle
 from keystone.platform.environments.services.registration import register_environment
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.files.services.references import registered_file_ids
@@ -293,6 +299,18 @@ class FirstUseRuntime:
     async def delete(self, sandbox):
         self.sandboxes.pop(sandbox, None)
 
+    @asynccontextmanager
+    async def stream(self, sandbox, run):
+        class Socket:
+            async def send(self, frame):
+                pass
+
+            async def __aiter__(self):
+                await asyncio.Event().wait()
+                yield b""
+
+        yield Socket()
+
 
 def test_default_environment_is_created_on_first_use_and_initialized_once(client):
     login(client)
@@ -319,3 +337,82 @@ def test_default_environment_is_created_on_first_use_and_initialized_once(client
     assert missing.status_code == 409
     assert missing.json()["code"] == "environment_state_missing"
     assert [initialize for _, initialize in runtime.creates] == [True, False]
+
+
+def _ready_default(client):
+    runtime = FirstUseRuntime()
+    client.app.state.opensandbox = runtime
+    created = client.post("/api/v1/environments", json={"kind": "chromium", "key": "default"})
+    path = f"/api/v1/environments/{created.json()['id']}"
+    opened = client.post(path + "/open").json()
+    assert opened["state"] == "ready"
+    return runtime, path, UUID(opened["id"])
+
+
+def _update_session(client, session_id, **values):
+    async def change():
+        async with client.app.state.runtime.database.transaction() as session:
+            await session.execute(
+                update(EnvironmentSession)
+                .where(EnvironmentSession.id == session_id)
+                .values(**values)
+            )
+
+    client.portal.call(change)
+
+
+def test_idle_sessions_stop_in_maintenance_unless_held_or_recent(client):
+    login(client)
+    runtime, path, session_id = _ready_default(client)
+    database = client.app.state.runtime.database
+
+    assert client.portal.call(stop_idle, database, runtime) == 0
+    _update_session(client, session_id, last_activity_at=utcnow() - timedelta(hours=1))
+    _update_session(
+        client,
+        session_id,
+        control_owner=uuid4(),
+        control_kind="automation",
+        control_until=utcnow() + timedelta(minutes=1),
+    )
+    assert client.portal.call(stop_idle, database, runtime) == 0
+    stop = client.post(f"{path}/sessions/{session_id}/stop")
+    assert stop.status_code == 409 and stop.json()["code"] == "environment_in_use"
+
+    # A hold from a crashed process lapses on its own.
+    _update_session(client, session_id, control_until=utcnow() - timedelta(seconds=1))
+    assert client.portal.call(stop_idle, database, runtime) == 1
+    [view] = client.get("/api/v1/environments").json()
+    assert view["session"]["state"] == "stopped" and not runtime.sandboxes
+
+
+def test_screen_hold_is_shared_across_processes_and_released_on_close(client):
+    login(client)
+    _, path, session_id = _ready_default(client)
+    screen = f"{path}/sessions/{session_id}/screen"
+    other = uuid4()
+    _update_session(
+        client,
+        session_id,
+        control_owner=other,
+        control_kind="human",
+        control_until=utcnow() + timedelta(minutes=1),
+    )
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(screen, headers={"Origin": ORIGIN}):
+            pytest.fail("A hold recorded by another process was ignored")
+
+    _update_session(client, session_id, control_until=utcnow() - timedelta(seconds=1))
+
+    async def holder():
+        async with client.app.state.runtime.database.transaction() as session:
+            run = await session.get(EnvironmentSession, session_id)
+            return run.control_owner, run.control_kind
+
+    with client.websocket_connect(screen, headers={"Origin": ORIGIN}):
+        owner, kind = client.portal.call(holder)
+        assert owner not in {None, other} and kind == "human"
+    deadline = time.monotonic() + 5
+    while client.portal.call(holder) != (None, None):
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
