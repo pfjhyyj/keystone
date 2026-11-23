@@ -205,7 +205,7 @@ sequenceDiagram
 
 配置变更与成功审计同事务。业务决定的审计由业务 handler 写入，操作者为执行身份，details 记录 via=messaging、入站 ID 和触发人的 external_user_id；入站拒绝记 denied。发送结果保存在 MessageDelivery，不逐次写审计。凭据、access token、回调密钥、原始报文、命令原文和 supplied 内容不进入审计、日志或检查点。
 
-投递与入站记录纳入[历史清理](../operations/deployment.md#历史保留与清理)，默认保留 180 天；仍为 pending、sending 或 received 的记录不清理。
+投递与入站记录纳入[历史清理](../operations/deployment.md#历史保留与清理)，保留期与规则在该处维护；仍为 pending、sending 或 received 的记录不清理。
 
 ## 7. 不变量
 
@@ -232,5 +232,5 @@ sequenceDiagram
 | 飞书自建应用发送 | 已实现：App ID/Secret 配置（token 只在进程内缓存）、从机器人所在的群选择发送目标、按投递 ID 去重发送并在窗口内重试未知结果、保存消息 ID、单独删除发送目标；卡片使用只读卡片结构，与群机器人相同。选群失败和投递错误按错误码附处理提示（缺权限、未启用机器人、机器人不在群等），对照表只在适配器维护 |
 | 飞书账号绑定 | 已实现：按邮箱或手机号查询 open_id 绑定、解除绑定、给绑定用户发测试消息、业务按 user_id 登记；发送时复查绑定与在职，解绑或停用的投递记 failed（recipient_unbound/recipient_disabled），不改发他人 |
 | 入站 | 未实现：长连接入站、命令、卡片动作、执行用户、回复原消息、发送时取内容；企业微信自建应用与群机器人 |
-| 历史清理 | 投递记录尚未纳入历史清理 |
+| 历史清理 | 已实现：已结束的投递记录按保留期清理；入站记录待入站实现后纳入 |
 | 渠道事实核验 | 飞书已按官方文档核验：token 使用推荐的 `accounts.feishu.cn/oauth/v3/token`（旧 `auth/v3/tenant_access_token/internal` 已标为历史版本），机器人不在群 230002、群已解散 232009、限频 230020、卡片请求体 ≤30 KB；自建应用已真实联调通过 token 获取、群列表和文本消息发送；token 失效码 99991661/99991663/99991665 与卡片结构在自建应用上待真实联调，重推事件 ID 与卡片回调经长连接待联调；企业微信待核验 |

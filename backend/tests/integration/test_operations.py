@@ -259,6 +259,7 @@ def test_retention_preserves_active_recent_and_run_linked_credentials_and_calls(
     query(client, seed)
     preview = client.portal.call(runtime.history_retention().execute)
     assert preview["sessions"] == preview["tokens"] == 2 and preview["audit"] == 1
+    assert preview["message_deliveries"] == 0
     assert preview["applied"] is False
     assert (
         query(

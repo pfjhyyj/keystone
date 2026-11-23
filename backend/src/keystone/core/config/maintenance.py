@@ -7,3 +7,4 @@ class MaintenanceSettings(BaseModel):
     pat_retention_days: int = Field(default=90, ge=1, le=3650)
     audit_retention_days: int = Field(default=365, ge=1, le=3650)
     maintenance_retention_days: int = Field(default=30, ge=1, le=3650)
+    message_delivery_retention_days: int = Field(default=30, ge=1, le=3650)

@@ -167,6 +167,7 @@ def build_history_retention(runtime):
     from keystone.platform.flow.services.identity import retained_execution_ids, retained_token_ids
     from keystone.platform.flow.tasks.definitions import RECONCILE, RECONCILE_SCHEDULE
     from keystone.platform.identity.services.retention import prune_credentials
+    from keystone.platform.messaging.services.retention import prune_deliveries
     from keystone.platform.model_access.tasks.definitions import (
         COST_SCAN,
         COST_SCHEDULE,
@@ -206,6 +207,11 @@ def build_history_retention(runtime):
     return HistoryRetention(
         partial(prune_credentials, runtime.database, runtime.settings, retained_token_ids),
         partial(prune_audit, runtime.database, runtime.settings.audit_retention_days),
+        partial(
+            prune_deliveries,
+            runtime.database,
+            runtime.settings.message_delivery_retention_days,
+        ),
         maintenance,
     )
 

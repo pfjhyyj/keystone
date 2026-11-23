@@ -18,6 +18,7 @@ from keystone.platform.messaging.services import channels as channels_module
 from keystone.platform.messaging.services import dispatch as dispatch_module
 from keystone.platform.messaging.services.deliveries import enqueue_in_transaction
 from keystone.platform.messaging.services.dispatch import dispatch
+from keystone.platform.messaging.services.retention import prune_deliveries
 
 pytestmark = pytest.mark.postgres
 HOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/secret-token-value"
@@ -194,6 +195,46 @@ def test_outcomes_are_final_and_deadlines_and_disabled_channels_hold(client, sen
     client.patch(f"{ROOT}/channels/{channel['id']}", json={"name": "运维群", "is_active": True})
     assert run_dispatch(client) == 1
     assert statuses(client)[-1][0] == "succeeded"
+
+
+def test_history_cleanup_removes_only_finished_deliveries_past_retention(client, sender):
+    configure(client)
+    old = utcnow() - timedelta(days=31)
+    finished = [add(client) for _ in range(3)]
+    run_dispatch(client)
+    waiting, recent = add(client), add(client)
+    run_dispatch(client)
+    claimed = add(client)
+
+    # Ages are set directly: one old row per open status stays, as does a recently ended one.
+    async def age():
+        async with client.app.state.runtime.database.transaction() as session:
+            for identifier, status in (
+                (finished[0], "succeeded"),
+                (finished[1], "failed"),
+                (finished[2], "unknown"),
+                (waiting, "pending"),
+                (claimed, "sending"),
+            ):
+                await session.execute(
+                    update(MessageDelivery)
+                    .where(MessageDelivery.id == identifier)
+                    .values(status=status, created_at=old, updated_at=old)
+                )
+            await session.execute(
+                update(MessageDelivery)
+                .where(MessageDelivery.id == recent)
+                .values(created_at=old, updated_at=utcnow() - timedelta(days=1))
+            )
+
+    client.portal.call(age)
+    prune = partial(prune_deliveries, client.app.state.runtime.database, 30)
+    assert client.portal.call(prune) == 3
+    assert len(statuses(client)) == 6
+    assert client.portal.call(partial(prune, apply=True)) == 3
+    remaining = query(client, lambda session: session.scalars(select(MessageDelivery.id)))
+    assert set(remaining.all()) == {waiting, recent, claimed}
+    assert client.portal.call(partial(prune, apply=True)) == 0
 
 
 def test_missing_key_is_not_replaced_while_ciphertexts_exist(client):
