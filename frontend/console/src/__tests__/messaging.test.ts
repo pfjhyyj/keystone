@@ -1,25 +1,22 @@
-import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { describe, expect, it, vi } from 'vitest'
+import * as confirmation from '../utils/confirm'
 import MessagingView from '../views/messaging/MessagingView.vue'
 import { authorize, fakeApi } from './support'
 
 const stamp = '2026-01-01T00:00:00Z'
+const destination = {
+  id: '22222222-2222-4222-8222-222222222222',
+  key: 'ops.alerts',
+  is_active: true,
+}
 const channel = {
   id: '11111111-1111-4111-8111-111111111111',
   name: '运维群',
   provider: 'feishu_webhook',
   is_active: true,
   has_credential: true,
-  created_at: stamp,
-  updated_at: stamp,
-}
-const destination = {
-  id: '22222222-2222-4222-8222-222222222222',
-  key: 'ops.alerts',
-  channel_id: channel.id,
-  external_id: null,
-  name: '运维群',
-  is_active: true,
+  destination,
   created_at: stamp,
   updated_at: stamp,
 }
@@ -50,11 +47,13 @@ describe('messaging administration', () => {
         writes.push([path, init.method, init.body ? JSON.parse(String(init.body)) : null])
         return path.endsWith('/test') ? { delivery_id: delivery.id } : channel
       }
-      return path.startsWith('/messaging/channels') ? [channel] : [destination]
+      return [channel]
     })
     const wrapper = mount(MessagingView)
     await flushPromises()
     expect(wrapper.text()).toContain('已设置')
+    expect(wrapper.text()).toContain('ops.alerts')
+    expect(wrapper.text()).not.toContain('接收方')
     expect(wrapper.text()).not.toContain('投递记录')
 
     await button(wrapper, '编辑渠道').trigger('click')
@@ -70,7 +69,8 @@ describe('messaging administration', () => {
     await button(wrapper, '新建渠道').trigger('click')
     const inputs = wrapper.findAll('[role=dialog] input')
     await inputs[0]!.setValue('新群')
-    await inputs[1]!.setValue('https://open.feishu.cn/open-apis/bot/v2/hook/abc')
+    await inputs[1]!.setValue('daily.report')
+    await inputs[2]!.setValue('https://open.feishu.cn/open-apis/bot/v2/hook/abc')
     await wrapper.get('[role=dialog] form').trigger('submit')
     await flushPromises()
     expect(writes[1]).toEqual([
@@ -80,6 +80,7 @@ describe('messaging administration', () => {
         name: '新群',
         provider: 'feishu_webhook',
         credential: { url: 'https://open.feishu.cn/open-apis/bot/v2/hook/abc' },
+        destination_key: 'daily.report',
       },
     ])
   })
@@ -93,7 +94,7 @@ describe('messaging administration', () => {
         return { delivery_id: delivery.id }
       }
       if (path.startsWith('/messaging/deliveries')) return [delivery]
-      return path.startsWith('/messaging/channels') ? [channel] : [destination]
+      return [channel]
     })
     const wrapper = mount(MessagingView)
     await flushPromises()
@@ -103,5 +104,69 @@ describe('messaging administration', () => {
     expect(wrapper.text()).toContain('测试消息已登记')
     expect(wrapper.text()).toContain('结果未知')
     expect(wrapper.text()).toContain('send_unconfirmed')
+  })
+
+  it('gives a channel saved without a key its destination on the next edit', async () => {
+    authorize(['messaging:manage'])
+    const writes: [string, string | undefined, unknown][] = []
+    fakeApi((path, init) => {
+      if (init.method && init.method !== 'GET') {
+        writes.push([path, init.method, JSON.parse(String(init.body))])
+        return channel
+      }
+      return [{ ...channel, destination: null }]
+    })
+    const wrapper = mount(MessagingView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('未设置')
+    expect(button(wrapper, '发送测试消息').attributes('disabled')).toBeDefined()
+    await button(wrapper, '编辑渠道').trigger('click')
+    await wrapper.findAll('[role=dialog] input')[1]!.setValue('ops.alerts')
+    await wrapper.get('[role=dialog] form').trigger('submit')
+    await flushPromises()
+    expect(writes).toEqual([
+      [`/messaging/channels/${channel.id}`, 'PATCH', { name: '运维群', is_active: true }],
+      [
+        '/messaging/destinations',
+        'POST',
+        { key: 'ops.alerts', channel_id: channel.id, name: '运维群' },
+      ],
+    ])
+  })
+
+  it('deletes a channel only after confirmation', async () => {
+    authorize(['messaging:manage'])
+    const writes: [string, string | undefined][] = []
+    let rows = [channel]
+    fakeApi((path, init) => {
+      if (init.method === 'DELETE') {
+        writes.push([path, init.method])
+        rows = []
+        return null
+      }
+      return rows
+    })
+    const confirm = vi.spyOn(confirmation, 'confirmAction').mockResolvedValueOnce(false)
+    const wrapper = mount(MessagingView)
+    await flushPromises()
+    const remove = async () => {
+      await wrapper.get('.row-more-trigger').trigger('click')
+      await flushPromises()
+      await button(new DOMWrapper(document.body) as unknown as VueWrapper, '删除渠道').trigger(
+        'click',
+      )
+    }
+    await remove()
+    await flushPromises()
+    expect(writes).toEqual([])
+    expect(confirm.mock.calls[0]![0]).toContain('ops.alerts')
+
+    confirm.mockResolvedValueOnce(true)
+    await remove()
+    await flushPromises()
+    expect(writes).toEqual([[`/messaging/channels/${channel.id}`, 'DELETE']])
+    expect(wrapper.text()).toContain('渠道已删除')
+    expect(wrapper.text()).toContain('暂无消息渠道')
+    confirm.mockRestore()
   })
 })

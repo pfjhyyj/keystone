@@ -8,8 +8,26 @@ CATALOG = Catalog(
         "message_delivery:read": "查看消息投递记录（不含内容）",
     },
     audit_actions={
-        "messaging.channel.create": {"name", "provider", "is_active", "credential_changed"},
-        "messaging.channel.update": {"name", "provider", "is_active", "credential_changed"},
+        "messaging.channel.create": {
+            "name",
+            "provider",
+            "is_active",
+            "credential_changed",
+            "destination_key",
+        },
+        "messaging.channel.update": {
+            "name",
+            "provider",
+            "is_active",
+            "credential_changed",
+            "destination_key",
+        },
+        "messaging.channel.delete": {
+            "name",
+            "provider",
+            "destination_keys",
+            "deliveries_removed",
+        },
         "messaging.destination.create": {"key", "channel_id", "name", "is_active"},
         "messaging.destination.update": {"key", "channel_id", "name", "is_active"},
         "messaging.destination.test": {"delivery_id"},

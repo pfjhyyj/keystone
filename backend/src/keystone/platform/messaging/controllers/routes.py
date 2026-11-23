@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Response
 
 from keystone.core.http import Page
 from keystone.platform.identity.controllers.dependencies import access_context
@@ -28,6 +28,12 @@ async def create_channel(data: schemas.ChannelCreate, request: Request):
 @router.patch("/channels/{identifier}")
 async def edit_channel(identifier: UUID, data: schemas.ChannelEdit, request: Request):
     return await _channels(request).save_channel(data, identifier)
+
+
+@router.delete("/channels/{identifier}", status_code=204)
+async def delete_channel(identifier: UUID, request: Request):
+    await _channels(request).delete_channel(identifier)
+    return Response(status_code=204)
 
 
 @router.get("/destinations")

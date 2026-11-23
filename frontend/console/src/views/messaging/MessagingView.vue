@@ -3,17 +3,13 @@ import { computed, inject, ref } from 'vue'
 import { routeLocationKey, routerKey } from 'vue-router'
 import { can } from '../../stores/session'
 import { request } from '../../api/client'
-import {
-  messagingApi,
-  type MessageChannel,
-  type MessageDelivery,
-  type MessageDestination,
-} from '../../api/messaging'
+import { messagingApi, type MessageChannel, type MessageDelivery } from '../../api/messaging'
 import { usePagedList } from '../../composables/usePagedList'
 import { useAction } from '../../composables/useAction'
 import AppDialog from '../../components/AppDialog.vue'
-import AppSelect from '../../components/AppSelect.vue'
 import ListPager from '../../components/ListPager.vue'
+import RowMore from '../../components/RowMore.vue'
+import { confirmAction } from '../../utils/confirm'
 
 const statusText: Record<MessageDelivery['status'], string> = {
   pending: '待发送',
@@ -28,7 +24,7 @@ const providerText = { feishu_webhook: '飞书群机器人' }
 const route = inject(routeLocationKey, undefined),
   router = inject(routerKey, undefined)
 const tabs = computed(() => [
-  ...(can('messaging:manage') ? ['channels', 'destinations'] : []),
+  ...(can('messaging:manage') ? ['channels'] : []),
   ...(can('message_delivery:read') ? ['deliveries'] : []),
 ])
 const localTab = ref('')
@@ -43,15 +39,13 @@ const tab = computed({
   },
 })
 const channelList = usePagedList('messaging:manage', messagingApi.channels)
-const destinationList = usePagedList('messaging:manage', messagingApi.destinations)
 const deliveryList = usePagedList('message_delivery:read', messagingApi.deliveries)
 const { busy, error, notice, run } = useAction()
-const channelName = (id: string) =>
-  channelList.rows.value.find((row) => row.id === id)?.name ?? id.slice(0, 8)
 
 const channelDialog = ref(false),
   editingChannel = ref<MessageChannel | null>(null),
   name = ref(''),
+  key = ref(''),
   active = ref(true),
   replaceCredential = ref(true),
   webhook = ref(''),
@@ -59,6 +53,7 @@ const channelDialog = ref(false),
 function editChannel(row: MessageChannel | null) {
   editingChannel.value = row
   name.value = row?.name ?? ''
+  key.value = row?.destination?.key ?? ''
   active.value = row?.is_active ?? true
   replaceCredential.value = !row
   webhook.value = ''
@@ -68,20 +63,29 @@ function editChannel(row: MessageChannel | null) {
 }
 async function saveChannel() {
   await run(async () => {
+    const editing = editingChannel.value
     const credential = replaceCredential.value
       ? { url: webhook.value, ...(secret.value ? { secret: secret.value } : {}) }
       : undefined
-    if (editingChannel.value)
-      await request(`/messaging/channels/${editingChannel.value.id}`, 'PATCH', {
+    if (editing) {
+      await request(`/messaging/channels/${editing.id}`, 'PATCH', {
         name: name.value,
         is_active: active.value,
         ...(credential ? { credential } : {}),
       })
-    else
+      // Channels saved before keys moved onto the channel form get theirs here.
+      if (!editing.destination)
+        await request('/messaging/destinations', 'POST', {
+          key: key.value,
+          channel_id: editing.id,
+          name: name.value,
+        })
+    } else
       await request('/messaging/channels', 'POST', {
         name: name.value,
         provider: 'feishu_webhook',
         credential,
+        destination_key: key.value,
       })
     webhook.value = secret.value = ''
     channelDialog.value = false
@@ -89,48 +93,24 @@ async function saveChannel() {
     channelList.search()
   })
 }
-
-const destinationDialog = ref(false),
-  editingDestination = ref<MessageDestination | null>(null),
-  key = ref(''),
-  channelId = ref(''),
-  destinationName = ref(''),
-  destinationActive = ref(true)
-const freeChannels = computed(() =>
-  channelList.rows.value.filter(
-    (row) => !destinationList.rows.value.some((item) => item.channel_id === row.id),
-  ),
-)
-function editDestination(row: MessageDestination | null) {
-  editingDestination.value = row
-  key.value = row?.key ?? ''
-  channelId.value = row?.channel_id ?? freeChannels.value[0]?.id ?? ''
-  destinationName.value = row?.name ?? ''
-  destinationActive.value = row?.is_active ?? true
-  error.value = ''
-  destinationDialog.value = true
-}
-async function saveDestination() {
+async function deleteChannel(row: MessageChannel) {
+  if (
+    !(await confirmAction(
+      `删除“${row.name}”？消息标识${row.destination ? `“${row.destination.key}”` : ''}和投递记录会一并删除，待发送的消息不再发送，删除后不可恢复。只想暂停可改为停用。`,
+      { title: '删除渠道', confirmText: '确认删除', danger: true },
+    ))
+  )
+    return
   await run(async () => {
-    if (editingDestination.value)
-      await request(`/messaging/destinations/${editingDestination.value.id}`, 'PATCH', {
-        name: destinationName.value,
-        is_active: destinationActive.value,
-      })
-    else
-      await request('/messaging/destinations', 'POST', {
-        key: key.value,
-        channel_id: channelId.value,
-        name: destinationName.value,
-      })
-    destinationDialog.value = false
-    notice.value = '接收方已保存'
-    destinationList.search()
+    await request(`/messaging/channels/${row.id}`, 'DELETE')
+    notice.value = '渠道已删除'
+    await channelList.reload()
+    if (can('message_delivery:read')) deliveryList.search()
   })
 }
-async function sendTest(row: MessageDestination) {
+async function sendTest(row: MessageChannel) {
   await run(async () => {
-    await request(`/messaging/destinations/${row.id}/test`, 'POST')
+    await request(`/messaging/destinations/${row.destination!.id}/test`, 'POST')
     notice.value = '测试消息已登记，Worker 将在几秒内发送，可在投递记录中查看结果'
     if (can('message_delivery:read')) deliveryList.search()
   })
@@ -144,7 +124,7 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
       notice
     }}</el-alert>
     <el-alert
-      v-if="error && !channelDialog && !destinationDialog"
+      v-if="error && !channelDialog"
       role="alert"
       type="error"
       show-icon
@@ -174,6 +154,8 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
         <div class="table-scroll">
           <el-table
             :fit="false"
+            native-scrollbar
+            table-layout="auto"
             :data="channelList.rows.value"
             row-key="id"
             stripe
@@ -181,6 +163,11 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
           >
             <el-table-column label="渠道" min-width="160"
               ><template #default="{ row }">{{ row.name }}</template></el-table-column
+            >
+            <el-table-column label="消息标识" min-width="140"
+              ><template #default="{ row }">{{
+                row.destination?.key ?? '未设置'
+              }}</template></el-table-column
             >
             <el-table-column label="类型" min-width="130"
               ><template #default="{ row }">{{
@@ -199,16 +186,34 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
                 }}</StatusTag></template
               ></el-table-column
             >
-            <el-table-column label="操作" min-width="100"
+            <el-table-column label="操作" min-width="200"
               ><template #default="{ row }"
-                ><el-button
-                  type="primary"
-                  link
-                  :disabled="busy"
-                  native-type="button"
-                  @click="editChannel(row)"
-                  >编辑渠道</el-button
-                ></template
+                ><div class="row-actions">
+                  <el-button
+                    type="primary"
+                    link
+                    :disabled="busy || !row.is_active || !row.destination?.is_active"
+                    native-type="button"
+                    @click="sendTest(row)"
+                    >发送测试消息</el-button
+                  ><el-button
+                    type="primary"
+                    link
+                    :disabled="busy"
+                    native-type="button"
+                    @click="editChannel(row)"
+                    >编辑渠道</el-button
+                  ><RowMore :label="`${row.name}的更多操作`"
+                    ><el-button
+                      :disabled="busy"
+                      native-type="button"
+                      type="danger"
+                      link
+                      @click="deleteChannel(row)"
+                      >删除渠道</el-button
+                    ></RowMore
+                  >
+                </div></template
               ></el-table-column
             >
             <template #empty><el-empty :image-size="64" description="暂无消息渠道" /></template>
@@ -219,85 +224,6 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
           :count="channelList.rows.value.length"
           :loading="busy || channelList.loading.value"
           @change="(value: number) => (channelList.page.value = value)"
-        />
-      </el-tab-pane>
-      <el-tab-pane v-if="can('messaging:manage')" label="接收方" name="destinations">
-        <div class="row-actions">
-          <el-button
-            type="primary"
-            :disabled="busy || !freeChannels.length"
-            native-type="button"
-            @click="editDestination(null)"
-            >新建接收方</el-button
-          ><el-button
-            :disabled="busy || destinationList.loading.value"
-            native-type="button"
-            @click="destinationList.reload()"
-            >刷新</el-button
-          >
-        </div>
-        <el-alert
-          v-if="destinationList.error.value"
-          role="alert"
-          type="error"
-          show-icon
-          :closable="false"
-          >{{ destinationList.error.value }}</el-alert
-        >
-        <div class="table-scroll">
-          <el-table
-            :fit="false"
-            :data="destinationList.rows.value"
-            row-key="id"
-            stripe
-            class="data-table"
-          >
-            <el-table-column label="接收方" min-width="160"
-              ><template #default="{ row }"
-                >{{ row.name }}<small>{{ row.key }}</small></template
-              ></el-table-column
-            >
-            <el-table-column label="渠道" min-width="140"
-              ><template #default="{ row }">{{
-                channelName(row.channel_id)
-              }}</template></el-table-column
-            >
-            <el-table-column label="状态" min-width="100"
-              ><template #default="{ row }"
-                ><StatusTag :status="row.is_active ? 'active' : 'disabled'">{{
-                  row.is_active ? '启用' : '停用'
-                }}</StatusTag></template
-              ></el-table-column
-            >
-            <el-table-column label="操作" min-width="180"
-              ><template #default="{ row }"
-                ><div class="row-actions">
-                  <el-button
-                    type="primary"
-                    link
-                    :disabled="busy || !row.is_active"
-                    native-type="button"
-                    @click="sendTest(row)"
-                    >发送测试消息</el-button
-                  ><el-button
-                    type="primary"
-                    link
-                    :disabled="busy"
-                    native-type="button"
-                    @click="editDestination(row)"
-                    >编辑</el-button
-                  >
-                </div></template
-              ></el-table-column
-            >
-            <template #empty><el-empty :image-size="64" description="暂无接收方" /></template>
-          </el-table>
-        </div>
-        <ListPager
-          :page="destinationList.page.value"
-          :count="destinationList.rows.value.length"
-          :loading="busy || destinationList.loading.value"
-          @change="(value: number) => (destinationList.page.value = value)"
         />
       </el-tab-pane>
       <el-tab-pane v-if="can('message_delivery:read')" label="投递记录" name="deliveries">
@@ -320,6 +246,8 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
         <div class="table-scroll">
           <el-table
             :fit="false"
+            native-scrollbar
+            table-layout="auto"
             :data="deliveryList.rows.value"
             row-key="id"
             stripe
@@ -328,7 +256,7 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
             <el-table-column label="登记时间" min-width="170"
               ><template #default="{ row }">{{ time(row.created_at) }}</template></el-table-column
             >
-            <el-table-column label="接收方" min-width="130"
+            <el-table-column label="消息标识" min-width="130"
               ><template #default="{ row }">{{ row.destination_key }}</template></el-table-column
             >
             <el-table-column label="来源" min-width="200"
@@ -381,6 +309,15 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
       }}</el-alert>
       <form class="dialog-form" @submit.prevent="saveChannel">
         <label>渠道名称<el-input v-model="name" required maxlength="128" /></label>
+        <label
+          >消息标识<el-input
+            v-model="key"
+            :disabled="!!editingChannel?.destination"
+            required
+            pattern="[a-z][a-z0-9_.]{0,63}"
+            placeholder="ops.alerts"
+        /></label>
+        <p>业务代码按消息标识发送，换群或换机器人只改渠道配置；标识保存后不可修改。</p>
         <p v-if="!editingChannel">类型：飞书群机器人。只向添加该机器人的群推送，不支持交互。</p>
         <el-checkbox v-if="editingChannel" class="check-option" v-model="active"
           >启用渠道</el-checkbox
@@ -408,47 +345,6 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
           <p>凭据加密保存，保存后不再显示。</p>
         </template>
         <el-button :disabled="busy" native-type="submit" type="primary">保存渠道</el-button>
-      </form>
-    </AppDialog>
-    <AppDialog
-      v-if="destinationDialog"
-      protect-changes
-      :title="editingDestination ? '编辑接收方' : '新建接收方'"
-      :busy="busy"
-      @close="
-        () => {
-          destinationDialog = false
-          error = ''
-        }
-      "
-    >
-      <el-alert v-if="error" role="alert" type="error" show-icon :closable="false">{{
-        error
-      }}</el-alert>
-      <form class="dialog-form" @submit.prevent="saveDestination">
-        <label
-          >接收方标识<el-input
-            v-model="key"
-            :disabled="!!editingDestination"
-            required
-            pattern="[a-z][a-z0-9_.]{0,63}"
-            placeholder="ops.alerts"
-        /></label>
-        <label v-if="!editingDestination"
-          >渠道<AppSelect v-model="channelId" required aria-label="渠道">
-            <el-option
-              v-for="item in freeChannels"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            /> </AppSelect
-        ></label>
-        <label>接收方名称<el-input v-model="destinationName" required maxlength="128" /></label>
-        <el-checkbox v-if="editingDestination" class="check-option" v-model="destinationActive"
-          >启用接收方</el-checkbox
-        >
-        <p>业务按标识发送消息，标识创建后不可修改。群机器人渠道只有一个接收方。</p>
-        <el-button :disabled="busy" native-type="submit" type="primary">保存接收方</el-button>
       </form>
     </AppDialog>
   </section>

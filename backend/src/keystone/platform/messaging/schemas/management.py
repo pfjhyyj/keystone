@@ -7,6 +7,7 @@ from pydantic import Field, SecretStr, field_validator
 from keystone.core.schemas import Input
 
 Name = Field(min_length=1, max_length=128)
+Key = Field(pattern=r"^[a-z][a-z0-9_.]{0,63}$")
 WEBHOOK_HOSTS = {"open.feishu.cn", "open.larksuite.com"}
 
 
@@ -36,6 +37,8 @@ class ChannelCreate(Input):
     name: str = Name
     provider: Literal["feishu_webhook"]
     credential: WebhookCredential
+    # A group bot reaches exactly one group, so its destination is created with it.
+    destination_key: str = Key
 
 
 class ChannelEdit(Input):
@@ -46,7 +49,7 @@ class ChannelEdit(Input):
 
 
 class DestinationCreate(Input):
-    key: str = Field(pattern=r"^[a-z][a-z0-9_.]{0,63}$")
+    key: str = Key
     channel_id: UUID
     name: str = Name
     external_id: str | None = Field(None, min_length=1, max_length=128)

@@ -1194,12 +1194,6 @@ dd {
   background: #fff;
   z-index: 3;
 }
-.row-more-trigger.el-button {
-  height: 26px;
-  padding: 2px 6px;
-  font-size: 12px;
-  color: #526173;
-}
 .row-more-actions {
   display: grid;
   gap: 4px;

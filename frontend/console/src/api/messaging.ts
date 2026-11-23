@@ -5,16 +5,7 @@ export interface MessageChannel {
   provider: 'feishu_webhook'
   is_active: boolean
   has_credential: boolean
-  created_at: string
-  updated_at: string
-}
-export interface MessageDestination {
-  id: string
-  key: string
-  channel_id: string
-  external_id: string | null
-  name: string
-  is_active: boolean
+  destination: { id: string; key: string; is_active: boolean } | null
   created_at: string
   updated_at: string
 }
@@ -36,8 +27,6 @@ export interface MessageDelivery {
 export const messagingApi = {
   channels: (offset: number) =>
     request<MessageChannel[]>(`/messaging/channels?offset=${offset}&limit=50`),
-  destinations: (offset: number) =>
-    request<MessageDestination[]>(`/messaging/destinations?offset=${offset}&limit=50`),
   deliveries: (offset: number) =>
     request<MessageDelivery[]>(`/messaging/deliveries?offset=${offset}&limit=50`),
 }
