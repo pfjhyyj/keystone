@@ -55,8 +55,9 @@ class PlatformStatus:
 
 
 class HistoryRetention:
-    def __init__(self, credentials, audit, engine):
+    def __init__(self, credentials, audit, deliveries, engine):
         self.credentials, self.audit, self.engine = credentials, audit, engine
+        self.deliveries = deliveries
 
     async def execute(self, *, apply=False):
         result = {"applied": apply}
@@ -65,6 +66,8 @@ class HistoryRetention:
                 result.update(await self.credentials(apply=apply))
             async with asyncio.timeout(10):
                 result["audit"] = await self.audit(apply=apply)
+            async with asyncio.timeout(10):
+                result["message_deliveries"] = await self.deliveries(apply=apply)
             async with asyncio.timeout(30):
                 result["maintenance"] = await self.engine(apply=apply)
             result["status"] = "ok"

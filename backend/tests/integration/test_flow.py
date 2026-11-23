@@ -107,6 +107,7 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
         "pat_retention_days",
         "audit_retention_days",
         "maintenance_retention_days",
+        "message_delivery_retention_days",
     ):
         env["KEYSTONE_" + name.upper()] = str(getattr(settings, name))
     for key, source in settings.file_storages.items():
