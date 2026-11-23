@@ -4,7 +4,7 @@ from keystone.core.catalog import Catalog
 
 CATALOG = Catalog(
     permissions={
-        "messaging:manage": "管理消息渠道与接收方",
+        "messaging:manage": "管理消息渠道、发送目标与飞书账号绑定",
         "message_delivery:read": "查看消息投递记录（不含内容）",
     },
     audit_actions={
@@ -34,5 +34,8 @@ CATALOG = Catalog(
         "messaging.destination.update": {"key", "channel_id", "name", "is_active"},
         "messaging.destination.delete": {"key", "channel_id", "name", "deliveries_removed"},
         "messaging.destination.test": {"delivery_id"},
+        "messaging.account.create": {"channel_id", "user_id", "external_user_id"},
+        "messaging.account.delete": {"channel_id", "user_id", "external_user_id"},
+        "messaging.account.test": {"delivery_id"},
     },
 )

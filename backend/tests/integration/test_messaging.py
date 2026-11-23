@@ -1,17 +1,19 @@
 from datetime import timedelta
 from functools import partial
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from sqlalchemy import select, update
 from test_files_dictionary import client as client
-from test_identity import query
+from test_identity import create_user, query
 
 from keystone.core.credentials import KEY_FILE
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.messaging.adapters import feishu_app, feishu_webhook
 from keystone.platform.messaging.models import MessageDelivery
+from keystone.platform.messaging.services import accounts as accounts_module
 from keystone.platform.messaging.services import channels as channels_module
 from keystone.platform.messaging.services import dispatch as dispatch_module
 from keystone.platform.messaging.services.deliveries import enqueue_in_transaction
@@ -392,3 +394,93 @@ def test_app_retries_unknown_with_the_same_uuid_inside_the_window(client, monkey
     _, webhook_destination = configure(client, key="ops.hook")
     fixed = client.delete(f"{ROOT}/destinations/{webhook_destination['id']}")
     assert fixed.json()["code"] == "message_destination_fixed"
+
+
+def test_users_are_reached_through_their_binding_and_never_redirected(client, monkeypatch):
+    channel = configure_app(client)
+    alice = create_user(client, "alice")
+    looked_up = []
+
+    async def open_id(app_id, secret, *, email=None, mobile=None):
+        looked_up.append((app_id, secret, email, mobile))
+        return {"alice@example.com": "ou_alice"}.get(email)
+
+    monkeypatch.setattr(accounts_module.feishu_app, "open_id", open_id)
+    names = ["爱丽丝"]
+
+    async def user_name(app_id, secret, open_id):
+        if not names:
+            raise feishu_app.Rejected("feishu_99991672")
+        return names.pop()
+
+    monkeypatch.setattr(accounts_module.feishu_app, "user_name", user_name)
+    preview = {"channel_id": channel["id"], "email": "alice@example.com"}
+    found = client.post(ROOT + "/accounts/lookup", json=preview).json()
+    assert found == {
+        "external_user_id": "ou_alice",
+        "name": "爱丽丝",
+        "name_hint": None,
+        "bound_to": None,
+    }
+    bind = {"channel_id": channel["id"], "user_id": alice["id"], "email": "alice@example.com"}
+    both = client.post(ROOT + "/accounts", json={**bind, "mobile": "13800000000"})
+    assert both.status_code == 422
+    unknown = client.post(ROOT + "/accounts", json={**bind, "email": "nobody@example.com"})
+    assert unknown.json()["code"] == "message_account_not_found"
+    created = client.post(ROOT + "/accounts", json=bind)
+    assert created.status_code == 201, created.text
+    account = created.json()
+    assert account["external_user_id"] == "ou_alice" and account["user"]["label"] == "alice"
+    assert client.post(ROOT + "/accounts", json=bind).json()["code"] == "message_account_exists"
+    # Without the basic info scope the preview still identifies the account and its binding.
+    found = client.post(ROOT + "/accounts/lookup", json=preview).json()
+    assert found["name"] is None and "contact:user.base:readonly" in found["name_hint"]
+    assert found["bound_to"]["label"] == "alice"
+    # The email used for the lookup is neither stored nor audited.
+    assert "alice@example.com" not in client.get("/api/v1/audit-logs").text
+    webhook, _ = configure(client)
+    refused = client.post(ROOT + "/accounts", json={**bind, "channel_id": webhook["id"]})
+    assert refused.json()["code"] == "message_channel_unsupported"
+
+    sender = AppSender()
+    monkeypatch.setattr(dispatch_module.feishu_app, "send", sender)
+
+    async def to_user(user_id):
+        async with client.app.state.runtime.database.transaction() as session:
+            return await enqueue_in_transaction(
+                session,
+                SimpleNamespace(user=SimpleNamespace(id=None)),
+                user_id=user_id,
+                content={"kind": "text", "text": "审批已通过"},
+                source_module="reports",
+                source_type="approval",
+                source_id="1",
+            )
+
+    client.portal.call(partial(to_user, UUID(alice["id"])))
+    assert client.post(f"{ROOT}/accounts/{account['id']}/test").status_code == 202
+    run_dispatch(client)
+    assert [item[2:4] for item in sender.sent] == [("open_id", "ou_alice")] * 2
+    [latest, first] = client.get(ROOT + "/deliveries").json()[:2]
+    assert first["recipient"] == {"id": alice["id"], "label": "alice"}
+    assert first["destination_key"] is None and latest["status"] == "succeeded"
+
+    # Registered before unbinding or disabling: the delivery fails instead of being sent.
+    client.portal.call(partial(to_user, UUID(alice["id"])))
+    assert client.delete(f"{ROOT}/accounts/{account['id']}").status_code == 204
+    run_dispatch(client)
+    assert statuses(client)[-1] == ("failed", "recipient_unbound", 0)
+    with pytest.raises(ServiceError) as error:
+        client.portal.call(partial(to_user, UUID(alice["id"])))
+    assert error.value.code == "message_recipient_unbound"
+
+    account = client.post(ROOT + "/accounts", json=bind).json()
+    client.portal.call(partial(to_user, UUID(alice["id"])))
+    client.put(f"/api/v1/users/{alice['id']}/active", json={"is_active": False})
+    run_dispatch(client)
+    assert statuses(client)[-1] == ("failed", "recipient_disabled", 0)
+    assert len(sender.sent) == 2
+
+    # Deleting the channel removes its bindings with it.
+    assert client.delete(f"{ROOT}/channels/{channel['id']}").status_code == 204
+    assert client.get(ROOT + "/accounts").json() == []

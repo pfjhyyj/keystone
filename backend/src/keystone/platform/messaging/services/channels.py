@@ -7,7 +7,12 @@ from sqlalchemy import delete, select
 
 from keystone.core.errors import ServiceError
 from keystone.platform.messaging.adapters import feishu_app, feishu_errors
-from keystone.platform.messaging.models import MessageChannel, MessageDelivery, MessageDestination
+from keystone.platform.messaging.models import (
+    ExternalAccount,
+    MessageChannel,
+    MessageDelivery,
+    MessageDestination,
+)
 from keystone.platform.messaging.schemas import AppCredential, WebhookCredential
 from keystone.platform.messaging.services.deliveries import enqueue_in_transaction
 
@@ -202,6 +207,9 @@ class ChannelService:
             if row is None:
                 raise ServiceError(404, "message_channel_not_found", "消息渠道不存在")
             removed = await remove_deliveries(session, MessageDelivery.channel_id == row.id)
+            await session.execute(
+                delete(ExternalAccount).where(ExternalAccount.channel_id == row.id)
+            )
             keys = (
                 await session.scalars(
                     delete(MessageDestination)

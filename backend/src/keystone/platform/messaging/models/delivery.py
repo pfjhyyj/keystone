@@ -19,6 +19,11 @@ class MessageDelivery(Base):
             name="ck_message_delivery_status",
         ),
         CheckConstraint("kind IN ('text', 'card')", name="ck_message_delivery_kind"),
+        # A delivery goes to a configured destination or to one bound user, never both.
+        CheckConstraint(
+            "num_nonnulls(destination_id, recipient_user_id) = 1",
+            name="ck_message_delivery_target",
+        ),
         Index(
             "ix_message_delivery_open",
             "status",
@@ -36,7 +41,11 @@ class MessageDelivery(Base):
     # The ID is also the provider de-duplication key where one exists.
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     channel_id: Mapped[UUID] = mapped_column(ForeignKey("keystone.message_channels.id"))
-    destination_id: Mapped[UUID] = mapped_column(ForeignKey("keystone.message_destinations.id"))
+    destination_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("keystone.message_destinations.id")
+    )
+    # Resolved to the user's binding on this channel when sent, so unbinding stops it.
+    recipient_user_id: Mapped[UUID | None]
     source_module: Mapped[str] = mapped_column(String(48))
     source_type: Mapped[str] = mapped_column(String(64))
     source_id: Mapped[str] = mapped_column(String(64))

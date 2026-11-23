@@ -12,7 +12,7 @@ import time
 from keystone.platform.messaging.adapters import feishu_content
 from keystone.platform.messaging.adapters.feishu_http import Rejected, Unknown, call
 
-__all__ = ["NotSent", "Rejected", "Unknown", "chats", "send"]
+__all__ = ["NotSent", "Rejected", "Unknown", "chats", "open_id", "send", "user_name"]
 
 TOKEN_URL = "https://accounts.feishu.cn/oauth/v3/token"
 API = "https://open.feishu.cn/open-apis"
@@ -145,3 +145,52 @@ async def chats(app_id, secret, page_token=None, *, transport=None):
     ]
     more = data.get("has_more") and isinstance(data.get("page_token"), str)
     return {"items": items, "page_token": data["page_token"] if more else None}
+
+
+async def open_id(app_id, secret, *, email=None, mobile=None, transport=None):
+    """The user's open ID in this app, or None when Feishu returns no match.
+
+    Users outside the app's contact data scope are not returned either.
+    https://open.feishu.cn/document/server-docs/contact-v3/user/batch_get_id
+    """
+    status, answer, code = await _api(
+        app_id,
+        secret,
+        "POST",
+        "/contact/v3/users/batch_get_id",
+        transport=transport,
+        params={"user_id_type": "open_id"},
+        content=json.dumps(
+            {"emails": [email]} if email else {"mobiles": [mobile]}, ensure_ascii=False
+        ).encode(),
+    )
+    if status >= 500 or answer is None:
+        raise Unknown
+    if code != 0:
+        raise Rejected(f"feishu_{code}" if type(code) is int else "provider_rejected")
+    for item in (answer.get("data") or {}).get("user_list") or []:
+        found = isinstance(item, dict) and item.get("user_id")
+        if isinstance(found, str) and found.startswith("ou_") and len(found) <= 64:
+            return found
+    return None
+
+
+async def user_name(app_id, secret, open_id, *, transport=None):
+    """The user's default name; needs a basic user info scope on top of contact access.
+
+    https://open.feishu.cn/document/server-docs/contact-v3/user/get
+    """
+    status, answer, code = await _api(
+        app_id,
+        secret,
+        "GET",
+        f"/contact/v3/users/{open_id}",
+        transport=transport,
+        params={"user_id_type": "open_id"},
+    )
+    if status >= 500 or answer is None:
+        raise Unknown
+    if code != 0:
+        raise Rejected(f"feishu_{code}" if type(code) is int else "provider_rejected")
+    name = ((answer.get("data") or {}).get("user") or {}).get("name")
+    return name[:128] if isinstance(name, str) and name else None
