@@ -23,10 +23,19 @@ def credential_unavailable():
 
 
 class CredentialVault:
-    def __init__(self, root, *, unavailable=credential_unavailable):
+    def __init__(self, root, *, unavailable=credential_unavailable, stored=None):
         self.root = Path(root).resolve() if root else None
         self.leases = LocalLeases(root)
         self.unavailable = unavailable
+        # Composition supplies one check across every module that keeps ciphertexts.
+        self.stored = stored
+
+    async def may_create(self, session):
+        """A missing key may be generated only while no module holds a ciphertext.
+
+        Otherwise the key was lost and must be restored; a new one would orphan old values.
+        """
+        return self.stored is not None and not await self.stored(session)
 
     def cipher(self, *, create=False):
         self.leases.fingerprint()

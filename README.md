@@ -8,6 +8,14 @@
 
 需要 Python 3.12、uv、Node 24（至少 24.15）、pnpm 11.19.0 和可连接的 PostgreSQL。可以使用自己的数据库；只有通过 Docker 启动本地数据库时才需要 Docker Compose。以下使用标准 shell，每个终端从仓库根目录开始。
 
+数据库就绪后，本机调试可以一条命令完成下面三步：
+
+```sh
+python scripts/dev.py
+```
+
+脚本缺配置时从示例复制，不启动数据库；配置的数据库连不上时提示后退出。每次启动执行 `keystone init`，切换分支后自动应用新迁移，首次初始化提示设置 `admin` 密码。之后在同一终端运行 API、Worker 和控制台，日志带进程前缀；任一进程退出或按 Ctrl+C 会停止全部进程。后端代码改动后需重新运行，前端由 Vite 热更新。用 IDE 调试器单独启动某个进程时，加 `--skip api` 或 `--skip worker`，入口为 `backend/` 下的 `keystone.entrypoints.api:main` 或 `keystone.entrypoints.worker:main`。
+
 ### 1. 配置数据库并启动 API
 
 先准备后端配置，已有配置会保留：

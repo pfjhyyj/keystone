@@ -22,6 +22,23 @@ def check_fields(provider, data):
         raise ServiceError(422, "model_workspace_invalid", "当前渠道不支持业务空间 ID")
 
 
+async def credentials_stored(session):
+    """Whether any model channel holds a sealed credential; used by composition."""
+    return (
+        await session.scalar(
+            select(Channel.id)
+            .where(
+                or_(
+                    Channel.api_key_encrypted.is_not(None),
+                    Channel.billing_api_key_encrypted.is_not(None),
+                )
+            )
+            .limit(1)
+        )
+        is not None
+    )
+
+
 class ChannelService:
     def __init__(self, identity: AccessContext, clients):
         self.identity, self.clients = identity, clients
@@ -60,23 +77,14 @@ class ChannelService:
                 )
             billing_key = data.billing_credentials.encoded()
         if data.api_key is not None or billing_key is not None:
-            existing = await session.scalar(
-                select(Channel.id)
-                .where(
-                    or_(
-                        Channel.api_key_encrypted.is_not(None),
-                        Channel.billing_api_key_encrypted.is_not(None),
-                    )
-                )
-                .limit(1)
-            )
+            create = await self.clients.credentials.may_create(session)
             for field, purpose, value in (
                 ("api_key", "inference", data.api_key),
                 ("billing_api_key", "billing", billing_key),
             ):
                 if value is not None:
                     encrypted = self.clients.credentials.encrypt(
-                        value, row.id, purpose, create=existing is None
+                        value, row.id, purpose, create=create
                     )
                     setattr(row, field + "_encrypted", encrypted)
         if data.clear_billing_api_key:

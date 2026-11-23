@@ -17,6 +17,7 @@ from keystone.platform.files.catalog import CATALOG as FILES_CATALOG
 from keystone.platform.flow.catalog import CATALOG as FLOW_CATALOG
 from keystone.platform.flow.schemas.packages import build_packages, execution_manifest
 from keystone.platform.identity.catalog import CATALOG as IDENTITY_CATALOG
+from keystone.platform.messaging.catalog import CATALOG as MESSAGING_CATALOG
 from keystone.platform.model_access.catalog import CATALOG as MODEL_CATALOG
 from keystone.worker.catalog import CATALOG as WORKER_CATALOG
 
@@ -29,6 +30,7 @@ PLATFORM_CATALOG = combine_catalogs(
         FILES_CATALOG,
         DICTIONARY_CATALOG,
         MODEL_CATALOG,
+        MESSAGING_CATALOG,
         WORKER_CATALOG,
     )
 )
@@ -102,10 +104,11 @@ def register_maintenance(runtime, health):
     from keystone.platform.environments.tasks import workflows as environment_jobs
     from keystone.platform.files.tasks import workflows as files_jobs
     from keystone.platform.flow.tasks import workflows as flow_jobs
+    from keystone.platform.messaging.tasks import workflows as messaging_jobs
     from keystone.platform.model_access.tasks import workflows as model_jobs
 
     bindings, installers = [], []
-    for module in (files_jobs, flow_jobs, model_jobs, environment_jobs):
+    for module in (files_jobs, flow_jobs, model_jobs, environment_jobs, messaging_jobs):
         tasks, install = module.register(runtime, health)
         bindings.extend(tasks)
         installers.append(install)
@@ -129,6 +132,7 @@ def register_maintenance(runtime, health):
         QueueDefinition(flow_jobs.QUEUE, 1, 1),
         QueueDefinition(history_jobs.QUEUE, 1, 1),
         QueueDefinition(environment_jobs.QUEUE, 1, 1),
+        QueueDefinition(messaging_jobs.QUEUE, 1, 1),
     )
     queues = queue_budgets(
         bindings,
@@ -139,6 +143,7 @@ def register_maintenance(runtime, health):
             model_jobs.COST_SCHEDULE,
             history_jobs.HISTORY_SCHEDULE,
             environment_jobs.IDLE_STOP_SCHEDULE,
+            messaging_jobs.DISPATCH_SCHEDULE,
         ),
         other_entrypoints=(
             definition.entrypoint for definition in runtime.flow_definitions.values()
@@ -213,6 +218,18 @@ def build_environment_keys():
     return environment_keys(BUSINESS_ENVIRONMENT_KEYS)
 
 
+async def credentials_stored(session):
+    """Every module that seals credentials with the shared key, listed explicitly."""
+    from keystone.platform.messaging.services.channels import (
+        credentials_stored as messaging_credentials,
+    )
+    from keystone.platform.model_access.services.channels import (
+        credentials_stored as model_credentials,
+    )
+
+    return await model_credentials(session) or await messaging_credentials(session)
+
+
 def build_model_clients(settings, database):
     from keystone.platform.flow.services.model_references import model_referenced
     from keystone.platform.model_access.adapters.billing.registry import BillingClient
@@ -228,7 +245,7 @@ def build_model_clients(settings, database):
         http,
         InferenceClient(http, CHANNELS),
         BillingClient(http, CHANNELS),
-        ChannelCredentials(settings.file_coordination_root),
+        ChannelCredentials(settings.file_coordination_root, stored=credentials_stored),
         QueryCoordination(database, settings),
         model_referenced,
     )
