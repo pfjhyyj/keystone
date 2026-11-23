@@ -4,7 +4,15 @@ import { login as loginSession, sessionError } from '../../stores/session'
 const username = ref(''),
   password = ref(''),
   busy = ref(false),
-  error = ref('')
+  error = ref(''),
+  form = ref<HTMLFormElement>()
+// Enter in the password field submits explicitly. Implicit submission can be swallowed on
+// first focus (e.g. by the browser's saved-password popup); requestSubmit keeps validation.
+function submitOnEnter(event: Event | KeyboardEvent) {
+  if ('isComposing' in event && event.isComposing) return
+  event.preventDefault()
+  form.value?.requestSubmit()
+}
 async function login() {
   if (busy.value) return
   busy.value = true
@@ -37,7 +45,7 @@ async function login() {
       <el-alert v-if="error || sessionError" type="error" show-icon :closable="false">{{
         error || sessionError
       }}</el-alert>
-      <form class="login-form" @submit.prevent="login">
+      <form ref="form" class="login-form" @submit.prevent="login">
         <label
           >登录名<el-input
             v-model="username"
@@ -57,7 +65,8 @@ async function login() {
             size="large"
             required
             maxlength="128"
-            show-password /></label
+            show-password
+            @keydown.enter="submitOnEnter" /></label
         ><el-button type="primary" native-type="submit" size="large" :loading="busy">{{
           busy ? '正在登录…' : '登录'
         }}</el-button>
