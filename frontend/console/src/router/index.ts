@@ -16,11 +16,8 @@ export const navigation = [
   },
   { path: '/model-usage', label: '用量与费用', permissions: ['model_invocation:read'] },
   { path: '/flows', label: 'Flow 运行', permissions: ['flow:read', 'flow:diagnose'] },
-  {
-    path: '/messaging',
-    label: '消息渠道',
-    permissions: ['messaging:manage', 'message_delivery:read'],
-  },
+  { path: '/messaging', label: '消息渠道', permissions: ['messaging:manage'] },
+  { path: '/messaging/records', label: '消息记录', permissions: ['message_delivery:read'] },
 ]
 export function canNavigate(item: (typeof navigation)[number]) {
   return !item.permissions.length || item.permissions.some(can)
@@ -60,7 +57,17 @@ export function makeRouter(history: RouterHistory = createWebHistory(import.meta
       { path: '/models', component: () => import('../views/models/ModelsView.vue') },
       { path: '/model-usage', component: () => import('../views/usage/UsageView.vue') },
       { path: '/flows', component: () => import('../views/flows/FlowsView.vue') },
-      { path: '/messaging', component: () => import('../views/messaging/MessagingView.vue') },
+      { path: '/messaging', component: () => import('../views/messaging/ChannelsView.vue') },
+      {
+        path: '/messaging/channels/:id',
+        component: () => import('../views/messaging/ChannelDetailView.vue'),
+        props: true,
+        meta: { title: '渠道详情', nav: '/messaging', permissions: ['messaging:manage'] },
+      },
+      {
+        path: '/messaging/records',
+        component: () => import('../views/messaging/RecordsView.vue'),
+      },
       {
         path: '/login',
         component: () => import('../views/login/LoginView.vue'),

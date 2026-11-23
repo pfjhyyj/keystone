@@ -193,16 +193,31 @@ def _answer(frame, result, elapsed_ms):
 class Connection:
     """One app's connection, reconnecting until stop() or a refused endpoint."""
 
-    def __init__(self, app_id, secret, handle, *, label, transport=None, connector=connect):
+    def __init__(
+        self, app_id, secret, handle, *, label, transport=None, connector=connect, on_change=None
+    ):
         self.app_id, self.secret, self.handle = app_id, secret, handle
         self.label, self.transport, self.connector = label, transport, connector
         self.timings = dict(DEFAULTS)
-        self.connected = False
+        # connecting, connected, refused (with the platform's code) or lost.
+        self.state, self.error_code = "connecting", None
+        self.on_change = on_change
         self._stop = asyncio.Event()
         self._parts = {}
 
+    @property
+    def connected(self):
+        return self.state == "connected"
+
     def stop(self):
         self._stop.set()
+
+    def _set(self, state, error_code=None):
+        if (state, error_code) == (self.state, self.error_code):
+            return
+        self.state, self.error_code = state, error_code
+        if self.on_change is not None:
+            self.on_change()
 
     async def run(self):
         first = True
@@ -223,12 +238,15 @@ class Connection:
                 await self._serve(url)
             except EndpointRefused as error:
                 log.warning("messaging_listener_refused channel=%s code=%s", self.label, error.code)
-            except (Unknown, OSError, WebSocketException, ValueError, KeyError) as error:
+                self._set("refused", error.code)
+            except Unknown:
+                log.warning("messaging_listener_lost channel=%s type=Unknown", self.label)
+                self._set("lost", "endpoint_unavailable")
+            except (OSError, WebSocketException, ValueError, KeyError) as error:
                 log.warning(
                     "messaging_listener_lost channel=%s type=%s", self.label, type(error).__name__
                 )
-            finally:
-                self.connected = False
+                self._set("lost", "connection_lost")
 
     async def _sleep(self, seconds):
         try:
@@ -239,7 +257,7 @@ class Connection:
     async def _serve(self, url):
         service = int(parse_qs(urlparse(url).query)["service_id"][0])
         async with self.connector(url, proxy=None, max_size=MAX_EVENT) as socket:
-            self.connected = True
+            self._set("connected")
             log.info("messaging_listener_connected channel=%s", self.label)
             pending = set()
             stopping = asyncio.create_task(self._stop.wait())

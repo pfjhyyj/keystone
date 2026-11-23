@@ -15,7 +15,12 @@ from keystone.core.credentials import KEY_FILE
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.messaging.adapters import feishu_app, feishu_webhook
-from keystone.platform.messaging.models import ExternalAccount, MessageDelivery, MessageInbound
+from keystone.platform.messaging.models import (
+    ExternalAccount,
+    MessageConnection,
+    MessageDelivery,
+    MessageInbound,
+)
 from keystone.platform.messaging.services import accounts as accounts_module
 from keystone.platform.messaging.services import channels as channels_module
 from keystone.platform.messaging.services import dispatch as dispatch_module
@@ -173,6 +178,10 @@ def test_outcomes_are_final_and_deadlines_and_disabled_channels_hold(client, sen
     assert statuses(client) == [("unknown", "send_unconfirmed", 1), ("failed", "feishu_19021", 1)]
     hints = [row["error_hint"] for row in client.get(ROOT + "/deliveries").json()]
     assert "签名" in hints[0] and "可能已送达" in hints[1]
+    failed = client.get(ROOT + "/deliveries?status=failed").json()
+    assert [row["error_code"] for row in failed] == ["feishu_19021"]
+    other = client.get(f"{ROOT}/deliveries?channel_id={UUID(int=1)}").json()
+    assert other == [] and client.get(ROOT + "/deliveries?status=bogus").status_code == 422
 
     # A deadline that passes before sending ends the delivery without a send.
     expiring = add(client, expires_at=utcnow() + timedelta(seconds=30))
@@ -837,6 +846,27 @@ def test_workers_follow_app_channel_changes_with_one_connection_each(client):
         assert endpoints == [{"AppID": "cli_a1b2c3", "AppSecret": "app-secret-value"}]
         client.portal.call(settle)
         assert len(endpoints) == 1
+        # The refusal and its reason reach the console with the channel.
+        app = client.get(f"{ROOT}/channels/{channel['id']}").json()
+        assert app["connection"]["state"] == "refused"
+        assert app["connection"]["error_code"] == "feishu_ws_1000040350"
+        assert "50" in app["connection"]["error_hint"]
+        assert app["groups"] == 0 and app["members"] == 0
+        listed = {row["id"]: row for row in client.get(ROOT + "/channels").json()}
+        assert listed[channel["id"]]["connection"]["state"] == "refused"
+        hooks = [row for row in listed.values() if row["provider"] == "feishu_webhook"]
+        assert "connection" not in hooks[0]
+
+        # Rows a stopped Worker left behind stop counting once they are no longer refreshed.
+        async def age():
+            async with runtime.database.transaction() as session:
+                await session.execute(
+                    update(MessageConnection).values(updated_at=utcnow() - timedelta(minutes=5))
+                )
+
+        client.portal.call(age)
+        stale = client.get(f"{ROOT}/channels/{channel['id']}").json()["connection"]
+        assert stale == {"state": "offline", "workers": 0}
         # A changed secret reconnects with it; disabling closes the connection.
         client.patch(
             f"{ROOT}/channels/{channel['id']}",
@@ -853,6 +883,8 @@ def test_workers_follow_app_channel_changes_with_one_connection_each(client):
         )
         client.portal.call(settle)
         assert listeners.running == {}
+        rows = query(client, lambda session: session.scalars(select(MessageConnection)))
+        assert rows.all() == []
     finally:
         client.portal.call(listeners.close)
 

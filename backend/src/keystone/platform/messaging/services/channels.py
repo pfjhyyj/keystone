@@ -1,15 +1,18 @@
 """Channel and destination configuration; credentials are write-only."""
 
 import json
+from datetime import timedelta
 
 from pydantic import SecretStr
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from keystone.core.errors import ServiceError
+from keystone.core.time import utcnow
 from keystone.platform.messaging.adapters import feishu_app, feishu_errors
 from keystone.platform.messaging.models import (
     ExternalAccount,
     MessageChannel,
+    MessageConnection,
     MessageDelivery,
     MessageDestination,
     MessageInbound,
@@ -20,6 +23,8 @@ from keystone.platform.messaging.services.deliveries import enqueue_in_transacti
 
 TEST_TEXT = "Keystone 测试消息：渠道配置可用。"
 
+# Workers refresh their connection rows every 30 seconds; older rows are from Workers gone.
+CONNECTION_FRESH = timedelta(seconds=90)
 PURPOSE = {"feishu_webhook": "messaging.webhook", "feishu_app": "messaging.app"}
 CREDENTIAL = {"feishu_webhook": WebhookCredential, "feishu_app": AppCredential}
 
@@ -28,8 +33,9 @@ def credential_unavailable():
     return ServiceError(503, "message_credential_unavailable", "消息渠道凭据或加密密钥不可用")
 
 
-def channel_view(row, destination=None):
+def channel_view(row, destination=None, facts=None):
     return {
+        **(facts or {}),
         **{
             key: getattr(row, key)
             for key in (
@@ -47,6 +53,55 @@ def channel_view(row, destination=None):
         "has_credential": bool(row.credential_encrypted),
         "destination": destination
         and {key: getattr(destination, key) for key in ("id", "key", "is_active")},
+    }
+
+
+def connection_summary(states):
+    """One app's long connections across Workers: any working connection is enough."""
+    connected = [item for item in states if item.state == "connected"]
+    if connected:
+        return {"state": "connected", "workers": len(connected)}
+    for state in ("refused", "lost", "connecting"):
+        found = next((item for item in states if item.state == state), None)
+        if found is not None:
+            return {
+                "state": state,
+                "workers": 0,
+                "error_code": found.error_code,
+                "error_hint": feishu_errors.hint(found.error_code),
+            }
+    # No running Worker holds a connection: inbound clicks and binding are not received.
+    return {"state": "offline", "workers": 0}
+
+
+async def channel_facts(session, rows):
+    """Connection state and how many groups and bound members each app channel has."""
+    apps = [row.id for row in rows if row.provider == "feishu_app"]
+    if not apps:
+        return {}
+    states = {}
+    for item in await session.scalars(
+        select(MessageConnection).where(
+            MessageConnection.channel_id.in_(apps),
+            MessageConnection.updated_at > utcnow() - CONNECTION_FRESH,
+        )
+    ):
+        states.setdefault(item.channel_id, []).append(item)
+    counts = {}
+    for model, name in ((MessageDestination, "groups"), (ExternalAccount, "members")):
+        for channel_id, count in await session.execute(
+            select(model.channel_id, func.count())
+            .where(model.channel_id.in_(apps))
+            .group_by(model.channel_id)
+        ):
+            counts.setdefault(channel_id, {})[name] = count
+    return {
+        channel_id: {
+            "connection": connection_summary(states.get(channel_id, [])),
+            "groups": counts.get(channel_id, {}).get("groups", 0),
+            "members": counts.get(channel_id, {}).get("members", 0),
+        }
+        for channel_id in apps
     }
 
 
@@ -133,7 +188,21 @@ class ChannelService:
                     )
                 )
             }
-            return [channel_view(row, destinations.get(row.id)) for row in rows]
+            facts = await channel_facts(session, rows)
+            return [channel_view(row, destinations.get(row.id), facts.get(row.id)) for row in rows]
+
+    async def channel(self, identifier):
+        async with self.identity.access("messaging:manage") as (session, _):
+            row = await session.get(MessageChannel, identifier)
+            if row is None:
+                raise ServiceError(404, "message_channel_not_found", "消息渠道不存在")
+            destination = None
+            if row.provider == "feishu_webhook":
+                destination = await session.scalar(
+                    select(MessageDestination).where(MessageDestination.channel_id == row.id)
+                )
+            facts = await channel_facts(session, [row])
+            return channel_view(row, destination, facts.get(row.id))
 
     async def save_channel(self, data, identifier=None):
         action = f"messaging.channel.{'update' if identifier else 'create'}"
@@ -215,6 +284,9 @@ class ChannelService:
                 delete(ExternalAccount).where(ExternalAccount.channel_id == row.id)
             )
             await session.execute(delete(MessageInbound).where(MessageInbound.channel_id == row.id))
+            await session.execute(
+                delete(MessageConnection).where(MessageConnection.channel_id == row.id)
+            )
             keys = (
                 await session.scalars(
                     delete(MessageDestination)
@@ -258,9 +330,11 @@ class ChannelService:
         except feishu_app.Unknown:
             raise ServiceError(504, "message_provider_unavailable", "飞书暂时无法访问") from None
 
-    async def destinations(self, offset, limit, provider=None):
+    async def destinations(self, offset, limit, provider=None, channel_id=None):
         async with self.identity.access("messaging:manage") as (session, _):
             query = select(MessageDestination)
+            if channel_id is not None:
+                query = query.where(MessageDestination.channel_id == channel_id)
             if provider is not None:
                 query = query.join(
                     MessageChannel, MessageDestination.channel_id == MessageChannel.id

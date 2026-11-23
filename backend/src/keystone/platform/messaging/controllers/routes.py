@@ -39,6 +39,11 @@ async def delete_channel(identifier: UUID, request: Request):
     return Response(status_code=204)
 
 
+@router.get("/channels/{identifier}")
+async def channel(identifier: UUID, request: Request):
+    return await _channels(request).channel(identifier)
+
+
 @router.get("/channels/{identifier}/chats")
 async def channel_chats(
     identifier: UUID,
@@ -53,8 +58,9 @@ async def destinations(
     request: Request,
     page: Page,
     provider: Literal["feishu_webhook", "feishu_app"] | None = None,
+    channel_id: UUID | None = None,
 ):
-    return await _channels(request).destinations(page.offset, page.limit, provider)
+    return await _channels(request).destinations(page.offset, page.limit, provider, channel_id)
 
 
 @router.post("/destinations", status_code=201)
@@ -84,8 +90,8 @@ def _accounts(request: Request) -> AccountService:
 
 
 @router.get("/accounts")
-async def accounts(request: Request, page: Page):
-    return await _accounts(request).accounts(page.offset, page.limit)
+async def accounts(request: Request, page: Page, channel_id: UUID | None = None):
+    return await _accounts(request).accounts(page.offset, page.limit, channel_id)
 
 
 # POST keeps the email or mobile out of URLs and request logs.
@@ -111,8 +117,15 @@ async def test_account(identifier: UUID, request: Request, card: bool = False):
 
 
 @router.get("/inbounds")
-async def inbounds(request: Request, page: Page):
-    return await InboundService(access_context(request)).listing(page.offset, page.limit)
+async def inbounds(
+    request: Request,
+    page: Page,
+    channel_id: UUID | None = None,
+    status: Literal["received", "processed", "rejected", "expired", "failed"] | None = None,
+):
+    return await InboundService(access_context(request)).listing(
+        page.offset, page.limit, channel_id, status
+    )
 
 
 # Any signed-in user manages their own bindings; a binding is made by messaging a code.
@@ -133,5 +146,13 @@ async def create_bind_code(request: Request):
 
 
 @router.get("/deliveries")
-async def deliveries(request: Request, page: Page):
-    return await DeliveryService(access_context(request)).listing(page.offset, page.limit)
+async def deliveries(
+    request: Request,
+    page: Page,
+    channel_id: UUID | None = None,
+    status: Literal["pending", "cancelled", "sending", "succeeded", "failed", "unknown", "expired"]
+    | None = None,
+):
+    return await DeliveryService(access_context(request)).listing(
+        page.offset, page.limit, channel_id, status
+    )

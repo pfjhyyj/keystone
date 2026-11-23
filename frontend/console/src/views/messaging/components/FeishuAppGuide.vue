@@ -50,17 +50,26 @@ const subscriptions = [
 </script>
 <template>
   <ElCollapse class="feishu-guide">
-    <ElCollapseItem title="飞书自建应用配置说明" name="guide">
-      <p>
-        在飞书开发者后台按下面配置同一个企业自建应用。只发消息时完成第 1、2、5
-        步即可；要让用户点击卡片按钮或自助绑定，还需完成第 3、4 步。
+    <ElCollapseItem name="guide">
+      <template #title>
+        <span class="guide-title"
+          ><strong>飞书自建应用配置说明</strong
+          ><span>需要在飞书开发者后台开通的能力、权限和订阅</span></span
+        >
+      </template>
+      <p class="guide-lead">
+        只发消息时完成第 1、2、5 步；要接收卡片按钮点击和成员自助绑定，还需完成第 3、4 步。
       </p>
-      <ol>
-        <li>在“添加应用能力”中启用<strong>机器人</strong>。</li>
+      <ol class="guide-steps">
         <li>
-          在“权限管理”中开通下列权限：
-          <el-table :data="scopes" size="small" :fit="false" table-layout="auto" class="data-table">
-            <el-table-column label="权限" min-width="190"
+          <strong>启用机器人</strong>
+          <p>在“添加应用能力”中添加机器人能力。</p>
+        </li>
+        <li>
+          <strong>开通权限</strong>
+          <p>在“权限管理”中开通：</p>
+          <el-table :data="scopes" size="small" table-layout="auto" class="guide-table">
+            <el-table-column label="权限" min-width="200"
               ><template #default="{ row }"
                 >{{ row.name }}<small>{{ row.code }}</small></template
               ></el-table-column
@@ -70,32 +79,34 @@ const subscriptions = [
           </el-table>
         </li>
         <li>
-          在“事件与回调”中，事件配置和回调配置的订阅方式都选<strong>使用长连接接收</strong>，并添加：
-          <el-table
-            :data="subscriptions"
-            size="small"
-            :fit="false"
-            table-layout="auto"
-            class="data-table"
-          >
+          <strong>订阅事件与回调</strong>
+          <p>在“事件与回调”中，事件配置和回调配置的订阅方式都选“使用长连接接收”，并添加：</p>
+          <el-table :data="subscriptions" size="small" table-layout="auto" class="guide-table">
             <el-table-column label="位置" prop="place" min-width="100" />
-            <el-table-column label="名称" min-width="190"
+            <el-table-column label="名称" min-width="200"
               ><template #default="{ row }"
                 >{{ row.name }}<small>{{ row.code }}</small></template
               ></el-table-column
             >
             <el-table-column label="用途" prop="use" min-width="200" />
           </el-table>
-          长连接由 Keystone 的 Worker 主动连向飞书，不需要公网地址或回调
-          URL。飞书保存长连接方式时会检查是否有在线连接：先在这里新建并启用渠道，保持 Worker
-          运行，约 30 秒内会连上，再回到开发者后台保存。
+          <p class="guide-note">
+            长连接由 Keystone 的 Worker 主动连向飞书，不需要公网地址或回调
+            URL。飞书保存长连接方式时会检查是否有在线连接：先在 Keystone 新建并启用渠道、保持 Worker
+            运行，等“接收点击”显示已连接，再回到开发者后台保存。
+          </p>
         </li>
         <li>
-          一个应用只接入一套 Keystone
-          环境。飞书把每个事件随机交给一个在线连接，多套环境共用一个应用时，事件会被其他环境收走。开发、测试和生产请使用不同的应用。
+          <strong>一个应用只接一套环境</strong>
+          <p>
+            飞书把每个事件随机交给一个在线连接，多套环境共用一个应用时，事件会被其他环境收走。开发、测试和生产请使用不同的应用。
+          </p>
         </li>
         <li>
-          在“版本管理与发布”中创建版本并发布；权限和订阅在发布后才生效。应用的可用范围须包含要接收消息和点击卡片的人。
+          <strong>发布版本</strong>
+          <p>
+            在“版本管理与发布”中创建版本并发布，权限和订阅在发布后才生效；应用的可用范围须包含要接收消息和点击卡片的人。
+          </p>
         </li>
       </ol>
     </ElCollapseItem>
@@ -103,14 +114,59 @@ const subscriptions = [
 </template>
 <style scoped>
 .feishu-guide {
-  margin-bottom: 16px;
+  margin: 0 0 16px;
+  background: #fff;
+  border: 1px solid #e4e8ed;
+  border-radius: 8px;
+  overflow: hidden;
 }
-.feishu-guide ol {
+.feishu-guide :deep(.el-collapse-item__header) {
+  height: auto;
+  min-height: 56px;
+  padding: 12px 20px;
+  border-bottom: none;
+  line-height: 1.4;
+}
+.feishu-guide :deep(.el-collapse-item__wrap) {
+  border-bottom: none;
+}
+.feishu-guide :deep(.el-collapse-item__content) {
+  padding: 0 20px 20px;
+  color: #334155;
+}
+.guide-title {
   display: grid;
-  gap: 12px;
-  padding-left: 20px;
+  gap: 2px;
 }
-.feishu-guide .data-table {
-  margin: 8px 0;
+.guide-title span {
+  color: #64748b;
+  font-size: 13px;
+  font-weight: normal;
+}
+.guide-lead {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+.guide-steps {
+  display: grid;
+  gap: 18px;
+  margin: 0;
+  padding-left: 22px;
+}
+.guide-steps li::marker {
+  font-weight: 600;
+}
+.guide-steps p {
+  margin: 4px 0 0;
+}
+.guide-table {
+  margin-top: 8px;
+  width: 100%;
+}
+.guide-note {
+  color: #64748b;
+  font-size: 13px;
 }
 </style>

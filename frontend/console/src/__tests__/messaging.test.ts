@@ -1,9 +1,17 @@
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
+import { createMemoryHistory } from 'vue-router'
 import * as confirmation from '../utils/confirm'
 import AppSelect from '../components/AppSelect.vue'
-import MessagingView from '../views/messaging/MessagingView.vue'
-import { authorize, fakeApi } from './support'
+import { makeRouter } from '../router'
+import ChannelsView from '../views/messaging/ChannelsView.vue'
+import ChannelDetailView from '../views/messaging/ChannelDetailView.vue'
+import RecordsView from '../views/messaging/RecordsView.vue'
+import GroupsPanel from '../views/messaging/components/GroupsPanel.vue'
+import MembersPanel from '../views/messaging/components/MembersPanel.vue'
+import type { MessageChannel } from '../api/messaging'
+import { identity } from '../stores/session'
+import { authorize, fakeApi as fakeRequests } from './support'
 
 const stamp = '2026-01-01T00:00:00Z'
 const destination = {
@@ -44,7 +52,10 @@ const app = {
   provider: 'feishu_app',
   app_id: 'cli_a1b2c3',
   destination: null,
-}
+  connection: { state: 'connected', workers: 2 },
+  groups: 1,
+  members: 3,
+} as MessageChannel
 const target = {
   id: '55555555-5555-4555-8555-555555555555',
   key: 'ops.daily',
@@ -59,28 +70,34 @@ const target = {
 const fields = (wrapper: VueWrapper) => wrapper.findAll('[role=dialog] input:not([type=radio])')
 const button = (wrapper: VueWrapper, label: string) =>
   wrapper.findAll('button').find((node) => node.text() === label)!
+const body = () => new DOMWrapper(document.body) as unknown as VueWrapper
+// Route changes re-check the session; it keeps the permissions each test authorizes.
+const fakeApi = (handler: Parameters<typeof fakeRequests>[0]) =>
+  fakeRequests((path, init) => (path === '/auth/me' ? identity.value : handler(path, init)))
+async function routed(path: string) {
+  const router = makeRouter(createMemoryHistory('/console/'))
+  await router.push(path)
+  return router
+}
 
-describe('messaging administration', () => {
+describe('messaging channels', () => {
   it('keeps the credential write-only and sends it only when replaced', async () => {
     authorize(['messaging:manage'])
     const writes: [string, string | undefined, unknown][] = []
     fakeApi((path, init) => {
       if (init.method && init.method !== 'GET') {
         writes.push([path, init.method, init.body ? JSON.parse(String(init.body)) : null])
-        return path.endsWith('/test') ? { delivery_id: delivery.id } : channel
+        return channel
       }
-      return /^\/messaging\/(destinations|accounts|inbounds)/.test(path) ? [] : [channel]
+      return [channel]
     })
-    const wrapper = mount(MessagingView)
+    const router = await routed('/messaging')
+    const wrapper = mount(ChannelsView, { global: { plugins: [router] } })
     await flushPromises()
-    expect(wrapper.text()).toContain('已设置')
     expect(wrapper.text()).toContain('ops.alerts')
-    expect(wrapper.text()).not.toContain('接收方')
-    const tabs = wrapper.findAll('.el-tabs__item').map((node) => node.text())
-    expect(tabs).not.toContain('发送目标')
-    expect(tabs).not.toContain('投递记录')
+    expect(wrapper.text()).toContain('不支持')
 
-    await button(wrapper, '编辑渠道').trigger('click')
+    await button(wrapper, '编辑').trigger('click')
     expect(wrapper.find('[role=dialog] input[type=password]').exists()).toBe(false)
     await wrapper.get('[role=dialog] form').trigger('submit')
     await flushPromises()
@@ -109,88 +126,33 @@ describe('messaging administration', () => {
     ])
   })
 
-  it('queues a test message and shows delivery facts without content', async () => {
-    authorize(['messaging:manage', 'message_delivery:read'])
-    const writes: string[] = []
+  it('tests a group bot from the list and gives a keyless one its key on edit', async () => {
+    authorize(['messaging:manage'])
+    const writes: [string, string | undefined, unknown][] = []
+    let rows = [channel]
     fakeApi((path, init) => {
-      if (init.method === 'POST') {
-        writes.push(path)
-        return { delivery_id: delivery.id }
+      if (init.method && init.method !== 'GET') {
+        writes.push([path, init.method, init.body ? JSON.parse(String(init.body)) : null])
+        return path.endsWith('/test') ? { delivery_id: delivery.id } : channel
       }
-      if (path.startsWith('/messaging/deliveries')) return [delivery]
-      return /^\/messaging\/(destinations|accounts|inbounds)/.test(path) ? [] : [channel]
+      return rows
     })
-    const wrapper = mount(MessagingView)
+    const router = await routed('/messaging')
+    let wrapper = mount(ChannelsView, { global: { plugins: [router] } })
     await flushPromises()
     await button(wrapper, '发送测试消息').trigger('click')
     await flushPromises()
-    expect(writes).toEqual([`/messaging/destinations/${destination.id}/test`])
+    expect(writes[0]).toEqual([`/messaging/destinations/${destination.id}/test`, 'POST', null])
     expect(wrapper.text()).toContain('测试消息已登记')
-    expect(wrapper.text()).toContain('结果未知')
-    expect(wrapper.text()).toContain('send_unconfirmed')
-  })
-
-  it('sends a test card from the row menu and lists inbound clicks', async () => {
-    authorize(['messaging:manage', 'message_delivery:read'])
-    const writes: string[] = []
-    const inbound = {
-      id: '66666666-6666-4666-8666-666666666666',
-      channel_id: app.id,
-      kind: 'card_action',
-      delivery_id: delivery.id,
-      action_key: 'ack',
-      external_user_id: 'ou_stranger',
-      actor: null,
-      status: 'rejected',
-      attempts: 1,
-      error_code: 'message_actor_unbound',
-      error_hint: '点击人的飞书账号没有绑定 Keystone 用户',
-      received_at: stamp,
-      processed_at: null,
-    }
-    fakeApi((path, init) => {
-      if (init.method === 'POST') {
-        writes.push(path)
-        return { delivery_id: delivery.id }
-      }
-      if (path.startsWith('/messaging/inbounds')) return [inbound]
-      if (path.startsWith('/messaging/destinations')) return [target]
-      return /^\/messaging\/(accounts|deliveries)/.test(path) ? [] : [app]
-    })
-    const wrapper = mount(MessagingView, { attachTo: document.body })
-    await flushPromises()
-    await wrapper.get('#pane-targets .row-more-trigger').trigger('click')
-    await flushPromises()
-    await button(new DOMWrapper(document.body) as unknown as VueWrapper, '发送测试卡片').trigger(
-      'click',
-    )
-    await flushPromises()
-    expect(writes).toEqual([`/messaging/destinations/${target.id}/test?card=true`])
-    expect(wrapper.text()).toContain('确认收到')
-    const inbounds = wrapper.get('#pane-inbounds')
-    expect(inbounds.text()).toContain('卡片操作')
-    expect(inbounds.text()).toContain('已拒绝')
-    expect(inbounds.text()).toContain('没有绑定 Keystone 用户')
     wrapper.unmount()
-  })
 
-  it('gives a channel saved without a key its destination on the next edit', async () => {
-    authorize(['messaging:manage'])
-    const writes: [string, string | undefined, unknown][] = []
-    fakeApi((path, init) => {
-      if (init.method && init.method !== 'GET') {
-        writes.push([path, init.method, JSON.parse(String(init.body))])
-        return channel
-      }
-      return /^\/messaging\/(destinations|accounts|inbounds)/.test(path)
-        ? []
-        : [{ ...channel, destination: null }]
-    })
-    const wrapper = mount(MessagingView)
+    writes.length = 0
+    rows = [{ ...channel, destination: null as unknown as typeof destination }]
+    wrapper = mount(ChannelsView, { global: { plugins: [router] } })
     await flushPromises()
     expect(wrapper.text()).toContain('未设置')
     expect(button(wrapper, '发送测试消息').attributes('disabled')).toBeDefined()
-    await button(wrapper, '编辑渠道').trigger('click')
+    await button(wrapper, '编辑').trigger('click')
     await fields(wrapper)[1]!.setValue('ops.alerts')
     await wrapper.get('[role=dialog] form').trigger('submit')
     await flushPromises()
@@ -214,17 +176,16 @@ describe('messaging administration', () => {
         rows = []
         return null
       }
-      return /^\/messaging\/(destinations|accounts|inbounds)/.test(path) ? [] : rows
+      return rows
     })
     const confirm = vi.spyOn(confirmation, 'confirmAction').mockResolvedValueOnce(false)
-    const wrapper = mount(MessagingView)
+    const router = await routed('/messaging')
+    const wrapper = mount(ChannelsView, { global: { plugins: [router] } })
     await flushPromises()
     const remove = async () => {
       await wrapper.get('.row-more-trigger').trigger('click')
       await flushPromises()
-      await button(new DOMWrapper(document.body) as unknown as VueWrapper, '删除渠道').trigger(
-        'click',
-      )
+      await button(body(), '删除渠道').trigger('click')
     }
     await remove()
     await flushPromises()
@@ -236,36 +197,38 @@ describe('messaging administration', () => {
     await flushPromises()
     expect(writes).toEqual([[`/messaging/channels/${channel.id}`, 'DELETE']])
     expect(wrapper.text()).toContain('渠道已删除')
-    expect(wrapper.text()).toContain('暂无消息渠道')
+    expect(wrapper.text()).toContain('还没有消息渠道')
     confirm.mockRestore()
   })
 
-  it('creates an app channel and adds a group picked from the bot chats', async () => {
+  it('shows apps with their connection and opens a new app on its groups', async () => {
     authorize(['messaging:manage'])
-    const writes: [string, string | undefined, unknown][] = []
-    const reads: string[] = []
+    const writes: [string, unknown][] = []
+    const refused = {
+      ...app,
+      id: '88888888-8888-4888-8888-888888888888',
+      name: '旧应用',
+      connection: {
+        state: 'refused',
+        workers: 0,
+        error_code: 'feishu_ws_1000040350',
+        error_hint: '长连接数超过飞书上限',
+      },
+    }
     fakeApi((path, init) => {
-      if (init.method && init.method !== 'GET') {
-        writes.push([path, init.method, JSON.parse(String(init.body))])
-        return init.method === 'POST' && path === '/messaging/channels' ? app : target
+      if (init.method === 'POST') {
+        writes.push([path, JSON.parse(String(init.body))])
+        return app
       }
-      reads.push(path)
-      if (path.includes('/chats'))
-        return {
-          items: [
-            { chat_id: 'oc_daily', name: '日报群', external: false },
-            { chat_id: 'oc_ops', name: '运维群', external: false },
-          ],
-          page_token: null,
-        }
-      if (/^\/messaging\/(accounts|inbounds)/.test(path)) return []
-      return path.startsWith('/messaging/destinations') ? [target] : [channel, app]
+      return [channel, app, refused]
     })
-    const wrapper = mount(MessagingView)
+    const router = await routed('/messaging')
+    const wrapper = mount(ChannelsView, { global: { plugins: [router] } })
     await flushPromises()
-    expect(wrapper.text()).toContain('cli_a1b2c3')
-    expect(wrapper.text()).toContain('按发送目标配置')
-    expect(reads).toContain('/messaging/destinations?provider=feishu_app&offset=0&limit=50')
+    expect(wrapper.text()).toContain('1 个群 · 3 位成员')
+    expect(wrapper.text()).toContain('已连接')
+    expect(wrapper.text()).toContain('连接被拒')
+    expect(wrapper.text()).toContain('长连接数超过飞书上限')
 
     await button(wrapper, '新建渠道').trigger('click')
     await wrapper.get('[role=dialog] input[value=feishu_app]').setValue()
@@ -275,35 +238,84 @@ describe('messaging administration', () => {
     await inputs[2]!.setValue('app-secret')
     await wrapper.get('[role=dialog] form').trigger('submit')
     await flushPromises()
-    expect(writes[0]).toEqual([
-      '/messaging/channels',
-      'POST',
-      {
-        name: '飞书应用',
-        provider: 'feishu_app',
-        app_id: 'cli_a1b2c3',
-        credential: { app_secret: 'app-secret' },
-      },
+    expect(writes).toEqual([
+      [
+        '/messaging/channels',
+        {
+          name: '飞书应用',
+          provider: 'feishu_app',
+          app_id: 'cli_a1b2c3',
+          credential: { app_secret: 'app-secret' },
+        },
+      ],
     ])
+    expect(router.currentRoute.value.fullPath).toBe(`/messaging/channels/${app.id}?tab=groups`)
+  })
+})
 
+describe('an app channel page', () => {
+  it('shows the connection, then manages groups picked from the bot chats', async () => {
+    authorize(['messaging:manage', 'message_delivery:read'])
+    const writes: [string, unknown][] = []
+    const reads: string[] = []
+    fakeApi((path, init) => {
+      if (init.method === 'POST') {
+        writes.push([path, init.body ? JSON.parse(String(init.body)) : null])
+        return path.includes('/test') ? { delivery_id: delivery.id } : target
+      }
+      reads.push(path)
+      if (path === `/messaging/channels/${app.id}`) return app
+      if (path.includes('/chats'))
+        return {
+          items: [
+            { chat_id: 'oc_daily', name: '日报群', external: false },
+            { chat_id: 'oc_ops', name: '运维群', external: false },
+          ],
+          page_token: null,
+        }
+      return path.startsWith('/messaging/destinations') ? [target] : []
+    })
+    const router = await routed(`/messaging/channels/${app.id}`)
+    const page = mount(ChannelDetailView, {
+      props: { id: app.id },
+      global: { plugins: [router] },
+    })
+    await flushPromises()
+    expect(page.text()).toContain('cli_a1b2c3')
+    expect(page.text()).toContain('已连接')
+    expect(page.text()).toContain('2 个 Worker 在线')
+    expect(page.text()).toContain('查看这个渠道的消息记录')
+    page.unmount()
+
+    const wrapper = mount(GroupsPanel, { props: { channel: app }, attachTo: document.body })
+    await flushPromises()
+    expect(reads).toContain(`/messaging/destinations?channel_id=${app.id}&offset=0&limit=50`)
+    expect(wrapper.text()).toContain('ops.daily')
     await button(wrapper, '添加群').trigger('click')
     await flushPromises()
     expect(reads).toContain(`/messaging/channels/${app.id}/chats`)
-    const [, chatSelect] = wrapper.findAllComponents(AppSelect)
+    const [chatSelect] = wrapper.findAllComponents(AppSelect)
     chatSelect!.vm.$emit('update:modelValue', 'oc_ops')
     await flushPromises()
     await wrapper.get('[role=dialog] input[placeholder="ops.alerts"]').setValue('ops.alerts')
     await wrapper.get('[role=dialog] form').trigger('submit')
     await flushPromises()
-    expect(writes[1]).toEqual([
+    expect(writes[0]).toEqual([
       '/messaging/destinations',
-      'POST',
       { key: 'ops.alerts', channel_id: app.id, name: '运维群', external_id: 'oc_ops' },
     ])
+
+    await wrapper.get('.row-more-trigger').trigger('click')
+    await flushPromises()
+    await button(body(), '发送测试卡片').trigger('click')
+    await flushPromises()
+    expect(writes[1]).toEqual([`/messaging/destinations/${target.id}/test?card=true`, null])
+    expect(wrapper.text()).toContain('确认收到')
+    wrapper.unmount()
   })
 
-  it('looks a Feishu account up with debounce and binds by the contact', async () => {
-    authorize(['messaging:manage', 'message_delivery:read', 'user:read'])
+  it('looks a Feishu account up with debounce and binds a member by the contact', async () => {
+    authorize(['messaging:manage', 'user:read'])
     const writes: [string, unknown][] = []
     const alice = {
       id: '66666666-6666-4666-8666-666666666666',
@@ -312,38 +324,32 @@ describe('messaging administration', () => {
     }
     fakeApi((path, init) => {
       if (init.method === 'POST') {
-        const body = JSON.parse(String(init.body))
-        writes.push([path, body])
+        const sent = JSON.parse(String(init.body))
+        writes.push([path, sent])
         if (path.endsWith('/lookup'))
           return { external_user_id: 'ou_alice', name: '爱丽丝', name_hint: null, bound_to: null }
         return {}
       }
       if (path.startsWith('/users')) return [alice]
-      if (path.startsWith('/messaging/accounts'))
-        return [
-          {
-            id: '77777777-7777-4777-8777-777777777777',
-            channel_id: app.id,
-            user: { id: alice.id, label: 'Alice' },
-            external_user_id: 'ou_alice',
-            created_at: stamp,
-          },
-        ]
-      if (path.startsWith('/messaging/deliveries'))
-        return [{ ...delivery, destination_key: null, recipient: { id: alice.id, label: 'Alice' } }]
-      if (/^\/messaging\/(destinations|inbounds)/.test(path)) return []
-      return [app]
+      return [
+        {
+          id: '77777777-7777-4777-8777-777777777777',
+          channel_id: app.id,
+          user: { id: alice.id, label: 'Alice' },
+          external_user_id: 'ou_alice',
+          created_at: stamp,
+        },
+      ]
     })
-    const wrapper = mount(MessagingView)
+    const wrapper = mount(MembersPanel, { props: { channel: app } })
     await flushPromises()
     expect(wrapper.text()).toContain('ou_alice')
-    expect(wrapper.text()).toContain('用户 Alice')
 
     vi.useFakeTimers()
     try {
-      await button(wrapper, '绑定账号').trigger('click')
+      await button(wrapper, '绑定成员').trigger('click')
       await flushPromises()
-      const [, userSelect, contactSelect] = wrapper.findAllComponents(AppSelect)
+      const [userSelect, contactSelect] = wrapper.findAllComponents(AppSelect)
       userSelect!.vm.$emit('update:modelValue', alice.id)
       const search = contactSelect!.vm.$attrs['remote-method'] as (q: string) => void
       // Partial input never reaches Feishu; rapid typing only looks up the last value.
@@ -368,5 +374,53 @@ describe('messaging administration', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('message records', () => {
+  it('lists sent and received records without content and filters them', async () => {
+    authorize(['messaging:manage', 'message_delivery:read'])
+    const reads: string[] = []
+    const inbound = {
+      id: '66666666-6666-4666-8666-666666666666',
+      channel_id: app.id,
+      kind: 'card_action',
+      delivery_id: delivery.id,
+      action_key: 'ack',
+      external_user_id: 'ou_stranger',
+      actor: null,
+      status: 'rejected',
+      attempts: 1,
+      error_code: 'message_actor_unbound',
+      error_hint: '点击人的飞书账号没有绑定 Keystone 用户',
+      received_at: stamp,
+      processed_at: null,
+    }
+    fakeApi((path) => {
+      reads.push(path)
+      if (path.startsWith('/messaging/deliveries')) return [delivery]
+      if (path.startsWith('/messaging/inbounds')) return [inbound]
+      return [channel, app]
+    })
+    const router = await routed(`/messaging/records?channel=${channel.id}`)
+    const wrapper = mount(RecordsView, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(reads).toContain(`/messaging/deliveries?offset=0&limit=50&channel_id=${channel.id}`)
+    const sent = wrapper.get('#pane-sent')
+    expect(sent.text()).toContain('结果未知')
+    expect(sent.text()).toContain('send_unconfirmed')
+    expect(sent.text()).toContain('运维群')
+    const received = wrapper.get('#pane-received')
+    expect(received.text()).toContain('点击卡片按钮')
+    expect(received.text()).toContain('已拒绝')
+    expect(received.text()).toContain('没有绑定 Keystone 用户')
+
+    const [, statusSelect] = wrapper.findAllComponents(AppSelect)
+    statusSelect!.vm.$emit('update:modelValue', 'failed')
+    statusSelect!.vm.$emit('change', 'failed')
+    await flushPromises()
+    expect(reads.at(-1)).toBe(
+      `/messaging/deliveries?offset=0&limit=50&channel_id=${channel.id}&status=failed`,
+    )
   })
 })
