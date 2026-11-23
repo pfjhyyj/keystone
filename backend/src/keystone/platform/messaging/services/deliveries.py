@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
+from keystone.platform.messaging.adapters import feishu_errors
 from keystone.platform.messaging.models import MessageChannel, MessageDelivery, MessageDestination
 from keystone.platform.messaging.schemas.content import MAX_CONTENT_BYTES, content_adapter
 
@@ -31,6 +32,7 @@ def delivery_view(row, destination_key=None):
         "status": row.status,
         "attempts": row.attempts,
         "error_code": row.error_code,
+        "error_hint": feishu_errors.hint(row.error_code),
         "expires_at": row.expires_at,
         "created_at": row.created_at,
         "sent_at": row.sent_at,

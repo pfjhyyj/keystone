@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -33,7 +33,12 @@ class WebhookCredential(Input):
         return value
 
 
-class ChannelCreate(Input):
+class AppCredential(Input):
+    # The app ID identifies the app and is fixed with the channel; only the secret rotates.
+    app_secret: SecretStr = Field(min_length=1, max_length=256)
+
+
+class WebhookChannelCreate(Input):
     name: str = Name
     provider: Literal["feishu_webhook"]
     credential: WebhookCredential
@@ -41,18 +46,29 @@ class ChannelCreate(Input):
     destination_key: str = Key
 
 
+class AppChannelCreate(Input):
+    name: str = Name
+    provider: Literal["feishu_app"]
+    app_id: str = Field(pattern=r"^cli_[A-Za-z0-9]{1,60}$")
+    credential: AppCredential
+
+
+ChannelCreate = Annotated[WebhookChannelCreate | AppChannelCreate, Field(discriminator="provider")]
+
+
 class ChannelEdit(Input):
     name: str = Name
     is_active: bool
-    # Omitted keeps the stored credential; a value replaces it as a whole.
-    credential: WebhookCredential | None = None
+    # Omitted keeps the stored credential; a value replaces it and must match the provider.
+    credential: WebhookCredential | AppCredential | None = None
 
 
 class DestinationCreate(Input):
     key: str = Key
     channel_id: UUID
     name: str = Name
-    external_id: str | None = Field(None, min_length=1, max_length=128)
+    # The group chat ID for app channels, chosen from the groups the bot is in.
+    external_id: str | None = Field(None, pattern=r"^oc_[A-Za-z0-9]{1,124}$")
 
 
 class DestinationEdit(Input):

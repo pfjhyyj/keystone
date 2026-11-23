@@ -6,10 +6,13 @@ from pydantic import SecretStr
 from sqlalchemy import delete, select
 
 from keystone.core.errors import ServiceError
+from keystone.platform.messaging.adapters import feishu_app, feishu_errors
 from keystone.platform.messaging.models import MessageChannel, MessageDelivery, MessageDestination
+from keystone.platform.messaging.schemas import AppCredential, WebhookCredential
 from keystone.platform.messaging.services.deliveries import enqueue_in_transaction
 
-PURPOSE = {"feishu_webhook": "messaging.webhook"}
+PURPOSE = {"feishu_webhook": "messaging.webhook", "feishu_app": "messaging.app"}
+CREDENTIAL = {"feishu_webhook": WebhookCredential, "feishu_app": AppCredential}
 
 
 def credential_unavailable():
@@ -24,6 +27,7 @@ def channel_view(row, destination=None):
                 "id",
                 "name",
                 "provider",
+                "app_id",
                 "is_active",
                 "created_at",
                 "created_by",
@@ -64,9 +68,14 @@ async def credentials_stored(session):
 
 
 async def seal(session, vault, row, credential):
-    value = {"url": credential.url.get_secret_value()}
-    if credential.secret is not None:
-        value["secret"] = credential.secret.get_secret_value()
+    if not isinstance(credential, CREDENTIAL[row.provider]):
+        raise ServiceError(422, "message_credential_invalid", "凭据与渠道类型不匹配")
+    if isinstance(credential, AppCredential):
+        value = {"app_secret": credential.app_secret.get_secret_value()}
+    else:
+        value = {"url": credential.url.get_secret_value()}
+        if credential.secret is not None:
+            value["secret"] = credential.secret.get_secret_value()
     return vault.encrypt(
         SecretStr(json.dumps(value)),
         row.id,
@@ -77,6 +86,17 @@ async def seal(session, vault, row, credential):
 
 def unseal(vault, row):
     return json.loads(vault.decrypt(row.credential_encrypted, row.id, PURPOSE[row.provider]))
+
+
+async def remove_deliveries(session, condition):
+    """Delete matching delivery history; a delivery being sent blocks the whole removal."""
+    # A row claimed meanwhile is re-checked by PostgreSQL and survives as `sending`.
+    removed = await session.execute(
+        delete(MessageDelivery).where(condition, MessageDelivery.status != "sending")
+    )
+    if await session.scalar(select(MessageDelivery.id).where(condition).limit(1)):
+        raise ServiceError(409, "message_channel_sending", "有消息正在发送，请稍后再删除")
+    return removed.rowcount
 
 
 class ChannelService:
@@ -117,16 +137,19 @@ class ChannelService:
                     raise ServiceError(404, "message_channel_not_found", "消息渠道不存在")
                 row.name, row.is_active = data.name, data.is_active
                 self.identity.touch(row, auth)
-                destination = await session.scalar(
-                    select(MessageDestination).where(MessageDestination.channel_id == row.id)
-                )
-                if destination is not None and row.provider == "feishu_webhook":
+                destination = None
+                if row.provider == "feishu_webhook":
+                    destination = await session.scalar(
+                        select(MessageDestination).where(MessageDestination.channel_id == row.id)
+                    )
+                if destination is not None:
                     destination.name = row.name
                     self.identity.touch(destination, auth)
             else:
                 row = MessageChannel(
                     name=data.name,
                     provider=data.provider,
+                    app_id=getattr(data, "app_id", None),
                     credential_encrypted="",
                     is_active=True,
                     created_by=auth.user.id,
@@ -134,15 +157,17 @@ class ChannelService:
                 )
                 session.add(row)
                 await session.flush()
-                destination = MessageDestination(
-                    key=data.destination_key,
-                    channel_id=row.id,
-                    name=row.name,
-                    is_active=True,
-                    created_by=auth.user.id,
-                    updated_by=auth.user.id,
-                )
-                session.add(destination)
+                destination = None
+                if row.provider == "feishu_webhook":
+                    destination = MessageDestination(
+                        key=data.destination_key,
+                        channel_id=row.id,
+                        name=row.name,
+                        is_active=True,
+                        created_by=auth.user.id,
+                        updated_by=auth.user.id,
+                    )
+                    session.add(destination)
             if data.credential is not None:
                 row.credential_encrypted = await seal(session, self.vault, row, data.credential)
             await session.flush()
@@ -155,6 +180,7 @@ class ChannelService:
                 {
                     "name": row.name,
                     "provider": row.provider,
+                    "app_id": row.app_id,
                     "is_active": row.is_active,
                     "credential_changed": data.credential is not None,
                     "destination_key": destination and destination.key,
@@ -175,18 +201,7 @@ class ChannelService:
             row = await session.get(MessageChannel, identifier, with_for_update=True)
             if row is None:
                 raise ServiceError(404, "message_channel_not_found", "消息渠道不存在")
-            # A row claimed meanwhile is re-checked by PostgreSQL and survives as `sending`.
-            removed = await session.execute(
-                delete(MessageDelivery).where(
-                    MessageDelivery.channel_id == row.id, MessageDelivery.status != "sending"
-                )
-            )
-            if await session.scalar(
-                select(MessageDelivery.id).where(MessageDelivery.channel_id == row.id).limit(1)
-            ):
-                raise ServiceError(
-                    409, "message_channel_sending", "渠道有消息正在发送，请稍后再删除"
-                )
+            removed = await remove_deliveries(session, MessageDelivery.channel_id == row.id)
             keys = (
                 await session.scalars(
                     delete(MessageDestination)
@@ -206,17 +221,39 @@ class ChannelService:
                 {
                     **details,
                     "destination_keys": sorted(keys),
-                    "deliveries_removed": removed.rowcount,
+                    "deliveries_removed": removed,
                 },
             )
 
-    async def destinations(self, offset, limit):
+    async def chats(self, identifier, page_token=None):
+        """One page of the groups an app bot is in, read live from Feishu."""
         async with self.identity.access("messaging:manage") as (session, _):
+            row = await session.get(MessageChannel, identifier)
+            if row is None:
+                raise ServiceError(404, "message_channel_not_found", "消息渠道不存在")
+            if row.provider != "feishu_app":
+                raise ServiceError(422, "message_channel_unsupported", "只有自建应用渠道可选择群")
+            app_id, secret = row.app_id, unseal(self.vault, row)["app_secret"]
+        # The provider call happens outside the database transaction.
+        try:
+            return await feishu_app.chats(app_id, secret, page_token)
+        except (feishu_app.Rejected, feishu_app.NotSent) as error:
+            reason = feishu_errors.hint(error.code) or "飞书拒绝了请求"
+            raise ServiceError(
+                502, "message_provider_rejected", f"{reason}（{error.code}）"
+            ) from None
+        except feishu_app.Unknown:
+            raise ServiceError(504, "message_provider_unavailable", "飞书暂时无法访问") from None
+
+    async def destinations(self, offset, limit, provider=None):
+        async with self.identity.access("messaging:manage") as (session, _):
+            query = select(MessageDestination)
+            if provider is not None:
+                query = query.join(
+                    MessageChannel, MessageDestination.channel_id == MessageChannel.id
+                ).where(MessageChannel.provider == provider)
             rows = await session.scalars(
-                select(MessageDestination)
-                .order_by(MessageDestination.key)
-                .offset(offset)
-                .limit(limit)
+                query.order_by(MessageDestination.key).offset(offset).limit(limit)
             )
             return [destination_view(row) for row in rows]
 
@@ -248,6 +285,10 @@ class ChannelService:
                             "message_destination_invalid",
                             "群机器人渠道只有一个接收方，且不填外部会话标识",
                         )
+                elif data.external_id is None:
+                    raise ServiceError(
+                        422, "message_destination_invalid", "自建应用渠道的接收方须选择群"
+                    )
                 row = MessageDestination(
                     key=data.key,
                     channel_id=channel.id,
@@ -273,6 +314,34 @@ class ChannelService:
                 },
             )
             return destination_view(row)
+
+    async def delete_destination(self, identifier):
+        """Remove one destination of an app channel together with its delivery history."""
+        action = "messaging.destination.delete"
+        async with self.identity.access(
+            "messaging:manage", action=action, target="messaging.destination", target_id=identifier
+        ) as (session, auth):
+            row = await session.get(MessageDestination, identifier)
+            if row is None:
+                raise ServiceError(404, "message_destination_not_found", "消息接收方不存在")
+            # Same lock order as channel deletion: the channel, then its deliveries.
+            channel = await session.get(MessageChannel, row.channel_id, with_for_update=True)
+            if channel.provider == "feishu_webhook":
+                raise ServiceError(
+                    422, "message_destination_fixed", "群机器人的消息标识随渠道一起删除"
+                )
+            removed = await remove_deliveries(session, MessageDelivery.destination_id == row.id)
+            details = {"key": row.key, "channel_id": str(row.channel_id), "name": row.name}
+            await session.delete(row)
+            await session.flush()
+            await self.identity.log(
+                session,
+                auth,
+                action,
+                "messaging.destination",
+                identifier,
+                {**details, "deliveries_removed": removed},
+            )
 
     async def test(self, identifier):
         """Queue a fixed test notice to one destination; the Worker sends it."""
