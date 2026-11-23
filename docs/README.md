@@ -20,6 +20,7 @@
 | [开发环境与检查](development/environment.md) | 日常开发、前端组织和统一检查入口 |
 | [业务接入](development/business.md) | 完整最小示例、模块分层、权限、迁移与装配 |
 | [Flow 开发](development/flow.md) | 工作流、Agent 与工具示例 |
+| [消息与卡片](development/messaging.md) | 业务发送通知和卡片、处理飞书按钮点击 |
 | [控制台视觉规范](../DESIGN.md) | 前端样式与交互；PRODUCT.md 为设计工具的本地产品上下文 |
 | [后端测试](../backend/tests/README.md) · [数据库迁移](../backend/migrations/README.md) | 各自规则的维护入口 |
 
