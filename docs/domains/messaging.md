@@ -90,7 +90,7 @@ erDiagram
 | 声明 | 字段 |
 |---|---|
 | 卡片动作 | source_module、source_type、key、identity、permission、handler(runtime, 身份上下文, source_id, action_key, inbound_id)；在 composition 的 MESSAGE_ACTIONS 中显式列出，source 与 key 重复或权限未声明时启动失败 |
-| 命令 | command_key、text（去掉 @ 后完整匹配）、where（p2p、group 或两者）、identity、permission、accept_within、handler(身份上下文, inbound_id, command_key) |
+| 命令 | command_key、text（去掉 @ 后完整匹配）、where（p2p、group 或两者）、identity、permission、accept_within、reply_failures（默认 false）、handler(身份上下文, inbound_id, command_key) |
 | 内容提供 | source_type、provider(source_id) → 内容或「不再可用」 |
 
 不同命令的 text 不能相同，也不能以平台保留的「绑定」开头。平台自带一个卡片动作：测试卡片上的「确认收到」，处理时只把卡片更新为已确认，用于不接业务时验证入站链路。identity 取值：
@@ -106,7 +106,18 @@ destination_user 只在群内、且接收方配置了执行用户时可用；卡
 
 业务在自己的事务内调用 MessagingService.enqueue 登记投递，传入接收方（Keystone 用户、destination key 或要回复的 inbound_id）、内容或 supplied、可选动作和截止时间；平台校验渠道启用、接收方可解析、渠道支持所选内容模式（群机器人拒绝带动作的卡片），与业务变更同事务写入 pending 投递。发给 Keystone 用户时，平台取该用户在已启用自建应用渠道上最早的绑定，登记时要求绑定存在且用户在职；投递只记录用户和渠道，发送时再按该渠道读取当前绑定。回复只能针对本模块命令产生的入站，发到原入站所在的会话和渠道。投递取消只在 pending 时生效。业务不直接调用渠道接口。
 
-命令 handler 只受理：在执行身份下校验业务规则，登记业务任务或 Flow，并保存 inbound_id。需要等待结果的回复由业务在结果确定时另行登记，不由平台等待。
+命令 handler 只受理：在执行身份下校验业务规则，登记业务任务或 Flow，并保存 inbound_id。需要立即确认时，handler 在同一事务内登记一条回复（如「已收到」）。需要等待结果的回复由业务在结果确定时另行登记，不由平台等待：结果由 Flow 产生时，在 Flow 的最后一个 Step 中以原身份登记。Flow 失败、取消或超时不会执行业务代码，业务需要回复这些结果时，用自己的计划核对仍未回复的入站及其 Flow 终态后登记。
+
+命令没有被业务受理时，handler 无法回复：业务拒绝会回滚它的事务，过期、未授权的命令也不会调用 handler。声明 `reply_failures=true` 的命令由平台在入站转为 rejected、expired 或 failed 的同一事务内登记一条 stored 文本回复，回复原消息：
+
+| 入站结果 | 回复内容 |
+|---|---|
+| 业务拒绝 | handler 抛出的 ServiceError 说明（与卡片动作的拒绝提示相同，只写可以给对方看的话） |
+| expired | 「命令已过期，请重新发送」 |
+| 未绑定、执行用户未配置或停用、无权限 | 对应的固定说明，不透露执行用户 |
+| failed（处理 3 次仍失败） | 「暂时无法处理，请稍后重新发送」 |
+
+这类回复的 source 为 `messaging` / `inbound` / 入站 ID，created_by 为入站解析出的执行身份，未解析出时为系统。每条入站最多一条失败回复，以入站 ID 去重。
 
 ### 4.2 发送时取内容
 
@@ -198,7 +209,7 @@ sequenceDiagram
 
 卡片动作只携带投递 ID 和 action_key。平台核对回调的消息 ID 等于该投递的 provider_message_id、渠道一致、action_key 在投递的 actions 中，业务对象由投递的 source 引用定位，不信任回调中的其他值。成功时卡片保留原内容，按钮换为「{执行人} 已{动作文案}」；拒绝时只应答错误提示和原因，卡片不变，触发人修正后（如完成绑定）可以再点。补处理成功后按消息 ID 更新卡片，失败不影响已提交的业务决定，也不重试。
 
-执行身份的权限是其当前角色权限，不叠加 PAT 范围，也不继承发送人身份；平台以 identity 提供的受信授权（与 Flow 执行身份相同的加载方式）构造执行上下文交给 handler。bound 模式下群卡片中任何成员点击都按各自身份判断。业务 handler 必须对重复决定幂等，以业务状态而非入站次数判定。业务拒绝或过期时是否回复由业务决定。
+执行身份的权限是其当前角色权限，不叠加 PAT 范围，也不继承发送人身份；平台以 identity 提供的受信授权（与 Flow 执行身份相同的加载方式）构造执行上下文交给 handler。bound 模式下群卡片中任何成员点击都按各自身份判断。业务 handler 必须对重复决定幂等，以业务状态而非入站次数判定。卡片动作被拒绝时只应答提示；命令被拒绝或过期时是否回复由命令的 `reply_failures` 决定，见 [4.1](#41-登记投递)。
 
 ### 5.4 飞书长连接
 
@@ -260,6 +271,7 @@ sequenceDiagram
 | 飞书账号绑定 | 已实现：按邮箱或手机号查询 open_id 绑定、解除绑定、给绑定用户发测试消息、业务按 user_id 登记；发送时复查绑定与在职，解绑或停用的投递记 failed（recipient_unbound/recipient_disabled），不改发他人 |
 | 控制台 | 已实现：“消息渠道”列出渠道及自建应用的群数、成员数和连接状态，自建应用进入详情页管理连接与凭据、群和成员绑定；“消息记录”分发出的消息和收到的操作，可按渠道和状态筛选；飞书后台配置说明在渠道页维护 |
 | 飞书入站 | 已实现：Worker 长连接（自行实现协议，帧编码与 lark-oapi 1.8.0 逐字节一致）、卡片动作（bound 身份，2 秒内同步处理并应答提示与新卡片，超时由发送任务补处理并按消息 ID 更新卡片）、个人中心生成绑定码私聊自助绑定、渠道与账号的测试卡片、入站记录。真实飞书待联调：长连接握手与事件、2.0 卡片按钮回调、应答卡片与按消息 ID 更新 |
-| 入站未实现 | 命令、回复原消息、destination_user 与执行用户（messaging:delegate）、发送时取内容；企业微信自建应用与群机器人。按真实业务需要再做 |
+| 飞书命令 | 未实现：命令声明与匹配（群内只 @ 应用、去掉 @ 后完整匹配）、destination_user 与执行用户（messaging:delegate）、回复原消息、`reply_failures` 失败回复、发送时取内容（supplied） |
+| 入站未实现 | 企业微信自建应用与群机器人。按真实业务需要再做 |
 | 历史清理 | 已实现：已结束的投递与入站记录按保留期清理，过期绑定码随之删除 |
 | 渠道事实核验 | 飞书已按官方文档核验：token 使用推荐的 `accounts.feishu.cn/oauth/v3/token`（旧 `auth/v3/tenant_access_token/internal` 已标为历史版本），机器人不在群 230002、群已解散 232009、限频 230020、卡片请求体 ≤30 KB；自建应用已真实联调通过 token 获取、群列表和文本消息发送；token 失效码 99991661/99991663/99991665 与卡片结构在自建应用上待真实联调，重推事件 ID 与卡片回调经长连接待联调；企业微信待核验 |
