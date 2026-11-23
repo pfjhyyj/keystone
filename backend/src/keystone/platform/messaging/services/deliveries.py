@@ -133,11 +133,21 @@ async def enqueue_in_transaction(
     )
 
 
+def filters(model, channel_id, status):
+    """Optional list filters shared by the delivery and inbound records."""
+    conditions = []
+    if channel_id is not None:
+        conditions.append(model.channel_id == channel_id)
+    if status is not None:
+        conditions.append(model.status == status)
+    return conditions
+
+
 class DeliveryService:
     def __init__(self, identity):
         self.identity = identity
 
-    async def listing(self, offset, limit):
+    async def listing(self, offset, limit, channel_id=None, status=None):
         async with self.identity.access("message_delivery:read") as (session, _):
             rows = (
                 await session.execute(
@@ -145,6 +155,7 @@ class DeliveryService:
                     .outerjoin(
                         MessageDestination, MessageDelivery.destination_id == MessageDestination.id
                     )
+                    .where(*filters(MessageDelivery, channel_id, status))
                     .order_by(MessageDelivery.created_at.desc(), MessageDelivery.id.desc())
                     .offset(offset)
                     .limit(limit)

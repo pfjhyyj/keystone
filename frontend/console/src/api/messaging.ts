@@ -1,5 +1,11 @@
 import { request } from './client'
 export type MessageProvider = 'feishu_webhook' | 'feishu_app'
+export interface MessageConnection {
+  state: 'connected' | 'connecting' | 'refused' | 'lost' | 'offline'
+  workers: number
+  error_code?: string | null
+  error_hint?: string | null
+}
 export interface MessageChannel {
   id: string
   name: string
@@ -8,6 +14,10 @@ export interface MessageChannel {
   is_active: boolean
   has_credential: boolean
   destination: { id: string; key: string; is_active: boolean } | null
+  // App channels only.
+  connection?: MessageConnection
+  groups?: number
+  members?: number
   created_at: string
   updated_at: string
 }
@@ -86,13 +96,25 @@ export const contactField = (value: string) =>
 // Only complete values are sent to Feishu: an email, a mainland mobile or one with "+".
 export const completeContact = (value: string) =>
   /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value) || /^(1\d{10}|\+\d{6,20})$/.test(value)
+export interface RecordFilter {
+  channelId?: string
+  status?: string
+}
+const recordQuery = (offset: number, filter: RecordFilter) =>
+  new URLSearchParams({
+    offset: String(offset),
+    limit: '50',
+    ...(filter.channelId ? { channel_id: filter.channelId } : {}),
+    ...(filter.status ? { status: filter.status } : {}),
+  }).toString()
 export const messagingApi = {
   channels: (offset: number) =>
     request<MessageChannel[]>(`/messaging/channels?offset=${offset}&limit=50`),
-  // Group bot keys live on their channel; only app channels list destinations separately.
-  appDestinations: (offset: number) =>
+  channel: (id: string) => request<MessageChannel>(`/messaging/channels/${id}`),
+  // Group bot keys live on their channel; only app channels list their groups separately.
+  groups: (channelId: string, offset: number) =>
     request<MessageDestination[]>(
-      `/messaging/destinations?provider=feishu_app&offset=${offset}&limit=50`,
+      `/messaging/destinations?channel_id=${channelId}&offset=${offset}&limit=50`,
     ),
   chats: (channelId: string, pageToken?: string) =>
     request<{ items: MessageChat[]; page_token: string | null }>(
@@ -100,18 +122,20 @@ export const messagingApi = {
         pageToken ? `?page_token=${encodeURIComponent(pageToken)}` : ''
       }`,
     ),
-  accounts: (offset: number) =>
-    request<MessageAccount[]>(`/messaging/accounts?offset=${offset}&limit=50`),
+  members: (channelId: string, offset: number) =>
+    request<MessageAccount[]>(
+      `/messaging/accounts?channel_id=${channelId}&offset=${offset}&limit=50`,
+    ),
   // POST keeps the email or mobile out of URLs and request logs.
   lookup: (channelId: string, contact: string) =>
     request<MessageLookup>('/messaging/accounts/lookup', 'POST', {
       channel_id: channelId,
       ...contactField(contact),
     }),
-  deliveries: (offset: number) =>
-    request<MessageDelivery[]>(`/messaging/deliveries?offset=${offset}&limit=50`),
-  inbounds: (offset: number) =>
-    request<MessageInbound[]>(`/messaging/inbounds?offset=${offset}&limit=50`),
+  deliveries: (offset: number, filter: RecordFilter = {}) =>
+    request<MessageDelivery[]>(`/messaging/deliveries?${recordQuery(offset, filter)}`),
+  inbounds: (offset: number, filter: RecordFilter = {}) =>
+    request<MessageInbound[]>(`/messaging/inbounds?${recordQuery(offset, filter)}`),
   // The signed-in user's own code; it is shown once and only its digest is stored.
   bindCode: () => request<BindCode>('/messaging/bind-codes', 'POST'),
   myBindings: () => request<MyBinding[]>('/messaging/me/accounts'),

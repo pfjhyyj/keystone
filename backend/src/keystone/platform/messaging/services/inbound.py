@@ -572,11 +572,14 @@ class InboundService:
     def __init__(self, identity):
         self.identity = identity
 
-    async def listing(self, offset, limit):
+    async def listing(self, offset, limit, channel_id=None, status=None):
+        from keystone.platform.messaging.services.deliveries import filters
+
         async with self.identity.access("message_delivery:read") as (session, _):
             rows = (
                 await session.scalars(
                     select(MessageInbound)
+                    .where(*filters(MessageInbound, channel_id, status))
                     .order_by(MessageInbound.received_at.desc(), MessageInbound.id.desc())
                     .offset(offset)
                     .limit(limit)

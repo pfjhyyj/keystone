@@ -45,12 +45,14 @@ class AccountService:
     def __init__(self, identity, vault):
         self.identity, self.vault = identity, vault
 
-    async def accounts(self, offset, limit):
+    async def accounts(self, offset, limit, channel_id=None):
         async with self.identity.access("messaging:manage") as (session, _):
+            query = select(ExternalAccount)
+            if channel_id is not None:
+                query = query.where(ExternalAccount.channel_id == channel_id)
             rows = (
                 await session.scalars(
-                    select(ExternalAccount)
-                    .order_by(ExternalAccount.created_at.desc(), ExternalAccount.id)
+                    query.order_by(ExternalAccount.created_at.desc(), ExternalAccount.id)
                     .offset(offset)
                     .limit(limit)
                 )

@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
   ArrowDown,
+  ChatDotRound,
   Coin,
   Collection,
   Document,
@@ -13,6 +14,7 @@ import {
   Menu,
   Monitor,
   Setting,
+  Tickets,
   User,
 } from '@element-plus/icons-vue'
 import {
@@ -34,7 +36,10 @@ const collapsed = ref(false),
   logoutError = ref('')
 const groups = [
   { title: '工作台', paths: ['/'] },
-  { title: '运行与消费', paths: ['/platform', '/model-usage', '/models', '/flows'] },
+  {
+    title: '运行与消费',
+    paths: ['/platform', '/model-usage', '/models', '/flows', '/messaging', '/messaging/records'],
+  },
   { title: '基础配置', paths: ['/dictionary'] },
   { title: '访问与审计', paths: ['/users', '/roles', '/audit'] },
 ]
@@ -48,8 +53,12 @@ const icons = {
   '/models': Setting,
   '/model-usage': Coin,
   '/flows': Management,
+  '/messaging': ChatDotRound,
+  '/messaging/records': Tickets,
 }
 const visible = computed(() => navigation.filter(canNavigate))
+// Pages below a menu entry (such as a channel's detail) name that entry in meta.nav.
+const current = computed(() => (typeof route.meta.nav === 'string' ? route.meta.nav : route.path))
 const menus = computed(() => {
   const business = visible.value.filter(
     (item) => !groups.some((group) => group.paths.includes(item.path)),
@@ -98,7 +107,7 @@ const title = computed(
 )
 const group = computed(
   () =>
-    groups.find((item) => item.paths.includes(route.path))?.title ??
+    groups.find((item) => item.paths.includes(current.value))?.title ??
     (navigation.some((item) => item.path === route.path) || route.meta.title ? '业务' : '账户设置'),
 )
 const allowed = computed(() => {
@@ -209,7 +218,7 @@ onBeforeUnmount(() => {
             :to="item.path"
             class="nav-link"
             :aria-label="item.label"
-            :aria-current="route.path === item.path ? 'page' : undefined"
+            :aria-current="current === item.path ? 'page' : undefined"
             :title="collapsed ? item.label : undefined"
             ><el-icon><component :is="icons[item.path as keyof typeof icons] ?? Grid" /></el-icon
             ><span class="nav-label">{{ item.label }}</span></RouterLink

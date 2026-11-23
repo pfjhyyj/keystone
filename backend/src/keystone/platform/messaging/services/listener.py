@@ -8,14 +8,16 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
+from sqlalchemy.dialects.postgresql import insert
 
 from keystone.core.errors import ServiceError
 from keystone.platform.messaging.adapters import feishu_app, feishu_ws
-from keystone.platform.messaging.models import MessageChannel
+from keystone.platform.messaging.models import MessageChannel, MessageConnection
 from keystone.platform.messaging.services import inbound
 from keystone.platform.messaging.services.channels import unseal
 
+# Readers treat connection rows older than three syncs as gone (channels.CONNECTION_FRESH).
 SYNC_SECONDS = 30
 log = logging.getLogger(__name__)
 
@@ -29,6 +31,8 @@ class Listeners:
         self.replies = set()
         # Shared by all of this Worker's connections.
         self.slots = asyncio.Semaphore(inbound.INLINE_LIMIT)
+        self.worker_id = runtime.settings.worker_id
+        self.writes = set()
 
     async def sync(self):
         async with self.runtime.database.transaction() as session:
@@ -53,6 +57,49 @@ class Listeners:
         for channel_id, (version, app_id, secret) in wanted.items():
             if channel_id not in self.running:
                 self._start(channel_id, version, app_id, secret)
+        await self._report()
+
+    async def _report(self, only=None):
+        """Record this Worker's connection states; rows for channels it dropped go away."""
+        running = {
+            channel_id: connection
+            for channel_id, (_, connection, _) in self.running.items()
+            if only is None or channel_id == only
+        }
+        async with self.runtime.database.transaction() as session:
+            if only is None:
+                await session.execute(
+                    delete(MessageConnection).where(
+                        MessageConnection.worker_id == self.worker_id,
+                        MessageConnection.channel_id.not_in(list(self.running)),
+                    )
+                )
+            for channel_id, connection in running.items():
+                values = {
+                    "state": connection.state,
+                    "error_code": connection.error_code,
+                    "updated_at": func.now(),
+                }
+                await session.execute(
+                    insert(MessageConnection)
+                    .values(channel_id=channel_id, worker_id=self.worker_id, **values)
+                    .on_conflict_do_update(
+                        index_elements=[MessageConnection.channel_id, MessageConnection.worker_id],
+                        set_=values,
+                    )
+                )
+
+    def _changed(self, channel_id):
+        async def write():
+            try:
+                await self._report(only=channel_id)
+            except Exception as error:
+                # The next sync writes the state again.
+                log.warning("messaging_listener_report_failed type=%s", type(error).__name__)
+
+        task = asyncio.create_task(write())
+        self.writes.add(task)
+        task.add_done_callback(self.writes.discard)
 
     def _start(self, channel_id, version, app_id, secret):
         channel = {"id": channel_id, "app_id": app_id}
@@ -72,6 +119,7 @@ class Listeners:
             label=str(channel_id),
             transport=self.transport,
             connector=self.connector,
+            on_change=lambda: self._changed(channel_id),
         )
         self.running[channel_id] = (version, connection, asyncio.create_task(connection.run()))
 
@@ -90,7 +138,11 @@ class Listeners:
     async def close(self):
         for channel_id in list(self.running):
             await self._forget(channel_id)
-        await asyncio.gather(*self.replies, return_exceptions=True)
+        await asyncio.gather(*self.replies, *self.writes, return_exceptions=True)
+        try:
+            await self._report()
+        except Exception:
+            log.warning("messaging_listener_report_failed type=close")
 
     async def run(self, stop):
         try:

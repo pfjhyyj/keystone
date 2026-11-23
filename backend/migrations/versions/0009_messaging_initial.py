@@ -210,8 +210,30 @@ def upgrade():
         schema="keystone",
     )
 
+    op.create_table(
+        "message_connections",
+        sa.Column(
+            "channel_id",
+            sa.Uuid(),
+            sa.ForeignKey("keystone.message_channels.id"),
+            primary_key=True,
+        ),
+        sa.Column("worker_id", sa.String(64), primary_key=True),
+        sa.Column("state", sa.String(16), nullable=False),
+        sa.Column("error_code", sa.String(64)),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.CheckConstraint(
+            "state IN ('connecting', 'connected', 'refused', 'lost')",
+            name="ck_message_connection_state",
+        ),
+        schema="keystone",
+    )
+
 
 def downgrade():
+    op.drop_table("message_connections", schema="keystone")
     op.drop_table("message_bind_codes", schema="keystone")
     op.drop_table("message_inbounds", schema="keystone")
     op.drop_table("message_deliveries", schema="keystone")

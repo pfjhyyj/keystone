@@ -44,6 +44,12 @@ HINTS = {
     "群机器人不再重发",
     "send_interrupted": "发送过程中进程中断，消息可能已送达",
     "credential_unavailable": "渠道凭据或加密密钥不可用，请检查密钥文件或重新填写凭据",
+    # The Worker's long connection to an app.
+    "feishu_ws_1000040350": "长连接数超过飞书上限（每个应用 50 个），"
+    "请减少同时运行的 Worker 或环境",
+    "feishu_ws_1000040344": "缺少 App ID 或 App Secret",
+    "endpoint_unavailable": "暂时无法从飞书获取长连接地址，Worker 会自动重试",
+    "connection_lost": "长连接断开，Worker 会按飞书给出的间隔自动重连",
     # Inbound card actions and binding messages.
     "message_actor_unbound": "点击人的飞书账号没有绑定 Keystone 用户，"
     "可在个人中心生成绑定码自助绑定",
