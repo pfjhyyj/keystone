@@ -276,6 +276,10 @@ Flow 只保存运行记录、权限和结果协调；业务结论、实体和采
 
 业务执行守卫和 Worker 服务绑定使用 composition 的显式 `EXECUTION_GUARD` / `WORKFLOW_BINDINGS`，契约与调用时机见[Flow 开发](flow.md#业务执行接入)。不必替换平台的 FlowService、ExecutionIdentity 或 Worker 主入口。
 
+## 发送消息与卡片（可选）
+
+业务需要把通知或带按钮的卡片发到飞书、并处理按钮点击时，在自己的身份事务里登记投递，在 `composition.MESSAGE_ACTIONS` 声明按钮的处理函数，见[消息与卡片](messaging.md)。
+
 ## 前端（可选）
 
 console 可直接承载业务页面，优先按现有 `views/<页面>/` 结构新增页面和路由并复用登录、权限与组件。业务确有界面或交付需求时也可使用独立前端工程。业务页面使用自己的输入表单、对象查询和受理接口。平台 Flow 页面只监控运行；console 不提供全局文件库，业务页面需要上传时按业务上传接口自行实现。
