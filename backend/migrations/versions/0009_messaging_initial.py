@@ -65,6 +65,25 @@ def upgrade():
         schema="keystone",
     )
     op.create_table(
+        "message_external_accounts",
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column(
+            "channel_id",
+            sa.Uuid(),
+            sa.ForeignKey("keystone.message_channels.id"),
+            nullable=False,
+        ),
+        sa.Column("external_user_id", sa.String(64), nullable=False),
+        sa.Column("user_id", sa.Uuid(), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column("created_by", sa.Uuid()),
+        sa.UniqueConstraint("channel_id", "external_user_id", name="uq_message_account_external"),
+        sa.UniqueConstraint("channel_id", "user_id", name="uq_message_account_user"),
+        schema="keystone",
+    )
+    op.create_table(
         "message_deliveries",
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column(
@@ -77,8 +96,8 @@ def upgrade():
             "destination_id",
             sa.Uuid(),
             sa.ForeignKey("keystone.message_destinations.id"),
-            nullable=False,
         ),
+        sa.Column("recipient_user_id", sa.Uuid()),
         sa.Column("source_module", sa.String(48), nullable=False),
         sa.Column("source_type", sa.String(64), nullable=False),
         sa.Column("source_id", sa.String(64), nullable=False),
@@ -104,6 +123,10 @@ def upgrade():
             name="ck_message_delivery_status",
         ),
         sa.CheckConstraint("kind IN ('text', 'card')", name="ck_message_delivery_kind"),
+        sa.CheckConstraint(
+            "num_nonnulls(destination_id, recipient_user_id) = 1",
+            name="ck_message_delivery_target",
+        ),
         schema="keystone",
     )
     op.create_index(
@@ -130,5 +153,6 @@ def upgrade():
 
 def downgrade():
     op.drop_table("message_deliveries", schema="keystone")
+    op.drop_table("message_external_accounts", schema="keystone")
     op.drop_table("message_destinations", schema="keystone")
     op.drop_table("message_channels", schema="keystone")

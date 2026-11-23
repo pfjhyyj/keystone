@@ -6,6 +6,7 @@ from fastapi import APIRouter, Query, Request, Response
 from keystone.core.http import Page
 from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.messaging import schemas
+from keystone.platform.messaging.services.accounts import AccountService
 from keystone.platform.messaging.services.channels import ChannelService
 from keystone.platform.messaging.services.deliveries import DeliveryService
 
@@ -74,6 +75,37 @@ async def delete_destination(identifier: UUID, request: Request):
 @router.post("/destinations/{identifier}/test", status_code=202)
 async def test_destination(identifier: UUID, request: Request):
     return await _channels(request).test(identifier)
+
+
+def _accounts(request: Request) -> AccountService:
+    return AccountService(access_context(request), request.app.state.runtime.messaging_vault())
+
+
+@router.get("/accounts")
+async def accounts(request: Request, page: Page):
+    return await _accounts(request).accounts(page.offset, page.limit)
+
+
+# POST keeps the email or mobile out of URLs and request logs.
+@router.post("/accounts/lookup")
+async def lookup_account(data: schemas.ContactLookup, request: Request):
+    return await _accounts(request).lookup(data)
+
+
+@router.post("/accounts", status_code=201)
+async def bind_account(data: schemas.AccountCreate, request: Request):
+    return await _accounts(request).bind(data)
+
+
+@router.delete("/accounts/{identifier}", status_code=204)
+async def unbind_account(identifier: UUID, request: Request):
+    await _accounts(request).unbind(identifier)
+    return Response(status_code=204)
+
+
+@router.post("/accounts/{identifier}/test", status_code=202)
+async def test_account(identifier: UUID, request: Request):
+    return await _accounts(request).test(identifier)
 
 
 @router.get("/deliveries")

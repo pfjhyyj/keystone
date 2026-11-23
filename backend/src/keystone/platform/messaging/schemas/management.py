@@ -2,7 +2,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 
 from keystone.core.schemas import Input
 
@@ -69,6 +69,23 @@ class DestinationCreate(Input):
     name: str = Name
     # The group chat ID for app channels, chosen from the groups the bot is in.
     external_id: str | None = Field(None, pattern=r"^oc_[A-Za-z0-9]{1,124}$")
+
+
+class ContactLookup(Input):
+    channel_id: UUID
+    # Used once to look up the open ID; neither is stored or audited.
+    email: str | None = Field(None, pattern=r"^[^@\s]{1,64}@[^@\s]{1,190}$")
+    mobile: str | None = Field(None, pattern=r"^\+?[0-9]{6,20}$")
+
+    @model_validator(mode="after")
+    def one_contact(self):
+        if (self.email is None) == (self.mobile is None):
+            raise ValueError("Provide either an email or a mobile number")
+        return self
+
+
+class AccountCreate(ContactLookup):
+    user_id: UUID
 
 
 class DestinationEdit(Input):

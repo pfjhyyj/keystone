@@ -69,7 +69,7 @@ describe('messaging administration', () => {
         writes.push([path, init.method, init.body ? JSON.parse(String(init.body)) : null])
         return path.endsWith('/test') ? { delivery_id: delivery.id } : channel
       }
-      return path.startsWith('/messaging/destinations') ? [] : [channel]
+      return /^\/messaging\/(destinations|accounts)/.test(path) ? [] : [channel]
     })
     const wrapper = mount(MessagingView)
     await flushPromises()
@@ -117,7 +117,7 @@ describe('messaging administration', () => {
         return { delivery_id: delivery.id }
       }
       if (path.startsWith('/messaging/deliveries')) return [delivery]
-      return path.startsWith('/messaging/destinations') ? [] : [channel]
+      return /^\/messaging\/(destinations|accounts)/.test(path) ? [] : [channel]
     })
     const wrapper = mount(MessagingView)
     await flushPromises()
@@ -137,7 +137,9 @@ describe('messaging administration', () => {
         writes.push([path, init.method, JSON.parse(String(init.body))])
         return channel
       }
-      return path.startsWith('/messaging/destinations') ? [] : [{ ...channel, destination: null }]
+      return /^\/messaging\/(destinations|accounts)/.test(path)
+        ? []
+        : [{ ...channel, destination: null }]
     })
     const wrapper = mount(MessagingView)
     await flushPromises()
@@ -167,7 +169,7 @@ describe('messaging administration', () => {
         rows = []
         return null
       }
-      return path.startsWith('/messaging/destinations') ? [] : rows
+      return /^\/messaging\/(destinations|accounts)/.test(path) ? [] : rows
     })
     const confirm = vi.spyOn(confirmation, 'confirmAction').mockResolvedValueOnce(false)
     const wrapper = mount(MessagingView)
@@ -211,6 +213,7 @@ describe('messaging administration', () => {
           ],
           page_token: null,
         }
+      if (path.startsWith('/messaging/accounts')) return []
       return path.startsWith('/messaging/destinations') ? [target] : [channel, app]
     })
     const wrapper = mount(MessagingView)
@@ -252,5 +255,73 @@ describe('messaging administration', () => {
       'POST',
       { key: 'ops.alerts', channel_id: app.id, name: '运维群', external_id: 'oc_ops' },
     ])
+  })
+
+  it('looks a Feishu account up with debounce and binds by the contact', async () => {
+    authorize(['messaging:manage', 'message_delivery:read', 'user:read'])
+    const writes: [string, unknown][] = []
+    const alice = {
+      id: '66666666-6666-4666-8666-666666666666',
+      username: 'alice',
+      display_name: 'Alice',
+    }
+    fakeApi((path, init) => {
+      if (init.method === 'POST') {
+        const body = JSON.parse(String(init.body))
+        writes.push([path, body])
+        if (path.endsWith('/lookup'))
+          return { external_user_id: 'ou_alice', name: '爱丽丝', name_hint: null, bound_to: null }
+        return {}
+      }
+      if (path.startsWith('/users')) return [alice]
+      if (path.startsWith('/messaging/accounts'))
+        return [
+          {
+            id: '77777777-7777-4777-8777-777777777777',
+            channel_id: app.id,
+            user: { id: alice.id, label: 'Alice' },
+            external_user_id: 'ou_alice',
+            created_at: stamp,
+          },
+        ]
+      if (path.startsWith('/messaging/deliveries'))
+        return [{ ...delivery, destination_key: null, recipient: { id: alice.id, label: 'Alice' } }]
+      if (path.startsWith('/messaging/destinations')) return []
+      return [app]
+    })
+    const wrapper = mount(MessagingView)
+    await flushPromises()
+    expect(wrapper.text()).toContain('ou_alice')
+    expect(wrapper.text()).toContain('用户 Alice')
+
+    vi.useFakeTimers()
+    try {
+      await button(wrapper, '绑定账号').trigger('click')
+      await flushPromises()
+      const [, userSelect, contactSelect] = wrapper.findAllComponents(AppSelect)
+      userSelect!.vm.$emit('update:modelValue', alice.id)
+      const search = contactSelect!.vm.$attrs['remote-method'] as (q: string) => void
+      // Partial input never reaches Feishu; rapid typing only looks up the last value.
+      search('138')
+      search('13800000000')
+      await vi.advanceTimersByTimeAsync(100)
+      search('13900000000')
+      await vi.advanceTimersByTimeAsync(300)
+      await flushPromises()
+      expect(writes).toEqual([
+        ['/messaging/accounts/lookup', { channel_id: app.id, mobile: '13900000000' }],
+      ])
+      expect(wrapper.text()).toContain('爱丽丝')
+      contactSelect!.vm.$emit('update:modelValue', '13900000000')
+      await flushPromises()
+      await wrapper.get('[role=dialog] form').trigger('submit')
+      await flushPromises()
+      expect(writes.at(-1)).toEqual([
+        '/messaging/accounts',
+        { channel_id: app.id, user_id: alice.id, mobile: '13900000000' },
+      ])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

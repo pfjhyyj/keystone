@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, ref } from 'vue'
 import { routeLocationKey, routerKey } from 'vue-router'
 import { ElRadioButton, ElRadioGroup } from 'element-plus'
 import { can } from '../../stores/session'
 import { request } from '../../api/client'
+import { adminApi, type ManagedUser } from '../../api/admin'
 import {
+  completeContact,
+  contactField,
   messagingApi,
+  type MessageAccount,
+  type MessageLookup,
   type MessageChannel,
   type MessageChat,
   type MessageDelivery,
@@ -37,6 +42,7 @@ const route = inject(routeLocationKey, undefined),
   router = inject(routerKey, undefined)
 const channelList = usePagedList('messaging:manage', messagingApi.channels)
 const targetList = usePagedList('messaging:manage', messagingApi.appDestinations)
+const accountList = usePagedList('messaging:manage', messagingApi.accounts)
 const deliveryList = usePagedList('message_delivery:read', messagingApi.deliveries)
 const { busy, error, notice, run } = useAction()
 const appChannels = computed(() =>
@@ -46,6 +52,9 @@ const tabs = computed(() => [
   ...(can('messaging:manage') ? ['channels'] : []),
   ...(can('messaging:manage') && (appChannels.value.length || targetList.rows.value.length)
     ? ['targets']
+    : []),
+  ...(can('messaging:manage') && (appChannels.value.length || accountList.rows.value.length)
+    ? ['accounts']
     : []),
   ...(can('message_delivery:read') ? ['deliveries'] : []),
 ])
@@ -62,7 +71,7 @@ const tab = computed({
 })
 const channelName = (id: string) =>
   channelList.rows.value.find((row) => row.id === id)?.name ?? id.slice(0, 8)
-const dialogOpen = computed(() => channelDialog.value || targetDialog.value)
+const dialogOpen = computed(() => channelDialog.value || targetDialog.value || accountDialog.value)
 
 const channelDialog = ref(false),
   editingChannel = ref<MessageChannel | null>(null),
@@ -145,12 +154,13 @@ async function deleteChannel(row: MessageChannel) {
     notice.value = '渠道已删除'
     await channelList.reload()
     targetList.search()
+    accountList.search()
     if (can('message_delivery:read')) deliveryList.search()
   })
 }
-async function sendTest(destinationId: string) {
+async function sendTest(destinationId: string, kind = 'destinations') {
   await run(async () => {
-    await request(`/messaging/destinations/${destinationId}/test`, 'POST')
+    await request(`/messaging/${kind}/${destinationId}/test`, 'POST')
     notice.value = '测试消息已登记，Worker 将在几秒内发送，可在投递记录中查看结果'
     if (can('message_delivery:read')) deliveryList.search()
   })
@@ -249,6 +259,99 @@ async function deleteTarget(row: MessageDestination) {
     notice.value = '发送目标已删除'
     await targetList.reload()
     if (can('message_delivery:read')) deliveryList.search()
+  })
+}
+const accountDialog = ref(false),
+  accountChannel = ref(''),
+  accountUser = ref(''),
+  contact = ref(''),
+  users = ref<ManagedUser[]>([]),
+  usersLoading = ref(false),
+  found = ref<(MessageLookup & { contact: string }) | null>(null),
+  lookupLoading = ref(false),
+  lookupMessage = ref('输入完整的手机号或邮箱')
+let userSearch = 0,
+  lookupGeneration = 0,
+  lookupTimer: ReturnType<typeof setTimeout> | undefined
+function lookupContact(query: string) {
+  const value = query.trim(),
+    current = ++lookupGeneration
+  clearTimeout(lookupTimer)
+  found.value = null
+  lookupLoading.value = false
+  if (!completeContact(value)) {
+    lookupMessage.value = '输入完整的手机号或邮箱'
+    return
+  }
+  lookupLoading.value = true
+  lookupTimer = setTimeout(async () => {
+    try {
+      const result = await messagingApi.lookup(accountChannel.value, value)
+      if (current === lookupGeneration) found.value = { ...result, contact: value }
+    } catch (reason) {
+      if (current === lookupGeneration)
+        lookupMessage.value = reason instanceof Error ? reason.message : '查询失败'
+    } finally {
+      if (current === lookupGeneration) lookupLoading.value = false
+    }
+  }, 300)
+}
+onBeforeUnmount(() => {
+  lookupGeneration++
+  clearTimeout(lookupTimer)
+})
+const foundLabel = computed(() => {
+  const item = found.value
+  if (!item) return ''
+  const who = item.name ?? `飞书用户 ${item.external_user_id}`
+  return item.bound_to ? `${who}（已绑定到 ${item.bound_to.label}）` : who
+})
+async function searchUsers(q: string) {
+  const current = ++userSearch
+  usersLoading.value = true
+  try {
+    const rows = await adminApi.users(0, q.trim())
+    if (current === userSearch) users.value = rows
+  } catch {
+    if (current === userSearch) users.value = []
+  } finally {
+    if (current === userSearch) usersLoading.value = false
+  }
+}
+function bindAccount() {
+  accountChannel.value = appChannels.value[0]?.id ?? ''
+  accountUser.value = contact.value = ''
+  found.value = null
+  lookupMessage.value = '输入完整的手机号或邮箱'
+  error.value = ''
+  accountDialog.value = true
+  void searchUsers('')
+}
+async function saveAccount() {
+  await run(async () => {
+    await request('/messaging/accounts', 'POST', {
+      channel_id: accountChannel.value,
+      user_id: accountUser.value,
+      ...contactField(contact.value.trim()),
+    })
+    contact.value = ''
+    accountDialog.value = false
+    notice.value = '飞书账号已绑定'
+    accountList.search()
+  })
+}
+async function unbindAccount(row: MessageAccount) {
+  if (
+    !(await confirmAction(
+      `解除“${row.user.label ?? row.user.id}”的飞书账号绑定？之后发给该用户的消息会失败，已登记未发出的也不再发送。`,
+      { title: '解除绑定', confirmText: '确认解除', danger: true },
+    ))
+  )
+    return
+  await run(async () => {
+    await request(`/messaging/accounts/${row.id}`, 'DELETE')
+    notice.value = '已解除绑定'
+    await accountList.reload()
   })
 }
 const time = (value: string | null) => (value ? new Date(value).toLocaleString() : '—')
@@ -463,6 +566,91 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
           @change="(value: number) => (targetList.page.value = value)"
         />
       </el-tab-pane>
+      <el-tab-pane v-if="tabs.includes('accounts')" label="账号绑定" name="accounts">
+        <p>
+          绑定后业务可以按 Keystone
+          用户发消息。管理员填写对方的飞书邮箱或手机号，平台向飞书查出账号，邮箱和手机号不保存。
+        </p>
+        <div class="row-actions">
+          <el-button
+            type="primary"
+            :disabled="busy || !appChannels.length || !can('user:read')"
+            native-type="button"
+            @click="bindAccount()"
+            >绑定账号</el-button
+          ><el-button
+            :disabled="busy || accountList.loading.value"
+            native-type="button"
+            @click="accountList.reload()"
+            >刷新</el-button
+          >
+        </div>
+        <p v-if="!can('user:read')">绑定账号需要查看用户的权限。</p>
+        <el-alert
+          v-if="accountList.error.value"
+          role="alert"
+          type="error"
+          show-icon
+          :closable="false"
+          >{{ accountList.error.value }}</el-alert
+        >
+        <div class="table-scroll">
+          <el-table
+            :fit="false"
+            native-scrollbar
+            table-layout="auto"
+            :data="accountList.rows.value"
+            row-key="id"
+            stripe
+            class="data-table"
+          >
+            <el-table-column label="用户" min-width="160"
+              ><template #default="{ row }"
+                >{{ row.user.label ?? '已删除用户'
+                }}<small>{{ row.external_user_id }}</small></template
+              ></el-table-column
+            >
+            <el-table-column label="渠道" min-width="140"
+              ><template #default="{ row }">{{
+                channelName(row.channel_id)
+              }}</template></el-table-column
+            >
+            <el-table-column label="绑定时间" min-width="170"
+              ><template #default="{ row }">{{ time(row.created_at) }}</template></el-table-column
+            >
+            <el-table-column label="操作" min-width="200"
+              ><template #default="{ row }"
+                ><div class="row-actions">
+                  <el-button
+                    type="primary"
+                    link
+                    :disabled="busy"
+                    native-type="button"
+                    @click="sendTest(row.id, 'accounts')"
+                    >发送测试消息</el-button
+                  ><RowMore :label="`${row.user.label ?? '用户'}的更多操作`"
+                    ><el-button
+                      :disabled="busy"
+                      native-type="button"
+                      type="danger"
+                      link
+                      @click="unbindAccount(row)"
+                      >解除绑定</el-button
+                    ></RowMore
+                  >
+                </div></template
+              ></el-table-column
+            >
+            <template #empty><el-empty :image-size="64" description="暂无账号绑定" /></template>
+          </el-table>
+        </div>
+        <ListPager
+          :page="accountList.page.value"
+          :count="accountList.rows.value.length"
+          :loading="busy || accountList.loading.value"
+          @change="(value: number) => (accountList.page.value = value)"
+        />
+      </el-tab-pane>
       <el-tab-pane v-if="can('message_delivery:read')" label="投递记录" name="deliveries">
         <div class="row-actions">
           <el-button
@@ -493,8 +681,11 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
             <el-table-column label="登记时间" min-width="170"
               ><template #default="{ row }">{{ time(row.created_at) }}</template></el-table-column
             >
-            <el-table-column label="消息标识" min-width="130"
-              ><template #default="{ row }">{{ row.destination_key }}</template></el-table-column
+            <el-table-column label="发送到" min-width="130"
+              ><template #default="{ row }">{{
+                row.destination_key ??
+                (row.recipient ? `用户 ${row.recipient.label ?? row.recipient.id}` : '—')
+              }}</template></el-table-column
             >
             <el-table-column label="来源" min-width="200"
               ><template #default="{ row }"
@@ -703,6 +894,78 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
         >
         <p v-if="!editingTarget">业务代码按消息标识发送，标识保存后不可修改。</p>
         <el-button :disabled="busy" native-type="submit" type="primary">保存发送目标</el-button>
+      </form>
+    </AppDialog>
+    <AppDialog
+      v-if="accountDialog"
+      protect-changes
+      title="绑定飞书账号"
+      :busy="busy"
+      @close="
+        () => {
+          accountDialog = false
+          error = ''
+        }
+      "
+    >
+      <el-alert v-if="error" role="alert" type="error" show-icon :closable="false">{{
+        error
+      }}</el-alert>
+      <form class="dialog-form" @submit.prevent="saveAccount">
+        <label
+          >渠道<AppSelect v-model="accountChannel" required aria-label="渠道">
+            <el-option
+              v-for="item in appChannels"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            /> </AppSelect
+        ></label>
+        <label
+          >用户<AppSelect
+            v-model="accountUser"
+            required
+            filterable
+            remote
+            aria-label="用户"
+            placeholder="搜索用户名或显示名"
+            :remote-method="searchUsers"
+            :loading="usersLoading"
+          >
+            <el-option
+              v-for="item in users"
+              :key="item.id"
+              :label="item.display_name || item.username"
+              :value="item.id"
+            /> </AppSelect
+        ></label>
+        <label
+          >飞书账号<AppSelect
+            v-model="contact"
+            required
+            filterable
+            remote
+            aria-label="飞书账号"
+            placeholder="输入手机号或邮箱搜索"
+            :remote-method="lookupContact"
+            :loading="lookupLoading"
+            loading-text="正在向飞书查询…"
+            :no-data-text="lookupMessage"
+          >
+            <el-option
+              v-if="found"
+              :key="found.external_user_id"
+              :label="foundLabel"
+              :value="found.contact"
+              :disabled="!!found.bound_to"
+            /> </AppSelect
+        ></label>
+        <p v-if="found?.name_hint">{{ found.name_hint }}</p>
+        <p>
+          企业邮箱查不到，请用对方在飞书登记的邮箱；非中国大陆手机号带“+”国家代码。应用需开通“通过手机号或邮箱获取用户
+          ID”权限，对方须在应用的通讯录权限范围内。手机号和邮箱只用于查询，不保存。
+        </p>
+        <el-button :disabled="busy" native-type="submit" type="primary">绑定</el-button>
       </form>
     </AppDialog>
   </section>

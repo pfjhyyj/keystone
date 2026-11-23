@@ -198,3 +198,45 @@ def test_chats_lists_live_groups_and_pages():
     }
     params = provider.calls[0].url.params
     assert params["page_size"] == "100" and params["page_token"] == "first"
+
+
+def lookup(provider, **contact):
+    return asyncio.run(
+        feishu_app.open_id(APP, SECRET, transport=httpx2.MockTransport(provider), **contact)
+    )
+
+
+def test_open_id_lookup_by_email_or_mobile():
+    found = httpx2.Response(
+        200,
+        json={"code": 0, "data": {"user_list": [{"user_id": "ou_abc", "email": "a@x.com"}]}},
+    )
+    provider = Provider(found, httpx2.Response(200, json={"code": 0, "data": {"user_list": []}}))
+    assert lookup(provider, email="a@x.com") == "ou_abc"
+    request = provider.calls[0]
+    assert request.url.path == "/open-apis/contact/v3/users/batch_get_id"
+    assert request.url.params["user_id_type"] == "open_id"
+    assert json.loads(request.content) == {"emails": ["a@x.com"]}
+    # Unknown contacts are simply absent from the answer.
+    assert lookup(provider, mobile="13800000000") is None
+    assert json.loads(provider.calls[1].content) == {"mobiles": ["13800000000"]}
+
+    missing = httpx2.Response(400, json={"code": 99991672, "msg": "Access denied"})
+    with pytest.raises(feishu_app.Rejected) as error:
+        lookup(Provider(missing), email="a@x.com")
+    assert error.value.code == "feishu_99991672"
+
+
+def test_user_name_reads_the_default_name():
+    provider = Provider(
+        httpx2.Response(
+            200, json={"code": 0, "data": {"user": {"name": "张三", "open_id": "ou_a"}}}
+        ),
+        httpx2.Response(400, json={"code": 41050, "msg": "no user authority"}),
+    )
+    transport = httpx2.MockTransport(provider)
+    assert asyncio.run(feishu_app.user_name(APP, SECRET, "ou_a", transport=transport)) == "张三"
+    assert provider.calls[0].url.path == "/open-apis/contact/v3/users/ou_a"
+    with pytest.raises(feishu_app.Rejected) as error:
+        asyncio.run(feishu_app.user_name(APP, SECRET, "ou_a", transport=transport))
+    assert error.value.code == "feishu_41050"
