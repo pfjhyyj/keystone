@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import importlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -64,7 +65,7 @@ def business(tmp_path, monkeypatch, empty_database_url):
             "--output",
             str(tmp_path / "businesses"),
             "--migrations",
-            str(directory / "versions"),
+            str(directory),
         ],
         check=True,
         capture_output=True,
@@ -85,9 +86,12 @@ def business(tmp_path, monkeypatch, empty_database_url):
         importlib.import_module(f"{PACKAGE}.models")
         return Base.metadata
 
-    def migration_config(settings):
-        config = original_config(settings)
+    def migration_config(settings, chains=()):
+        # The generated chain is registered here, as model_registry would list it.
+        config = original_config(settings, chains)
+        locations = (directory / "versions", directory / "businesses" / NAMESPACE)
         config.set_main_option("script_location", str(directory))
+        config.set_main_option("version_locations", os.pathsep.join(map(str, locations)))
         return config
 
     monkeypatch.setattr(model_registry, "load_models", load_models)
@@ -282,8 +286,7 @@ def test_generated_migration_downgrades_without_touching_the_platform(business):
     client = business.client
     create(client)
     config = migrations.migration_config(client.app.state.runtime.settings)
-    script = ScriptDirectory.from_config(config)
-    (child,) = script.get_heads()
+    assert set(ScriptDirectory.from_config(config).get_heads()) == {"0009", f"{NAMESPACE}_0001"}
 
     def tables():
         return query(
@@ -296,8 +299,8 @@ def test_generated_migration_downgrades_without_touching_the_platform(business):
             ),
         )
 
-    command.downgrade(config, script.get_revision(child).down_revision)
+    command.downgrade(config, f"{NAMESPACE}@base")
     assert tables() == [False, True]
-    command.upgrade(config, "head")
+    command.upgrade(config, "heads")
     assert tables() == [True, True]
     assert client.get(URL).json() == []

@@ -1,4 +1,4 @@
-"""Create a business package and its first domain migration.
+"""Create a business package and the first migration of its own chain.
 
 Usage:
     python scripts/new_business.py notes --entity note
@@ -17,9 +17,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BUSINESSES = ROOT / "backend/src/keystone/businesses"
-MIGRATIONS = ROOT / "backend/migrations/versions"
+MIGRATIONS = ROOT / "backend/migrations"
 
 NAMESPACE = re.compile(r"[a-z][a-z0-9_]{0,47}")
+# Alembic stores revisions in VARCHAR(32), so "<namespace>_NNNN" bounds chain owners.
+CHAIN_NAMESPACE = re.compile(r"[a-z][a-z0-9_]{0,26}")
 IDENTIFIER = re.compile(r"[a-z][a-z0-9_]*")
 MIGRATION_NAME = re.compile(r"([0-9]{4})_([a-z][a-z0-9_]*_[a-z][a-z0-9_]*)\.py")
 
@@ -50,10 +52,10 @@ def migration_metadata(path: Path) -> dict:
     return metadata
 
 
-def next_migration(versions: Path, namespace: str) -> tuple[Path, str, str | None]:
-    """Plan from static metadata without importing historical DDL or runtime models."""
+def platform_head(versions: Path) -> str | None:
+    """Read the platform chain from static metadata without importing historical DDL."""
     history, revisions, numbers = [], set(), set()
-    for path in sorted(versions.rglob("*.py")):
+    for path in sorted(versions.rglob("*.py")) if versions.is_dir() else ():
         relative = path.relative_to(versions)
         match = MIGRATION_NAME.fullmatch(path.name)
         if not match or len(relative.parts) != 1:
@@ -76,24 +78,24 @@ def next_migration(versions: Path, namespace: str) -> tuple[Path, str, str | Non
         revisions.add(revision)
         numbers.add(number)
         history.append((number, revision, down))
-        if match[2] == f"{namespace}_initial":
-            raise SystemExit(
-                f"Initial migration for {namespace} already exists; "
-                "use --no-migration to generate code without recreating its tables"
-            )
     head = None
     for expected, (number, revision, down) in enumerate(sorted(history), 1):
         if number != expected or down != head:
             raise SystemExit("Migration sequence must be contiguous and match one linear chain")
         head = revision
-    number = len(history) + 1
-    if number > 9999:
-        raise SystemExit("Migration sequence exhausted; revise the naming convention first")
-    revision = f"{number:04d}"
-    if revision in revisions:
-        raise SystemExit(f"Migration revision already exists: {revision}")
-    path = versions / f"{revision}_{namespace}_initial.py"
-    return path, revision, head
+    return head
+
+
+def next_migration(migrations: Path, namespace: str) -> tuple[Path, str, str | None]:
+    """Start the business chain on top of the current platform head."""
+    head = platform_head(migrations / "versions")
+    chain = migrations / "businesses" / namespace
+    if chain.exists() and any(chain.iterdir()):
+        raise SystemExit(
+            f"Initial migration for {namespace} already exists; "
+            "use --no-migration to generate code without recreating its tables"
+        )
+    return chain / "0001_initial.py", f"{namespace}_0001", head
 
 
 def render(path: Path, template: str, values: dict[str, str]) -> None:
@@ -340,9 +342,9 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "@REVISION@"
-down_revision = @DOWN_REVISION@
-branch_labels = None
-depends_on = None
+down_revision = None
+branch_labels = ("@NAMESPACE@",)
+depends_on = @DEPENDS_ON@
 
 
 def upgrade():
@@ -386,7 +388,12 @@ def parse_args(argv=None):
     parser.add_argument("--resource", help="API and module name (default: entity + s)")
     parser.add_argument("--label", help="Chinese display label (default: entity)")
     parser.add_argument("--output", type=Path, default=BUSINESSES, help="Businesses directory")
-    parser.add_argument("--migrations", type=Path, default=MIGRATIONS, help="Migration directory")
+    parser.add_argument(
+        "--migrations",
+        type=Path,
+        default=MIGRATIONS,
+        help="Migrations root holding versions/ and businesses/",
+    )
     parser.add_argument("--no-migration", action="store_true", help="Skip the initial migration")
     args = parser.parse_args(argv)
     args.entity = args.entity or args.namespace
@@ -399,6 +406,8 @@ def parse_args(argv=None):
         parser.error("resource must match [a-z][a-z0-9_]*")
     if not NAMESPACE.fullmatch(args.namespace):
         parser.error("namespace must start with a lowercase letter and be at most 48 characters")
+    if not args.no_migration and not CHAIN_NAMESPACE.fullmatch(args.namespace):
+        parser.error("namespace must be at most 27 characters to own a migration chain")
     if any(character in args.label for character in '"\n\r\\'):
         parser.error("label cannot contain quotes, backslashes or newlines")
     keys = [f"{args.namespace}.{args.entity}:{action}" for action in ("read", "write")]
@@ -431,10 +440,10 @@ def main(argv=None) -> int:
         generated.append(path)
 
     if plan is not None:
-        migration, revision, down = plan
+        migration, revision, depends = plan
         values |= {
             "REVISION": revision,
-            "DOWN_REVISION": f'"{down}"' if down else "None",
+            "DEPENDS_ON": f'"{depends}"' if depends else "None",
         }
         if migration.exists():
             raise SystemExit(f"{migration} already exists")
@@ -454,7 +463,9 @@ def main(argv=None) -> int:
         f"1. composition.py: import {args.namespace} CATALOG and add "
         f'("{args.namespace}", CATALOG) to BUSINESS_CATALOGS.\n'
         f"2. bootstrap.py: import the {args.namespace} controllers router and include it.\n"
-        f"3. model_registry.py: import {values['CLASS']} from the new models package.\n"
+        f"3. model_registry.py: import {values['CLASS']} from the new models package"
+        + ("" if args.no_migration else f' and add "{args.namespace}" to MIGRATION_CHAINS')
+        + ".\n"
         "4. Run keystone init and keystone check, then verify the table matches the ORM.\n"
         "5. Add tests under backend/tests/ and a business frontend if needed.\n"
         "See docs/development/business.md for the complete checklist."

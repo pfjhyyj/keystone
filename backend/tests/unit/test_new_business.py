@@ -11,14 +11,19 @@ from support.module_checks import check_module_layers
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT.parent / "scripts/new_business.py"
-VERSIONS = ROOT / "migrations/versions"
+MIGRATIONS = ROOT / "migrations"
+VERSIONS = MIGRATIONS / "versions"
+
+
+def migration_heads(root, *chains):
+    locations = [root / "versions", *(root / "businesses" / chain for chain in chains)]
+    script = ScriptDirectory(str(root), version_locations=[str(path) for path in locations])
+    return set(script.get_heads())
 
 
 def migration_head(directory):
-    script = ScriptDirectory(str(directory.parent), version_locations=[str(directory)])
-    heads = set(script.get_heads())
-    assert len(heads) == 1, heads
-    return heads.pop()
+    (head,) = migration_heads(directory.parent)
+    return head
 
 
 def invoke(businesses, migrations, *extra):
@@ -47,11 +52,11 @@ def invoke(businesses, migrations, *extra):
 def generate(tmp_path, *extra):
     businesses = tmp_path / "businesses"
     migrations = tmp_path / "migrations"
-    shutil.copytree(VERSIONS, migrations)
+    shutil.copytree(MIGRATIONS, migrations, ignore=shutil.ignore_patterns("__pycache__"))
     return invoke(businesses, migrations, *extra), businesses, migrations
 
 
-def test_generated_business_is_importable_and_migration_extends_head(tmp_path, monkeypatch):
+def test_generated_business_is_importable_and_starts_its_own_chain(tmp_path, monkeypatch):
     head = migration_head(VERSIONS)
     result, businesses, migrations = generate(tmp_path)
     assert result.returncode == 0, result.stderr
@@ -65,13 +70,18 @@ def test_generated_business_is_importable_and_migration_extends_head(tmp_path, m
         "services",
         "controllers",
     }
-    revision = f"{int(migration_head(VERSIONS)) + 1:04d}"
-    path = migrations / f"{revision}_tiny_notes_initial.py"
+    path = migrations / "businesses/tiny_notes/0001_initial.py"
     migration = path.read_text(encoding="utf-8")
-    assert f'revision = "{revision}"' in migration
-    assert f'down_revision = "{head}"' in migration
+    assert 'revision = "tiny_notes_0001"' in migration
+    assert "down_revision = None" in migration
+    assert 'branch_labels = ("tiny_notes",)' in migration
+    assert f'depends_on = "{head}"' in migration
     assert '"tiny_notes_tiny_note"' in migration
-    assert migration_head(migrations) == revision
+    # The platform chain is untouched; the business adds a second head beside it.
+    assert {p.name for p in (migrations / "versions").glob("*.py")} == {
+        p.name for p in VERSIONS.glob("*.py")
+    }
+    assert migration_heads(migrations, "tiny_notes") == {head, "tiny_notes_0001"}
 
     monkeypatch.syspath_prepend(str(businesses))
     from fastapi.routing import iter_route_contexts
@@ -166,40 +176,52 @@ def test_scaffold_refuses_existing_package_and_invalid_namespace(tmp_path):
     assert invalid.returncode != 0 and "must match" in invalid.stderr
 
 
-def test_scaffold_continues_global_sequence_across_business_modules(tmp_path):
+def test_each_business_starts_an_independent_chain_within_the_revision_limit(tmp_path):
     result, businesses, migrations = generate(tmp_path)
     assert result.returncode == 0, result.stderr
-    # A long namespace must not overflow Alembic's 32-character revision column.
-    namespace = "a" * 48
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT),
-            namespace,
-            "--entity",
-            "note",
-            "--output",
-            str(businesses),
-            "--migrations",
-            str(migrations),
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+
+    def scaffold(namespace, *extra):
+        return subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                namespace,
+                "--entity",
+                "note",
+                "--output",
+                str(businesses),
+                "--migrations",
+                str(migrations),
+                *extra,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    # Alembic's revision column holds 32 characters, so "<namespace>_NNNN" caps it at 27.
+    namespace = "a" * 27
+    result = scaffold(namespace)
     assert result.returncode == 0, result.stderr
-    previous = f"{int(migration_head(VERSIONS)) + 1:04d}"
-    revision = f"{int(previous) + 1:04d}"
-    path = migrations / f"{revision}_{namespace}_initial.py"
-    value = path.read_text(encoding="utf8")
-    assert f'revision = "{revision}"' in value and f'down_revision = "{previous}"' in value
-    assert migration_head(migrations) == revision
+    assert f'"{namespace}" to MIGRATION_CHAINS' in result.stdout
+    assert migration_heads(migrations, "tiny_notes", namespace) == {
+        migration_head(VERSIONS),
+        "tiny_notes_0001",
+        f"{namespace}_0001",
+    }
+    longer = "b" * 28
+    result = scaffold(longer)
+    assert result.returncode != 0 and "at most 27 characters" in result.stderr
+    assert not (businesses / longer).exists()
+    result = scaffold(longer, "--no-migration")
+    assert result.returncode == 0, result.stderr
+    assert not (migrations / "businesses" / longer).exists()
 
 
 def test_scaffold_reads_annotated_metadata_without_executing_migration(tmp_path):
     businesses, migrations = tmp_path / "businesses", tmp_path / "migrations"
-    shutil.copytree(VERSIONS, migrations)
-    path = migrations / "0007_worker_initial.py"
+    shutil.copytree(VERSIONS, migrations / "versions")
+    path = migrations / "versions/0007_worker_initial.py"
     content = (
         path.read_text(encoding="utf8")
         .replace('revision = "0007"', 'revision: str = "0007"')
@@ -208,16 +230,14 @@ def test_scaffold_reads_annotated_metadata_without_executing_migration(tmp_path)
         .replace("depends_on = None", "depends_on: str | None = None")
     )
     path.write_text(content, encoding="utf8")
-    assert migration_head(migrations) == migration_head(VERSIONS)
+    assert migration_head(migrations / "versions") == migration_head(VERSIONS)
     path.write_text(
         content + '\nraise RuntimeError("must not import historical DDL")\n', encoding="utf8"
     )
     result = invoke(businesses, migrations)
     assert result.returncode == 0, result.stderr
-    previous = migration_head(VERSIONS)
-    revision = f"{int(previous) + 1:04d}"
-    value = (migrations / f"{revision}_tiny_notes_initial.py").read_text(encoding="utf8")
-    assert f'revision = "{revision}"' in value and f'down_revision = "{previous}"' in value
+    value = (migrations / "businesses/tiny_notes/0001_initial.py").read_text(encoding="utf8")
+    assert f'depends_on = "{migration_head(VERSIONS)}"' in value
 
 
 def test_scaffold_refuses_to_recreate_a_module_with_existing_migrations(tmp_path):
@@ -237,7 +257,7 @@ def test_scaffold_refuses_to_recreate_a_module_with_existing_migrations(tmp_path
     assert {path: path.read_bytes() for path in migrations.rglob("*.py")} == before
 
 
-@pytest.mark.parametrize("entity_length,valid", [(14, True), (15, False)])
+@pytest.mark.parametrize("entity_length,valid", [(35, True), (36, False)])
 def test_scaffold_checks_postgresql_table_name_length_before_writing(
     tmp_path, entity_length, valid
 ):
@@ -246,7 +266,7 @@ def test_scaffold_checks_postgresql_table_name_length_before_writing(
         [
             sys.executable,
             str(SCRIPT),
-            "n" * 48,
+            "n" * 27,
             "--entity",
             "e" * entity_length,
             "--output",
@@ -260,7 +280,10 @@ def test_scaffold_checks_postgresql_table_name_length_before_writing(
     )
     if valid:
         assert result.returncode == 0, result.stderr
-        assert migration_head(migrations) == "0001"
+        # Without a platform chain the business chain has nothing to depend on.
+        value = (migrations / "businesses" / ("n" * 27) / "0001_initial.py").read_text("utf8")
+        assert f'revision = "{"n" * 27}_0001"' in value
+        assert "depends_on = None" in value
     else:
         assert result.returncode != 0 and "table name must be at most 63" in result.stderr
         assert not output.exists() and not migrations.exists()
@@ -282,8 +305,9 @@ def test_scaffold_checks_postgresql_table_name_length_before_writing(
 )
 def test_invalid_migration_history_fails_before_creating_business(tmp_path, mistake, message):
     businesses, migrations = tmp_path / "businesses", tmp_path / "migrations"
-    shutil.copytree(VERSIONS, migrations)
-    path = migrations / "0007_worker_initial.py"
+    versions = migrations / "versions"
+    shutil.copytree(VERSIONS, versions)
+    path = versions / "0007_worker_initial.py"
     content = path.read_text(encoding="utf8")
     if mistake == "duplicate_sequence":
         path.rename(path.with_name("0006_worker_initial.py"))
@@ -297,7 +321,7 @@ def test_invalid_migration_history_fails_before_creating_business(tmp_path, mist
     elif mistake == "missing_module":
         path.rename(path.with_name("0007_registration.py"))
     elif mistake == "module_directory":
-        target = migrations / "worker" / path.name
+        target = versions / "worker" / path.name
         target.parent.mkdir()
         path.rename(target)
     elif mistake == "merge":

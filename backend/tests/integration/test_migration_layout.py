@@ -30,6 +30,7 @@ def test_baseline_revisions_upgrade_and_downgrade_without_restamping(empty_datab
         shutil.copyfile(item.path, flat / "versions" / f"{item.revision}.py")
     standalone = migration_config(settings)
     standalone.set_main_option("script_location", str(flat))
+    standalone.set_main_option("version_locations", str(flat / "versions"))
     standalone.set_main_option("recursive_version_locations", "false")
     standalone.attributes["create_schema"] = True
     command.upgrade(standalone, revision)
@@ -79,5 +80,73 @@ def test_baseline_revisions_upgrade_and_downgrade_without_restamping(empty_datab
             )
             assert connection.scalar(text("SELECT username FROM keystone.users")) == "preserved"
             assert connection.scalar(text("SELECT value FROM dbos.retention_probe")) == 42
+    finally:
+        engine.dispose()
+
+
+def write_revision(path, revision, down, *, labels=None, depends=None):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"revision = {revision!r}\ndown_revision = {down!r}\n"
+        f"branch_labels = {labels!r}\ndepends_on = {depends!r}\n\n\n"
+        "def upgrade():\n    pass\n\n\ndef downgrade():\n    pass\n",
+        encoding="utf8",
+    )
+
+
+def test_business_chain_versions_match_what_alembic_records(
+    empty_database_url, tmp_path, monkeypatch
+):
+    from keystone.core import migrations
+
+    source = Path(migrations.__file__).resolve().parents[3] / "migrations"
+    root = tmp_path / "app/migrations"
+    shutil.copytree(source, root, ignore=shutil.ignore_patterns("__pycache__"))
+    monkeypatch.setattr(
+        migrations, "__file__", str(tmp_path / "app/.venv/site/keystone/core/migrations.py")
+    )
+    monkeypatch.chdir(tmp_path / "app")
+    settings = Settings(config_file=None, database_url=empty_database_url)
+    notes = root / "businesses/notes"
+    engine = create_engine(empty_database_url)
+
+    def upgrade():
+        config = migration_config(settings, ("notes",))
+        config.attributes["create_schema"] = True
+        command.upgrade(config, "heads")
+        return config
+
+    def recorded():
+        with engine.connect() as connection:
+            return set(connection.scalars(text("SELECT version_num FROM keystone.alembic_version")))
+
+    def expected():
+        return migrations.expected_heads(settings, ("notes",))
+
+    try:
+        # The business depends on the platform head, so its row stands for both.
+        write_revision(
+            notes / "0001_initial.py", "notes_0001", None, labels=("notes",), depends=CURRENT_HEAD
+        )
+        upgrade()
+        assert recorded() == expected() == {"notes_0001"}
+        # The platform moves on without the business: both heads are recorded.
+        platform_next = f"{int(CURRENT_HEAD) + 1:04d}"
+        write_revision(
+            root / f"versions/{platform_next}_probe_next.py", platform_next, CURRENT_HEAD
+        )
+        upgrade()
+        assert recorded() == expected() == {platform_next, "notes_0001"}
+        # A later business revision needs the newer platform structure.
+        write_revision(notes / "0002_next.py", "notes_0002", "notes_0001", depends=platform_next)
+        config = upgrade()
+        assert recorded() == expected() == {"notes_0002"}
+        # Removing the business chain leaves the platform at its head.
+        command.downgrade(config, "notes@base")
+        assert recorded() == {platform_next}
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT to_regclass('keystone.users') IS NOT NULL"))
+        upgrade()
+        assert recorded() == expected()
     finally:
         engine.dispose()

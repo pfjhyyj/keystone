@@ -14,14 +14,16 @@
 backend/.venv/bin/python scripts/new_business.py notes --entity note --label 笔记
 ```
 
-Windows 使用 `backend/.venv/Scripts/python.exe`。脚手架创建业务目录和下一条迁移，采用服务端固定 `owner_id` 的本人范围、部分更新及审计摘要。先评审业务字段和对象策略，再按生成命令的提示完成三处显式装配：
+Windows 使用 `backend/.venv/Scripts/python.exe`。脚手架创建业务目录和该业务迁移链的第一条迁移，采用服务端固定 `owner_id` 的本人范围、部分更新及审计摘要。先评审业务字段和对象策略，再按生成命令的提示完成三处显式装配：
 
 ```python
 # backend/src/keystone/composition.py
 from keystone.businesses.notes.catalog import CATALOG as NOTES
 BUSINESS_CATALOGS = (("notes", NOTES),)
 
-# backend/src/keystone/model_registry.py 的 load_models() 内
+# backend/src/keystone/model_registry.py
+MIGRATION_CHAINS = ("notes",)
+# load_models() 内
 from keystone.businesses.notes import models as notes_models  # noqa: F401
 
 # backend/src/keystone/bootstrap.py 的 create_app() 内
@@ -155,7 +157,7 @@ businesses/<namespace>/
 | `--entity` | 同 namespace | 单数 snake_case，用于模型类名与表名后缀；`<namespace>_<entity>` 表名最多 63 字符 |
 | `--resource` | entity + `s` | API 路径与 schemas/services 文件名 |
 | `--label` | entity | 权限说明中的中文名称 |
-| `--migrations` | `backend/migrations/versions` | 读取完整历史，直接生成 `NNNN_<namespace>_initial.py` |
+| `--migrations` | `backend/migrations` | 迁移根目录，读取平台链并在 `businesses/<namespace>/` 生成 `0001_initial.py` |
 
 脚手架只写文件，不改装配代码；生成后会打印需要手工完成的接入点。临时空迁移目录仅用于独立评审或测试；实际接入或评审追加顺序时，应复制完整 `versions/` 历史后再指定 `--migrations`，不能把空目录生成的编号直接合入现有链。
 
@@ -207,7 +209,7 @@ from .note import Note as Note
 
 模型须加入 model_registry.load_models()，见[快速接入](#生成与装配)。
 
-脚手架基于完整迁移历史的当前 head 生成 `backend/migrations/versions/NNNN_<namespace>_initial.py`，含建表与逆序回滚；编号、生成前校验、只追加和手工增量规则见[迁移说明](../../backend/migrations/README.md#后续变更与脚手架)。生成后评审字段、约束和索引，按快速接入步骤执行 `keystone init`（升级到 head 并应用 DBOS 迁移，重复执行保留数据和密码）与 `keystone check`（验证数据库、迁移版本和存储）。
+脚手架基于平台链的当前 head 生成 `backend/migrations/businesses/<namespace>/0001_initial.py`（revision `<namespace>_0001`，`depends_on` 为平台 head），含建表与逆序回滚；生成后把命名空间加入 `model_registry.MIGRATION_CHAINS`。命名、生成前校验、只追加和手工增量规则见[迁移说明](../../backend/migrations/README.md#平台链与业务链)。生成后评审字段、约束和索引，按快速接入步骤执行 `keystone init`（升级各链并应用 DBOS 迁移，重复执行保留数据和密码）与 `keystone check`（验证数据库、迁移版本和存储）。
 
 ## 接入 HTTP
 
