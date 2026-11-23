@@ -12,9 +12,13 @@ from keystone.platform.messaging.models import (
     MessageChannel,
     MessageDelivery,
     MessageDestination,
+    MessageInbound,
 )
 from keystone.platform.messaging.schemas import AppCredential, WebhookCredential
+from keystone.platform.messaging.services.actions import TEST_CARD
 from keystone.platform.messaging.services.deliveries import enqueue_in_transaction
+
+TEST_TEXT = "Keystone 测试消息：渠道配置可用。"
 
 PURPOSE = {"feishu_webhook": "messaging.webhook", "feishu_app": "messaging.app"}
 CREDENTIAL = {"feishu_webhook": WebhookCredential, "feishu_app": AppCredential}
@@ -210,6 +214,7 @@ class ChannelService:
             await session.execute(
                 delete(ExternalAccount).where(ExternalAccount.channel_id == row.id)
             )
+            await session.execute(delete(MessageInbound).where(MessageInbound.channel_id == row.id))
             keys = (
                 await session.scalars(
                     delete(MessageDestination)
@@ -351,7 +356,7 @@ class ChannelService:
                 {**details, "deliveries_removed": removed},
             )
 
-    async def test(self, identifier):
+    async def test(self, identifier, *, card=False):
         """Queue a fixed test notice to one destination; the Worker sends it."""
         action = "messaging.destination.test"
         async with self.identity.access(
@@ -364,7 +369,7 @@ class ChannelService:
                 session,
                 auth,
                 destination_key=row.key,
-                content={"kind": "text", "text": "Keystone 测试消息：渠道配置可用。"},
+                content=TEST_CARD if card else {"kind": "text", "text": TEST_TEXT},
                 source_module="messaging",
                 source_type="destination_test",
                 source_id=str(row.id),

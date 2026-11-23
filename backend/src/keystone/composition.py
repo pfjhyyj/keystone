@@ -41,6 +41,8 @@ FLOW_PACKAGES = ()
 # Add (namespace, (EnvironmentKey(...), ...)) for each business that uses environments.
 BUSINESS_ENVIRONMENT_KEYS = ()
 FLOW_QUEUES: tuple[QueueDefinition, ...] = ()
+# Card actions businesses answer: messaging.services.actions.MessageAction(...) entries.
+MESSAGE_ACTIONS = ()
 # Explicit trusted factories; API never imports business execution modules.
 EXECUTION_GUARD = None
 WORKFLOW_BINDINGS = ()
@@ -63,6 +65,12 @@ def flow_queues(settings):
 def execution_version():
     resources, manifest = execution_manifest(FLOW_PACKAGES)
     return artifact_version(Path(__file__).resolve().parent, resources, manifest=manifest)
+
+
+def build_message_actions(catalog):
+    from keystone.platform.messaging.services.actions import build_actions
+
+    return build_actions(MESSAGE_ACTIONS, catalog.permissions)
 
 
 def build_flow_definitions(catalog):
@@ -167,7 +175,7 @@ def build_history_retention(runtime):
     from keystone.platform.flow.services.identity import retained_execution_ids, retained_token_ids
     from keystone.platform.flow.tasks.definitions import RECONCILE, RECONCILE_SCHEDULE
     from keystone.platform.identity.services.retention import prune_credentials
-    from keystone.platform.messaging.services.retention import prune_deliveries
+    from keystone.platform.messaging.services.retention import prune_messaging
     from keystone.platform.model_access.tasks.definitions import (
         COST_SCAN,
         COST_SCHEDULE,
@@ -208,7 +216,7 @@ def build_history_retention(runtime):
         partial(prune_credentials, runtime.database, runtime.settings, retained_token_ids),
         partial(prune_audit, runtime.database, runtime.settings.audit_retention_days),
         partial(
-            prune_deliveries,
+            prune_messaging,
             runtime.database,
             runtime.settings.message_delivery_retention_days,
         ),

@@ -26,6 +26,13 @@ class CardLink(Input):
         return value
 
 
+class CardAction(Input):
+    # Resolved against the declared actions of the delivery's source type when clicked.
+    key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    text: str = Field(min_length=1, max_length=16)
+    style: Literal["default", "primary", "danger"] = "default"
+
+
 class TextContent(Input):
     kind: Literal["text"] = "text"
     text: str = Field(min_length=1, max_length=4000)
@@ -37,6 +44,14 @@ class CardContent(Input):
     body: str | None = Field(None, max_length=4000)
     fields: list[CardField] = Field(default_factory=list, max_length=10)
     links: list[CardLink] = Field(default_factory=list, max_length=5)
+    actions: list[CardAction] = Field(default_factory=list, max_length=4)
+
+    @field_validator("actions")
+    @classmethod
+    def distinct_actions(cls, value):
+        if len({action.key for action in value}) != len(value):
+            raise ValueError("Action keys must be distinct")
+        return value
 
 
 Content = Annotated[TextContent | CardContent, Field(discriminator="kind")]

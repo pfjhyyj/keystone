@@ -1,8 +1,11 @@
+import asyncio
+import json
 from datetime import timedelta
 from functools import partial
 from types import SimpleNamespace
 from uuid import UUID
 
+import httpx2
 import pytest
 from sqlalchemy import select, update
 from test_files_dictionary import client as client
@@ -12,13 +15,16 @@ from keystone.core.credentials import KEY_FILE
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.messaging.adapters import feishu_app, feishu_webhook
-from keystone.platform.messaging.models import MessageDelivery
+from keystone.platform.messaging.models import ExternalAccount, MessageDelivery, MessageInbound
 from keystone.platform.messaging.services import accounts as accounts_module
 from keystone.platform.messaging.services import channels as channels_module
 from keystone.platform.messaging.services import dispatch as dispatch_module
+from keystone.platform.messaging.services import inbound as inbound_module
+from keystone.platform.messaging.services.actions import MessageAction
 from keystone.platform.messaging.services.deliveries import enqueue_in_transaction
 from keystone.platform.messaging.services.dispatch import dispatch
-from keystone.platform.messaging.services.retention import prune_deliveries
+from keystone.platform.messaging.services.listener import Listeners
+from keystone.platform.messaging.services.retention import prune_messaging
 
 pytestmark = pytest.mark.postgres
 HOOK = "https://open.feishu.cn/open-apis/bot/v2/hook/secret-token-value"
@@ -228,13 +234,13 @@ def test_history_cleanup_removes_only_finished_deliveries_past_retention(client,
             )
 
     client.portal.call(age)
-    prune = partial(prune_deliveries, client.app.state.runtime.database, 30)
-    assert client.portal.call(prune) == 3
+    prune = partial(prune_messaging, client.app.state.runtime.database, 30)
+    assert client.portal.call(prune)["message_deliveries"] == 3
     assert len(statuses(client)) == 6
-    assert client.portal.call(partial(prune, apply=True)) == 3
+    assert client.portal.call(partial(prune, apply=True))["message_deliveries"] == 3
     remaining = query(client, lambda session: session.scalars(select(MessageDelivery.id)))
     assert set(remaining.all()) == {waiting, recent, claimed}
-    assert client.portal.call(partial(prune, apply=True)) == 0
+    assert client.portal.call(partial(prune, apply=True))["message_deliveries"] == 0
 
 
 def test_missing_key_is_not_replaced_while_ciphertexts_exist(client):
@@ -525,3 +531,379 @@ def test_users_are_reached_through_their_binding_and_never_redirected(client, mo
     # Deleting the channel removes its bindings with it.
     assert client.delete(f"{ROOT}/channels/{channel['id']}").status_code == 204
     assert client.get(ROOT + "/accounts").json() == []
+
+
+def card_click(event_id, delivery_id, *, open_id="ou_admin", message_id="om_1", action="ack"):
+    return json.dumps(
+        {
+            "schema": "2.0",
+            "header": {
+                "event_id": event_id,
+                "event_type": "card.action.trigger",
+                "create_time": "1700000000000",
+                "app_id": "cli_a1b2c3",
+            },
+            "event": {
+                "operator": {"open_id": open_id},
+                "action": {"value": {"delivery_id": str(delivery_id), "action": action}},
+                "context": {"open_message_id": message_id, "open_chat_id": "oc_ops"},
+            },
+        }
+    ).encode()
+
+
+def private_text(message_id, text, *, open_id="ou_admin", chat_type="p2p"):
+    return json.dumps(
+        {
+            "schema": "2.0",
+            "header": {"event_id": f"e-{message_id}", "event_type": "im.message.receive_v1"},
+            "event": {
+                "sender": {"sender_id": {"open_id": open_id}, "sender_type": "user"},
+                "message": {
+                    "message_id": message_id,
+                    "chat_type": chat_type,
+                    "message_type": "text",
+                    "content": json.dumps({"text": text}),
+                },
+            },
+        }
+    ).encode()
+
+
+def receive(client, channel, payload, slots=None):
+    replies = []
+    answer = client.portal.call(
+        inbound_module.receive,
+        client.app.state.runtime,
+        {"id": UUID(channel["id"]), "app_id": "cli_a1b2c3"},
+        payload,
+        lambda content, open_id, key: replies.append((content["text"], open_id, key)),
+        slots,
+    )
+    return answer, replies
+
+
+def inbounds(client):
+    return [
+        (row["kind"], row["status"], row["error_code"])
+        for row in reversed(client.get(ROOT + "/inbounds").json())
+    ]
+
+
+def add_to(client, key, content):
+    async def register():
+        async with client.app.state.runtime.database.transaction() as session:
+            return await enqueue_in_transaction(
+                session,
+                SimpleNamespace(user=SimpleNamespace(id=None)),
+                destination_key=key,
+                content=content,
+                source_module="reports",
+                source_type="daily",
+                source_id="2026-11-22",
+            )
+
+    return str(client.portal.call(register))
+
+
+def test_self_binding_codes_bind_the_sender_once_and_are_never_stored(client):
+    channel = configure_app(client)
+    issued = client.post(ROOT + "/bind-codes")
+    assert issued.status_code == 201, issued.text
+    code = issued.json()["code"]
+    assert len(code) == 8
+    [mine] = client.get(ROOT + "/me/accounts").json()
+    assert mine["channel_name"] == "飞书应用" and mine["account"] is None
+
+    # Group messages and other text are ignored without a record.
+    group = private_text("om_g", f"绑定 {code}", chat_type="group")
+    assert receive(client, channel, group) == (None, [])
+    assert receive(client, channel, private_text("om_x", "你好"))[1] == []
+    _, replies = receive(client, channel, private_text("om_1", f"绑定 {code.lower()}"))
+    [account] = client.get(ROOT + "/accounts").json()
+    assert account["external_user_id"] == "ou_admin"
+    label = account["user"]["label"]
+    assert replies == [(f"已绑定到 Keystone 用户 {label}。", "ou_admin", "om_1")]
+    # Feishu may push the same message twice; it is answered once.
+    assert receive(client, channel, private_text("om_1", f"绑定 {code}"))[1] == []
+    # The code is used up.
+    _, replies = receive(client, channel, private_text("om_2", f"绑定 {code}"))
+    assert "无效" in replies[0][0]
+
+    # A newer code moves the user to the account that sent it.
+    newer = client.post(ROOT + "/bind-codes").json()["code"]
+    _, replies = receive(client, channel, private_text("om_3", f"绑定 {newer}", open_id="ou_new"))
+    assert "已绑定到" in replies[0][0]
+    [account] = client.get(ROOT + "/accounts").json()
+    assert account["external_user_id"] == "ou_new"
+
+    # An account already bound to someone else is not taken over.
+    alice = create_user(client, "alice")
+    taken = {"channel_id": channel["id"], "user_id": alice["id"]}
+
+    async def bind_alice():
+        async with client.app.state.runtime.database.transaction() as session:
+            session.add(
+                ExternalAccount(
+                    channel_id=UUID(taken["channel_id"]),
+                    user_id=UUID(taken["user_id"]),
+                    external_user_id="ou_alice",
+                )
+            )
+
+    client.portal.call(bind_alice)
+    other = client.post(ROOT + "/bind-codes").json()["code"]
+    _, replies = receive(client, channel, private_text("om_4", f"绑定 {other}", open_id="ou_alice"))
+    assert "已绑定其他" in replies[0][0]
+
+    # Failures count per Feishu account: one earlier wrong code plus four more.
+    for index in range(4):
+        receive(client, channel, private_text(f"om_bad{index}", "绑定 ZZZZZZZZ"))
+    _, replies = receive(client, channel, private_text("om_bad9", "绑定 ZZZZZZZZ"))
+    assert "次数过多" in replies[0][0]
+    assert inbounds(client)[0] == ("bind", "processed", None)
+    assert inbounds(client)[-1] == ("bind", "rejected", "bind_rate_limited")
+    audits = client.get("/api/v1/audit-logs?action=messaging.account.self_bind").json()
+    assert [item["details"]["replaced"] for item in audits] == [True, False]
+
+    # Users see and remove only their own binding.
+    [mine] = client.get(ROOT + "/me/accounts").json()
+    assert mine["account"]["external_user_id"] == "ou_new"
+    [alice_account] = [
+        row for row in client.get(ROOT + "/accounts").json() if row["user"]["id"] == alice["id"]
+    ]
+    foreign = client.delete(f"{ROOT}/me/accounts/{alice_account['id']}")
+    assert foreign.json()["code"] == "message_account_not_found"
+    assert client.delete(f"{ROOT}/me/accounts/{mine['account']['id']}").status_code == 204
+    assert client.get(ROOT + "/me/accounts").json()[0]["account"] is None
+    removed = client.get("/api/v1/audit-logs?action=messaging.account.self_unbind").json()
+    assert removed[0]["details"]["external_user_id"] == "ou_new"
+    text = client.get("/api/v1/audit-logs").text + client.get(ROOT + "/inbounds").text
+    assert code not in text and newer not in text and other not in text
+
+
+def test_card_actions_run_as_the_bound_user_and_answer_inside_the_deadline(client, monkeypatch):
+    channel = configure_app(client)
+    destination = client.post(
+        ROOT + "/destinations",
+        json={
+            "key": "ops.app",
+            "channel_id": channel["id"],
+            "name": "运维群",
+            "external_id": "oc_ops",
+        },
+    )
+    assert destination.status_code == 201, destination.text
+    _, hook_destination = configure(client)
+    refused = client.post(f"{ROOT}/destinations/{hook_destination['id']}/test?card=true")
+    assert refused.json()["code"] == "message_actions_unsupported"
+    sender = AppSender()
+    monkeypatch.setattr(dispatch_module.feishu_app, "send", sender)
+    sent = client.post(f"{ROOT}/destinations/{destination.json()['id']}/test?card=true")
+    delivery_id = sent.json()["delivery_id"]
+    run_dispatch(client)
+
+    # Not bound yet: refused with a hint, and audited as denied.
+    answer, _ = receive(client, channel, card_click("e1", delivery_id))
+    assert answer["toast"]["type"] == "error" and "绑定" in answer["toast"]["content"]
+    assert inbounds(client) == [("card_action", "rejected", "message_actor_unbound")]
+    denied = client.get("/api/v1/audit-logs?action=messaging.inbound.card_action").json()
+    assert denied[0]["outcome"] == "denied"
+
+    code = client.post(ROOT + "/bind-codes").json()["code"]
+    receive(client, channel, private_text("om_bind", f"绑定 {code}"))
+    label = client.get(ROOT + "/accounts").json()[0]["user"]["label"]
+    answer, _ = receive(client, channel, card_click("e2", delivery_id))
+    assert answer["toast"] == {"type": "success", "content": "已确认收到"}
+    card = answer["card"]["data"]
+    assert card["schema"] == "2.0" and card["config"]["update_multi"] is True
+    assert f"{label} 已确认收到" in json.dumps(card, ensure_ascii=False)
+    assert "callback" not in json.dumps(card)
+    # A repeated callback is answered from the stored outcome without running again.
+    again, _ = receive(client, channel, card_click("e2", delivery_id))
+    assert again == {"toast": {"type": "success", "content": "已处理"}}
+    # Values copied into another message do not match the clicked card.
+    forged, _ = receive(client, channel, card_click("e3", delivery_id, message_id="om_other"))
+    assert forged["toast"]["type"] == "error"
+    unknown, _ = receive(client, channel, card_click("e4", delivery_id, action="approve"))
+    assert unknown["toast"]["type"] == "error"
+    assert [row for row in inbounds(client) if row[0] == "card_action"][-3:] == [
+        ("card_action", "processed", None),
+        ("card_action", "rejected", "message_action_mismatch"),
+        ("card_action", "rejected", "message_action_mismatch"),
+    ]
+    rows = client.get(ROOT + "/inbounds").json()
+    [row] = [row for row in rows if row["kind"] == "card_action" and row["status"] == "processed"]
+    assert row["actor"]["label"] == label
+
+    # Business actions: a permission check, a refusal and a handler too slow for the deadline.
+    calls = []
+
+    async def approve(runtime, identity, source_id, action_key, inbound_id):
+        async with identity.access("messaging:manage") as (_, auth):
+            calls.append((source_id, action_key, auth.user.username))
+        if len(calls) == 2:
+            raise ServiceError(409, "report_closed", "报表已关闭")
+        if len(calls) == 3:
+            await asyncio.sleep(5)
+
+    runtime = client.app.state.runtime
+    monkeypatch.setattr(
+        runtime,
+        "message_actions",
+        {
+            **runtime.message_actions,
+            ("reports", "daily", "approve"): MessageAction(
+                "reports", "daily", "approve", "messaging:manage", approve
+            ),
+        },
+    )
+    monkeypatch.setattr(inbound_module, "BUDGET_SECONDS", 0.5)
+    approval = add_to(
+        client,
+        "ops.app",
+        {
+            "kind": "card",
+            "title": "日报",
+            "actions": [{"key": "approve", "text": "批准", "style": "primary"}],
+        },
+    )
+    run_dispatch(client)
+    message_id = f"om_{len(sender.sent)}"
+
+    def click(event_id):
+        payload = card_click(event_id, approval, message_id=message_id, action="approve")
+        return receive(client, channel, payload)[0]
+
+    assert click("e5")["toast"]["content"] == "已批准"
+    assert calls == [("2026-11-22", "approve", "admin")]
+    assert click("e6")["toast"] == {"type": "error", "content": "报表已关闭"}
+    assert click("e7") == {"toast": {"type": "info", "content": "已收到，正在处理"}}
+    assert inbounds(client)[-3:] == [
+        ("card_action", "processed", None),
+        ("card_action", "rejected", "report_closed"),
+        ("card_action", "received", None),
+    ]
+
+    # The periodic pass finishes it after the lease and updates the card in place.
+    updated = []
+
+    async def update_card(app_id, secret, message, card):
+        updated.append((message, json.dumps(card, ensure_ascii=False)))
+
+    monkeypatch.setattr(inbound_module.feishu_app, "update_card", update_card)
+
+    async def expire_lease():
+        async with runtime.database.transaction() as session:
+            await session.execute(
+                update(MessageInbound)
+                .where(MessageInbound.status == "received")
+                .values(updated_at=utcnow() - timedelta(minutes=2))
+            )
+
+    client.portal.call(expire_lease)
+    vault = runtime.messaging_vault()
+    assert client.portal.call(inbound_module.retry, runtime, vault) == 1
+    assert inbounds(client)[-1] == ("card_action", "processed", None)
+    assert updated[0][0] == message_id and f"{label} 已批准" in updated[0][1]
+    assert client.portal.call(inbound_module.retry, runtime, vault) == 0
+
+    # Deleting the channel removes its inbound history with it.
+    assert client.delete(f"{ROOT}/channels/{channel['id']}").status_code == 204
+    assert client.get(ROOT + "/inbounds").json() == []
+
+
+def test_workers_follow_app_channel_changes_with_one_connection_each(client):
+    channel = configure_app(client)
+    configure(client)
+    runtime = client.app.state.runtime
+    endpoints = []
+
+    def answer(request):
+        endpoints.append(json.loads(request.content))
+        return httpx2.Response(200, json={"code": 1000040350, "msg": "limit"})
+
+    listeners = Listeners(
+        runtime, runtime.messaging_vault(), transport=httpx2.MockTransport(answer)
+    )
+
+    async def settle():
+        await listeners.sync()
+        await asyncio.sleep(0.1)
+
+    try:
+        client.portal.call(settle)
+        assert list(listeners.running) == [UUID(channel["id"])]
+        assert endpoints == [{"AppID": "cli_a1b2c3", "AppSecret": "app-secret-value"}]
+        client.portal.call(settle)
+        assert len(endpoints) == 1
+        # A changed secret reconnects with it; disabling closes the connection.
+        client.patch(
+            f"{ROOT}/channels/{channel['id']}",
+            json={
+                "name": "飞书应用",
+                "is_active": True,
+                "credential": {"app_secret": "rotated-secret"},
+            },
+        )
+        client.portal.call(settle)
+        assert endpoints[-1]["AppSecret"] == "rotated-secret" and len(listeners.running) == 1
+        client.patch(
+            f"{ROOT}/channels/{channel['id']}", json={"name": "飞书应用", "is_active": False}
+        )
+        client.portal.call(settle)
+        assert listeners.running == {}
+    finally:
+        client.portal.call(listeners.close)
+
+
+def test_a_busy_worker_defers_clicks_to_the_periodic_pass(client, monkeypatch):
+    channel = configure_app(client)
+    destination = client.post(
+        ROOT + "/destinations",
+        json={
+            "key": "ops.app",
+            "channel_id": channel["id"],
+            "name": "运维群",
+            "external_id": "oc_ops",
+        },
+    ).json()
+    sender = AppSender()
+    monkeypatch.setattr(dispatch_module.feishu_app, "send", sender)
+    code = client.post(ROOT + "/bind-codes").json()["code"]
+    receive(client, channel, private_text("om_bind", f"绑定 {code}"))
+    sent = client.post(f"{ROOT}/destinations/{destination['id']}/test?card=true")
+    delivery_id = sent.json()["delivery_id"]
+    run_dispatch(client)
+    updated = []
+
+    async def update_card(app_id, secret, message, card):
+        updated.append(message)
+
+    monkeypatch.setattr(inbound_module.feishu_app, "update_card", update_card)
+    monkeypatch.setattr(inbound_module, "BUDGET_SECONDS", 0.2)
+
+    async def busy(payload):
+        # Every slot is taken: the click is kept and answered without being processed.
+        slots = asyncio.Semaphore(0)
+        return await inbound_module.receive(
+            client.app.state.runtime,
+            {"id": UUID(channel["id"]), "app_id": "cli_a1b2c3"},
+            payload,
+            lambda *_: None,
+            slots,
+        )
+
+    click = card_click("e1", delivery_id, message_id=f"om_{len(sender.sent)}")
+    assert client.portal.call(busy, click) == {
+        "toast": {"type": "info", "content": "已收到，正在处理"}
+    }
+    assert inbounds(client)[-1] == ("card_action", "received", None)
+    # A binding message has nothing to resume from, so it is left unanswered for redelivery.
+    with pytest.raises(TimeoutError):
+        client.portal.call(busy, private_text("om_again", "绑定 ABCDEFGH"))
+    # The next pass takes the deferred click at once; no lease has to run out first.
+    runtime = client.app.state.runtime
+    assert client.portal.call(inbound_module.retry, runtime, runtime.messaging_vault()) == 1
+    assert inbounds(client)[-1] == ("card_action", "processed", None)
+    assert updated == [f"om_{len(sender.sent)}"]

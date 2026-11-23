@@ -103,6 +103,9 @@ async def run_executor(runtime, stop, *, ready, health):
                 flow_worker.report_ready()
                 for install in installers:
                     await install()
+                from keystone.platform.messaging.services.listener import listening
+
+                await stack.enter_async_context(listening(runtime))
                 async with asyncio.timeout(LEASE_CHECK_SECONDS):
                     await lease()
                 if stop.is_set():

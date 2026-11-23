@@ -69,15 +69,16 @@ describe('messaging administration', () => {
         writes.push([path, init.method, init.body ? JSON.parse(String(init.body)) : null])
         return path.endsWith('/test') ? { delivery_id: delivery.id } : channel
       }
-      return /^\/messaging\/(destinations|accounts)/.test(path) ? [] : [channel]
+      return /^\/messaging\/(destinations|accounts|inbounds)/.test(path) ? [] : [channel]
     })
     const wrapper = mount(MessagingView)
     await flushPromises()
     expect(wrapper.text()).toContain('已设置')
     expect(wrapper.text()).toContain('ops.alerts')
     expect(wrapper.text()).not.toContain('接收方')
-    expect(wrapper.text()).not.toContain('发送目标')
-    expect(wrapper.text()).not.toContain('投递记录')
+    const tabs = wrapper.findAll('.el-tabs__item').map((node) => node.text())
+    expect(tabs).not.toContain('发送目标')
+    expect(tabs).not.toContain('投递记录')
 
     await button(wrapper, '编辑渠道').trigger('click')
     expect(wrapper.find('[role=dialog] input[type=password]').exists()).toBe(false)
@@ -117,7 +118,7 @@ describe('messaging administration', () => {
         return { delivery_id: delivery.id }
       }
       if (path.startsWith('/messaging/deliveries')) return [delivery]
-      return /^\/messaging\/(destinations|accounts)/.test(path) ? [] : [channel]
+      return /^\/messaging\/(destinations|accounts|inbounds)/.test(path) ? [] : [channel]
     })
     const wrapper = mount(MessagingView)
     await flushPromises()
@@ -129,6 +130,50 @@ describe('messaging administration', () => {
     expect(wrapper.text()).toContain('send_unconfirmed')
   })
 
+  it('sends a test card from the row menu and lists inbound clicks', async () => {
+    authorize(['messaging:manage', 'message_delivery:read'])
+    const writes: string[] = []
+    const inbound = {
+      id: '66666666-6666-4666-8666-666666666666',
+      channel_id: app.id,
+      kind: 'card_action',
+      delivery_id: delivery.id,
+      action_key: 'ack',
+      external_user_id: 'ou_stranger',
+      actor: null,
+      status: 'rejected',
+      attempts: 1,
+      error_code: 'message_actor_unbound',
+      error_hint: '点击人的飞书账号没有绑定 Keystone 用户',
+      received_at: stamp,
+      processed_at: null,
+    }
+    fakeApi((path, init) => {
+      if (init.method === 'POST') {
+        writes.push(path)
+        return { delivery_id: delivery.id }
+      }
+      if (path.startsWith('/messaging/inbounds')) return [inbound]
+      if (path.startsWith('/messaging/destinations')) return [target]
+      return /^\/messaging\/(accounts|deliveries)/.test(path) ? [] : [app]
+    })
+    const wrapper = mount(MessagingView, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.get('#pane-targets .row-more-trigger').trigger('click')
+    await flushPromises()
+    await button(new DOMWrapper(document.body) as unknown as VueWrapper, '发送测试卡片').trigger(
+      'click',
+    )
+    await flushPromises()
+    expect(writes).toEqual([`/messaging/destinations/${target.id}/test?card=true`])
+    expect(wrapper.text()).toContain('确认收到')
+    const inbounds = wrapper.get('#pane-inbounds')
+    expect(inbounds.text()).toContain('卡片操作')
+    expect(inbounds.text()).toContain('已拒绝')
+    expect(inbounds.text()).toContain('没有绑定 Keystone 用户')
+    wrapper.unmount()
+  })
+
   it('gives a channel saved without a key its destination on the next edit', async () => {
     authorize(['messaging:manage'])
     const writes: [string, string | undefined, unknown][] = []
@@ -137,7 +182,7 @@ describe('messaging administration', () => {
         writes.push([path, init.method, JSON.parse(String(init.body))])
         return channel
       }
-      return /^\/messaging\/(destinations|accounts)/.test(path)
+      return /^\/messaging\/(destinations|accounts|inbounds)/.test(path)
         ? []
         : [{ ...channel, destination: null }]
     })
@@ -169,7 +214,7 @@ describe('messaging administration', () => {
         rows = []
         return null
       }
-      return /^\/messaging\/(destinations|accounts)/.test(path) ? [] : rows
+      return /^\/messaging\/(destinations|accounts|inbounds)/.test(path) ? [] : rows
     })
     const confirm = vi.spyOn(confirmation, 'confirmAction').mockResolvedValueOnce(false)
     const wrapper = mount(MessagingView)
@@ -213,7 +258,7 @@ describe('messaging administration', () => {
           ],
           page_token: null,
         }
-      if (path.startsWith('/messaging/accounts')) return []
+      if (/^\/messaging\/(accounts|inbounds)/.test(path)) return []
       return path.startsWith('/messaging/destinations') ? [target] : [channel, app]
     })
     const wrapper = mount(MessagingView)
@@ -286,7 +331,7 @@ describe('messaging administration', () => {
         ]
       if (path.startsWith('/messaging/deliveries'))
         return [{ ...delivery, destination_key: null, recipient: { id: alice.id, label: 'Alice' } }]
-      if (path.startsWith('/messaging/destinations')) return []
+      if (/^\/messaging\/(destinations|inbounds)/.test(path)) return []
       return [app]
     })
     const wrapper = mount(MessagingView)

@@ -12,6 +12,7 @@ import {
 import { useAction } from '../../composables/useAction'
 import { confirmAction } from '../../utils/confirm'
 import PermissionPicker from '../roles/components/PermissionPicker.vue'
+import FeishuBindings from './components/FeishuBindings.vue'
 const route = useRoute(),
   router = useRouter()
 const { busy, error, run } = useAction()
@@ -31,7 +32,7 @@ const forced = computed(() => !!identity.value?.user.password_change_required)
 const active = computed(() =>
   forced.value
     ? 'password'
-    : ['profile', 'password', 'tokens'].includes(String(route.query.tab))
+    : ['profile', 'password', 'tokens', 'feishu'].includes(String(route.query.tab))
       ? String(route.query.tab)
       : 'profile',
 )
@@ -264,6 +265,12 @@ onBeforeUnmount(clearForms)
             ><template #empty><el-empty description="尚无个人令牌。" :image-size="64" /></template
           ></el-table>
           <p v-if="tokens.length === 50">此处显示最近 50 条；完整分页查询由 API 提供。</p>
+        </div>
+      </el-tab-pane>
+      <el-tab-pane label="飞书绑定" name="feishu" :disabled="forced">
+        <div class="account-section">
+          <h2>飞书账号</h2>
+          <FeishuBindings v-if="active === 'feishu'" />
         </div>
       </el-tab-pane>
     </el-tabs>

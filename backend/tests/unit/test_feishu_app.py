@@ -240,3 +240,47 @@ def test_user_name_reads_the_default_name():
     with pytest.raises(feishu_app.Rejected) as error:
         asyncio.run(feishu_app.user_name(APP, SECRET, "ou_a", transport=transport))
     assert error.value.code == "feishu_41050"
+
+
+def test_shared_cards_are_updated_by_message_id():
+    provider = Provider(httpx2.Response(200, json={"code": 0, "data": {}}))
+    card = {"schema": "2.0", "config": {"update_multi": True}, "body": {"elements": []}}
+    asyncio.run(
+        feishu_app.update_card(APP, SECRET, "om_1", card, transport=httpx2.MockTransport(provider))
+    )
+    [request] = provider.calls
+    assert request.method == "PATCH" and request.url.path == "/open-apis/im/v1/messages/om_1"
+    assert json.loads(json.loads(request.content)["content"]) == card
+    expired = Provider(httpx2.Response(400, json={"code": 230031, "msg": "14 days"}))
+    with pytest.raises(feishu_app.Rejected) as error:
+        asyncio.run(
+            feishu_app.update_card(
+                APP, SECRET, "om_1", card, transport=httpx2.MockTransport(expired)
+            )
+        )
+    assert error.value.code == "feishu_230031"
+
+
+def test_cards_with_actions_call_back_with_the_delivery_and_never_mix_versions():
+    from keystone.platform.messaging.adapters import feishu_content
+
+    content = {
+        "kind": "card",
+        "title": "日报",
+        "body": None,
+        "fields": [{"label": "状态", "value": "完成"}],
+        "links": [{"text": "打开", "url": "https://example.com/r"}],
+        "actions": [{"key": "approve", "text": "批准", "style": "primary"}],
+    }
+    msg_type, card = feishu_content.render(content, "d-1")
+    assert msg_type == "interactive" and card["schema"] == "2.0"
+    assert card["config"] == {"update_multi": True}
+    text = json.dumps(card, ensure_ascii=False)
+    assert '"value": {"delivery_id": "d-1", "action": "approve"}' in text
+    assert '"default_url": "https://example.com/r"' in text and "状态：完成" in text
+    done = feishu_content.action_card(content, "d-1", outcome="张三 已批准")
+    assert done["schema"] == "2.0" and "callback" not in json.dumps(done)
+    assert "张三 已批准" in json.dumps(done, ensure_ascii=False)
+    # Read-only cards keep the structure group bots also accept.
+    _, plain = feishu_content.render({**content, "actions": []}, "d-1")
+    assert "schema" not in plain

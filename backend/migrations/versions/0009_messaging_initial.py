@@ -150,8 +150,70 @@ def upgrade():
         postgresql_where=sa.text("status = 'unknown' AND attempts < 3"),
     )
 
+    op.create_table(
+        "message_inbounds",
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column(
+            "channel_id",
+            sa.Uuid(),
+            sa.ForeignKey("keystone.message_channels.id"),
+            nullable=False,
+        ),
+        sa.Column("dedupe_key", sa.String(64), nullable=False),
+        sa.Column("kind", sa.String(16), nullable=False),
+        sa.Column("delivery_id", sa.Uuid()),
+        sa.Column("action_key", sa.String(64)),
+        sa.Column("provider_message_id", sa.String(64)),
+        sa.Column("external_user_id", sa.String(64), nullable=False),
+        sa.Column("actor_id", sa.Uuid()),
+        sa.Column("occurred_at", sa.DateTime(timezone=True)),
+        sa.Column("status", sa.String(16), nullable=False),
+        sa.Column("attempts", sa.Integer(), nullable=False),
+        sa.Column("error_code", sa.String(64)),
+        sa.Column(
+            "received_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.Column("processed_at", sa.DateTime(timezone=True)),
+        sa.UniqueConstraint("channel_id", "dedupe_key", name="uq_message_inbound_dedupe"),
+        sa.CheckConstraint(
+            "status IN ('received', 'processed', 'rejected', 'expired', 'failed')",
+            name="ck_message_inbound_status",
+        ),
+        sa.CheckConstraint("kind IN ('card_action', 'bind')", name="ck_message_inbound_kind"),
+        schema="keystone",
+    )
+    op.create_index(
+        "ix_message_inbound_open",
+        "message_inbounds",
+        ["updated_at"],
+        schema="keystone",
+        postgresql_where=sa.text("status = 'received'"),
+    )
+    op.create_index(
+        "ix_message_inbound_history",
+        "message_inbounds",
+        ["received_at", "id"],
+        schema="keystone",
+    )
+    op.create_table(
+        "message_bind_codes",
+        sa.Column("user_id", sa.Uuid(), primary_key=True),
+        sa.Column("code_digest", sa.String(64), nullable=False),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
+        ),
+        sa.UniqueConstraint("code_digest"),
+        schema="keystone",
+    )
+
 
 def downgrade():
+    op.drop_table("message_bind_codes", schema="keystone")
+    op.drop_table("message_inbounds", schema="keystone")
     op.drop_table("message_deliveries", schema="keystone")
     op.drop_table("message_external_accounts", schema="keystone")
     op.drop_table("message_destinations", schema="keystone")

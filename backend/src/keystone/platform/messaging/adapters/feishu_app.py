@@ -3,6 +3,7 @@
 https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/tenant_access_token
 https://open.feishu.cn/document/server-docs/im-v1/message/create
 https://open.feishu.cn/document/server-docs/group/chat/list
+https://open.feishu.cn/document/server-docs/im-v1/message-card/patch
 """
 
 import hashlib
@@ -12,7 +13,7 @@ import time
 from keystone.platform.messaging.adapters import feishu_content
 from keystone.platform.messaging.adapters.feishu_http import Rejected, Unknown, call
 
-__all__ = ["NotSent", "Rejected", "Unknown", "chats", "open_id", "send", "user_name"]
+__all__ = ["NotSent", "Rejected", "Unknown", "chats", "open_id", "send", "update_card", "user_name"]
 
 TOKEN_URL = "https://accounts.feishu.cn/oauth/v3/token"
 API = "https://open.feishu.cn/open-apis"
@@ -86,7 +87,7 @@ async def _api(app_id, secret, method, path, *, transport=None, **request):
 
 async def send(app_id, secret, receive_id_type, receive_id, content, uuid, *, transport=None):
     """Send once and return the provider message ID."""
-    msg_type, body = feishu_content.render(content)
+    msg_type, body = feishu_content.render(content, uuid)
     serialized = json.dumps(body, ensure_ascii=False)
     payload = json.dumps(
         {"receive_id": receive_id, "msg_type": msg_type, "content": serialized, "uuid": uuid},
@@ -115,6 +116,29 @@ async def send(app_id, secret, receive_id_type, receive_id, content, uuid, *, tr
     if code == 0:
         raise Unknown
     raise Rejected(f"feishu_{code}" if type(code) is int else "provider_rejected")
+
+
+async def update_card(app_id, secret, message_id, card, *, transport=None):
+    """Replace a shared card the app sent within the last 14 days, for every recipient."""
+    content = json.dumps(card, ensure_ascii=False)
+    if len(content.encode()) > MAX_BODY["interactive"]:
+        raise Rejected("content_too_large")
+    status, answer, code = await _api(
+        app_id,
+        secret,
+        "PATCH",
+        f"/im/v1/messages/{message_id}",
+        transport=transport,
+        content=json.dumps({"content": content}, ensure_ascii=False).encode(),
+    )
+    if code in TOKEN_INVALID:
+        raise NotSent("credential_invalid")
+    if code in RATE_LIMITED:
+        raise NotSent("provider_rate_limited")
+    if status >= 500 or answer is None:
+        raise Unknown
+    if code != 0:
+        raise Rejected(f"feishu_{code}" if type(code) is int else "provider_rejected")
 
 
 async def chats(app_id, secret, page_token=None, *, transport=None):

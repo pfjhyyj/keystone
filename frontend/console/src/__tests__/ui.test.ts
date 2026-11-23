@@ -8,6 +8,7 @@ import AppDialog from '../components/AppDialog.vue'
 import AppSelect from '../components/AppSelect.vue'
 import AccountView from '../views/account/AccountView.vue'
 import { identity } from '../stores/session'
+import * as confirmation from '../utils/confirm'
 import { makeRouter } from '../router'
 import { authorize, chooseSelect, deferred, fakeApi } from './support'
 
@@ -196,4 +197,64 @@ it('clears all password inputs after a rejected password change', async () => {
       .findAll('.password-form input')
       .every((input) => (input.element as HTMLInputElement).value === ''),
   ).toBe(true)
+})
+
+it('binds a Feishu account by code, notices the binding and unbinds after confirming', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+  try {
+    authorize([])
+    const calls: string[] = []
+    const app = { channel_id: 'c1', channel_name: '飞书应用', account: null }
+    const bound = {
+      ...app,
+      account: { id: 'a1', external_user_id: 'ou_me', created_at: '2026-11-23T08:00:00Z' },
+    }
+    let rows: unknown[] = [app]
+    fakeApi((path, init) => {
+      if (path === '/auth/me') return identity.value
+      calls.push(`${init.method ?? 'GET'} ${path}`)
+      if (path === '/messaging/bind-codes')
+        return { code: 'ABCD2345', expires_at: new Date(Date.now() + 600000).toISOString() }
+      if (init.method === 'DELETE') {
+        rows = [app]
+        return null
+      }
+      return path === '/messaging/me/accounts' ? rows : []
+    })
+    const confirm = vi.spyOn(confirmation, 'confirmAction').mockResolvedValue(true)
+    const router = makeRouter(createMemoryHistory('/console/'))
+    await router.push('/account?tab=feishu')
+    const wrapper = mount(AccountView, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('未绑定')
+    await wrapper
+      .findAll('button')
+      .find((node) => node.text() === '绑定飞书账号')!
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.get('code[aria-label="绑定消息"]').text()).toBe('绑定 ABCD2345')
+    expect(wrapper.text()).toContain('搜索“飞书应用”')
+
+    // The binding shows up on a later check; the code and steps go away by themselves.
+    rows = [bound]
+    await vi.advanceTimersByTimeAsync(3000)
+    await flushPromises()
+    expect(wrapper.find('code[aria-label="绑定消息"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('飞书账号已绑定')
+    expect(wrapper.text()).toContain('ou_me')
+    expect(wrapper.findAll('button').map((node) => node.text())).not.toContain('绑定飞书账号')
+
+    await wrapper
+      .findAll('button')
+      .find((node) => node.text() === '解除绑定')!
+      .trigger('click')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(calls).toContain('DELETE /messaging/me/accounts/a1')
+    expect(wrapper.text()).toContain('未绑定')
+    wrapper.unmount()
+    confirm.mockRestore()
+  } finally {
+    vi.useRealTimers()
+  }
 })

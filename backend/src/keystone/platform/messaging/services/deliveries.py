@@ -125,6 +125,9 @@ async def enqueue_in_transaction(
     channel = destination and await session.get(MessageChannel, destination.channel_id)
     if destination is None or not destination.is_active or not channel.is_active:
         raise ServiceError(409, "message_destination_unavailable", "消息接收方不存在或已停用")
+    if content.get("actions") and channel.provider != "feishu_app":
+        # Group bots cannot receive callbacks, so their buttons could never be answered.
+        raise ServiceError(422, "message_actions_unsupported", "群机器人不支持带动作的卡片")
     return await register(
         session, auth, channel.id, content, source, expires_at, destination_id=destination.id
     )

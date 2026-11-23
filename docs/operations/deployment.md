@@ -215,7 +215,7 @@ uv run --locked keystone retry-file-delete --file-id <文件 UUID>
 
 ## 历史保留与清理
 
-历史清理只处理过期凭据、审计、已结束的消息投递和已完成的 DBOS 维护任务；业务实体、FlowRun、文件引用、ModelInvocation、费用与调用幂等记录不在删除范围内。默认关闭自动删除，先检查预览、确认保留政策及必要归档，再配置同版本 API/Worker 并重新发布。
+历史清理只处理过期凭据、审计、已结束的消息投递与入站记录和已完成的 DBOS 维护任务；业务实体、FlowRun、文件引用、ModelInvocation、费用与调用幂等记录不在删除范围内。默认关闭自动删除，先检查预览、确认保留政策及必要归档，再配置同版本 API/Worker 并重新发布。
 
 ### 保留规则
 
@@ -226,7 +226,7 @@ uv run --locked keystone retry-file-delete --file-id <文件 UUID>
 | `pat_retention_days` | 90 | 从 PAT 过期或撤销的较早时刻起保留；任何 FlowRun 引用均阻止物理删除，包括终态 Run |
 | `audit_retention_days` | 365 | 按 occurred_at 保留；删除结果写运行日志，不递归生成审计 |
 | `maintenance_retention_days` | 30 | 仅删除白名单内、已完成且超过保留期的维护工作流叶节点 |
-| `message_delivery_retention_days` | 30 | 按最后更新时间保留已结束的投递（含不再重试的 unknown）；pending 与 sending 不删除 |
+| `message_delivery_retention_days` | 30 | 按最后更新时间保留已结束的投递（含不再重试的 unknown）与入站记录；pending、sending 的投递和 received 的入站不删除，过期绑定码直接删除 |
 
 天数范围均为 1–3650。相应环境变量使用 `KEYSTONE_` 前缀及大写名称。API、Worker、CLI 应使用相同策略；这些配置参与 Worker 公共配置摘要。
 
