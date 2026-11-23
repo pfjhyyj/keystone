@@ -5,6 +5,7 @@ from dbos import DBOS
 from keystone.core.execution.contracts import NoInput, TaskBinding
 from keystone.core.execution.schedules import register_schedule
 from keystone.core.execution.steps import safe_step
+from keystone.platform.messaging.services import inbound
 from keystone.platform.messaging.services.dispatch import dispatch
 from keystone.platform.messaging.tasks.definitions import DISPATCH, DISPATCH_SCHEDULE
 
@@ -16,7 +17,10 @@ def register(runtime, health):
 
     @safe_step(name="messaging.dispatch", error_code="message_dispatch_failed")
     async def dispatch_step():
-        await dispatch(runtime.database, runtime.messaging_vault())
+        vault = runtime.messaging_vault()
+        # Inbound first, so replies it queues can go out in the same pass.
+        await inbound.retry(runtime, vault)
+        await dispatch(runtime.database, vault)
         return True
 
     @DBOS.workflow(name=WORKFLOW)

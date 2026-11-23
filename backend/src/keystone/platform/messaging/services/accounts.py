@@ -10,6 +10,7 @@ from keystone.core.errors import ServiceError
 from keystone.platform.identity.services.subjects import users_in_transaction
 from keystone.platform.messaging.adapters import feishu_app, feishu_errors
 from keystone.platform.messaging.models import ExternalAccount, MessageChannel
+from keystone.platform.messaging.services.actions import TEST_CARD
 from keystone.platform.messaging.services.channels import unseal
 from keystone.platform.messaging.services.deliveries import register, user_is_active
 
@@ -175,7 +176,7 @@ class AccountService:
             await session.flush()
             await self.identity.log(session, auth, action, "messaging.account", identifier, details)
 
-    async def test(self, identifier):
+    async def test(self, identifier, *, card=False):
         """Queue a fixed notice to one bound user on that binding's channel."""
         action = "messaging.account.test"
         async with self.identity.access(
@@ -193,7 +194,7 @@ class AccountService:
                 session,
                 auth,
                 channel.id,
-                {"kind": "text", "text": TEST_TEXT},
+                TEST_CARD if card else {"kind": "text", "text": TEST_TEXT},
                 {
                     "source_module": "messaging",
                     "source_type": "account_test",

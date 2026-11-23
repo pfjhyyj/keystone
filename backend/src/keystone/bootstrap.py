@@ -8,6 +8,7 @@ from keystone import __version__, composition
 from keystone.composition import (
     build_catalog,
     build_flow_definitions,
+    build_message_actions,
     build_model_clients,
     execution_version,
     flow_package_owners,
@@ -59,6 +60,7 @@ class Runtime:
     worker_lease: object | None = None
     execution_guard: Callable | None = None
     environment_keys: Mapping = field(default_factory=dict)
+    message_actions: Mapping = field(default_factory=dict)
     opensandbox: OpenSandbox | None = None
     history_offset: int = 0
     tasks: TaskClient | None = None
@@ -189,6 +191,7 @@ def build_runtime(settings: Settings) -> Runtime:
         flow_packages=flow_package_owners(),
         execution_guard=composition.EXECUTION_GUARD,
         environment_keys=composition.build_environment_keys(),
+        message_actions=build_message_actions(catalog),
     )
     if settings.opensandbox_url:
         # Shared by API requests and Worker maintenance; both reach the same provider.

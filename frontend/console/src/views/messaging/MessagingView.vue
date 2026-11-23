@@ -14,6 +14,7 @@ import {
   type MessageChannel,
   type MessageChat,
   type MessageDelivery,
+  type MessageInbound,
   type MessageDestination,
   type MessageProvider,
 } from '../../api/messaging'
@@ -23,6 +24,7 @@ import AppDialog from '../../components/AppDialog.vue'
 import AppSelect from '../../components/AppSelect.vue'
 import ListPager from '../../components/ListPager.vue'
 import RowMore from '../../components/RowMore.vue'
+import FeishuAppGuide from './components/FeishuAppGuide.vue'
 import { confirmAction } from '../../utils/confirm'
 
 const statusText: Record<MessageDelivery['status'], string> = {
@@ -34,6 +36,13 @@ const statusText: Record<MessageDelivery['status'], string> = {
   unknown: '结果未知',
   expired: '已过期',
 }
+const inboundText: Record<MessageInbound['status'], [string, string]> = {
+  received: ['处理中', 'pending'],
+  processed: ['已处理', 'succeeded'],
+  rejected: ['已拒绝', 'denied'],
+  expired: ['已过期', 'expired'],
+  failed: ['失败', 'failed'],
+}
 const providerText: Record<MessageProvider, string> = {
   feishu_webhook: '飞书群机器人',
   feishu_app: '飞书自建应用',
@@ -44,6 +53,7 @@ const channelList = usePagedList('messaging:manage', messagingApi.channels)
 const targetList = usePagedList('messaging:manage', messagingApi.appDestinations)
 const accountList = usePagedList('messaging:manage', messagingApi.accounts)
 const deliveryList = usePagedList('message_delivery:read', messagingApi.deliveries)
+const inboundList = usePagedList('message_delivery:read', messagingApi.inbounds)
 const { busy, error, notice, run } = useAction()
 const appChannels = computed(() =>
   channelList.rows.value.filter((row) => row.provider === 'feishu_app'),
@@ -57,6 +67,9 @@ const tabs = computed(() => [
     ? ['accounts']
     : []),
   ...(can('message_delivery:read') ? ['deliveries'] : []),
+  ...(can('message_delivery:read') && (appChannels.value.length || inboundList.rows.value.length)
+    ? ['inbounds']
+    : []),
 ])
 const localTab = ref('')
 const tab = computed({
@@ -158,10 +171,12 @@ async function deleteChannel(row: MessageChannel) {
     if (can('message_delivery:read')) deliveryList.search()
   })
 }
-async function sendTest(destinationId: string, kind = 'destinations') {
+async function sendTest(destinationId: string, kind = 'destinations', card = false) {
   await run(async () => {
-    await request(`/messaging/${kind}/${destinationId}/test`, 'POST')
-    notice.value = '测试消息已登记，Worker 将在几秒内发送，可在投递记录中查看结果'
+    await request(`/messaging/${kind}/${destinationId}/test${card ? '?card=true' : ''}`, 'POST')
+    notice.value = card
+      ? '测试卡片已登记。点击卡片上的“确认收到”，可在入站记录中查看处理结果；点击人须先绑定飞书账号'
+      : '测试消息已登记，Worker 将在几秒内发送，可在投递记录中查看结果'
     if (can('message_delivery:read')) deliveryList.search()
   })
 }
@@ -367,6 +382,7 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
     }}</el-alert>
     <el-tabs v-model="tab">
       <el-tab-pane v-if="can('messaging:manage')" label="渠道" name="channels">
+        <FeishuAppGuide />
         <div class="row-actions">
           <el-button type="primary" :disabled="busy" native-type="button" @click="editChannel(null)"
             >新建渠道</el-button
@@ -545,6 +561,12 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
                     >编辑</el-button
                   ><RowMore :label="`${row.name}的更多操作`"
                     ><el-button
+                      :disabled="busy || !row.is_active"
+                      native-type="button"
+                      link
+                      @click="sendTest(row.id, 'destinations', true)"
+                      >发送测试卡片</el-button
+                    ><el-button
                       :disabled="busy"
                       native-type="button"
                       type="danger"
@@ -629,6 +651,12 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
                     @click="sendTest(row.id, 'accounts')"
                     >发送测试消息</el-button
                   ><RowMore :label="`${row.user.label ?? '用户'}的更多操作`"
+                    ><el-button
+                      :disabled="busy"
+                      native-type="button"
+                      link
+                      @click="sendTest(row.id, 'accounts', true)"
+                      >发送测试卡片</el-button
                     ><el-button
                       :disabled="busy"
                       native-type="button"
@@ -722,6 +750,78 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
           @change="(value: number) => (deliveryList.page.value = value)"
         />
       </el-tab-pane>
+      <el-tab-pane v-if="tabs.includes('inbounds')" label="入站记录" name="inbounds">
+        <p>
+          飞书里点击卡片按钮、私聊应用发送绑定码，会记录在这里。Worker
+          运行时才能收到；飞书后台的订阅配置见渠道页的“飞书自建应用配置说明”。
+        </p>
+        <div class="row-actions">
+          <el-button
+            :disabled="inboundList.loading.value"
+            native-type="button"
+            @click="inboundList.reload()"
+            >刷新</el-button
+          >
+        </div>
+        <el-alert
+          v-if="inboundList.error.value"
+          role="alert"
+          type="error"
+          show-icon
+          :closable="false"
+          >{{ inboundList.error.value }}</el-alert
+        >
+        <div class="table-scroll">
+          <el-table
+            :fit="false"
+            native-scrollbar
+            table-layout="auto"
+            :data="inboundList.rows.value"
+            row-key="id"
+            stripe
+            class="data-table"
+          >
+            <el-table-column label="收到时间" min-width="170"
+              ><template #default="{ row }">{{ time(row.received_at) }}</template></el-table-column
+            >
+            <el-table-column label="类型" min-width="140"
+              ><template #default="{ row }"
+                >{{ row.kind === 'bind' ? '自助绑定' : '卡片操作'
+                }}<small v-if="row.action_key">{{ row.action_key }}</small></template
+              ></el-table-column
+            >
+            <el-table-column label="触发人" min-width="180"
+              ><template #default="{ row }"
+                >{{ row.actor ? (row.actor.label ?? row.actor.id) : '未绑定'
+                }}<small>{{ row.external_user_id }}</small></template
+              ></el-table-column
+            >
+            <el-table-column label="状态" min-width="100"
+              ><template #default="{ row }"
+                ><StatusTag :status="inboundText[row.status as MessageInbound['status']][1]">{{
+                  inboundText[row.status as MessageInbound['status']][0]
+                }}</StatusTag></template
+              ></el-table-column
+            >
+            <el-table-column label="错误" min-width="220"
+              ><template #default="{ row }"
+                >{{ row.error_code ?? '—'
+                }}<small v-if="row.error_hint">{{ row.error_hint }}</small></template
+              ></el-table-column
+            >
+            <el-table-column label="处理时间" min-width="170"
+              ><template #default="{ row }">{{ time(row.processed_at) }}</template></el-table-column
+            >
+            <template #empty><el-empty :image-size="64" description="暂无入站记录" /></template>
+          </el-table>
+        </div>
+        <ListPager
+          :page="inboundList.page.value"
+          :count="inboundList.rows.value.length"
+          :loading="inboundList.loading.value"
+          @change="(value: number) => (inboundList.page.value = value)"
+        />
+      </el-tab-pane>
     </el-tabs>
     <AppDialog
       v-if="channelDialog"
@@ -749,7 +849,7 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
           只向添加该机器人的群推送，不支持交互；一个群机器人对应一个消息标识。
         </p>
         <p v-if="!editingChannel && isApp">
-          可发到应用机器人所在的多个群。保存后在“发送目标”里选择群；应用需开通“以应用的身份发消息”和“获取群组信息”权限，并启用机器人能力。
+          可发到应用机器人所在的多个群和绑定的用户，并接收卡片按钮点击。保存后在“发送目标”里选择群；飞书后台要开通的权限和订阅见渠道页的“飞书自建应用配置说明”。
         </p>
         <label>渠道名称<el-input v-model="name" required maxlength="128" /></label>
         <template v-if="!isApp">
@@ -962,8 +1062,7 @@ const time = (value: string | null) => (value ? new Date(value).toLocaleString()
         ></label>
         <p v-if="found?.name_hint">{{ found.name_hint }}</p>
         <p>
-          企业邮箱查不到，请用对方在飞书登记的邮箱；非中国大陆手机号带“+”国家代码。应用需开通“通过手机号或邮箱获取用户
-          ID”权限，对方须在应用的通讯录权限范围内。手机号和邮箱只用于查询，不保存。
+          企业邮箱查不到，请用对方在飞书登记的邮箱；非中国大陆手机号带“+”国家代码。对方须在应用的通讯录权限范围内，所需权限见渠道页的配置说明。手机号和邮箱只用于查询，不保存。也可以让对方在个人中心生成绑定码自助绑定。
         </p>
         <el-button :disabled="busy" native-type="submit" type="primary">绑定</el-button>
       </form>

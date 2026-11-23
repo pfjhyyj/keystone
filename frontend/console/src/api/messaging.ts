@@ -56,6 +56,30 @@ export interface MessageDelivery {
   created_at: string
   sent_at: string | null
 }
+export interface MessageInbound {
+  id: string
+  channel_id: string
+  kind: 'card_action' | 'bind'
+  delivery_id: string | null
+  action_key: string | null
+  external_user_id: string
+  actor: { id: string; label: string | null } | null
+  status: 'received' | 'processed' | 'rejected' | 'expired' | 'failed'
+  attempts: number
+  error_code: string | null
+  error_hint: string | null
+  received_at: string
+  processed_at: string | null
+}
+export interface BindCode {
+  code: string
+  expires_at: string
+}
+export interface MyBinding {
+  channel_id: string
+  channel_name: string
+  account: { id: string; external_user_id: string; created_at: string } | null
+}
 // A value with "@" is looked up as an email, anything else as a mobile number.
 export const contactField = (value: string) =>
   value.includes('@') ? { email: value } : { mobile: value }
@@ -86,4 +110,10 @@ export const messagingApi = {
     }),
   deliveries: (offset: number) =>
     request<MessageDelivery[]>(`/messaging/deliveries?offset=${offset}&limit=50`),
+  inbounds: (offset: number) =>
+    request<MessageInbound[]>(`/messaging/inbounds?offset=${offset}&limit=50`),
+  // The signed-in user's own code; it is shown once and only its digest is stored.
+  bindCode: () => request<BindCode>('/messaging/bind-codes', 'POST'),
+  myBindings: () => request<MyBinding[]>('/messaging/me/accounts'),
+  unbindMine: (id: string) => request<null>(`/messaging/me/accounts/${id}`, 'DELETE'),
 }

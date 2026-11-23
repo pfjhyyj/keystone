@@ -37,5 +37,8 @@ CATALOG = Catalog(
         "messaging.account.create": {"channel_id", "user_id", "external_user_id"},
         "messaging.account.delete": {"channel_id", "user_id", "external_user_id"},
         "messaging.account.test": {"delivery_id"},
+        "messaging.account.self_bind": {"channel_id", "external_user_id", "replaced", "via"},
+        "messaging.account.self_unbind": {"channel_id", "external_user_id"},
+        "messaging.inbound.card_action": set(),
     },
 )

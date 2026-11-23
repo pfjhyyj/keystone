@@ -44,6 +44,20 @@ HINTS = {
     "群机器人不再重发",
     "send_interrupted": "发送过程中进程中断，消息可能已送达",
     "credential_unavailable": "渠道凭据或加密密钥不可用，请检查密钥文件或重新填写凭据",
+    # Inbound card actions and binding messages.
+    "message_actor_unbound": "点击人的飞书账号没有绑定 Keystone 用户，"
+    "可在个人中心生成绑定码自助绑定",
+    "message_actor_disabled": "点击人绑定的 Keystone 用户已停用",
+    "message_action_mismatch": "回调与发出的卡片不一致（消息、渠道或按钮不匹配），没有执行",
+    "message_action_unknown": "这个按钮对应的操作已不再声明，没有执行",
+    "message_channel_disabled": "渠道已停用，没有执行",
+    "inbound_unfinished": "多次处理都没有完成，已放弃；如需执行请重新操作",
+    "permission_denied": "点击人没有执行这项操作的权限",
+    "password_change_required": "点击人需先在 Keystone 修改初始密码",
+    "bind_code_invalid": "绑定码无效、已过期或已使用",
+    "bind_account_taken": "这个飞书账号已绑定其他 Keystone 用户，需管理员先解除",
+    "bind_user_disabled": "生成绑定码的用户已停用",
+    "bind_rate_limited": "同一飞书账号一小时内输错绑定码过多，暂时拒绝",
 }
 
 

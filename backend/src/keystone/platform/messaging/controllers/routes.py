@@ -9,6 +9,7 @@ from keystone.platform.messaging import schemas
 from keystone.platform.messaging.services.accounts import AccountService
 from keystone.platform.messaging.services.channels import ChannelService
 from keystone.platform.messaging.services.deliveries import DeliveryService
+from keystone.platform.messaging.services.inbound import InboundService, SelfBindingService
 
 router = APIRouter(prefix="/api/v1/messaging", tags=["messaging"])
 
@@ -73,8 +74,9 @@ async def delete_destination(identifier: UUID, request: Request):
 
 
 @router.post("/destinations/{identifier}/test", status_code=202)
-async def test_destination(identifier: UUID, request: Request):
-    return await _channels(request).test(identifier)
+async def test_destination(identifier: UUID, request: Request, card: bool = False):
+    # card=true sends the test card whose button checks the inbound path.
+    return await _channels(request).test(identifier, card=card)
 
 
 def _accounts(request: Request) -> AccountService:
@@ -104,8 +106,30 @@ async def unbind_account(identifier: UUID, request: Request):
 
 
 @router.post("/accounts/{identifier}/test", status_code=202)
-async def test_account(identifier: UUID, request: Request):
-    return await _accounts(request).test(identifier)
+async def test_account(identifier: UUID, request: Request, card: bool = False):
+    return await _accounts(request).test(identifier, card=card)
+
+
+@router.get("/inbounds")
+async def inbounds(request: Request, page: Page):
+    return await InboundService(access_context(request)).listing(page.offset, page.limit)
+
+
+# Any signed-in user manages their own bindings; a binding is made by messaging a code.
+@router.get("/me/accounts")
+async def my_accounts(request: Request):
+    return await SelfBindingService(access_context(request)).accounts()
+
+
+@router.delete("/me/accounts/{identifier}", status_code=204)
+async def unbind_mine(identifier: UUID, request: Request):
+    await SelfBindingService(access_context(request)).unbind(identifier)
+    return Response(status_code=204)
+
+
+@router.post("/bind-codes", status_code=201)
+async def create_bind_code(request: Request):
+    return await SelfBindingService(access_context(request)).create()
 
 
 @router.get("/deliveries")
