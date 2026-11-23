@@ -2,7 +2,7 @@
 
 消息渠道把通知和交互卡片送到企业 IM，并把卡片上的操作和固定文本命令按声明的执行身份交回业务决定。业务 Service 决定发什么、发给谁、收到操作后做什么；平台负责渠道配置、发送登记与防重、入站验签与去重、执行身份解析和送达事实。
 
-本页是设计契约，飞书群机器人推送已实现，其余见[目标与当前实现差异](#目标与当前实现差异)。首版接入飞书和企业微信的自建应用（可发送与交互）和群机器人（只发送到所在群）；固定文本命令首版只支持飞书。
+本页是设计契约，飞书群机器人推送和飞书自建应用向群发送已实现，其余见[目标与当前实现差异](#目标与当前实现差异)。首版接入飞书和企业微信的自建应用（可发送与交互）和群机器人（只发送到所在群）；固定文本命令首版只支持飞书。
 
 ## 1. 范围与边界
 
@@ -30,8 +30,8 @@ erDiagram
 
 | 对象 | 主要字段与约束 |
 |---|---|
-| MessageChannel | id、name、provider（feishu_app/wecom_app/feishu_webhook/wecom_webhook）、非秘密连接参数、凭据密文、is_active、配置审计字段 |
-| MessageDestination | id、唯一且固定的 key、channel_id、外部会话标识、name、可选 executing_user_id、is_active；业务按 key 引用，不传原始外部 ID。群机器人渠道恰有一个接收方，随渠道创建，key 在渠道表单中填写，名称跟随渠道；不填外部会话标识，也不能设置执行用户。控制台只在有多接收方的渠道上单独展示接收方 |
+| MessageChannel | id、name、provider（feishu_app/wecom_app/feishu_webhook/wecom_webhook）、非秘密连接参数（飞书自建应用为 app_id，随渠道固定）、凭据密文、is_active、配置审计字段 |
+| MessageDestination | id、唯一且固定的 key、channel_id、外部会话标识、name、可选 executing_user_id、is_active；业务按 key 引用，不传原始外部 ID。群机器人渠道恰有一个接收方，随渠道创建，key 在渠道表单中填写，名称跟随渠道；不填外部会话标识，也不能设置执行用户。控制台只在有多接收方的渠道上单独展示接收方，称为发送目标；自建应用的群从应用机器人所在的群中选择，同一渠道的同一个群只配置一次 |
 | ExternalAccount | channel_id、external_user_id、user_id；(channel_id, external_user_id) 与 (channel_id, user_id) 各自唯一 |
 | MessageDelivery | 见下表 |
 | MessageInbound | 见下表；(channel_id, provider_event_id) 唯一 |
@@ -43,7 +43,7 @@ erDiagram
 | kind、content_mode、content | text 或 card；content_mode 为 stored 时 content 为受控结构，最大 16 KiB，不含秘密；为 supplied 时不保存 content，见 [4.2](#42-发送时取内容) |
 | actions | 卡片动作 key 列表，须为发起业务已注册的动作 |
 | expires_at | 可选截止时间；之后不再发送 |
-| status、attempts、error_code | 见 [5.2](#52-发送)；attempts 计物理发送次数 |
+| status、attempts、error_code、first_attempted_at | 见 [5.2](#52-发送)；attempts 计领取发送的次数，first_attempted_at 是首次领取时间，重试窗口由此起算 |
 | provider_message_id、card_update_ref | 渠道回执；卡片后续更新所需的受控凭据及期限 |
 | created_at/by、sent_at、updated_at | 登记、首次发送与最近变更 |
 
@@ -142,14 +142,15 @@ sequenceDiagram
 | 当前状态 | 事件 | 下一状态 |
 |---|---|---|
 | pending | 业务取消 | cancelled |
-| pending、unknown | 已过 expires_at | expired |
+| pending | 已过 expires_at | expired |
 | pending | 领取并登记本次尝试 | sending |
 | sending | 内容提供返回「不再可用」 | expired |
+| sending | 发送前被拒（取不到 token、限频），确定没有发出 | 首次尝试回到 pending，否则 unknown；error_code 保留原因 |
 | sending | 渠道明确成功 | succeeded，保存 provider_message_id |
 | sending | 渠道明确拒绝（权限、接收方无效、内容不支持） | failed |
 | sending | 超时、断流或无法确认 | unknown |
-| unknown | 渠道支持去重，仍在去重窗口与截止时间内且 attempts 未达 3 | sending（同一投递 ID；stored 投递使用同一报文） |
-| unknown | 群机器人，或超出窗口或次数 | 保持 unknown，不再自动发送 |
+| unknown | 渠道支持去重，距 first_attempted_at 仍在去重窗口内、未过截止时间、attempts 未达 3，且距上次尝试已过 30 秒 | sending（同一投递 ID；stored 投递使用同一报文） |
+| unknown | 群机器人，或超出窗口、次数或截止时间 | 保持 unknown，不再自动发送；可能已送达，所以不改为 expired |
 | sending（进程中断遗留） | 发送任务恢复 | 视为 unknown，按上两行处理 |
 
 发送任务由维护计划定期扫描，使用独立队列与全局并发上限，按渠道限频节奏发送；未配置渠道时没有投递，扫描只是一次走状态索引的空查询。外部请求不持业务事务；标记 sending 与发送分开提交，接受“已标记未发出”的窗口，由同一去重键重试覆盖。超出窗口的 unknown 不重发，由业务或操作者核对后决定是否以新投递再次通知。接收方绑定失效或用户停用时直接 failed，不改发他人。
@@ -228,6 +229,7 @@ sequenceDiagram
 | 范围 | 当前实现 |
 |---|---|
 | 飞书群机器人 | 已实现：渠道与其唯一接收方同表单配置、凭据加密、业务事务内登记、Worker 每 5 秒发送、截止时间、控制台配置与测试消息、投递记录 |
-| 自建应用与入站 | 未实现：飞书、企业微信自建应用发送，外部账号绑定，长连接入站、命令、卡片动作、执行用户、回复原消息、发送时取内容；企业微信群机器人 |
+| 飞书自建应用发送 | 已实现：App ID/Secret 配置（token 只在进程内缓存）、从机器人所在的群选择发送目标、按投递 ID 去重发送并在窗口内重试未知结果、保存消息 ID、单独删除发送目标；卡片使用只读卡片结构，与群机器人相同。选群失败和投递错误按错误码附处理提示（缺权限、未启用机器人、机器人不在群等），对照表只在适配器维护 |
+| 账号绑定与入站 | 未实现：外部账号绑定与发给用户，长连接入站、命令、卡片动作、执行用户、回复原消息、发送时取内容；企业微信自建应用与群机器人 |
 | 历史清理 | 投递记录尚未纳入历史清理 |
-| 渠道事实核验 | 飞书已按官方文档核验，重推事件 ID 与卡片回调经长连接待联调；企业微信待核验 |
+| 渠道事实核验 | 飞书已按官方文档核验：token 使用推荐的 `accounts.feishu.cn/oauth/v3/token`（旧 `auth/v3/tenant_access_token/internal` 已标为历史版本），机器人不在群 230002、群已解散 232009、限频 230020、卡片请求体 ≤30 KB；自建应用已真实联调通过 token 获取、群列表和文本消息发送；token 失效码 99991661/99991663/99991665 与卡片结构在自建应用上待真实联调，重推事件 ID 与卡片回调经长连接待联调；企业微信待核验 |

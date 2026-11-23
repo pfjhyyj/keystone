@@ -3,29 +3,19 @@
 https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot
 """
 
-import asyncio
 import base64
 import hashlib
 import hmac
 import json
 import time
 
-import httpx2
+from keystone.platform.messaging.adapters import feishu_content
+from keystone.platform.messaging.adapters.feishu_http import Rejected, Unknown, call
+
+__all__ = ["Rejected", "Unknown", "render", "send", "sign"]
 
 MAX_BODY = 20 * 1024
-MAX_RESPONSE = 64 * 1024
 RATE_LIMITED = {11232, 9499}
-
-
-class Rejected(Exception):
-    """The provider answered and did not deliver; safe to report as failed."""
-
-    def __init__(self, code):
-        self.code = code
-
-
-class Unknown(Exception):
-    """No trustworthy answer; the message may or may not have been delivered."""
 
 
 def sign(secret, timestamp):
@@ -35,50 +25,9 @@ def sign(secret, timestamp):
 
 
 def render(content):
-    if content["kind"] == "text":
-        return {"msg_type": "text", "content": {"text": content["text"]}}
-    elements = []
-    if content.get("body"):
-        elements.append({"tag": "div", "text": {"tag": "plain_text", "content": content["body"]}})
-    if content.get("fields"):
-        elements.append(
-            {
-                "tag": "div",
-                "fields": [
-                    {
-                        "is_short": True,
-                        "text": {
-                            "tag": "plain_text",
-                            "content": f"{field['label']}：{field['value']}",
-                        },
-                    }
-                    for field in content["fields"]
-                ],
-            }
-        )
-    if content.get("links"):
-        elements.append(
-            {
-                "tag": "action",
-                "actions": [
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": link["text"]},
-                        "type": "default",
-                        "url": link["url"],
-                    }
-                    for link in content["links"]
-                ],
-            }
-        )
-    return {
-        "msg_type": "interactive",
-        "card": {
-            "config": {"wide_screen_mode": True},
-            "header": {"title": {"tag": "plain_text", "content": content["title"]}},
-            "elements": elements,
-        },
-    }
+    msg_type, body = feishu_content.render(content)
+    # Group bots take the card object itself under `card`, not a serialized `content`.
+    return {"msg_type": msg_type, "card" if msg_type == "interactive" else "content": body}
 
 
 async def send(url, secret, content, *, transport=None):
@@ -89,34 +38,18 @@ async def send(url, secret, content, *, transport=None):
     payload = json.dumps(body, ensure_ascii=False).encode()
     if len(payload) > MAX_BODY:
         raise Rejected("content_too_large")
-    try:
-        async with (
-            asyncio.timeout(10),
-            httpx2.AsyncClient(
-                transport=transport or httpx2.AsyncHTTPTransport(retries=0, trust_env=False),
-                timeout=10,
-                follow_redirects=False,
-                trust_env=False,
-            ) as client,
-        ):
-            async with client.stream(
-                "POST", url, content=payload, headers={"Content-Type": "application/json"}
-            ) as response:
-                data = bytearray()
-                async for chunk in response.aiter_bytes():
-                    data.extend(chunk)
-                    if len(data) > MAX_RESPONSE:
-                        raise Unknown
-                status = response.status_code
-    except (httpx2.HTTPError, OSError, TimeoutError):
-        raise Unknown from None
+    status, answer = await call(
+        "POST",
+        url,
+        transport=transport,
+        content=payload,
+        headers={"Content-Type": "application/json"},
+    )
     if status >= 500:
         raise Unknown
-    try:
-        answer = json.loads(data)
-        code = answer.get("code", answer.get("StatusCode"))
-    except (ValueError, AttributeError):
-        raise (Unknown if status < 400 else Rejected("provider_rejected")) from None
+    if answer is None:
+        raise Unknown if status < 400 else Rejected("provider_rejected")
+    code = answer.get("code", answer.get("StatusCode"))
     if status < 400 and code == 0:
         return
     if type(code) is not int:

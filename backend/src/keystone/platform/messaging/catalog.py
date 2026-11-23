@@ -11,6 +11,7 @@ CATALOG = Catalog(
         "messaging.channel.create": {
             "name",
             "provider",
+            "app_id",
             "is_active",
             "credential_changed",
             "destination_key",
@@ -18,6 +19,7 @@ CATALOG = Catalog(
         "messaging.channel.update": {
             "name",
             "provider",
+            "app_id",
             "is_active",
             "credential_changed",
             "destination_key",
@@ -30,6 +32,7 @@ CATALOG = Catalog(
         },
         "messaging.destination.create": {"key", "channel_id", "name", "is_active"},
         "messaging.destination.update": {"key", "channel_id", "name", "is_active"},
+        "messaging.destination.delete": {"key", "channel_id", "name", "deliveries_removed"},
         "messaging.destination.test": {"delivery_id"},
     },
 )

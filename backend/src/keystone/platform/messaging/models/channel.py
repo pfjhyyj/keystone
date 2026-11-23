@@ -10,12 +10,16 @@ from keystone.core.database import Base
 class MessageChannel(Base):
     __tablename__ = "message_channels"
     __table_args__ = (
-        CheckConstraint("provider IN ('feishu_webhook')", name="ck_message_channel_provider"),
+        CheckConstraint(
+            "provider IN ('feishu_webhook', 'feishu_app')", name="ck_message_channel_provider"
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(128))
     provider: Mapped[str] = mapped_column(String(32))
+    # Non-secret connection parameter of app channels; changing apps needs a new channel.
+    app_id: Mapped[str | None] = mapped_column(String(64))
     # Sealed by the credential vault, bound to this channel; never returned or logged.
     credential_encrypted: Mapped[str] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(default=True)

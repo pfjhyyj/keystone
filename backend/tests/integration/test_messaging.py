@@ -1,4 +1,5 @@
 from datetime import timedelta
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -9,8 +10,9 @@ from test_identity import query
 from keystone.core.credentials import KEY_FILE
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
-from keystone.platform.messaging.adapters import feishu_webhook
+from keystone.platform.messaging.adapters import feishu_app, feishu_webhook
 from keystone.platform.messaging.models import MessageDelivery
+from keystone.platform.messaging.services import channels as channels_module
 from keystone.platform.messaging.services import dispatch as dispatch_module
 from keystone.platform.messaging.services.deliveries import enqueue_in_transaction
 from keystone.platform.messaging.services.dispatch import dispatch
@@ -160,6 +162,8 @@ def test_outcomes_are_final_and_deadlines_and_disabled_channels_hold(client, sen
     sender.outcome = None
     assert run_dispatch(client) == 0
     assert statuses(client) == [("unknown", "send_unconfirmed", 1), ("failed", "feishu_19021", 1)]
+    hints = [row["error_hint"] for row in client.get(ROOT + "/deliveries").json()]
+    assert "签名" in hints[0] and "可能已送达" in hints[1]
 
     # A deadline that passes before sending ends the delivery without a send.
     expiring = add(client, expires_at=utcnow() + timedelta(seconds=30))
@@ -249,3 +253,142 @@ def test_deleting_a_channel_removes_its_key_and_history_unless_a_send_is_running
 
     # The key is free again once its channel is gone.
     configure(client)
+
+
+class AppSender:
+    def __init__(self):
+        self.sent, self.outcomes = [], []
+
+    async def __call__(self, app_id, secret, receive_id_type, receive_id, content, uuid):
+        self.sent.append((app_id, secret, receive_id_type, receive_id, uuid))
+        outcome = self.outcomes.pop(0) if self.outcomes else None
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome or f"om_{len(self.sent)}"
+
+
+def configure_app(client):
+    channel = client.post(
+        ROOT + "/channels",
+        json={
+            "name": "飞书应用",
+            "provider": "feishu_app",
+            "app_id": "cli_a1b2c3",
+            "credential": {"app_secret": "app-secret-value"},
+        },
+    )
+    assert channel.status_code == 201, channel.text
+    return channel.json()
+
+
+def test_app_channel_targets_groups_and_lists_them_live(client, monkeypatch):
+    channel = configure_app(client)
+    assert channel["app_id"] == "cli_a1b2c3" and channel["destination"] is None
+    assert "app-secret-value" not in client.get("/api/v1/audit-logs").text
+    # The credential type is fixed by the provider.
+    mismatch = client.patch(
+        f"{ROOT}/channels/{channel['id']}",
+        json={"name": "飞书应用", "is_active": True, "credential": {"url": HOOK}},
+    )
+    assert mismatch.json()["code"] == "message_credential_invalid"
+
+    seen = []
+
+    async def chats(app_id, secret, page_token=None):
+        seen.append((app_id, secret, page_token))
+        return {
+            "items": [{"chat_id": "oc_ops", "name": "运维群", "external": False}],
+            "page_token": None,
+        }
+
+    monkeypatch.setattr(channels_module.feishu_app, "chats", chats)
+    listed = client.get(f"{ROOT}/channels/{channel['id']}/chats", params={"page_token": "p2"})
+    assert listed.json()["items"][0]["chat_id"] == "oc_ops"
+    assert seen == [("cli_a1b2c3", "app-secret-value", "p2")]
+
+    # A missing scope says which permission to grant instead of a bare code.
+    async def forbidden(app_id, secret, page_token=None):
+        raise feishu_app.Rejected("feishu_99991672")
+
+    monkeypatch.setattr(channels_module.feishu_app, "chats", forbidden)
+    refused = client.get(f"{ROOT}/channels/{channel['id']}/chats")
+    assert refused.status_code == 502 and "im:chat:readonly" in refused.json()["detail"]
+
+    missing = client.post(
+        ROOT + "/destinations",
+        json={"key": "ops.app", "channel_id": channel["id"], "name": "运维群"},
+    )
+    assert missing.json()["code"] == "message_destination_invalid"
+    for key, chat in (("ops.app", "oc_ops"), ("ops.daily", "oc_daily")):
+        created = client.post(
+            ROOT + "/destinations",
+            json={"key": key, "channel_id": channel["id"], "name": key, "external_id": chat},
+        )
+        assert created.status_code == 201, created.text
+    configure(client)
+    app_only = client.get(ROOT + "/destinations", params={"provider": "feishu_app"}).json()
+    assert [row["key"] for row in app_only] == ["ops.app", "ops.daily"]
+
+
+def test_app_retries_unknown_with_the_same_uuid_inside_the_window(client, monkeypatch):
+    channel = configure_app(client)
+    destination = client.post(
+        ROOT + "/destinations",
+        json={
+            "key": "ops.alerts",
+            "channel_id": channel["id"],
+            "name": "运维群",
+            "external_id": "oc_ops",
+        },
+    ).json()
+    sender = AppSender()
+    monkeypatch.setattr(dispatch_module.feishu_app, "send", sender)
+
+    async def age(**values):
+        async with client.app.state.runtime.database.transaction() as session:
+            await session.execute(update(MessageDelivery).values(**values))
+
+    def backdate():
+        client.portal.call(partial(age, updated_at=utcnow() - timedelta(minutes=1)))
+
+    # Unanswered sends are retried with the delivery ID as uuid, at most three attempts.
+    sender.outcomes = [feishu_app.Unknown(), feishu_app.Unknown(), feishu_app.Unknown()]
+    delivery = add(client)
+    run_dispatch(client)
+    assert run_dispatch(client) == 0  # waits for the retry delay
+    backdate()
+    run_dispatch(client)
+    backdate()
+    run_dispatch(client)
+    backdate()
+    assert run_dispatch(client) == 0
+    assert statuses(client) == [("unknown", "send_unconfirmed", 3)]
+    assert {item[4] for item in sender.sent} == {str(delivery)}
+    assert sender.sent[0][:4] == ("cli_a1b2c3", "app-secret-value", "chat_id", "oc_ops")
+
+    # Outside the de-duplication window an unknown delivery is left alone.
+    client.portal.call(partial(age, attempts=1, first_attempted_at=utcnow() - timedelta(hours=1)))
+    backdate()
+    assert run_dispatch(client) == 0
+
+    # A refusal before sending returns a first attempt to pending; success keeps the receipt.
+    sender.outcomes = [feishu_app.NotSent("provider_rate_limited")]
+    add(client)
+    run_dispatch(client)
+    assert statuses(client)[-1] == ("pending", "provider_rate_limited", 1)
+    run_dispatch(client)
+    rows = query(
+        client,
+        lambda session: session.scalars(
+            select(MessageDelivery).order_by(MessageDelivery.created_at)
+        ),
+    ).all()
+    assert rows[-1].status == "succeeded" and rows[-1].provider_message_id.startswith("om_")
+    assert rows[-1].error_code is None
+
+    # A single app destination can be deleted with its history; group bot keys cannot.
+    assert client.delete(f"{ROOT}/destinations/{destination['id']}").status_code == 204
+    assert statuses(client) == []
+    _, webhook_destination = configure(client, key="ops.hook")
+    fixed = client.delete(f"{ROOT}/destinations/{webhook_destination['id']}")
+    assert fixed.json()["code"] == "message_destination_fixed"

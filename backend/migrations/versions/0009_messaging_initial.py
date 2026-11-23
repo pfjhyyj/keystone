@@ -33,10 +33,13 @@ def upgrade():
         sa.Column("id", sa.Uuid(), primary_key=True),
         sa.Column("name", sa.String(128), nullable=False),
         sa.Column("provider", sa.String(32), nullable=False),
+        sa.Column("app_id", sa.String(64)),
         sa.Column("credential_encrypted", sa.Text(), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False),
         *_audited(),
-        sa.CheckConstraint("provider IN ('feishu_webhook')", name="ck_message_channel_provider"),
+        sa.CheckConstraint(
+            "provider IN ('feishu_webhook', 'feishu_app')", name="ck_message_channel_provider"
+        ),
         schema="keystone",
     )
     op.create_table(
@@ -85,6 +88,8 @@ def upgrade():
         sa.Column("status", sa.String(16), nullable=False),
         sa.Column("attempts", sa.Integer(), nullable=False),
         sa.Column("error_code", sa.String(64)),
+        sa.Column("provider_message_id", sa.String(64)),
+        sa.Column("first_attempted_at", sa.DateTime(timezone=True)),
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
         ),
@@ -113,6 +118,13 @@ def upgrade():
         "message_deliveries",
         ["created_at", "id"],
         schema="keystone",
+    )
+    op.create_index(
+        "ix_message_delivery_retry",
+        "message_deliveries",
+        ["first_attempted_at"],
+        schema="keystone",
+        postgresql_where=sa.text("status = 'unknown' AND attempts < 3"),
     )
 
 

@@ -26,6 +26,11 @@ class MessageDelivery(Base):
             postgresql_where=text("status IN ('pending', 'sending')"),
         ),
         Index("ix_message_delivery_history", "created_at", "id"),
+        Index(
+            "ix_message_delivery_retry",
+            "first_attempted_at",
+            postgresql_where=text("status = 'unknown' AND attempts < 3"),
+        ),
     )
 
     # The ID is also the provider de-duplication key where one exists.
@@ -41,6 +46,9 @@ class MessageDelivery(Base):
     status: Mapped[str] = mapped_column(String(16), default="pending")
     attempts: Mapped[int] = mapped_column(default=0)
     error_code: Mapped[str | None] = mapped_column(String(64))
+    provider_message_id: Mapped[str | None] = mapped_column(String(64))
+    # Retries with the same ID stay inside the provider de-duplication window from here.
+    first_attempted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_by: Mapped[UUID | None]
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
