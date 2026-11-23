@@ -18,7 +18,7 @@ from keystone.core.database import Database
 from keystone.core.execution.dispatch import TaskClient
 from keystone.core.http import install_errors, validate_http_routes
 from keystone.core.migrations import expected_heads
-from keystone.model_registry import load_models
+from keystone.model_registry import MIGRATION_CHAINS, load_models
 from keystone.platform.audit.controllers import router as audit_router
 from keystone.platform.dictionary.controllers import router as dictionary_router
 from keystone.platform.environments.adapters.opensandbox import OpenSandbox
@@ -178,7 +178,7 @@ def build_runtime(settings: Settings) -> Runtime:
         raise ValueError("Flow queue is not configured")
     execution_version()
     load_models()
-    heads = expected_heads(settings)
+    heads = expected_heads(settings, MIGRATION_CHAINS)
     database = Database(settings, catalog=catalog)
     runtime = Runtime(
         settings,

@@ -2,6 +2,10 @@
 
 from keystone.core.database import Base
 
+# Each business with tables adds its namespace here; its revisions live in
+# backend/migrations/businesses/<namespace>. Directories are never scanned.
+MIGRATION_CHAINS: tuple[str, ...] = ()
+
 
 def load_models():
     from keystone.platform.audit import models as audit_models  # noqa: F401

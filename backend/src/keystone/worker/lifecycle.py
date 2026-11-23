@@ -11,6 +11,7 @@ from keystone.core.database import Database
 from keystone.core.errors import ServiceError
 from keystone.core.execution.runtime import has_owned_work
 from keystone.core.migrations import expected_heads
+from keystone.model_registry import MIGRATION_CHAINS
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.model_access.services.recovery import has_worker_calls
@@ -24,7 +25,7 @@ async def change_worker(settings, worker_id, *, reactivate=False):
         raise ServiceError(400, "worker_identity_invalid", "固定身份格式不合法")
     database = Database(settings, catalog=build_catalog())
     try:
-        checks = await database.readiness(expected_heads(settings))
+        checks = await database.readiness(expected_heads(settings, MIGRATION_CHAINS))
         if any(value != "ok" for value in checks.values()):
             raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
         storage = StorageRegistry(settings)

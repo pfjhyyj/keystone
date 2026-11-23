@@ -14,7 +14,8 @@ from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.errors import ServiceError
 from keystone.core.logging import configure_logging, safe_exception
-from keystone.core.migrations import expected_heads, migration_config
+from keystone.core.migrations import expected_heads, migration_config, migration_scripts
+from keystone.model_registry import MIGRATION_CHAINS
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.identity.adapters.security import Passwords
 from keystone.platform.identity.models import User
@@ -28,7 +29,7 @@ async def recover_model_calls(settings, *, api_stopped=False):
         raise ServiceError(409, "api_stop_required", "请先停止全部 API 进程并明确确认")
     database = Database(settings, catalog=build_catalog())
     try:
-        checks = await database.readiness(expected_heads(settings))
+        checks = await database.readiness(expected_heads(settings, MIGRATION_CHAINS))
         if any(value != "ok" for value in checks.values()):
             raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
         count = await recover_api_calls(database, api_stopped=True)
@@ -91,9 +92,11 @@ async def ensure_admin(settings, *, username="admin", display_name="管理员", 
 
 
 def initialize(settings, *, username="admin", display_name="管理员", non_interactive=False):
-    config = migration_config(settings)
+    config = migration_config(settings, MIGRATION_CHAINS)
     config.attributes["create_schema"] = True
-    command.upgrade(config, "head")
+    # Reject a malformed chain before any revision touches the database.
+    migration_scripts(config)
+    command.upgrade(config, "heads")
     from dbos import DBOS
 
     DBOS.migrate(settings.database_url.get_secret_value(), schema="dbos")
@@ -242,7 +245,7 @@ def main() -> None:
             async def requeue():
                 database = Database(settings, catalog=build_catalog())
                 try:
-                    checks = await database.readiness(expected_heads(settings))
+                    checks = await database.readiness(expected_heads(settings, MIGRATION_CHAINS))
                     if any(value != "ok" for value in checks.values()):
                         raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
                     await retry_delete(database, args.file_id)
@@ -258,7 +261,7 @@ def main() -> None:
             async def restore():
                 database = Database(settings, catalog=build_catalog())
                 try:
-                    checks = await database.readiness(expected_heads(settings))
+                    checks = await database.readiness(expected_heads(settings, MIGRATION_CHAINS))
                     if any(value != "ok" for value in checks.values()):
                         raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
                     return await reset_admin_role(database)
@@ -292,7 +295,7 @@ def main() -> None:
             del password
             run_async(init_admin(settings, data))
             return
-        command.current(migration_config(settings))
+        command.current(migration_config(settings, MIGRATION_CHAINS))
     except Exception as error:
         # Do not print raw settings/driver exceptions, which can contain secrets.
         logging.getLogger(__name__).error(
