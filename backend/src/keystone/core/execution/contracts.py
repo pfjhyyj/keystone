@@ -95,6 +95,22 @@ class ScheduleDefinition:
 
 
 @dataclass(frozen=True)
+class BusinessTasks:
+    """A business's background tasks. The Worker imports `module` and calls its register()."""
+
+    module: str
+    queues: tuple[QueueDefinition, ...] = ()
+    schedules: tuple[ScheduleDefinition, ...] = ()
+
+    def __post_init__(self):
+        _name(self.module)
+        if not all(isinstance(queue, QueueDefinition) for queue in self.queues) or not all(
+            isinstance(plan, ScheduleDefinition) for plan in self.schedules
+        ):
+            raise ValueError("Invalid business tasks")
+
+
+@dataclass(frozen=True)
 class ExecutionRef:
     workflow_id: str
 

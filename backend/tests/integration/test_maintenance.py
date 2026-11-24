@@ -479,3 +479,41 @@ def test_flow_scan_attempts_advance_fairly_across_scheduled_passes(client, tmp_p
         )
         == 25
     )
+
+
+def test_worker_runs_declared_business_schedules(client, tmp_path):
+    marker = tmp_path / "business-tick.txt"
+    code = f"""
+import sys, types
+from pathlib import Path
+from dbos import DBOS
+from keystone import composition
+from keystone.core.execution.contracts import (
+    BusinessTasks, NoInput, QueueDefinition, ScheduleDefinition, TaskBinding, TaskDefinition,
+)
+from keystone.core.execution.schedules import register_schedule
+
+TASK = TaskDefinition("test.business_tick", "keystone.test.business_tick", NoInput, "test-business")
+PLAN = ScheduleDefinition(
+    "keystone.test.business", "keystone.test.business_schedule", TASK.key, cron="* * * * * *"
+)
+
+def register(runtime, health):
+    @DBOS.workflow(name=TASK.entrypoint)
+    async def tick(payload):
+        Path({str(marker)!r}).write_text("ran")
+
+    task = TaskBinding(TASK, tick)
+    return (task,), register_schedule(PLAN, task, execution_prefix="test-business")
+
+module = types.ModuleType("business_jobs")
+module.register = register
+sys.modules["business_jobs"] = module
+composition.BUSINESS_TASKS = (
+    BusinessTasks("business_jobs", (QueueDefinition("test-business", 1, 1),), (PLAN,)),
+)
+from keystone.entrypoints.worker import main
+main()
+"""
+    with worker(client, tmp_path, code=code) as (process, log):
+        wait_for(client, process, log, marker.exists)
