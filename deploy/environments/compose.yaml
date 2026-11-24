@@ -1,0 +1,24 @@
+name: keystone-environments
+
+# Development dependency for interactive environments, started on its own when needed.
+# API and Worker run on the host and reach sandboxes only through this server's proxy;
+# sandboxes are created on this host's Docker engine.
+services:
+  opensandbox:
+    image: opensandbox/server:release-1.2.0
+    environment:
+      OPENSANDBOX_SERVER_API_KEY: ${KEYSTONE_OPENSANDBOX_KEY:-opensandbox_local_only}
+      SANDBOX_CONFIG_PATH: /etc/opensandbox/config.toml
+    ports:
+      - "127.0.0.1:${KEYSTONE_OPENSANDBOX_PORT:-8090}:8090"
+    networks:
+      - default
+      - browser_runtime
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./opensandbox.dev.toml:/etc/opensandbox/config.toml:ro
+    restart: unless-stopped
+
+networks:
+  browser_runtime:
+    name: keystone_browser_runtime
