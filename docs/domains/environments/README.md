@@ -314,7 +314,7 @@ sequenceDiagram
 | `environment_control_lost` | 持有已结束、被结束会话或被他人取得 |
 | `environment_session_changed` | `expect` 指定的会话已不是当前会话（已结束、重建或不存在） |
 | `environment_control_changed` | 交还之后有其他持有人取得过控制权 |
-| `environment_scope_violation` | 动作后页面离开声明的范围，本次持有已结束 |
+| `environment_scope_violation` | 动作后页面离开声明的范围，本次持有已结束。异常为 `ScopeViolation`，`url` 是到达的地址，只在当前 Step 内使用，持久化的失败不含它。业务信任入口自身的跳转时（例如入口地址跳到事先不知道的落地站点），可校验该地址后把主机加入范围，再以 `acquire(..., expect=Handover(原会话, 原代次))` 取得新持有继续 |
 | `environment_action_unsupported` | 类型不支持该动作 |
 
 动作本身的状态（如 `stale` 表示引用不属于最近一次快照、`invalid` 表示参数不合法）在结果的 `state` 中返回，由业务判断。
