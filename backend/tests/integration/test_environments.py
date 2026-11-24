@@ -584,6 +584,8 @@ def test_snapshot_extras_and_clipboard_pass_through_only_known_fields(client):
     result = client.portal.call(act, grant, 1, "clipboard", None)
     assert result["frames"] == frames and result["text"].endswith("/token")
     assert "cookies" not in result and runtime.actions[-1] == ("clipboard", {})
+    client.portal.call(act, grant, 2, "press", {"key": "Escape"})
+    assert runtime.actions[-1] == ("press", {"key": "Escape"})
 
 
 def test_idle_stop_respects_a_bounded_business_keep(client):

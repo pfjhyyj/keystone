@@ -11,6 +11,7 @@
 | FlowDefinition/Package、角色、快照、文件路径、Context、执行上限与恢复 | [Flow](docs/domains/flow.md)、[接入示例](docs/development/flow.md) |
 | 模型操作、费用与原任务恢复 | [模型接入](docs/domains/model-access.md) |
 | 新业务、权限、审计、迁移 | [模块扩展](docs/development/business.md) |
+| 下游仓库、代码归属、平台缺口与合并上游 | [下游交付项目](docs/development/downstream.md) |
 | 文件及其他领域 | [文档索引](docs/README.md) |
 | 开发、验证、发布与恢复 | [开发](docs/development/environment.md)、[测试](backend/tests/README.md)、[部署](docs/operations/deployment.md)、[备份恢复](docs/operations/backup-restore.md) |
 
@@ -28,6 +29,7 @@
 
 - Keystone 面向单企业内部多个业务模块，采用模块化单体：API、Worker、CLI 共用工程、镜像和发布制品，领域 Service 用 Python 调用协作，不建立内部 HTTP 服务。优先简单开发和部署，业务页面可直接集成到控制台；不以业务独立发布、独立 Worker、多租户、跨宿主或滚动发布作为当前平台目标，不预建分布式协议或插件体系。适用性按架构文档的真实业务验证目标评估。
 - 先明确资源、操作、事实归属和权限；优先普通函数、Service 对象和显式依赖注入，不引入通用 CRUD/Repository/BaseService、动态扫描、在线插件或第二执行引擎。
+- Keystone 上游仓库的 `businesses/` 保持为空，业务在下游仓库实现；下游不修改平台代码，平台缺口先在上游按通用契约补齐，上游文档和代码不出现下游业务名。
 - composition/bootstrap 显式装配声明和依赖；平台不导入业务/examples，core 不依赖领域，跨模块只使用公开 Service/Schema，不导入其他模块 ORM/Adapter。
 - 目录、分层依赖、catalog、Flow/Task 放置与技术例外按[分层规范](docs/development/business.md#模块分层与代码规范)和[模块目录](docs/development/business.md#模块目录与后台任务)；平台链与业务链的命名、登记和版本记录按[迁移说明](backend/migrations/README.md)，历史 revision 不重写。
 

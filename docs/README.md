@@ -11,7 +11,7 @@
 | [身份](domains/identity.md) · [审计](domains/audit.md) · [字典](domains/dictionary.md) | 授权、操作记录与业务选项 |
 | [文件](domains/files.md) · [模型接入](domains/model-access.md) · [Flow](domains/flow.md) | 文件生命周期、模型调用与持久流程 |
 | [交互环境](domains/environments/README.md) | 浏览器、手机容器与真机的会话、画面、控制权与自动操作；各类型细节见目录内文档 |
-| [消息渠道](domains/messaging.md) | IM 通知、交互卡片与入站命令（群机器人推送已实现） |
+| [消息渠道](domains/messaging.md) | IM 通知、交互卡片与入站命令 |
 
 ## 开发
 
@@ -19,6 +19,7 @@
 |---|---|
 | [开发环境与检查](development/environment.md) | 日常开发、前端组织和统一检查入口 |
 | [业务接入](development/business.md) | 完整最小示例、模块分层、权限、迁移与装配 |
+| [下游交付项目](development/downstream.md) | 下游仓库、代码归属、平台缺口、合并上游与重建 |
 | [Flow 开发](development/flow.md) | 工作流、Agent 与工具示例 |
 | [消息与卡片](development/messaging.md) | 业务发送通知和卡片、处理飞书按钮点击 |
 | [控制台视觉规范](../DESIGN.md) | 前端样式与交互；PRODUCT.md 为设计工具的本地产品上下文 |
