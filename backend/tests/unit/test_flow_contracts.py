@@ -167,7 +167,7 @@ def observe(**options):
     return apply
 DBOS.workflow = staticmethod(observe)
 if not OMIT_REGISTRATION:
-    register_workflows()
+    register_workflows(runtime)
 expected = {item.entrypoint for item in runtime.flow_definitions.values()}
 assert expected <= registered, f'Missing Worker entrypoints: {expected - registered}'
 """
