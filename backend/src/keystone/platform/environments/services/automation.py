@@ -24,7 +24,7 @@ from keystone.platform.environments.services.lifecycle import controlled, releas
 
 ACTIONS = {
     "chromium": frozenset(
-        {"snapshot", "click", "type", "read", "clipboard", "screenshot", "wait", "open"}
+        {"snapshot", "click", "type", "press", "read", "clipboard", "screenshot", "wait", "open"}
     ),
 }
 RESULT_FIELDS = ("state", "url", "title", "elements", "frames", "text", "image")

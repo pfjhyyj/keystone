@@ -24,15 +24,31 @@ MAX_ELEMENTS = 200
 MAX_SCREENSHOT = 2 * 1024 * 1024
 MAX_CLIPBOARD = 4096
 MAX_FRAMES = 20
-ACTIONS = {"snapshot", "click", "type", "read", "clipboard", "screenshot", "open", "wait"}
+MAX_SCAN = 8000
+ACTIONS = {
+    "snapshot", "click", "type", "press", "read", "clipboard", "screenshot", "open", "wait",
+}
+# Key name -> Windows virtual key code that CDP needs for the default action.
+KEYS = {"Escape": 27, "Enter": 13, "Tab": 9}
 
 SNAPSHOT = r"""
 (() => {
   const generation = (window.__keystoneGeneration = (window.__keystoneGeneration || 0) + 1);
   document.querySelectorAll('[data-keystone-ref]')
     .forEach(e => e.removeAttribute('data-keystone-ref'));
-  const selector = 'a[href],button,input,select,textarea,[role=button],[role=link],[role=tab],' +
+  const semantic = 'a[href],button,input,select,textarea,[role=button],[role=link],[role=tab],' +
     '[role=checkbox],[role=radio],[role=option],[role=menuitem],[contenteditable=true]';
+  // Sites also make plain elements clickable with a handler, tabindex or pointer cursor.
+  const selector = semantic + ',[onclick],[tabindex],div,span,li,label,img,svg,i,p,td';
+  const pointer = e => getComputedStyle(e).cursor === 'pointer';
+  const clickable = e => {
+    if (e.matches(semantic)) return true;
+    if (e.parentElement && e.parentElement.closest(semantic)) return false;
+    return e.hasAttribute('onclick') || typeof e.onclick === 'function' ||
+      (e.hasAttribute('tabindex') && e.tabIndex >= 0) ||
+      // A styled wrapper around a real control is not a second target.
+      (pointer(e) && !(e.parentElement && pointer(e.parentElement)) && !e.querySelector(semantic));
+  };
   const shown = e => {
     if (e.closest('[hidden],[inert],[aria-hidden=true]')) return false;
     const box = e.getBoundingClientRect(), style = getComputedStyle(e);
@@ -69,9 +85,10 @@ SNAPSHOT = r"""
     return {};
   };
   const elements = [];
+  let scanned = 0;
   for (const e of document.querySelectorAll(selector)) {
-    if (elements.length >= %(limit)d) break;
-    if (!shown(e)) continue;
+    if (elements.length >= %(limit)d || ++scanned > %(scan)d) break;
+    if (!clickable(e) || !shown(e)) continue;
     const ref = `s${generation}e${elements.length + 1}`;
     e.setAttribute('data-keystone-ref', ref);
     const secret = e.type === 'password';
@@ -81,7 +98,9 @@ SNAPSHOT = r"""
       role: e.getAttribute('role') || e.tagName.toLowerCase(),
       name: clean(e.getAttribute('aria-label') || e.getAttribute('title') || e.innerText ||
         e.getAttribute('placeholder') || e.getAttribute('name')),
-      value: secret || !('value' in e) || e.tagName === 'BUTTON' ? undefined : clean(e.value),
+      type: e.tagName === 'INPUT' ? e.type : undefined,
+      value: secret || !['INPUT', 'SELECT', 'TEXTAREA'].includes(e.tagName) ? undefined
+        : clean(e.value),
       state: state.length ? state : undefined,
       ...container(e),
     });
@@ -221,7 +240,8 @@ def run(name, arguments, deadline):
     try:
         if name == "snapshot":
             data = page.evaluate(
-                SNAPSHOT % {"limit": MAX_ELEMENTS, "text": MAX_TEXT, "frames": MAX_FRAMES}
+                SNAPSHOT
+                % {"limit": MAX_ELEMENTS, "scan": MAX_SCAN, "text": MAX_TEXT, "frames": MAX_FRAMES}
             )
         elif name in {"click", "type"}:
             ref = json.dumps(_text(arguments.get("ref"), 32))
@@ -238,6 +258,22 @@ def run(name, arguments, deadline):
                 if not page.evaluate(FOCUS % ref):
                     raise ActionError("stale")
                 page.call("Input.insertText", text=_text(arguments.get("text"), 2000))
+            data = {}
+        elif name == "press":
+            key = arguments.get("key")
+            if key not in KEYS:
+                raise ActionError("invalid")
+            code = KEYS[key]
+            # Enter carries text so pages see a keypress as well as keydown/keyup.
+            extra = {"text": "\r"} if key == "Enter" else {}
+            page.call(
+                "Input.dispatchKeyEvent", type="keyDown", key=key, code=key,
+                windowsVirtualKeyCode=code, **extra,
+            )
+            page.call(
+                "Input.dispatchKeyEvent", type="keyUp", key=key, code=key,
+                windowsVirtualKeyCode=code,
+            )
             data = {}
         elif name == "read":
             ref = arguments.get("ref")
