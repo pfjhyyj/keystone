@@ -91,3 +91,8 @@ class AccountCreate(ContactLookup):
 class DestinationEdit(Input):
     name: str = Name
     is_active: bool
+
+
+class DestinationExecutor(Input):
+    # None removes the executing user; destination_user events in the group are refused.
+    user_id: UUID | None

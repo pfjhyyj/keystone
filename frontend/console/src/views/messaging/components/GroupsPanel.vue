@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { can } from '../../../stores/session'
 import { request } from '../../../api/client'
+import { adminApi, type ManagedUser } from '../../../api/admin'
 import {
   messagingApi,
   type MessageChannel,
@@ -33,6 +35,41 @@ const dialog = ref(false),
   chatsLoading = ref(false),
   chatsError = ref('')
 const taken = computed(() => new Set(list.rows.value.map((row) => row.external_id)))
+const delegating = ref<MessageDestination | null>(null),
+  executor = ref(''),
+  users = ref<ManagedUser[]>([]),
+  usersLoading = ref(false)
+let userSearch = 0
+
+async function searchUsers(q: string) {
+  const current = ++userSearch
+  usersLoading.value = true
+  try {
+    const rows = await adminApi.users(0, q.trim())
+    if (current === userSearch) users.value = rows
+  } catch {
+    if (current === userSearch) users.value = []
+  } finally {
+    if (current === userSearch) usersLoading.value = false
+  }
+}
+function delegate(row: MessageDestination) {
+  delegating.value = row
+  executor.value = row.executing_user?.id ?? ''
+  users.value = []
+  error.value = ''
+  void searchUsers('')
+}
+async function saveExecutor(userId: string | null) {
+  const row = delegating.value
+  if (!row) return
+  await run(async () => {
+    await request(`/messaging/destinations/${row.id}/executor`, 'PUT', { user_id: userId })
+    delegating.value = null
+    notice.value = userId ? '执行用户已设置' : '已取消执行用户'
+    await list.reload()
+  })
+}
 
 async function loadChats(more = false) {
   chatsLoading.value = true
@@ -151,6 +188,11 @@ async function remove(row: MessageDestination) {
             ><code>{{ row.key }}</code></template
           ></el-table-column
         >
+        <el-table-column label="执行用户" min-width="120"
+          ><template #default="{ row }">{{
+            row.executing_user ? (row.executing_user.label ?? row.executing_user.id) : '—'
+          }}</template></el-table-column
+        >
         <el-table-column label="状态" min-width="100"
           ><template #default="{ row }"
             ><StatusTag :status="row.is_active ? 'active' : 'disabled'">{{
@@ -182,6 +224,13 @@ async function remove(row: MessageDestination) {
                   link
                   @click="sendTest(row, true)"
                   >发送测试卡片</el-button
+                ><el-button
+                  v-if="can('messaging:delegate')"
+                  :disabled="busy || !can('user:read')"
+                  native-type="button"
+                  link
+                  @click="delegate(row)"
+                  >设置执行用户</el-button
                 ><el-button
                   :disabled="busy"
                   native-type="button"
@@ -272,6 +321,63 @@ async function remove(row: MessageDestination) {
         <label>名称<el-input v-model="name" required maxlength="128" /></label>
         <el-checkbox v-if="editing" class="check-option" v-model="active">启用这个群</el-checkbox>
         <el-button :disabled="busy" native-type="submit" type="primary">保存</el-button>
+      </form>
+    </AppDialog>
+    <AppDialog
+      v-if="delegating"
+      protect-changes
+      title="设置执行用户"
+      :busy="busy"
+      @close="
+        () => {
+          delegating = null
+          error = ''
+        }
+      "
+    >
+      <el-alert v-if="error" role="alert" type="error" show-icon :closable="false">{{
+        error
+      }}</el-alert>
+      <form class="dialog-form" @submit.prevent="saveExecutor(executor)">
+        <p>
+          群“{{
+            delegating.name
+          }}”的成员发送声明为按群执行的命令或点击这类按钮时，以执行用户的身份和当前权限执行，不需要绑定飞书账号。这相当于把该用户的权限交给群里所有人，只能选择权限不超过你的用户。
+        </p>
+        <label
+          >执行用户<AppSelect
+            v-model="executor"
+            required
+            filterable
+            remote
+            aria-label="执行用户"
+            placeholder="搜索用户名或显示名"
+            :remote-method="searchUsers"
+            :loading="usersLoading"
+          >
+            <el-option
+              v-if="delegating.executing_user && !users.some((u) => u.id === executor)"
+              :label="delegating.executing_user.label ?? delegating.executing_user.id"
+              :value="delegating.executing_user.id"
+            />
+            <el-option
+              v-for="item in users"
+              :key="item.id"
+              :label="item.display_name || item.username"
+              :value="item.id"
+            /> </AppSelect
+        ></label>
+        <div class="row-actions">
+          <el-button :disabled="busy || !executor" native-type="submit" type="primary"
+            >保存</el-button
+          ><el-button
+            v-if="delegating.executing_user"
+            :disabled="busy"
+            native-type="button"
+            @click="saveExecutor(null)"
+            >取消执行用户</el-button
+          >
+        </div>
       </form>
     </AppDialog>
   </div>

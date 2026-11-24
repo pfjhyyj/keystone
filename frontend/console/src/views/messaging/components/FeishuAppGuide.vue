@@ -17,8 +17,14 @@ const scopes = [
   {
     name: '读取用户发给机器人的单聊消息',
     code: 'im:message.p2p_msg:readonly',
-    use: '用户私聊机器人发送绑定码，自助绑定飞书账号',
-    need: '自助绑定需要',
+    use: '用户私聊机器人发送绑定码或业务命令',
+    need: '自助绑定或私聊命令需要',
+  },
+  {
+    name: '获取群组中所有@机器人的消息',
+    code: 'im:message.group_at_msg:readonly',
+    use: '群成员 @机器人发送业务命令',
+    need: '群内命令需要',
   },
   {
     name: '通过手机号或邮箱获取用户 ID',
@@ -38,7 +44,7 @@ const subscriptions = [
     place: '事件配置',
     name: '接收消息 v2.0',
     code: 'im.message.receive_v1',
-    use: '收到用户私聊发来的绑定码',
+    use: '收到私聊的绑定码和命令、群里 @机器人的命令',
   },
   {
     place: '回调配置',

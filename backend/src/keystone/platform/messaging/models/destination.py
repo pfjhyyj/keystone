@@ -17,6 +17,9 @@ class MessageDestination(Base):
     external_id: Mapped[str | None] = mapped_column(String(128))
     name: Mapped[str] = mapped_column(String(128))
     is_active: Mapped[bool] = mapped_column(default=True)
+    # Group members act as this user where a declaration uses destination_user; set only
+    # by someone holding messaging:delegate whose permissions cover the user's.
+    executing_user_id: Mapped[UUID | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     created_by: Mapped[UUID | None]
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

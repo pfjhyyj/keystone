@@ -70,7 +70,7 @@ def sender(monkeypatch):
 
 def run_dispatch(client):
     runtime = client.app.state.runtime
-    return client.portal.call(dispatch, runtime.database, runtime.messaging_vault())
+    return client.portal.call(dispatch, runtime, runtime.messaging_vault())
 
 
 def statuses(client):

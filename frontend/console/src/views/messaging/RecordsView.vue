@@ -12,7 +12,7 @@ import { usePagedList } from '../../composables/usePagedList'
 import AppSelect from '../../components/AppSelect.vue'
 import ListPager from '../../components/ListPager.vue'
 import StatusTag from '../../components/StatusTag.vue'
-import { deliveryText, inboundText, time } from './labels'
+import { deliveryText, inboundKind, inboundText, time } from './labels'
 
 const route = inject(routeLocationKey, undefined),
   router = inject(routerKey, undefined)
@@ -102,7 +102,11 @@ function filterChannel(value: string) {
               ><template #default="{ row }"
                 >{{
                   row.destination_key ??
-                  (row.recipient ? `用户 ${row.recipient.label ?? row.recipient.id}` : '—')
+                  (row.recipient
+                    ? `用户 ${row.recipient.label ?? row.recipient.id}`
+                    : row.reply_inbound_id
+                      ? '回复收到的命令'
+                      : '—')
                 }}<small>{{ channelName(row.channel_id) }}</small></template
               ></el-table-column
             >
@@ -199,8 +203,12 @@ function filterChannel(value: string) {
             >
             <el-table-column label="操作" min-width="150"
               ><template #default="{ row }"
-                >{{ row.kind === 'bind' ? '自助绑定' : '点击卡片按钮'
-                }}<small>{{ row.action_key ?? channelName(row.channel_id) }}</small></template
+                >{{ inboundKind[row.kind as MessageInbound['kind']]
+                }}<small>{{
+                  row.command_key
+                    ? `${row.command_module}.${row.command_key}`
+                    : (row.action_key ?? channelName(row.channel_id))
+                }}</small></template
               ></el-table-column
             >
             <el-table-column label="操作人" min-width="180"

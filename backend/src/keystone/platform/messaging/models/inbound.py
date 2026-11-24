@@ -17,7 +17,7 @@ from keystone.core.database import Base
 
 
 class MessageInbound(Base):
-    """One event received from a channel: a card action or a binding message."""
+    """One event received from a channel: a card action, a command or a binding message."""
 
     __tablename__ = "message_inbounds"
     __table_args__ = (
@@ -26,7 +26,9 @@ class MessageInbound(Base):
             "status IN ('received', 'processed', 'rejected', 'expired', 'failed')",
             name="ck_message_inbound_status",
         ),
-        CheckConstraint("kind IN ('card_action', 'bind')", name="ck_message_inbound_kind"),
+        CheckConstraint(
+            "kind IN ('card_action', 'command', 'bind')", name="ck_message_inbound_kind"
+        ),
         Index(
             "ix_message_inbound_open",
             "updated_at",
@@ -44,6 +46,11 @@ class MessageInbound(Base):
     # retention never waits on inbound history.
     delivery_id: Mapped[UUID | None]
     action_key: Mapped[str | None] = mapped_column(String(64))
+    # Commands: the destination of the group it came from (none in private chats) and the
+    # matched declaration. The text itself is never kept.
+    destination_id: Mapped[UUID | None]
+    command_module: Mapped[str | None] = mapped_column(String(48))
+    command_key: Mapped[str | None] = mapped_column(String(64))
     provider_message_id: Mapped[str | None] = mapped_column(String(64))
     external_user_id: Mapped[str] = mapped_column(String(64))
     actor_id: Mapped[UUID | None]

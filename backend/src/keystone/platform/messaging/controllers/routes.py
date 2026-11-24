@@ -73,6 +73,13 @@ async def edit_destination(identifier: UUID, data: schemas.DestinationEdit, requ
     return await _channels(request).save_destination(data, identifier)
 
 
+@router.put("/destinations/{identifier}/executor")
+async def set_destination_executor(
+    identifier: UUID, data: schemas.DestinationExecutor, request: Request
+):
+    return await _channels(request).set_executor(identifier, data.user_id)
+
+
 @router.delete("/destinations/{identifier}", status_code=204)
 async def delete_destination(identifier: UUID, request: Request):
     await _channels(request).delete_destination(identifier)

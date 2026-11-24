@@ -20,7 +20,7 @@ def register(runtime, health):
         vault = runtime.messaging_vault()
         # Inbound first, so replies it queues can go out in the same pass.
         await inbound.retry(runtime, vault)
-        await dispatch(runtime.database, vault)
+        await dispatch(runtime, vault)
         return True
 
     @DBOS.workflow(name=WORKFLOW)

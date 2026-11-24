@@ -19,10 +19,23 @@ class MessageDelivery(Base):
             name="ck_message_delivery_status",
         ),
         CheckConstraint("kind IN ('text', 'card')", name="ck_message_delivery_kind"),
-        # A delivery goes to a configured destination or to one bound user, never both.
+        # A delivery goes to a configured destination, one bound user or a command's
+        # conversation, never more than one.
         CheckConstraint(
-            "num_nonnulls(destination_id, recipient_user_id) = 1",
+            "num_nonnulls(destination_id, recipient_user_id, reply_inbound_id) = 1",
             name="ck_message_delivery_target",
+        ),
+        CheckConstraint(
+            "(content_mode = 'stored' AND content IS NOT NULL)"
+            " OR (content_mode = 'supplied' AND content IS NULL)",
+            name="ck_message_delivery_content",
+        ),
+        # The platform answers a failed command at most once.
+        Index(
+            "uq_message_delivery_failure_reply",
+            "reply_inbound_id",
+            unique=True,
+            postgresql_where=text("source_module = 'messaging'"),
         ),
         Index(
             "ix_message_delivery_open",
@@ -46,11 +59,16 @@ class MessageDelivery(Base):
     )
     # Resolved to the user's binding on this channel when sent, so unbinding stops it.
     recipient_user_id: Mapped[UUID | None]
+    # Replies go to the command's message. Not a foreign key, so inbound retention never
+    # waits on delivery history.
+    reply_inbound_id: Mapped[UUID | None]
     source_module: Mapped[str] = mapped_column(String(48))
     source_type: Mapped[str] = mapped_column(String(64))
     source_id: Mapped[str] = mapped_column(String(64))
     kind: Mapped[str] = mapped_column(String(8))
-    content: Mapped[dict] = mapped_column(JSONB)
+    # `supplied` content is fetched from the business right before each send, never stored.
+    content_mode: Mapped[str] = mapped_column(String(8), default="stored")
+    content: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(16), default="pending")
     attempts: Mapped[int] = mapped_column(default=0)

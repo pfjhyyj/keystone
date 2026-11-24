@@ -2,6 +2,7 @@
 
 https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/authentication-management/access-token/tenant_access_token
 https://open.feishu.cn/document/server-docs/im-v1/message/create
+https://open.feishu.cn/document/server-docs/im-v1/message/reply
 https://open.feishu.cn/document/server-docs/group/chat/list
 https://open.feishu.cn/document/server-docs/im-v1/message-card/patch
 """
@@ -13,7 +14,17 @@ import time
 from keystone.platform.messaging.adapters import feishu_content
 from keystone.platform.messaging.adapters.feishu_http import Rejected, Unknown, call
 
-__all__ = ["NotSent", "Rejected", "Unknown", "chats", "open_id", "send", "update_card", "user_name"]
+__all__ = [
+    "NotSent",
+    "Rejected",
+    "Unknown",
+    "chats",
+    "open_id",
+    "reply",
+    "send",
+    "update_card",
+    "user_name",
+]
 
 TOKEN_URL = "https://accounts.feishu.cn/oauth/v3/token"
 API = "https://open.feishu.cn/open-apis"
@@ -85,16 +96,20 @@ async def _api(app_id, secret, method, path, *, transport=None, **request):
         return status, answer, code
 
 
-async def send(app_id, secret, receive_id_type, receive_id, content, uuid, *, transport=None):
-    """Send once and return the provider message ID."""
+def _message(content, uuid, **target):
     msg_type, body = feishu_content.render(content, uuid)
     serialized = json.dumps(body, ensure_ascii=False)
     payload = json.dumps(
-        {"receive_id": receive_id, "msg_type": msg_type, "content": serialized, "uuid": uuid},
+        {**target, "msg_type": msg_type, "content": serialized, "uuid": uuid},
         ensure_ascii=False,
     ).encode()
     if len(payload) > MAX_BODY[msg_type]:
         raise Rejected("content_too_large")
+    return payload
+
+
+async def send(app_id, secret, receive_id_type, receive_id, content, uuid, *, transport=None):
+    """Send once and return the provider message ID."""
     status, answer, code = await _api(
         app_id,
         secret,
@@ -102,8 +117,25 @@ async def send(app_id, secret, receive_id_type, receive_id, content, uuid, *, tr
         "/im/v1/messages",
         transport=transport,
         params={"receive_id_type": receive_id_type},
-        content=payload,
+        content=_message(content, uuid, receive_id=receive_id),
     )
+    return _sent(status, answer, code)
+
+
+async def reply(app_id, secret, message_id, content, uuid, *, transport=None):
+    """Reply once in the conversation of a received message; returns the new message ID."""
+    status, answer, code = await _api(
+        app_id,
+        secret,
+        "POST",
+        f"/im/v1/messages/{message_id}/reply",
+        transport=transport,
+        content=_message(content, uuid),
+    )
+    return _sent(status, answer, code)
+
+
+def _sent(status, answer, code):
     if code in TOKEN_INVALID:
         raise NotSent("credential_invalid")
     if code in RATE_LIMITED:
