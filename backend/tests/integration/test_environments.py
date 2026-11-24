@@ -434,6 +434,7 @@ class ActingRuntime(FirstUseRuntime):
         self.actions = []
         self.url = "https://portal.example.com/home"
         self.fail = False
+        self.extra = {}
 
     async def action(self, sandbox, run, name, arguments, timeout_seconds):
         self.actions.append((name, arguments))
@@ -441,7 +442,7 @@ class ActingRuntime(FirstUseRuntime):
             raise RuntimeUnavailable
         if name == "open":
             self.url = arguments["url"]
-        return {"state": "ok", "url": self.url, "cookies": "never returned"}
+        return {"state": "ok", "url": self.url, "cookies": "never returned", **self.extra}
 
 
 def test_automation_holds_registers_actions_and_enforces_scope(client):
@@ -496,3 +497,129 @@ def test_automation_holds_registers_actions_and_enforces_scope(client):
     client.portal.call(automation.release, grant)
     with client.websocket_connect(path + "/screen", headers={"Origin": ORIGIN}):
         pass
+
+
+def test_next_segment_continues_only_from_the_handed_back_session(client):
+    login(client)
+    runtime = ActingRuntime()
+    client.app.state.opensandbox = runtime
+    app = client.app.state.runtime
+    app.opensandbox = runtime
+    secret = token(client, ["environment:use"])["token"]
+    automation = app.environment_automation(
+        AccessContext(app.database, app.settings, Credential("pat", secret))
+    )
+    first, second, intruder = uuid4(), uuid4(), uuid4()
+
+    def fails(code, *call, **kwargs):
+        with pytest.raises(ServiceError) as error:
+            client.portal.call(partial(*call, **kwargs))
+        assert error.value.code == code
+
+    fails("environment_not_ready", automation.handover, "chromium", "default")
+    grant = client.portal.call(automation.acquire, "chromium", "default", first)
+    fails("environment_in_use", automation.handover, "chromium", "default")
+    client.portal.call(automation.release, grant)
+
+    # The user finishes in the screen and presses "continue".
+    path = f"/api/v1/environments/{grant.environment_id}/sessions/{grant.session_id}"
+    with client.websocket_connect(path + "/screen", headers={"Origin": ORIGIN}):
+        pass
+    point = client.portal.call(automation.handover, "chromium", "default")
+    assert point.session_id == grant.session_id
+
+    resumed = client.portal.call(
+        partial(automation.acquire, "chromium", "default", second, expect=point)
+    )
+    assert resumed.session_id == point.session_id
+    # A restarted Worker resumes its own hold without comparing the handover again.
+    assert (
+        client.portal.call(partial(automation.acquire, "chromium", "default", second, expect=point))
+        == resumed
+    )
+    client.portal.call(automation.release, resumed)
+
+    # Anyone holding the session after the handover invalidates it.
+    point = client.portal.call(automation.handover, "chromium", "default")
+    taken = client.portal.call(automation.acquire, "chromium", "default", intruder)
+    client.portal.call(automation.release, taken)
+    fails(
+        "environment_control_changed",
+        automation.acquire,
+        "chromium",
+        "default",
+        second,
+        expect=point,
+    )
+
+    # A stopped session is never replaced by a new one for the old handover.
+    point = client.portal.call(automation.handover, "chromium", "default")
+    assert client.post(path + "/stop").json()["state"] == "stopped"
+    creates = len(runtime.creates)
+    fails(
+        "environment_session_changed",
+        automation.acquire,
+        "chromium",
+        "default",
+        second,
+        expect=point,
+    )
+    assert len(runtime.creates) == creates
+
+
+def test_snapshot_extras_and_clipboard_pass_through_only_known_fields(client):
+    login(client)
+    runtime = ActingRuntime()
+    client.app.state.opensandbox = runtime
+    app = client.app.state.runtime
+    app.opensandbox = runtime
+    secret = token(client, ["environment:use"])["token"]
+    automation = app.environment_automation(
+        AccessContext(app.database, app.settings, Credential("pat", secret))
+    )
+    grant = client.portal.call(automation.acquire, "chromium", "default", uuid4())
+    frames = [{"host": "captcha.example.net", "width": 300, "height": 150}]
+    runtime.extra = {"frames": frames, "text": "https://portal.example.com/s/token"}
+    act = partial(automation.act, domains=("example.com",))
+    result = client.portal.call(act, grant, 1, "clipboard", None)
+    assert result["frames"] == frames and result["text"].endswith("/token")
+    assert "cookies" not in result and runtime.actions[-1] == ("clipboard", {})
+
+
+def test_idle_stop_respects_a_bounded_business_keep(client):
+    from keystone.platform.environments.schemas.keys import DEFAULT
+
+    login(client)
+    runtime, path, session_id = _ready_default(client)
+    database = client.app.state.runtime.database
+    asked, answer = [], {}
+
+    async def keep(session, environment_id, run_id):
+        asked.append(run_id)
+        if "error" in answer:
+            raise answer["error"]
+        if "sleep" in answer:
+            await asyncio.sleep(answer["sleep"])
+        return answer.get("until")
+
+    keys = {DEFAULT.key: DEFAULT.__class__(DEFAULT.key, DEFAULT.name, DEFAULT.kinds, keep)}
+    idle = utcnow() - timedelta(hours=1)
+    _update_session(client, session_id, last_activity_at=idle)
+
+    answer["until"] = utcnow() + timedelta(hours=1)
+    assert client.portal.call(stop_idle, database, runtime, keys) == 0
+    answer.clear()
+    answer["error"] = RuntimeError("business bug")
+    assert client.portal.call(stop_idle, database, runtime, keys) == 0
+    answer.clear()
+    answer["sleep"] = 2
+    assert client.portal.call(stop_idle, database, runtime, keys) == 0
+    assert asked == [session_id] * 3
+
+    # The keep never extends past four hours after the last activity.
+    _update_session(client, session_id, last_activity_at=utcnow() - timedelta(hours=5))
+    answer.clear()
+    answer["until"] = utcnow() + timedelta(days=1)
+    assert client.portal.call(stop_idle, database, runtime, keys) == 1
+    [view] = client.get("/api/v1/environments").json()
+    assert view["session"]["state"] == "stopped"

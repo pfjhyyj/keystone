@@ -18,7 +18,7 @@
 | 自动操作 | 公共动作加类型专属动作，业务 Flow 在 Worker 中按原身份调用 |
 | 权限与审计 | 复用 Identity 和 Audit。后端校验当前用户或 Flow 原身份、功能权限和环境归属 |
 
-交互环境是可选模块：没有配置任何提供方时，API 与 Worker 都不装配 Adapter、不运行闲置检查，依赖交互环境的业务在受理时明确拒绝，控制台隐藏入口；迁移照常建表。只配置部分提供方时，只开放对应类型。
+交互环境是可选模块：没有配置任何提供方时，API 与 Worker 都不装配 Adapter、不运行闲置检查，依赖交互环境的业务在受理时明确拒绝，控制台「我的环境」提示未配置；迁移照常建表。只配置部分提供方时，只开放对应类型。
 
 ## 2. 领域模型与事实归属
 
@@ -159,7 +159,7 @@ sequenceDiagram
 
 Worker 每分钟运行一次闲置检查计划。打开或复用会话、画面连接及断开、自动动作和归还控制权都刷新最近活动时间。会话闲置满 30 分钟时，在行锁下复核并受理结束；有画面连接、启停或核对中、自动控制权有效、动作仍在收尾时跳过。
 
-业务可在环境 key 的声明上附带保留检查，说明自己的任务仍需要这个会话（例如自动段已交还、正在等待用户登录）。保留检查以环境 ID 和会话 ID 查询业务自己的表，返回保留截止时间或空；平台只比较时间，不解释业务状态：
+业务可在环境 key 的声明上附带保留检查 `keep(session, environment_id, session_id)`，说明自己的任务仍需要这个会话（例如自动段已交还、正在等待用户登录）。平台为每次调用开一个只读用途的数据库事务，业务以环境 ID 和会话 ID 查询自己的表，返回保留截止时间或 None；平台只比较时间，不解释业务状态：
 
 | 规则 | 内容 |
 | --- | --- |
@@ -301,7 +301,7 @@ sequenceDiagram
 
 | 调用 | 语义 |
 | --- | --- |
-| `handover(kind, key)` | 见 [7.1](#71-续段与人工交还)。返回交还点（会话 ID、代次）；会话不是 `Ready` 时返回 `environment_not_ready`，有有效持有时返回 `environment_in_use`。只读，不改变控制权 |
+| `handover(kind, key)` | 见 [7.1](#71-续段与人工交还)。返回交还点 `Handover(session_id, generation)`，业务把两项写入下一段输入后原样构造传回；会话不是 `Ready` 时返回 `environment_not_ready`，有有效持有时返回 `environment_in_use`。只读，不改变控制权 |
 | `acquire(kind, key, owner, expect=None)` | 按 key 取得本人环境，以 `owner`（FlowRun ID）取得自动持有，返回含会话与代次的 grant。不带 `expect` 时必要时首次创建并打开会话；带 `expect` 时只使用该会话并比较代次，不打开新会话。同一 owner 已持有时直接续用原持有、不再比较 `expect`（Worker 重启后恢复），他人持有时返回 `environment_in_use` |
 | `act(grant, sequence, name, arguments, domains=..., timeout_seconds=15)` | 以第 `sequence` 号发送一个动作，返回只含状态、地址、标题、元素、框架、文本或截图的结果。序号每次新持有从 1 起，必须连续；业务按 Step 位置确定序号，重放时已登记的序号返回 `environment_action_unknown`，不再发送 |
 | `renew(grant)` | 长时间思考或等待前续期，持有期限 60 秒 |
@@ -343,9 +343,9 @@ sequenceDiagram
 | --- | --- |
 | 环境类型与提供方按代码声明，支持多种类型 | 模块 `platform/environments`、`Environment` / `EnvironmentSession` 与 `environment:*` 权限已就位，`kind` 只有 `chromium`，提供方固定为 OpenSandbox |
 | 公共与类型专属动作 | 浏览器动作已实现；安卓动作随安卓类型实现 |
-| Worker 计划执行闲置结束，业务可在环境 key 上声明保留检查（[4.4](#44-闲置结束)） | 闲置结束已实现；`EnvironmentKey` 没有保留检查，有效的自动持有仍会阻止闲置结束 |
-| 续段按交还点核对会话与代次（[7.1](#71-续段与人工交还)） | 没有 `handover`；`acquire` 不接受 `expect`，续段只能重新按 key 取得，无法发现交还后他人取得过控制权 |
-| 控制台提供「我的环境」与画面页，业务页面可链接到指定环境的画面 | 控制台没有环境页面；画面只在独立的 `examples/browser-workbench` 中可用 |
+| Worker 计划执行闲置结束，业务可在环境 key 上声明保留检查（[4.4](#44-闲置结束)） | 已实现：`EnvironmentKey.keep` |
+| 续段按交还点核对会话与代次（[7.1](#71-续段与人工交还)） | 已实现：`handover` 与 `acquire(..., expect=...)` |
+| 控制台提供「我的环境」与画面页，业务页面可链接到指定环境的画面 | 已实现：「我的环境」列出环境与会话、重新检查、结束和备份；画面页为 `/console/environments/<kind>/<key>`，可带 `back`（站内路径）回到业务页面，提供连接与断开画面、向远程剪贴板发送文本。没有提供方配置时只显示空列表。`examples/browser-workbench` 保留为独立前端示例 |
 | 画面协议按类型声明，前端按协议选择组件 | 只有 noVNC |
 | 安卓容器：OpenSandbox 可运行安卓镜像（binder 或 KVM）、scrcpy 画面、卷持久化 | 未验证 |
 | 安卓真机：接入代理协议、设备登记与分配 | 未设计实现，代理协议待验证后确定 |

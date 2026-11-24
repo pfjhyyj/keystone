@@ -1,5 +1,7 @@
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import datetime
 from types import MappingProxyType
 
 KINDS = ("chromium",)
@@ -12,6 +14,9 @@ class EnvironmentKey:
     key: str
     name: str
     kinds: tuple[str, ...]
+    # keep(session, environment_id, session_id) -> keep-until or None. Read-only and bounded:
+    # it tells the idle stop that the business still waits on this session.
+    keep: Callable[..., Awaitable[datetime | None]] | None = None
 
 
 DEFAULT = EnvironmentKey("default", "默认环境", KINDS)

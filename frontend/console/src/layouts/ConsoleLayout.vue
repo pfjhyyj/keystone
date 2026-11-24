@@ -13,6 +13,7 @@ import {
   Management,
   Menu,
   Monitor,
+  Platform,
   Setting,
   Tickets,
   User,
@@ -35,7 +36,7 @@ const collapsed = ref(false),
   logoutBusy = ref(false),
   logoutError = ref('')
 const groups = [
-  { title: '工作台', paths: ['/'] },
+  { title: '工作台', paths: ['/', '/environments'] },
   {
     title: '运行与消费',
     paths: ['/platform', '/model-usage', '/models', '/flows', '/messaging', '/messaging/records'],
@@ -45,6 +46,7 @@ const groups = [
 ]
 const icons = {
   '/': Grid,
+  '/environments': Platform,
   '/platform': Monitor,
   '/users': User,
   '/roles': Key,
