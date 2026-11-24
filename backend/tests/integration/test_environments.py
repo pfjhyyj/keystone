@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import pickle
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -20,6 +21,7 @@ from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.environments.adapters.opensandbox import RuntimeUnavailable
 from keystone.platform.environments.models import EnvironmentSession
+from keystone.platform.environments.services.automation import ScopeViolation
 from keystone.platform.environments.services.idle import stop_idle
 from keystone.platform.environments.services.registration import register_environment
 from keystone.platform.files.adapters.storage import StorageRegistry
@@ -487,7 +489,11 @@ def test_automation_holds_registers_actions_and_enforces_scope(client):
     assert len(runtime.actions) == sent
     client.portal.call(act, grant, 3, "read", None)
 
-    fails("environment_scope_violation", act, grant, 4, "open", {"url": "https://elsewhere.test/"})
+    with pytest.raises(ScopeViolation) as escaped:
+        client.portal.call(act, grant, 4, "open", {"url": "https://elsewhere.test/"})
+    assert escaped.value.code == "environment_scope_violation"
+    assert escaped.value.url == "https://elsewhere.test/"
+    assert pickle.loads(pickle.dumps(escaped.value)).__dict__.get("url") is None
     fails("environment_control_lost", act, grant, 5, "snapshot", None)
 
     # After the hold ends the user can take over the same session.

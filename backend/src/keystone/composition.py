@@ -6,7 +6,7 @@ from pathlib import Path
 from types import MappingProxyType
 
 from keystone.core.catalog import Catalog, combine_catalogs, merge_catalogs
-from keystone.core.execution.contracts import QueueDefinition
+from keystone.core.execution.contracts import BusinessTasks, QueueDefinition
 from keystone.core.execution.planning import queue_budgets
 from keystone.core.execution.version import artifact_version
 from keystone.platform.audit.catalog import CATALOG as AUDIT_CATALOG
@@ -46,6 +46,9 @@ FLOW_QUEUES: tuple[QueueDefinition, ...] = ()
 MESSAGE_ACTIONS = ()
 MESSAGE_COMMANDS = ()
 MESSAGE_CONTENTS = ()
+# Each business's background tasks: BusinessTasks(module, queues, schedules). The module
+# exposes register(runtime, health) -> (bindings, install) and is imported by the Worker only.
+BUSINESS_TASKS: tuple[BusinessTasks, ...] = ()
 # Explicit trusted factories; API never imports business execution modules.
 EXECUTION_GUARD = None
 WORKFLOW_BINDINGS = ()
@@ -144,6 +147,10 @@ def register_maintenance(runtime, health):
     )
     bindings.extend(tasks)
     installers.append(install)
+    for declared in BUSINESS_TASKS:
+        tasks, install = import_module(declared.module).register(runtime, health)
+        bindings.extend(tasks)
+        installers.append(install)
     definitions = (
         QueueDefinition(model_jobs.QUEUE, 1, 1),
         QueueDefinition(
@@ -156,6 +163,7 @@ def register_maintenance(runtime, health):
         QueueDefinition(history_jobs.QUEUE, 1, 1),
         QueueDefinition(environment_jobs.QUEUE, 1, 1),
         QueueDefinition(messaging_jobs.QUEUE, 1, 1),
+        *(queue for declared in BUSINESS_TASKS for queue in declared.queues),
     )
     queues = queue_budgets(
         bindings,
@@ -167,6 +175,7 @@ def register_maintenance(runtime, health):
             history_jobs.HISTORY_SCHEDULE,
             environment_jobs.IDLE_STOP_SCHEDULE,
             messaging_jobs.DISPATCH_SCHEDULE,
+            *(plan for declared in BUSINESS_TASKS for plan in declared.schedules),
         ),
         other_entrypoints=(
             definition.entrypoint for definition in runtime.flow_definitions.values()

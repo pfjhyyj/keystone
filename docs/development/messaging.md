@@ -173,7 +173,7 @@ async def request_digest(self, inbound_id):
 
 handler 约定与按钮相同（只受理、幂等、ServiceError 拒绝、业务自己写审计），另有：
 
-- **结果回复**：平台不等待结果。结果由 Flow 产生时，在 Flow 最后一个 Step 中以原身份用保存的 inbound_id 登记回复。Flow 失败、取消或超时不会执行业务代码；需要回复这些结果时，业务用自己的计划找出仍未回复的入站及其 Flow 终态再登记。
+- **结果回复**：平台不等待结果。结果由 Flow 产生时，在 Flow 最后一个 Step 中以原身份用保存的 inbound_id 登记回复。Flow 失败、取消或超时不会执行业务代码；需要回复这些结果时，业务用自己的[计划任务](business.md#模块目录与后台任务)找出仍未回复的入站及其 Flow 终态再登记。
 - **失败回复**：`reply_failures=True` 时，handler 抛出的 ServiceError 说明、命令过期、未绑定、群没有执行用户、无权限和多次处理失败都由平台回复原消息，handler 不必处理；为 False 时这些情况不回复。
 - **执行身份**：默认是发送人绑定的用户，未绑定时拒绝。`identity="destination_user"` 的命令只能在群里用，以管理员在“消息渠道 → 群 → 设置执行用户”中为该群指定的用户执行，发送人不需要绑定；设置执行用户需要 `messaging:delegate`，且执行用户的权限不能超过设置人。
 - **回复只限本模块**：`inbound_id` 必须是本模块命令产生的入站。回复发到原消息所在的私聊或群。

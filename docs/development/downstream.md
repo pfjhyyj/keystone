@@ -17,7 +17,7 @@ git remote add upstream https://github.com/pfjhyyj/keystone.git
 |---|---|---|
 | `backend/src/keystone/businesses/<namespace>/` | 下游 | 新增 |
 | `backend/migrations/businesses/<namespace>/` | 下游 | 新增，链内只追加，见[迁移说明](../../backend/migrations/README.md#平台链与业务链) |
-| `composition.py`、`model_registry.py`、`bootstrap.py` 中的业务声明 | 下游 | 只在已有元组和装配位置追加，不改平台条目 |
+| `composition.py`（`BUSINESS_CATALOGS`、`FLOW_PACKAGES`、`BUSINESS_ENVIRONMENT_KEYS`、`MESSAGE_*`、`BUSINESS_TASKS`、`WORKFLOW_BINDINGS` 等）、`model_registry.py`、`bootstrap.py` 中的业务声明 | 下游 | 只在已有元组和装配位置追加，不改平台条目 |
 | `frontend/console/src/views/<namespace>/`、路由与菜单条目 | 下游 | 新增页面，路由和菜单只追加条目 |
 | 业务文档 `docs/<namespace>.md`、业务运维说明 | 下游 | 新增；平台文档只在上游维护 |
 | `core/`、`platform/`、平台迁移、运行镜像、控制台框架、平台文档 | 上游 | 下游不修改 |
@@ -43,6 +43,18 @@ backend/.venv/bin/python scripts/check.py --scope full
 ```
 
 冲突只在装配和菜单位置时，保留双方条目。平台迁移链与上游完全相同，业务链的 `depends_on` 指向它需要的平台 revision；合并后执行 `keystone init` 升级到各链 head。
+
+统一检查同时运行平台测试，它们须在登记了业务后仍然通过。只因装配了业务才失败的平台测试依赖了空装配，按[平台缺口](#平台缺口)在上游修正。
+
+## 常见接入做法
+
+| 需要 | 做法 |
+|---|---|
+| Worker 中的业务代码（Flow 步骤、消息命令、发送时取内容）使用 Runtime | 在 `tasks/` 层写 `bind(runtime)` 并登记到 `WORKFLOW_BINDINGS`；在 bind 内导入执行模块，API 不加载它们 |
+| 业务知道自己每段 Flow 的结果 | 平台只向业务开放 Run 状态（`FlowService.statuses_in_transaction`）。段的最后一步以原身份把业务结果写入业务表；Run 失败、取消或超时时没有业务结果，由状态推导 |
+| Flow 失败等平台不执行业务代码的情况仍要处理（如回复命令） | 用 `BUSINESS_TASKS` 声明业务自己的计划任务 |
+| 短期保存凭据类结果（如订阅链接） | 用 core 的 `CredentialVault` 加密写入业务表并设到期时间，读取时过期即清除；不进入 Step 返回值、日志、审计和投递记录，发送时用 `supplied` 取内容 |
+| 入口地址跳到事先不知道的站点 | 见[交互环境 7.2](../domains/environments/README.md#72-业务接入接口) 中的 `ScopeViolation` |
 
 ## 从旧分叉重建
 

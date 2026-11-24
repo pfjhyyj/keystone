@@ -141,3 +141,12 @@ main()
 
         wait_for(client, process, log, marker.exists)
         assert marker.read_text() == client.app.state.runtime.settings.worker_id
+
+
+def test_business_tasks_reject_foreign_declarations():
+    from keystone.core.execution.contracts import BusinessTasks
+
+    with pytest.raises(ValueError):
+        BusinessTasks("jobs", queues=("keystone-system",))
+    with pytest.raises(ValueError):
+        BusinessTasks(" jobs")

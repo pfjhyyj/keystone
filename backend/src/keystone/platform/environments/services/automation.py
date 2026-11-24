@@ -40,6 +40,21 @@ class Handover:
     generation: int
 
 
+class ScopeViolation(ServiceError):
+    """The page left the declared domains and the hold ended.
+
+    `url` is the address it reached, so a business that trusts the site's own redirect can take a
+    new hold with that host added. It is never persisted: a stored failure is a plain ServiceError.
+    """
+
+    def __init__(self, url):
+        super().__init__(409, "environment_scope_violation", "页面已离开允许的范围")
+        self.url = url
+
+    def __reduce__(self):
+        return ServiceError, (self.status, self.code, self.detail)
+
+
 @dataclass(frozen=True)
 class AutomationGrant:
     environment_id: UUID
@@ -245,5 +260,5 @@ class EnvironmentAutomation:
             if escaped:
                 release_control(run)
         if escaped:
-            raise ServiceError(409, "environment_scope_violation", "页面已离开允许的范围")
+            raise ScopeViolation(result.get("url"))
         return {key: result[key] for key in RESULT_FIELDS if key in result}

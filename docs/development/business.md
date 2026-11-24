@@ -316,7 +316,7 @@ console 可直接承载业务页面，优先按现有 `views/<页面>/` 结构�
 2. tasks/definitions.py 声明 TaskDefinition 和可选 ScheduleDefinition，输入 extra="forbid"，不保存 Runtime、凭据或句柄。
 3. tasks/workflows.py 的工厂注册 Workflow/safe_step，按需注入窄 Service，返回 `(bindings, install)`。
 4. 外部 I/O 放 safe_step，Workflow 层 enqueue_task；execution_key 标同次执行，coalesce_key 只合并活动工作，详细语义见[投递](../execution.md#3-投递与合并)。
-5. composition 显式汇总绑定、计划及预算，由 queue_budgets 检查入口、输入和队列一致性。
+5. 在 `composition.BUSINESS_TASKS` 追加 `BusinessTasks("keystone.businesses.<namespace>.tasks.workflows", queues, schedules)`：Worker 导入该模块并调用 `register(runtime, health)`，与平台任务一起由 queue_budgets 检查入口、输入和队列一致性；API 不导入它。
 6. 验证稳定 ID、合并、重启、依赖故障与领域幂等；不从请求接受任意处理函数、导入路径或执行身份。
 
 API 的业务 Controller 在授权后通过注入的 Runtime 调用 `await runtime.tasks.enqueue(TASK, payload, execution_key=key)`；TASK 取自轻量 definitions。CLI 命令使用 build_runtime(settings) 装配相同客户端，在 finally 中 `await runtime.close()`，不启动 Worker。Service 不导入执行设施，普通函数的组合与任务投递放入口层。

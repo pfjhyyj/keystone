@@ -20,6 +20,7 @@ from keystone.core.errors import ServiceError
 from keystone.core.migrations import migration_config
 from keystone.core.time import utcnow
 from keystone.entrypoints import cli
+from keystone.model_registry import MIGRATION_CHAINS
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.dictionary.services import dictionaries
 from keystone.platform.files.adapters.storage import initialize
@@ -98,9 +99,10 @@ def client(empty_database_url, tmp_path, monkeypatch):
         file_storages={"local": {"driver": "filesystem", "root": tmp_path / "storage"}},
         file_max_bytes=1024,
     )
-    config = migration_config(settings)
+    # Every registered chain, as `keystone init` does, so downstream business tables exist.
+    config = migration_config(settings, MIGRATION_CHAINS)
     config.attributes["create_schema"] = True
-    command.upgrade(config, "head")
+    command.upgrade(config, "heads")
 
     async def initialize_user():
         database = Database(settings, catalog=build_catalog())
