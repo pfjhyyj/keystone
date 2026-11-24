@@ -16,6 +16,7 @@ from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.migrations import migration_config
 from keystone.core.time import utcnow
+from keystone.model_registry import MIGRATION_CHAINS
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.identity.adapters.security import Passwords, digest
 from keystone.platform.identity.models import LoginSession, PersonalAccessToken, User
@@ -32,9 +33,10 @@ BROWSER = {"Origin": ORIGIN, "X-Keystone-Request": "1"}
 @pytest.fixture
 def client(empty_database_url):
     settings = Settings(config_file=None, database_url=empty_database_url, env="test")
-    config = migration_config(settings)
+    # Every registered chain, as `keystone init` does, so downstream business tables exist.
+    config = migration_config(settings, MIGRATION_CHAINS)
     config.attributes["create_schema"] = True
-    command.upgrade(config, "head")
+    command.upgrade(config, "heads")
 
     async def initialize():
         database = Database(settings, catalog=build_catalog())
