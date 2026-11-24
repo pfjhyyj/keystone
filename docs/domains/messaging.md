@@ -2,7 +2,7 @@
 
 消息渠道把通知和交互卡片送到企业 IM，并把卡片上的操作和固定文本命令按声明的执行身份交回业务决定。业务 Service 决定发什么、发给谁、收到操作后做什么；平台负责渠道配置、发送登记与防重、入站验签与去重、执行身份解析和送达事实。
 
-本页是设计契约，业务接入写法见[消息与卡片](../development/messaging.md)；飞书群机器人、自建应用发到群和绑定用户、账号绑定与卡片按钮已实现，其余见[目标与当前实现差异](#目标与当前实现差异)。首版接入飞书和企业微信的自建应用（可发送与交互）和群机器人（只发送到所在群）；固定文本命令首版只支持飞书。
+本页是设计契约，业务接入写法见[消息与卡片](../development/messaging.md)；飞书群机器人、自建应用发到群和绑定用户、账号绑定、卡片按钮、固定命令与回复已实现，其余见[目标与当前实现差异](#目标与当前实现差异)。首版接入飞书和企业微信的自建应用（可发送与交互）和群机器人（只发送到所在群）；固定文本命令首版只支持飞书。
 
 ## 1. 范围与边界
 
@@ -52,7 +52,7 @@ erDiagram
 |---|---|
 | id、channel_id、dedupe_key、kind | 入站 ID、渠道、渠道去重键（命令与绑定取消息 ID，卡片动作取回调事件 ID）、card_action、command 或 bind |
 | delivery_id、action_key | 卡片动作：所属投递与动作 key |
-| destination_id、command_key、provider_message_id | 命令：所在接收方（私聊为空）、匹配到的命令、原消息 ID（供回复） |
+| destination_id、command_module、command_key、provider_message_id | 命令：所在接收方（私聊为空）、匹配到的命令声明（模块与 key）、原消息 ID（供回复） |
 | external_user_id、actor_id | 触发人的渠道用户 ID；解析出的执行身份 |
 | occurred_at、status、attempts、error_code、received_at、processed_at | 渠道记录的事件发生时间；状态见 [5.3](#53-入站动作与命令)；attempts 计处理次数 |
 
@@ -89,11 +89,11 @@ erDiagram
 
 | 声明 | 字段 |
 |---|---|
-| 卡片动作 | source_module、source_type、key、identity、permission、handler(runtime, 身份上下文, source_id, action_key, inbound_id)；在 composition 的 MESSAGE_ACTIONS 中显式列出，source 与 key 重复或权限未声明时启动失败 |
-| 命令 | command_key、text（去掉 @ 后完整匹配）、where（p2p、group 或两者）、identity、permission、accept_within、reply_failures（默认 false）、handler(身份上下文, inbound_id, command_key) |
-| 内容提供 | source_type、provider(source_id) → 内容或「不再可用」 |
+| 卡片动作 | source_module、source_type、key、permission、handler(runtime, 身份上下文, source_id, action_key, inbound_id)、identity（默认 bound）；在 composition 的 MESSAGE_ACTIONS 中列出，source 与 key 重复或权限未声明时启动失败 |
+| 命令 | module、key（即 command_key）、text（去掉 @ 后完整匹配）、where（p2p、group 或两者）、permission、handler(身份上下文, inbound_id, command_key)、accept_within、identity（默认 bound）、reply_failures（默认 false）；在 MESSAGE_COMMANDS 中列出 |
+| 内容提供 | source_module、source_type、provider(身份上下文, source_id) → 内容或 None（不再可用）；在 MESSAGE_CONTENTS 中列出 |
 
-不同命令的 text 不能相同，也不能以平台保留的「绑定」开头。平台自带一个卡片动作：测试卡片上的「确认收到」，处理时只把卡片更新为已确认，用于不接业务时验证入站链路。identity 取值：
+不同命令的 text 不能相同，也不能以平台保留的「绑定」开头；destination_user 命令只能声明 group。平台自带一个卡片动作：测试卡片上的「确认收到」，处理时只把卡片更新为已确认，用于不接业务时验证入站链路。identity 取值：
 
 | 身份模式 | 触发人 | 执行身份 | 访问控制 |
 |---|---|---|---|
@@ -121,7 +121,7 @@ destination_user 只在群内、且接收方配置了执行用户时可用；卡
 
 ### 4.2 发送时取内容
 
-content_mode=supplied 用于正文含有不应落库的内容（如带凭据的链接）。Worker 每次发送前调用该 source_type 的内容提供函数取内容并立即渲染发送，内容不进入投递记录、日志、检查点或错误信息。提供函数以登记投递时的身份（created_by）及其当前权限执行，须有界、不改变业务状态，返回「不再可用」时投递转为 expired。同一投递的多次尝试可能取得不同内容，因此只在按键去重的渠道上重试。
+content_mode=supplied 用于正文含有不应落库的内容（如带凭据的链接）。登记时只声明内容种类（text 或 card），不传内容；Worker 每次发送前调用该 source 的内容提供函数取内容并立即渲染发送，内容不进入投递记录、日志、检查点或错误信息。提供函数以登记投递时的身份（created_by）及其当前权限执行，须在 10 秒内返回、不改变业务状态，返回「不再可用」时投递转为 expired。卡片动作要随投递保存才能核对点击，所以 supplied 卡片不能带动作。同一投递的多次尝试可能取得不同内容，因此只在按键去重的渠道上重试。
 
 ## 5. 主要流程
 
@@ -131,7 +131,7 @@ content_mode=supplied 用于正文含有不应落库的内容（如带凭据的�
 
 用户也可以自助绑定：在控制台个人页生成绑定码（8 位、10 分钟有效、每人同时只有一个，只存摘要，重新生成即作废旧码），然后私聊应用机器人发送「绑定 绑定码」。平台用发送人的 open_id 绑定到生成该码的用户，用掉绑定码，并私聊回复结果。该用户在此渠道已有绑定时改绑为新账号；该 open_id 已绑定其他用户时拒绝，由管理员先解除。同一飞书账号一小时内被拒 5 次后暂停尝试，防止猜码。自助绑定只需登录，不需要通讯录权限：生成绑定码证明控制 Keystone 账号，发送绑定码证明控制飞书账号。绑定与改绑记审计，操作者为该用户，details 记录 via=messaging 和渠道。个人中心按启用的应用列出用户自己的绑定状态，用户可以更换或解除自己的绑定（只能操作本人的绑定，解除记审计）；显示绑定码期间页面每 3 秒查询一次绑定状态，绑定出现或绑定码过期即停止。
 
-设置或更换接收方的执行用户另需 messaging:delegate，且执行用户的有效权限不得超过操作者的有效权限，与[角色分配](identity.md#36-角色变更与删除时序)的上限规则一致；这把该用户的权限交给群成员使用，只在设置时检查，之后执行用户权限变化按其当前权限生效。停用渠道阻止新发送和新入站处理，已登记投递保持原状态。删除渠道连同其接收方、外部账号绑定和投递记录一起删除，待发送的投递不再发送，审计记录被删的接收方 key 与投递数；有投递正处于 sending 时拒绝删除，不部分删除。
+设置或更换接收方的执行用户另需 messaging:delegate，且执行用户的有效权限不得超过操作者的有效权限，与[角色分配](identity.md#36-角色变更与删除时序)的上限规则一致；这把该用户的权限交给群成员使用，只在设置时检查，之后执行用户权限变化按其当前权限生效。只有自建应用的群能设置执行用户；设置、更换和取消记 messaging.destination.delegate，details 含新旧执行用户。停用渠道阻止新发送和新入站处理，已登记投递保持原状态。删除渠道连同其接收方、外部账号绑定和投递记录一起删除，待发送的投递不再发送，审计记录被删的接收方 key 与投递数；有投递正处于 sending 时拒绝删除，不部分删除。
 
 ### 5.2 发送
 
@@ -161,7 +161,8 @@ sequenceDiagram
 | pending | 已过 expires_at | expired |
 | pending | 领取并登记本次尝试 | sending |
 | sending | 内容提供返回「不再可用」 | expired |
-| sending | 发送前被拒（取不到 token、限频），确定没有发出 | 首次尝试回到 pending，否则 unknown；error_code 保留原因 |
+| sending | 发送前被拒（取不到 token、限频）或内容提供出错、超时，确定没有发出 | 首次尝试回到 pending，否则 unknown；error_code 保留原因 |
+| sending | 内容提供拒绝（ServiceError，含创建人停用或失去权限）、没有声明提供函数，或返回的内容种类不符、带动作或超限 | failed |
 | sending | 渠道明确成功 | succeeded，保存 provider_message_id |
 | sending | 渠道明确拒绝（权限、接收方无效、内容不支持） | failed |
 | sending | 超时、断流或无法确认 | unknown |
@@ -270,8 +271,8 @@ sequenceDiagram
 | 飞书自建应用发送 | 已实现：App ID/Secret 配置（token 只在进程内缓存）、从机器人所在的群选择发送目标、按投递 ID 去重发送并在窗口内重试未知结果、保存消息 ID、单独删除发送目标；卡片使用只读卡片结构，与群机器人相同。选群失败和投递错误按错误码附处理提示（缺权限、未启用机器人、机器人不在群等），对照表只在适配器维护 |
 | 飞书账号绑定 | 已实现：按邮箱或手机号查询 open_id 绑定、解除绑定、给绑定用户发测试消息、业务按 user_id 登记；发送时复查绑定与在职，解绑或停用的投递记 failed（recipient_unbound/recipient_disabled），不改发他人 |
 | 控制台 | 已实现：“消息渠道”列出渠道及自建应用的群数、成员数和连接状态，自建应用进入详情页管理连接与凭据、群和成员绑定；“消息记录”分发出的消息和收到的操作，可按渠道和状态筛选；飞书后台配置说明在渠道页维护 |
-| 飞书入站 | 已实现：Worker 长连接（自行实现协议，帧编码与 lark-oapi 1.8.0 逐字节一致）、卡片动作（bound 身份，2 秒内同步处理并应答提示与新卡片，超时由发送任务补处理并按消息 ID 更新卡片）、个人中心生成绑定码私聊自助绑定、渠道与账号的测试卡片、入站记录。真实飞书待联调：长连接握手与事件、2.0 卡片按钮回调、应答卡片与按消息 ID 更新 |
-| 飞书命令 | 未实现：命令声明与匹配（群内只 @ 应用、去掉 @ 后完整匹配）、destination_user 与执行用户（messaging:delegate）、回复原消息、`reply_failures` 失败回复、发送时取内容（supplied） |
+| 飞书入站 | 已实现：Worker 长连接（自行实现协议，帧编码与 lark-oapi 1.8.0 逐字节一致）、卡片动作（bound 与 destination_user 身份，2 秒内同步处理并应答提示与新卡片，超时由发送任务补处理并按消息 ID 更新卡片）、个人中心生成绑定码私聊自助绑定、渠道与账号的测试卡片、入站记录。真实飞书待联调：长连接握手与事件、2.0 卡片按钮回调、应答卡片与按消息 ID 更新 |
+| 飞书命令 | 已实现：命令声明与匹配（私聊与群内 @ 应用，去掉 @ 后完整匹配，只在配置的群）、destination_user 与执行用户（控制台在群的更多操作中设置，需 messaging:delegate）、回复原消息、`reply_failures` 失败回复、发送时取内容（supplied）。真实飞书待联调：群内 @ 消息的 mentions 格式、回复接口 |
 | 入站未实现 | 企业微信自建应用与群机器人。按真实业务需要再做 |
 | 历史清理 | 已实现：已结束的投递与入站记录按保留期清理，过期绑定码随之删除 |
 | 渠道事实核验 | 飞书已按官方文档核验：token 使用推荐的 `accounts.feishu.cn/oauth/v3/token`（旧 `auth/v3/tenant_access_token/internal` 已标为历史版本），机器人不在群 230002、群已解散 232009、限频 230020、卡片请求体 ≤30 KB；自建应用已真实联调通过 token 获取、群列表和文本消息发送；token 失效码 99991661/99991663/99991665 与卡片结构在自建应用上待真实联调，重推事件 ID 与卡片回调经长连接待联调；企业微信待核验 |

@@ -8,6 +8,8 @@ from sqlalchemy import delete, func, select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
+from keystone.platform.identity.services.authorization import role_grants
+from keystone.platform.identity.services.subjects import users_in_transaction
 from keystone.platform.messaging.adapters import feishu_app, feishu_errors
 from keystone.platform.messaging.models import (
     ExternalAccount,
@@ -105,8 +107,8 @@ async def channel_facts(session, rows):
     }
 
 
-def destination_view(row):
-    return {
+def destination_view(row, executor=None):
+    view = {
         key: getattr(row, key)
         for key in (
             "id",
@@ -119,6 +121,18 @@ def destination_view(row):
             "updated_at",
         )
     }
+    view["executing_user"] = row.executing_user_id and {
+        "id": row.executing_user_id,
+        "label": executor,
+    }
+    return view
+
+
+async def executor_labels(session, rows):
+    users = await users_in_transaction(
+        session, {row.executing_user_id for row in rows if row.executing_user_id}
+    )
+    return {user["id"]: user["label"] for user in users}
 
 
 async def credentials_stored(session):
@@ -339,10 +353,13 @@ class ChannelService:
                 query = query.join(
                     MessageChannel, MessageDestination.channel_id == MessageChannel.id
                 ).where(MessageChannel.provider == provider)
-            rows = await session.scalars(
-                query.order_by(MessageDestination.key).offset(offset).limit(limit)
-            )
-            return [destination_view(row) for row in rows]
+            rows = (
+                await session.scalars(
+                    query.order_by(MessageDestination.key).offset(offset).limit(limit)
+                )
+            ).all()
+            labels = await executor_labels(session, rows)
+            return [destination_view(row, labels.get(row.executing_user_id)) for row in rows]
 
     async def save_destination(self, data, identifier=None):
         action = f"messaging.destination.{'update' if identifier else 'create'}"
@@ -400,7 +417,51 @@ class ChannelService:
                     "is_active": row.is_active,
                 },
             )
-            return destination_view(row)
+            labels = await executor_labels(session, [row])
+            return destination_view(row, labels.get(row.executing_user_id))
+
+    async def set_executor(self, identifier, user_id):
+        """Let group members act as a Keystone user through destination_user declarations.
+
+        This hands the user's permissions to the group, so the operator must hold them all;
+        later changes to the user's roles apply as they happen.
+        """
+        action = "messaging.destination.delegate"
+        async with self.identity.access(
+            "messaging:manage", action=action, target="messaging.destination", target_id=identifier
+        ) as (session, auth):
+            auth.require("messaging:delegate")
+            row = await session.get(MessageDestination, identifier, with_for_update=True)
+            if row is None:
+                raise ServiceError(404, "message_destination_not_found", "消息接收方不存在")
+            channel = await session.get(MessageChannel, row.channel_id)
+            if channel.provider != "feishu_app":
+                raise ServiceError(
+                    422, "message_destination_invalid", "群机器人收不到群内操作，不能设置执行用户"
+                )
+            if user_id is not None:
+                found = await users_in_transaction(session, [user_id])
+                if not found or not found[0]["is_active"]:
+                    raise ServiceError(404, "user_not_found", "用户不存在或已停用")
+                grants = await role_grants(session, user_id)
+                auth.grantable(set().union(*grants.values()))
+            previous, row.executing_user_id = row.executing_user_id, user_id
+            self.identity.touch(row, auth)
+            await self.identity.log(
+                session,
+                auth,
+                action,
+                "messaging.destination",
+                row.id,
+                {
+                    "key": row.key,
+                    "channel_id": str(row.channel_id),
+                    "executing_user_id": user_id and str(user_id),
+                    "previous_user_id": previous and str(previous),
+                },
+            )
+            labels = await executor_labels(session, [row])
+            return destination_view(row, labels.get(row.executing_user_id))
 
     async def delete_destination(self, identifier):
         """Remove one destination of an app channel together with its delivery history."""

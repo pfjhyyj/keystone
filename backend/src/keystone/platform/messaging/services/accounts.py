@@ -194,7 +194,7 @@ class AccountService:
                 raise ServiceError(409, "message_recipient_disabled", "该用户已停用")
             delivery = await register(
                 session,
-                auth,
+                auth.user.id,
                 channel.id,
                 TEST_CARD if card else {"kind": "text", "text": TEST_TEXT},
                 {

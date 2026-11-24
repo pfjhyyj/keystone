@@ -28,6 +28,8 @@ export interface MessageDestination {
   external_id: string | null
   name: string
   is_active: boolean
+  // Group members act as this user for commands and buttons declared as destination_user.
+  executing_user: { id: string; label: string | null } | null
   created_at: string
   updated_at: string
 }
@@ -54,10 +56,14 @@ export interface MessageDelivery {
   channel_id: string
   destination_key: string | null
   recipient: { id: string; label: string | null } | null
+  // Set for replies to a received command.
+  reply_inbound_id: string | null
   source_module: string
   source_type: string
   source_id: string
   kind: 'text' | 'card'
+  // supplied content is fetched from the business when sending and never stored.
+  content_mode: 'stored' | 'supplied'
   status: 'pending' | 'cancelled' | 'sending' | 'succeeded' | 'failed' | 'unknown' | 'expired'
   attempts: number
   error_code: string | null
@@ -69,9 +75,12 @@ export interface MessageDelivery {
 export interface MessageInbound {
   id: string
   channel_id: string
-  kind: 'card_action' | 'bind'
+  kind: 'card_action' | 'command' | 'bind'
   delivery_id: string | null
   action_key: string | null
+  destination_id: string | null
+  command_module: string | null
+  command_key: string | null
   external_user_id: string
   actor: { id: string; label: string | null } | null
   status: 'received' | 'processed' | 'rejected' | 'expired' | 'failed'

@@ -55,6 +55,7 @@ def upgrade():
         sa.Column("external_id", sa.String(128)),
         sa.Column("name", sa.String(128), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False),
+        sa.Column("executing_user_id", sa.Uuid()),
         *_audited(),
         schema="keystone",
     )
@@ -98,11 +99,13 @@ def upgrade():
             sa.ForeignKey("keystone.message_destinations.id"),
         ),
         sa.Column("recipient_user_id", sa.Uuid()),
+        sa.Column("reply_inbound_id", sa.Uuid()),
         sa.Column("source_module", sa.String(48), nullable=False),
         sa.Column("source_type", sa.String(64), nullable=False),
         sa.Column("source_id", sa.String(64), nullable=False),
         sa.Column("kind", sa.String(8), nullable=False),
-        sa.Column("content", postgresql.JSONB(), nullable=False),
+        sa.Column("content_mode", sa.String(8), nullable=False),
+        sa.Column("content", postgresql.JSONB()),
         sa.Column("expires_at", sa.DateTime(timezone=True)),
         sa.Column("status", sa.String(16), nullable=False),
         sa.Column("attempts", sa.Integer(), nullable=False),
@@ -124,8 +127,13 @@ def upgrade():
         ),
         sa.CheckConstraint("kind IN ('text', 'card')", name="ck_message_delivery_kind"),
         sa.CheckConstraint(
-            "num_nonnulls(destination_id, recipient_user_id) = 1",
+            "num_nonnulls(destination_id, recipient_user_id, reply_inbound_id) = 1",
             name="ck_message_delivery_target",
+        ),
+        sa.CheckConstraint(
+            "(content_mode = 'stored' AND content IS NOT NULL)"
+            " OR (content_mode = 'supplied' AND content IS NULL)",
+            name="ck_message_delivery_content",
         ),
         schema="keystone",
     )
@@ -149,6 +157,14 @@ def upgrade():
         schema="keystone",
         postgresql_where=sa.text("status = 'unknown' AND attempts < 3"),
     )
+    op.create_index(
+        "uq_message_delivery_failure_reply",
+        "message_deliveries",
+        ["reply_inbound_id"],
+        unique=True,
+        schema="keystone",
+        postgresql_where=sa.text("source_module = 'messaging'"),
+    )
 
     op.create_table(
         "message_inbounds",
@@ -163,6 +179,9 @@ def upgrade():
         sa.Column("kind", sa.String(16), nullable=False),
         sa.Column("delivery_id", sa.Uuid()),
         sa.Column("action_key", sa.String(64)),
+        sa.Column("destination_id", sa.Uuid()),
+        sa.Column("command_module", sa.String(48)),
+        sa.Column("command_key", sa.String(64)),
         sa.Column("provider_message_id", sa.String(64)),
         sa.Column("external_user_id", sa.String(64), nullable=False),
         sa.Column("actor_id", sa.Uuid()),
@@ -182,7 +201,9 @@ def upgrade():
             "status IN ('received', 'processed', 'rejected', 'expired', 'failed')",
             name="ck_message_inbound_status",
         ),
-        sa.CheckConstraint("kind IN ('card_action', 'bind')", name="ck_message_inbound_kind"),
+        sa.CheckConstraint(
+            "kind IN ('card_action', 'command', 'bind')", name="ck_message_inbound_kind"
+        ),
         schema="keystone",
     )
     op.create_index(

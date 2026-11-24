@@ -26,6 +26,11 @@ export const inboundText: Record<MessageInbound['status'], [string, string]> = {
   expired: ['已过期', 'expired'],
   failed: ['失败', 'failed'],
 }
+export const inboundKind: Record<MessageInbound['kind'], string> = {
+  card_action: '点击卡片按钮',
+  command: '发送命令',
+  bind: '自助绑定',
+}
 export const connectionText: Record<MessageConnection['state'], [string, string]> = {
   connected: ['已连接', 'active'],
   connecting: ['连接中', 'pending'],

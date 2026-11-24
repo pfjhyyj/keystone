@@ -63,6 +63,7 @@ const target = {
   external_id: 'oc_daily',
   name: '日报群',
   is_active: true,
+  executing_user: null,
   created_at: stamp,
   updated_at: stamp,
 }
@@ -311,6 +312,63 @@ describe('an app channel page', () => {
     await flushPromises()
     expect(writes[1]).toEqual([`/messaging/destinations/${target.id}/test?card=true`, null])
     expect(wrapper.text()).toContain('确认收到')
+    wrapper.unmount()
+  })
+
+  it('lets only delegators hand a group to an executing user', async () => {
+    authorize(['messaging:manage', 'user:read'])
+    const writes: [string, unknown][] = []
+    const alice = {
+      id: '66666666-6666-4666-8666-666666666666',
+      username: 'alice',
+      display_name: 'Alice',
+    }
+    let executing: { id: string; label: string } | null = null
+    fakeApi((path, init) => {
+      if (init.method === 'PUT') {
+        const sent = JSON.parse(String(init.body))
+        writes.push([path, sent])
+        executing = sent.user_id ? { id: alice.id, label: 'Alice' } : null
+        return { ...target, executing_user: executing }
+      }
+      if (path.startsWith('/users')) return [alice]
+      return [{ ...target, executing_user: executing }]
+    })
+    const plain = mount(GroupsPanel, { props: { channel: app }, attachTo: document.body })
+    await flushPromises()
+    await plain.get('.row-more-trigger').trigger('click')
+    await flushPromises()
+    expect(body().text()).not.toContain('设置执行用户')
+    plain.unmount()
+
+    authorize(['messaging:manage', 'messaging:delegate', 'user:read'])
+    const wrapper = mount(GroupsPanel, { props: { channel: app }, attachTo: document.body })
+    await flushPromises()
+    await wrapper.get('.row-more-trigger').trigger('click')
+    await flushPromises()
+    await button(body(), '设置执行用户').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('交给群里所有人')
+    const [userSelect] = wrapper.findAllComponents(AppSelect)
+    userSelect!.vm.$emit('update:modelValue', alice.id)
+    await flushPromises()
+    await wrapper.get('[role=dialog] form').trigger('submit')
+    await flushPromises()
+    expect(writes).toEqual([
+      [`/messaging/destinations/${target.id}/executor`, { user_id: alice.id }],
+    ])
+    expect(wrapper.text()).toContain('Alice')
+
+    await wrapper.get('.row-more-trigger').trigger('click')
+    await flushPromises()
+    await button(body(), '设置执行用户').trigger('click')
+    await flushPromises()
+    await button(wrapper, '取消执行用户').trigger('click')
+    await flushPromises()
+    expect(writes.at(-1)).toEqual([
+      `/messaging/destinations/${target.id}/executor`,
+      { user_id: null },
+    ])
     wrapper.unmount()
   })
 

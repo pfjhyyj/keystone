@@ -41,8 +41,11 @@ FLOW_PACKAGES = ()
 # Add (namespace, (EnvironmentKey(...), ...)) for each business that uses environments.
 BUSINESS_ENVIRONMENT_KEYS = ()
 FLOW_QUEUES: tuple[QueueDefinition, ...] = ()
-# Card actions businesses answer: messaging.services.actions.MessageAction(...) entries.
+# Card actions, commands and send-time content providers businesses answer:
+# messaging.services.actions.MessageAction / MessageCommand / MessageContent entries.
 MESSAGE_ACTIONS = ()
+MESSAGE_COMMANDS = ()
+MESSAGE_CONTENTS = ()
 # Explicit trusted factories; API never imports business execution modules.
 EXECUTION_GUARD = None
 WORKFLOW_BINDINGS = ()
@@ -71,6 +74,18 @@ def build_message_actions(catalog):
     from keystone.platform.messaging.services.actions import build_actions
 
     return build_actions(MESSAGE_ACTIONS, catalog.permissions)
+
+
+def build_message_commands(catalog):
+    from keystone.platform.messaging.services.actions import build_commands
+
+    return build_commands(MESSAGE_COMMANDS, catalog.permissions)
+
+
+def build_message_contents():
+    from keystone.platform.messaging.services.actions import build_contents
+
+    return build_contents(MESSAGE_CONTENTS)
 
 
 def build_flow_definitions(catalog):

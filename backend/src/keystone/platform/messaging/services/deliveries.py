@@ -2,7 +2,8 @@
 
 Businesses register a delivery inside their own authorized transaction, so a message exists
 exactly when the business change commits. Content and timing are authorized by the business
-entry; recipients are limited to configured destinations and users bound on an app channel.
+entry; recipients are limited to configured destinations, users bound on an app channel and
+the conversations of the business's own commands.
 """
 
 import json
@@ -19,6 +20,7 @@ from keystone.platform.messaging.models import (
     MessageChannel,
     MessageDelivery,
     MessageDestination,
+    MessageInbound,
 )
 from keystone.platform.messaging.schemas.content import MAX_CONTENT_BYTES, content_adapter
 
@@ -32,10 +34,12 @@ def delivery_view(row, destination_key=None, recipient=None):
         "channel_id": row.channel_id,
         "destination_key": destination_key,
         "recipient": recipient,
+        "reply_inbound_id": row.reply_inbound_id,
         "source_module": row.source_module,
         "source_type": row.source_type,
         "source_id": row.source_id,
         "kind": row.kind,
+        "content_mode": row.content_mode,
         "status": row.status,
         "attempts": row.attempts,
         "error_code": row.error_code,
@@ -51,11 +55,26 @@ async def user_is_active(session, user_id):
     return bool(found) and found[0]["is_active"]
 
 
-async def register(session, auth, channel_id, content, source, expires_at, **target):
-    """Insert a pending delivery to a resolved channel and target; checks are the caller's."""
+def checked_content(content):
+    """Validate neutral content; raises ServiceError when it is too large to keep or send."""
     content = content_adapter.validate_python(content).model_dump(mode="json")
     if len(json.dumps(content, ensure_ascii=False).encode()) > MAX_CONTENT_BYTES:
         raise ServiceError(422, "message_content_too_large", "消息内容过长")
+    return content
+
+
+async def register(
+    session, created_by, channel_id, content, source, expires_at, *, supplied=None, **target
+):
+    """Insert a pending delivery to a resolved channel and target; checks are the caller's.
+
+    With `supplied` ("text" or "card") no content is stored: the source's content provider is
+    asked for it right before each send.
+    """
+    if (content is None) == (supplied is None) or supplied not in (None, "text", "card"):
+        raise ValueError("Pass either content or the kind of supplied content")
+    if content is not None:
+        content = checked_content(content)
     if any(
         not isinstance(value, str) or not value or len(value) > SOURCE_FIELDS[name]
         for name, value in source.items()
@@ -65,12 +84,13 @@ async def register(session, auth, channel_id, content, source, expires_at, **tar
         raise ServiceError(422, "message_already_expired", "投递截止时间已过")
     row = MessageDelivery(
         channel_id=channel_id,
-        kind=content["kind"],
+        kind=supplied or content["kind"],
+        content_mode="supplied" if supplied else "stored",
         content=content,
         expires_at=expires_at,
         status="pending",
         attempts=0,
-        created_by=auth.user.id,
+        created_by=created_by,
         **source,
         **target,
     )
@@ -94,22 +114,45 @@ async def enqueue_in_transaction(
     session,
     auth,
     *,
-    content,
     source_module,
     source_type,
     source_id,
+    content=None,
+    supplied=None,
     destination_key=None,
     user_id=None,
+    inbound_id=None,
     expires_at: datetime | None = None,
 ):
     """Register a pending delivery in the caller's transaction and return its ID.
 
-    Pass exactly one target: a configured destination key, or a Keystone user bound on an
-    active app channel.
+    Pass exactly one target: a configured destination key, a Keystone user bound on an
+    active app channel, or the inbound ID of one of this module's commands to reply to it.
+    Pass either content or `supplied="text"|"card"` to fetch the content when sending.
     """
-    if (destination_key is None) == (user_id is None):
-        raise ValueError("Pass exactly one of destination_key or user_id")
+    if sum(value is not None for value in (destination_key, user_id, inbound_id)) != 1:
+        raise ValueError("Pass exactly one of destination_key, user_id or inbound_id")
     source = {"source_module": source_module, "source_type": source_type, "source_id": source_id}
+    created_by = auth.user.id
+    options = {"supplied": supplied}
+    if inbound_id is not None:
+        inbound = await session.get(MessageInbound, inbound_id)
+        # Only the module whose command was received answers in that conversation.
+        if inbound is None or inbound.kind != "command" or inbound.command_module != source_module:
+            raise ServiceError(404, "message_reply_unavailable", "要回复的命令不存在")
+        channel = await session.get(MessageChannel, inbound.channel_id)
+        if not channel.is_active:
+            raise ServiceError(409, "message_destination_unavailable", "消息渠道已停用")
+        return await register(
+            session,
+            created_by,
+            channel.id,
+            content,
+            source,
+            expires_at,
+            reply_inbound_id=inbound.id,
+            **options,
+        )
     if user_id is not None:
         channel_id = await user_channel(session, user_id)
         if channel_id is None:
@@ -117,7 +160,14 @@ async def enqueue_in_transaction(
         if not await user_is_active(session, user_id):
             raise ServiceError(409, "message_recipient_disabled", "该用户已停用")
         return await register(
-            session, auth, channel_id, content, source, expires_at, recipient_user_id=user_id
+            session,
+            created_by,
+            channel_id,
+            content,
+            source,
+            expires_at,
+            recipient_user_id=user_id,
+            **options,
         )
     destination = await session.scalar(
         select(MessageDestination).where(MessageDestination.key == destination_key)
@@ -125,11 +175,18 @@ async def enqueue_in_transaction(
     channel = destination and await session.get(MessageChannel, destination.channel_id)
     if destination is None or not destination.is_active or not channel.is_active:
         raise ServiceError(409, "message_destination_unavailable", "消息接收方不存在或已停用")
-    if content.get("actions") and channel.provider != "feishu_app":
+    if content and content.get("actions") and channel.provider != "feishu_app":
         # Group bots cannot receive callbacks, so their buttons could never be answered.
         raise ServiceError(422, "message_actions_unsupported", "群机器人不支持带动作的卡片")
     return await register(
-        session, auth, channel.id, content, source, expires_at, destination_id=destination.id
+        session,
+        created_by,
+        channel.id,
+        content,
+        source,
+        expires_at,
+        destination_id=destination.id,
+        **options,
     )
 
 

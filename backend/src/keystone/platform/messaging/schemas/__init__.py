@@ -7,4 +7,5 @@ from .management import ChannelEdit as ChannelEdit
 from .management import ContactLookup as ContactLookup
 from .management import DestinationCreate as DestinationCreate
 from .management import DestinationEdit as DestinationEdit
+from .management import DestinationExecutor as DestinationExecutor
 from .management import WebhookCredential as WebhookCredential

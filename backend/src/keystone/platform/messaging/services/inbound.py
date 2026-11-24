@@ -1,9 +1,10 @@
-"""Inbound events: card actions run as the clicker's bound user, binding codes bind a user.
+"""Inbound events: card actions and commands run as their declared executing user, binding
+codes bind a user.
 
 Events arrive on a Worker's long connection and are answered within Feishu's 3 seconds.
 Each is stored once by its de-duplication key, then processed right away; one that does not
 finish in time stays `received` and the Worker's periodic pass finishes it. Bodies, binding
-codes and message text are never stored or logged.
+codes and message text are never stored or logged; a command keeps only its matched key.
 """
 
 import asyncio
@@ -16,7 +17,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from keystone.core.errors import ServiceError
@@ -32,8 +33,10 @@ from keystone.platform.messaging.models import (
     MessageBindCode,
     MessageChannel,
     MessageDelivery,
+    MessageDestination,
     MessageInbound,
 )
+from keystone.platform.messaging.services.deliveries import register
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +60,11 @@ BIND_REPLIES = {
     "bind_user_disabled": "生成绑定码的 Keystone 用户已停用。",
     "bind_rate_limited": "尝试次数过多，请一小时后再试。",
 }
+UNBOUND_REPLY = "你的飞书账号还没有绑定 Keystone 用户，请先私聊应用发送绑定码"
+EXPIRED_REPLY = "命令已过期，请重新发送"
+FAILED_REPLY = "暂时无法处理，请稍后重新发送"
+# Feishu replaces each mention in a group message's text with a key such as "@_user_1".
+MENTION = re.compile(r"@_user_[0-9]+")
 
 
 def digest(code):
@@ -70,6 +78,9 @@ def inbound_view(row, actor=None):
         "kind": row.kind,
         "delivery_id": row.delivery_id,
         "action_key": row.action_key,
+        "destination_id": row.destination_id,
+        "command_module": row.command_module,
+        "command_key": row.command_key,
         "external_user_id": row.external_user_id,
         "actor": actor,
         "status": row.status,
@@ -82,10 +93,10 @@ def inbound_view(row, actor=None):
 
 
 class ActingUser(AccessContext):
-    """The bound user's current role permissions; no PAT scope, nothing from the sender."""
+    """An executing user's current role permissions; no PAT scope, nothing from the sender."""
 
-    def __init__(self, runtime, user_id, inbound_id):
-        super().__init__(runtime.database, runtime.settings, correlation_id=str(inbound_id))
+    def __init__(self, runtime, user_id, correlation_id):
+        super().__init__(runtime.database, runtime.settings, correlation_id=str(correlation_id))
         self.user_id = user_id
 
     async def authorize(self, session):
@@ -131,13 +142,13 @@ async def _store(database, channel_id, **values):
         return row.id, row.status, False
 
 
-# --- card actions
+# --- processing card actions and commands
 
 
-async def _claim(database, inbound_id):
+async def _claim(runtime, inbound_id):
     """Take the processing lease; None while another processor holds it."""
     now = utcnow()
-    async with database.transaction() as session:
+    async with runtime.database.transaction() as session:
         row = await session.get(MessageInbound, inbound_id, with_for_update=True)
         if row is None or row.status != "received":
             return None
@@ -145,26 +156,111 @@ async def _claim(database, inbound_id):
             return None
         if row.attempts >= MAX_ATTEMPTS:
             row.status, row.error_code, row.updated_at = "failed", "inbound_unfinished", now
+            await _reply_failure(session, runtime, row, FAILED_REPLY)
             return None
         row.attempts, row.updated_at = row.attempts + 1, now
         return {
-            "id": row.id,
-            "channel_id": row.channel_id,
-            "delivery_id": row.delivery_id,
-            "action_key": row.action_key,
-            "provider_message_id": row.provider_message_id,
-            "external_user_id": row.external_user_id,
+            key: getattr(row, key)
+            for key in (
+                "id",
+                "kind",
+                "channel_id",
+                "delivery_id",
+                "action_key",
+                "destination_id",
+                "command_module",
+                "command_key",
+                "provider_message_id",
+                "external_user_id",
+                "occurred_at",
+                "received_at",
+            )
         }
 
 
-async def _resolve(runtime, item):
-    """Check the click against its delivery and bind it to the clicker's Keystone user."""
+async def _reply_failure(session, runtime, row, text):
+    """Answer a command the business never accepted, where its declaration asks for it."""
+    if row.kind != "command":
+        return
+    declared = runtime.message_commands.get((row.command_module, row.command_key))
+    if declared is None or not declared.reply_failures:
+        return
+    await register(
+        session,
+        row.actor_id,
+        row.channel_id,
+        {"kind": "text", "text": text[:4000]},
+        {"source_module": "messaging", "source_type": "inbound", "source_id": str(row.id)},
+        None,
+        reply_inbound_id=row.id,
+    )
+
+
+async def _finish(runtime, inbound_id, status, error_code=None, actor_id=None, reply=None):
+    now = utcnow()
+    async with runtime.database.transaction() as session:
+        row = await session.get(MessageInbound, inbound_id, with_for_update=True)
+        if row is None or row.status != "received":
+            return
+        row.status, row.error_code, row.actor_id = status, error_code, actor_id
+        row.updated_at, row.processed_at = now, now if status == "processed" else None
+        if reply is not None:
+            # Registered with the outcome, so a failure is answered exactly once.
+            await _reply_failure(session, runtime, row, reply)
+
+
+async def _executor(session, mode, channel_id, external_user_id, destination_id):
+    """The Keystone user an event runs as: the sender's binding or the group's executing user."""
+    if mode == "bound":
+        user_id = await session.scalar(
+            select(ExternalAccount.user_id).where(
+                ExternalAccount.channel_id == channel_id,
+                ExternalAccount.external_user_id == external_user_id,
+            )
+        )
+        if user_id is None:
+            raise Refused("message_actor_unbound", UNBOUND_REPLY)
+        found = await users_in_transaction(session, [user_id])
+        if not found or not found[0]["is_active"]:
+            raise Refused("message_actor_disabled", "你绑定的 Keystone 用户已停用", user_id)
+        return found[0]
+    destination = destination_id and await session.get(MessageDestination, destination_id)
+    if destination is None or destination.channel_id != channel_id or not destination.is_active:
+        raise Refused("message_destination_unavailable", "这个群不能执行这项操作")
+    if destination.executing_user_id is None:
+        raise Refused("message_executor_unset", "这个群还没有配置执行用户，请联系管理员")
+    found = await users_in_transaction(session, [destination.executing_user_id])
+    if not found or not found[0]["is_active"]:
+        # The executing user is not named to the group.
+        raise Refused(
+            "message_executor_disabled",
+            "这个群的执行用户已停用，请联系管理员",
+            destination.executing_user_id,
+        )
+    return found[0]
+
+
+async def _authorized(runtime, user, permission, inbound_id):
+    identity = ActingUser(runtime, user["id"], inbound_id)
+    if permission:
+        try:
+            async with identity.access(permission):
+                pass
+        except ServiceError as error:
+            raise Refused(error.code, "你没有执行这项操作的权限", user["id"]) from None
+    return identity
+
+
+async def _resolve_action(runtime, item):
+    """Check the click against its delivery and find who it runs as."""
     async with runtime.database.transaction() as session:
         channel = await session.get(MessageChannel, item["channel_id"])
         delivery = item["delivery_id"] and await session.get(MessageDelivery, item["delivery_id"])
         actions = {
             action["key"]: action
-            for action in ((delivery and delivery.content.get("actions")) or [])
+            for action in (
+                (delivery and delivery.content and delivery.content.get("actions")) or []
+            )
         }
         # Only the delivery ID and action key come from the card; both must match the
         # message that was clicked, so a value copied into another card is refused.
@@ -182,77 +278,142 @@ async def _resolve(runtime, item):
         )
         if declared is None:
             raise Refused("message_action_unknown", "这项操作已不再支持")
-        user_id = await session.scalar(
-            select(ExternalAccount.user_id).where(
-                ExternalAccount.channel_id == item["channel_id"],
-                ExternalAccount.external_user_id == item["external_user_id"],
+        destination_id = delivery.destination_id
+        if delivery.reply_inbound_id is not None:
+            # A reply card belongs to the group the command came from.
+            destination_id = await session.scalar(
+                select(MessageInbound.destination_id).where(
+                    MessageInbound.id == delivery.reply_inbound_id
+                )
             )
+        user = await _executor(
+            session, declared.identity, item["channel_id"], item["external_user_id"], destination_id
         )
-        if user_id is None:
-            raise Refused(
-                "message_actor_unbound",
-                "你的飞书账号还没有绑定 Keystone 用户，请先私聊应用发送绑定码",
-            )
-        found = await users_in_transaction(session, [user_id])
-        if not found or not found[0]["is_active"]:
-            raise Refused("message_actor_disabled", "你绑定的 Keystone 用户已停用", user_id)
-        return declared, delivery, actions[item["action_key"]], found[0]
+        return declared, delivery, actions[item["action_key"]], user
 
 
-async def _finish(database, inbound_id, status, error_code=None, actor_id=None):
-    now = utcnow()
-    async with database.transaction() as session:
-        await session.execute(
-            update(MessageInbound)
-            .where(MessageInbound.id == inbound_id, MessageInbound.status == "received")
-            .values(
-                status=status,
-                error_code=error_code,
-                actor_id=actor_id,
-                updated_at=now,
-                processed_at=now if status == "processed" else None,
-            )
-        )
+async def _refused(runtime, item, refused, reply):
+    await _finish(
+        runtime,
+        item["id"],
+        "rejected",
+        refused.code,
+        refused.actor_id,
+        reply=refused.message if reply else None,
+    )
+    await audit.failed(
+        runtime.database,
+        f"messaging.inbound.{item['kind']}",
+        Actor("user", refused.actor_id) if refused.actor_id else Actor("system"),
+        "messaging.inbound",
+        item["id"],
+        str(item["id"]),
+        refused.code,
+        True,
+    )
+    return {"status": "rejected", "message": refused.message}
 
 
-async def process(runtime, inbound_id):
-    """Process one claimed card action; returns the outcome, or None if not claimed."""
-    item = await _claim(runtime.database, inbound_id)
-    if item is None:
-        return None
+async def _process_action(runtime, item):
+    inbound_id = item["id"]
     try:
-        declared, delivery, action, user = await _resolve(runtime, item)
-        identity = ActingUser(runtime, user["id"], inbound_id)
-        if declared.permission:
-            try:
-                async with identity.access(declared.permission):
-                    pass
-            except ServiceError as error:
-                raise Refused(error.code, "你没有执行这项操作的权限", user["id"]) from None
+        declared, delivery, action, user = await _resolve_action(runtime, item)
+        identity = await _authorized(runtime, user, declared.permission, inbound_id)
         try:
             await declared.handler(runtime, identity, delivery.source_id, action["key"], inbound_id)
         except ServiceError as error:
             # A business refusal is the business's to audit; only the outcome is kept here.
-            await _finish(runtime.database, inbound_id, "rejected", error.code, user["id"])
+            await _finish(runtime, inbound_id, "rejected", error.code, user["id"])
             return {"status": "rejected", "message": error.detail}
     except Refused as refused:
-        await _finish(runtime.database, inbound_id, "rejected", refused.code, refused.actor_id)
-        await audit.failed(
-            runtime.database,
-            "messaging.inbound.card_action",
-            Actor("user", refused.actor_id) if refused.actor_id else Actor("system"),
-            "messaging.inbound",
-            inbound_id,
-            str(inbound_id),
-            refused.code,
-            True,
-        )
-        return {"status": "rejected", "message": refused.message}
-    await _finish(runtime.database, inbound_id, "processed", actor_id=user["id"])
+        return await _refused(runtime, item, refused, False)
+    await _finish(runtime, inbound_id, "processed", actor_id=user["id"])
     card = feishu_content.action_card(
         delivery.content, delivery.id, outcome=f"{user['label']} 已{action['text']}"
     )
     return {"status": "processed", "card": card, "done": f"已{action['text']}"}
+
+
+async def _resolve_command(runtime, item, declared):
+    """Check the command is still accepted here and in time; None once it has expired."""
+    async with runtime.database.transaction() as session:
+        if declared is None:
+            raise Refused("message_command_unknown", "这个命令已不再支持")
+        channel = await session.get(MessageChannel, item["channel_id"])
+        if not channel.is_active:
+            raise Refused("message_channel_disabled", "该应用已停用")
+        place = "group" if item["destination_id"] else "p2p"
+        if place not in declared.where:
+            raise Refused("message_command_mismatch", "这个命令不能在这里使用")
+        if place == "group":
+            destination = await session.get(MessageDestination, item["destination_id"])
+            if (
+                destination is None
+                or destination.channel_id != item["channel_id"]
+                or not destination.is_active
+            ):
+                raise Refused("message_destination_unavailable", "这个群不能执行这项操作")
+        occurred = item["occurred_at"] or item["received_at"]
+        if utcnow() - occurred > declared.accept_within:
+            return None
+        return await _executor(
+            session,
+            declared.identity,
+            item["channel_id"],
+            item["external_user_id"],
+            item["destination_id"],
+        )
+
+
+async def _process_command(runtime, item):
+    inbound_id = item["id"]
+    declared = runtime.message_commands.get((item["command_module"], item["command_key"]))
+    reply = bool(declared and declared.reply_failures)
+    try:
+        user = await _resolve_command(runtime, item, declared)
+        if user is None:
+            await _finish(runtime, inbound_id, "expired", reply=EXPIRED_REPLY if reply else None)
+            return {"status": "expired"}
+        identity = await _authorized(runtime, user, declared.permission, inbound_id)
+        try:
+            await declared.handler(identity, inbound_id, declared.key)
+        except ServiceError as error:
+            await _finish(
+                runtime,
+                inbound_id,
+                "rejected",
+                error.code,
+                user["id"],
+                reply=error.detail if reply else None,
+            )
+            return {"status": "rejected"}
+    except Refused as refused:
+        return await _refused(runtime, item, refused, reply)
+    await _finish(runtime, inbound_id, "processed", actor_id=user["id"])
+    return {"status": "processed"}
+
+
+async def process(runtime, inbound_id):
+    """Process one claimed card action or command; returns the outcome, or None if not claimed."""
+    item = await _claim(runtime, inbound_id)
+    if item is None:
+        return None
+    if item["kind"] == "command":
+        return await _process_command(runtime, item)
+    return await _process_action(runtime, item)
+
+
+async def _inline(runtime, inbound_id, slots):
+    """Process right away within the budget; None leaves it to the periodic pass."""
+    if slots is not None and slots.locked():
+        return None
+    try:
+        async with slots or contextlib.nullcontext(), asyncio.timeout(BUDGET_SECONDS):
+            return await process(runtime, inbound_id)
+    except TimeoutError:
+        # Cancelled mid-way: the business transaction rolled back, the lease expires and the
+        # periodic pass processes it again.
+        return None
 
 
 def _card_answer(outcome):
@@ -297,20 +458,11 @@ async def receive_card_action(runtime, channel_id, header, event, slots=None):
         if status == "processed":
             return {"toast": {"type": "success", "content": "已处理"}}
         return _card_answer(None)
-    if slots is not None and slots.locked():
-        return _card_answer(None)
-    try:
-        async with slots or contextlib.nullcontext(), asyncio.timeout(BUDGET_SECONDS):
-            outcome = await process(runtime, inbound_id)
-    except TimeoutError:
-        # Cancelled mid-way: the business transaction rolled back, the lease expires and the
-        # periodic pass processes it again.
-        outcome = None
-    return _card_answer(outcome)
+    return _card_answer(await _inline(runtime, inbound_id, slots))
 
 
 async def retry(runtime, vault):
-    """Finish card actions that inline processing did not; returns how many were tried."""
+    """Finish events that inline processing did not; returns how many were tried."""
     from keystone.platform.messaging.services.channels import unseal
 
     async with runtime.database.transaction() as session:
@@ -332,8 +484,15 @@ async def retry(runtime, vault):
             )
         ).all()
     for inbound_id, channel_id, message_id in rows:
-        outcome = await process(runtime, inbound_id)
-        if not outcome or outcome["status"] != "processed" or not message_id:
+        try:
+            outcome = await process(runtime, inbound_id)
+        except Exception as error:
+            # Left `received`; the lease runs out and a later pass tries again.
+            log.warning(
+                "messaging_inbound_failed inbound=%s type=%s", inbound_id, type(error).__name__
+            )
+            continue
+        if not outcome or "card" not in outcome or not message_id:
             continue
         # Nobody is waiting for an answer any more, so the card is updated in place.
         try:
@@ -446,25 +605,87 @@ async def _apply_binding(session, channel_id, user_id, open_id):
     )
 
 
+def _command(runtime, text, place):
+    return next(
+        (
+            command
+            for command in runtime.message_commands.values()
+            if command.text == text and place in command.where
+        ),
+        None,
+    )
+
+
+async def _group_destination(database, channel_id, chat_id):
+    if not isinstance(chat_id, str):
+        return None
+    async with database.transaction() as session:
+        return await session.scalar(
+            select(MessageDestination.id).where(
+                MessageDestination.channel_id == channel_id,
+                MessageDestination.external_id == chat_id,
+                MessageDestination.is_active.is_(True),
+            )
+        )
+
+
 async def receive_message(runtime, channel, header, event, slots=None):
-    """Only private binding messages are handled; everything else is ignored unstored."""
+    """Handle private binding codes and declared commands; anything else is ignored unstored.
+
+    Returns (reply content, open ID, message ID) for a binding message, otherwise None.
+    """
     message = event.get("message") or {}
     sender = event.get("sender") or {}
-    if (
-        message.get("chat_type") != "p2p"
-        or message.get("message_type") != "text"
-        or sender.get("sender_type") != "user"
-    ):
+    if message.get("message_type") != "text" or sender.get("sender_type") != "user":
         return None
     try:
         text = json.loads(message.get("content") or "").get("text")
     except (ValueError, AttributeError):
         return None
-    matched = isinstance(text, str) and BIND_MESSAGE.fullmatch(text)
     message_id = _short(message.get("message_id"))
     open_id = _short((sender.get("sender_id") or {}).get("open_id"))
-    if not matched or message_id is None or open_id is None:
+    if not isinstance(text, str) or message_id is None or open_id is None:
         return None
+    destination_id = None
+    if message.get("chat_type") == "p2p":
+        matched = BIND_MESSAGE.fullmatch(text)
+        if matched:
+            return await _receive_bind(
+                runtime, channel, header, message_id, open_id, matched, slots
+            )
+        command = _command(runtime, text.strip(), "p2p")
+    elif message.get("chat_type") == "group" and message.get("mentions"):
+        # Group messages reach the app only when it is mentioned; mentions are not the text.
+        command = _command(runtime, MENTION.sub("", text).strip(), "group")
+        if command is not None:
+            destination_id = await _group_destination(
+                runtime.database, channel["id"], message.get("chat_id")
+            )
+            if destination_id is None:
+                return None
+    else:
+        return None
+    if command is None:
+        return None
+    inbound_id, _, new = await _store(
+        runtime.database,
+        channel["id"],
+        dedupe_key=message_id,
+        kind="command",
+        destination_id=destination_id,
+        command_module=command.module,
+        command_key=command.key,
+        provider_message_id=message_id,
+        external_user_id=open_id,
+        occurred_at=_occurred(header),
+    )
+    if new:
+        # Results are answered by replies the handler or the platform registers.
+        await _inline(runtime, inbound_id, slots)
+    return None
+
+
+async def _receive_bind(runtime, channel, header, message_id, open_id, matched, slots):
     # Binding keeps nothing to finish later, so it waits for a slot; if none frees up in
     # time the event goes unanswered and Feishu pushes it again.
     async with asyncio.timeout(BUDGET_SECONDS), slots or contextlib.nullcontext():
