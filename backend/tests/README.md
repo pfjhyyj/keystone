@@ -38,6 +38,7 @@ backend/.venv/bin/python scripts/check.py      # Windows：backend/.venv/Scripts
 - Flow 快照与安装使用 `support.flow_packages`；需要 DBOS 执行器或历史客户端的用例请求 `support.flow_engine.flow_engine`，普通授权/事务用例不依赖它。`test_flow.worker()` 启动真实执行器，fast_health 只缩短依赖/心跳观察周期。
 - 并发使用事件、门闩和明确状态，不依赖短 sleep。反复取消须等待原生 I/O/进程/文件清理。领域终态、调用收尾与 DBOS 检查点完成是独立事实。
 - 迁移测试使用原始隔离库验证完整基线、约束及含数据的升级/回滚，不导入自动升级 head 的应用夹具。
+- 平台测试不假定业务装配为空：下游仓库会登记业务。权限、计划和迁移 head 按 `composition`、`model_registry` 的当前声明比较，测试业务追加到已有声明而不替换。
 - 架构检查（`unit/test_architecture.py`）递归覆盖平台/业务分层、相对导入和渠道 adapter 约束，脚手架输出遵守相同规范；锁、事务与身份语义不以 mock 替代数据库。
 
 ## 本地媒体专项验收

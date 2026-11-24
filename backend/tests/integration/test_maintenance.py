@@ -38,6 +38,13 @@ def wait_for(client, process, log, condition, timeout=30):
     pytest.fail(log.read_text(encoding="utf8") + "\nMaintenance did not reach expected state")
 
 
+def business_schedules():
+    """Schedules of the businesses this repository declares; none in Keystone itself."""
+    from keystone import composition
+
+    return {plan.name for tasks in composition.BUSINESS_TASKS for plan in tasks.schedules}
+
+
 def schedules(client):
     engine = client.app.state.runtime.flow_engine.client
     return {item["schedule_name"]: item for item in client.portal.call(engine.list_schedules_async)}
@@ -66,6 +73,7 @@ def test_schedules_survive_restart_without_duplicate_cleanup(client, tmp_path):
             flow_jobs.SCHEDULE,
             model_jobs.SCHEDULE,
             messaging_jobs.SCHEDULE,
+            *business_schedules(),
         }
         for plan in original.values():
             assert not plan["automatic_backfill"]

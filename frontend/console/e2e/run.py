@@ -24,6 +24,7 @@ from keystone.core.asyncio import run
 from keystone.core.config import Settings
 from keystone.core.database import Database
 from keystone.core.migrations import migration_config
+from keystone.model_registry import MIGRATION_CHAINS
 from keystone.platform.files.adapters.storage import initialize
 from keystone.platform.identity.adapters.security import Passwords
 from keystone.platform.identity.schemas import UserCreate
@@ -100,9 +101,9 @@ def main():
                     file_coordination_root=root,
                     file_storages={"local": {"driver": "filesystem", "root": root}},
                 )
-                config = migration_config(settings)
+                config = migration_config(settings, MIGRATION_CHAINS)
                 config.attributes["create_schema"] = True
-                command.upgrade(config, "head")
+                command.upgrade(config, "heads")
                 DBOS.migrate(database_url, schema="dbos")
 
                 async def seed():

@@ -16,7 +16,7 @@ from test_files_dictionary import upload
 from test_flow import configuration as configuration
 from test_flow import start, wait_run, worker
 from test_identity import query
-from test_maintenance import schedules, wait_for
+from test_maintenance import business_schedules, schedules, wait_for
 
 from keystone.core.errors import ServiceError
 from keystone.platform.model_access.adapters.coordination import QueryCoordination
@@ -56,7 +56,7 @@ def test_shared_plans_limits_idle_health_and_duplicate_identity(client, tmp_path
         assert b.poll() is None, lb.read_text(encoding="utf8")
         current = status(client)
         assert current["ready_workers"] == current["expected_workers"] == 2
-        assert len(schedules(client)) == 4
+        assert len(schedules(client)) == 4 + len(business_schedules())
         identity = {row["worker_id"]: row["instance_id"] for row in current["instances"]}
         with worker(client, tmp_path) as (duplicate, log):
             duplicate.wait(timeout=15)

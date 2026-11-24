@@ -89,7 +89,8 @@ def business(tmp_path, monkeypatch, empty_database_url):
     def migration_config(settings, chains=()):
         # The generated chain is registered here, as model_registry would list it.
         config = original_config(settings, chains)
-        locations = (directory / "versions", directory / "businesses" / NAMESPACE)
+        registered = (*model_registry.MIGRATION_CHAINS, NAMESPACE)
+        locations = (directory / "versions", *(directory / "businesses" / c for c in registered))
         config.set_main_option("script_location", str(directory))
         config.set_main_option("version_locations", os.pathsep.join(map(str, locations)))
         return config
@@ -100,7 +101,8 @@ def business(tmp_path, monkeypatch, empty_database_url):
     monkeypatch.setattr(cli, "migration_config", migration_config)
     try:
         catalog = importlib.import_module(f"{PACKAGE}.catalog").CATALOG
-        monkeypatch.setattr(composition, "BUSINESS_CATALOGS", ((NAMESPACE, catalog),))
+        declared = (*composition.BUSINESS_CATALOGS, (NAMESPACE, catalog))
+        monkeypatch.setattr(composition, "BUSINESS_CATALOGS", declared)
         settings = bootstrap.Settings(
             config_file=None,
             env="test",
@@ -286,7 +288,13 @@ def test_generated_migration_downgrades_without_touching_the_platform(business):
     client = business.client
     create(client)
     config = migrations.migration_config(client.app.state.runtime.settings)
-    assert set(ScriptDirectory.from_config(config).get_heads()) == {"0009", f"{NAMESPACE}_0001"}
+    heads = set(ScriptDirectory.from_config(config).get_heads())
+    expected = {"0009", f"{NAMESPACE}_0001"}
+    # Any other head belongs to a business the repository already declares.
+    assert expected <= heads and all(
+        any(head.startswith(f"{chain}_") for chain in model_registry.MIGRATION_CHAINS)
+        for head in heads - expected
+    )
 
     def tables():
         return query(

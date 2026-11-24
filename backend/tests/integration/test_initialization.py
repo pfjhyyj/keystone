@@ -12,6 +12,7 @@ from keystone.core.database import Database
 from keystone.core.errors import ServiceError
 from keystone.core.migrations import expected_heads
 from keystone.entrypoints.cli import initialize
+from keystone.model_registry import MIGRATION_CHAINS
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.identity.models import User
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
@@ -79,9 +80,10 @@ def test_init_prepares_all_dependencies_and_preserves_existing_accounts(
                 assert await session.scalar(
                     text("SELECT to_regclass('keystone.worker_heartbeats')")
                 )
-                assert await session.scalar(
+                stored = await session.scalars(
                     text("SELECT version_num FROM keystone.alembic_version")
-                ) in expected_heads(settings)
+                )
+                assert set(stored) == expected_heads(settings, MIGRATION_CHAINS)
         finally:
             await database.close()
 
