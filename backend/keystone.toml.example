@@ -39,6 +39,12 @@ file_upload_timeout_seconds = 3600
 
 # Model channels/keys are configured manually in the console after startup.
 
+# Interactive environments (optional): build the browser image and start OpenSandbox as in
+# docs/development/environment.md, then uncomment. Values match deploy/compose.yaml.
+# opensandbox_url = "http://127.0.0.1:8090"
+# opensandbox_key = "opensandbox_local_only"
+# browser_runtime_image = "keystone-browser-chromium:local"
+
 # Optional for non-interactive initialization of an empty installation only.
 # Otherwise `keystone init` prompts. Existing passwords are never reset.
 # initial_admin_password = ""

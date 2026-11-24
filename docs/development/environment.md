@@ -6,6 +6,18 @@
 
 本机 API、Worker 和 CLI 共用 `backend/keystone.toml`，前端与依赖 Compose 的可选覆盖文件及读取规则见[配置说明](../operations/configuration.md)。`keystone init` 一次完成迁移、存储和管理员初始化，不创建模型配置，命令参数见[运维命令](../operations/deployment.md#22-运维命令)。
 
+### 交互环境（可选）
+
+浏览器等交互环境需要 OpenSandbox。它和 PostgreSQL 一样是本机依赖：在 Docker 中运行，API、Worker 仍在本机运行，只通过 OpenSandbox 的代理访问沙箱。在仓库根目录执行：
+
+```sh
+docker build -t keystone-browser-chromium:local deploy/environments/browser/runtime
+docker pull opensandbox/execd:release-1.2.0
+docker compose -f deploy/compose.yaml --profile environments up -d --wait
+```
+
+再取消 `backend/keystone.toml` 中 `opensandbox_url`、`opensandbox_key`、`browser_runtime_image` 三行的注释并重启 API 和 Worker。沙箱容器由 OpenSandbox 在本机 Docker 上创建，Chromium 所需的 seccomp 配置在 `deploy/environments/opensandbox.dev.toml`。停止前先在「我的环境」结束会话；浏览器空间卷名为 `keystone-environment-<环境 ID>`，`docker compose down -v` 不会删除它。
+
 ## 前端目录约定
 
 控制台以管理总览（`/console/`）为入口，完整服务与 Worker 状态位于 `/console/platform`。模型接入和 Flow 的活动页签保存在查询参数 `tab` 中；用量页保留已应用的筛选、分页和钻取条件，表单草稿不写入浏览器存储。新建或编辑模型使用独立编辑区，普通短表单使用对话框，诊断详情使用抽屉。共享视觉约定见 [DESIGN.md](../../DESIGN.md)。

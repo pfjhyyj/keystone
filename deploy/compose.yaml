@@ -19,5 +19,27 @@ services:
       retries: 12
     restart: unless-stopped
 
+  # Optional, for interactive environments: --profile environments. Sandboxes are created on
+  # this host's Docker engine and reached only through this server's proxy.
+  opensandbox:
+    image: opensandbox/server:release-1.2.0
+    profiles: ["environments"]
+    environment:
+      OPENSANDBOX_SERVER_API_KEY: ${KEYSTONE_OPENSANDBOX_KEY:-opensandbox_local_only}
+      SANDBOX_CONFIG_PATH: /etc/opensandbox/config.toml
+    ports:
+      - "127.0.0.1:${KEYSTONE_OPENSANDBOX_PORT:-8090}:8090"
+    networks:
+      - default
+      - browser_runtime
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./environments/opensandbox.dev.toml:/etc/opensandbox/config.toml:ro
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+
+networks:
+  browser_runtime:
+    name: keystone_browser_runtime
