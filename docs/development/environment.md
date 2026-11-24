@@ -8,15 +8,15 @@
 
 ### 交互环境（可选）
 
-浏览器等交互环境需要 OpenSandbox。它和 PostgreSQL 一样是本机依赖：在 Docker 中运行，API、Worker 仍在本机运行，只通过 OpenSandbox 的代理访问沙箱。在仓库根目录执行：
+浏览器等交互环境需要 OpenSandbox。它和 PostgreSQL 一样是可单独启动的本机依赖：只在需要时用 `deploy/environments/compose.yaml` 启动，API、Worker 仍在本机运行，只通过 OpenSandbox 的代理访问沙箱。在仓库根目录执行：
 
 ```sh
 docker build -t keystone-browser-chromium:local deploy/environments/browser/runtime
 docker pull opensandbox/execd:release-1.2.0
-docker compose -f deploy/compose.yaml --profile environments up -d --wait
+docker compose -f deploy/environments/compose.yaml up -d --wait
 ```
 
-再取消 `backend/keystone.toml` 中 `opensandbox_url`、`opensandbox_key`、`browser_runtime_image` 三行的注释并重启 API 和 Worker。沙箱容器由 OpenSandbox 在本机 Docker 上创建，Chromium 所需的 seccomp 配置在 `deploy/environments/opensandbox.dev.toml`。停止前先在「我的环境」结束会话；浏览器空间卷名为 `keystone-environment-<环境 ID>`，`docker compose down -v` 不会删除它。
+再取消 `backend/keystone.toml` 中 `opensandbox_url`、`opensandbox_key`、`browser_runtime_image` 三行的注释并重启 API 和 Worker。沙箱容器由 OpenSandbox 在本机 Docker 上创建，Chromium 所需的 seccomp 配置在 `deploy/environments/opensandbox.dev.toml`。停止前先在「我的环境」结束会话；浏览器空间卷名为 `keystone-environment-<环境 ID>`，停止 OpenSandbox 用 `docker compose -f deploy/environments/compose.yaml down`，它不会删除空间卷。
 
 ## 前端目录约定
 
