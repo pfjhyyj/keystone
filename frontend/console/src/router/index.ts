@@ -4,6 +4,7 @@ import { can, ensureSession, identity, refreshSession } from '../stores/session'
 
 export const navigation = [
   { path: '/', label: '管理总览', permissions: [] },
+  { path: '/environments', label: '我的环境', permissions: ['environment:use'] },
   { path: '/platform', label: '平台状态', permissions: [] },
   { path: '/users', label: '用户管理', permissions: ['user:read'] },
   { path: '/roles', label: '角色管理', permissions: ['role:read'] },
@@ -57,6 +58,20 @@ export function makeRouter(history: RouterHistory = createWebHistory(import.meta
       { path: '/models', component: () => import('../views/models/ModelsView.vue') },
       { path: '/model-usage', component: () => import('../views/usage/UsageView.vue') },
       { path: '/flows', component: () => import('../views/flows/FlowsView.vue') },
+      {
+        path: '/environments',
+        component: () => import('../views/environments/EnvironmentsView.vue'),
+      },
+      {
+        path: '/environments/:kind/:key',
+        component: () => import('../views/environments/ScreenView.vue'),
+        props: (route) => ({
+          kind: route.params.kind,
+          envKey: route.params.key,
+          back: typeof route.query.back === 'string' ? route.query.back : undefined,
+        }),
+        meta: { title: '环境画面', nav: '/environments', permissions: ['environment:use'] },
+      },
       { path: '/messaging', component: () => import('../views/messaging/ChannelsView.vue') },
       {
         path: '/messaging/channels/:id',

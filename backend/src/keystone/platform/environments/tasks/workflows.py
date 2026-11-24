@@ -18,7 +18,7 @@ def register(runtime, health):
 
     @safe_step(name="environments.idle_stop", error_code="environment_idle_stop_failed")
     async def idle_step():
-        await stop_idle(runtime.database, runtime.opensandbox)
+        await stop_idle(runtime.database, runtime.opensandbox, runtime.environment_keys)
         return True
 
     @DBOS.workflow(name=WORKFLOW)

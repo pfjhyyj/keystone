@@ -1,5 +1,7 @@
 """Stop interactive sessions nobody has used for a while; run by Worker maintenance."""
 
+import asyncio
+import logging
 from datetime import timedelta
 
 from sqlalchemy import or_, select
@@ -16,7 +18,10 @@ from keystone.platform.environments.services.lifecycle import (
 )
 
 IDLE_AFTER = timedelta(minutes=30)
+KEEP_LIMIT = timedelta(hours=4)
+KEEP_TIMEOUT = 1
 BATCH = 10
+log = logging.getLogger(__name__)
 
 
 def _idle(run, cutoff, now):
@@ -30,14 +35,35 @@ def _idle(run, cutoff, now):
     )
 
 
-async def stop_idle(database, runtime):
-    """Accept and finish at most one batch; held, starting or busy sessions are skipped."""
+async def _kept(database, declared, environment_id, run_id, last_activity_at):
+    """Ask the declaring business whether it still waits on this session; errors keep it."""
+    if declared is None or declared.keep is None:
+        return False
+    try:
+        async with asyncio.timeout(KEEP_TIMEOUT), database.transaction() as session:
+            until = await declared.keep(session, environment_id, run_id)
+    except Exception as error:
+        log.warning("environment_keep_failed key=%s type=%s", declared.key, type(error).__name__)
+        return True
+    # A business cannot keep a sandbox running indefinitely past its last real use.
+    return until is not None and min(until, last_activity_at + KEEP_LIMIT) > utcnow()
+
+
+async def stop_idle(database, runtime, keys=None):
+    """Accept and finish at most one batch; held, starting, busy or kept sessions are skipped."""
+    keys = keys or {}
     now = utcnow()
     cutoff = now - IDLE_AFTER
     async with database.transaction() as session:
         candidates = list(
             await session.execute(
-                select(EnvironmentSession.id, EnvironmentSession.environment_id)
+                select(
+                    EnvironmentSession.id,
+                    EnvironmentSession.environment_id,
+                    EnvironmentSession.last_activity_at,
+                    Environment.key,
+                )
+                .join(Environment, Environment.id == EnvironmentSession.environment_id)
                 .where(
                     EnvironmentSession.purpose == "interactive",
                     EnvironmentSession.state == "ready",
@@ -52,7 +78,10 @@ async def stop_idle(database, runtime):
             )
         )
     stopped = 0
-    for run_id, environment_id in candidates:
+    for run_id, environment_id, last_activity_at, key in candidates:
+        # Outside the environment lock: the business query must not hold up user requests.
+        if await _kept(database, keys.get(key), environment_id, run_id, last_activity_at):
+            continue
         async with database.transaction() as session:
             # Same lock order as user requests: environment, then session.
             await session.get(Environment, environment_id, with_for_update=True)

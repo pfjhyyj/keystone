@@ -8,6 +8,7 @@ older one. Results carry only small projections, never cookies or full page bodi
 import base64
 import hmac
 import json
+import subprocess
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from itertools import count
@@ -21,7 +22,9 @@ MAX_BODY = 8192
 MAX_TEXT = 8000
 MAX_ELEMENTS = 200
 MAX_SCREENSHOT = 2 * 1024 * 1024
-ACTIONS = {"snapshot", "click", "type", "read", "screenshot", "open", "wait"}
+MAX_CLIPBOARD = 4096
+MAX_FRAMES = 20
+ACTIONS = {"snapshot", "click", "type", "read", "clipboard", "screenshot", "open", "wait"}
 
 SNAPSHOT = r"""
 (() => {
@@ -37,6 +40,34 @@ SNAPSHOT = r"""
       style.display !== 'none';
   };
   const clean = value => (value || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  const aria = (e, name) => e.getAttribute(`aria-${name}`) === 'true';
+  const states = e => {
+    const current = e.getAttribute('aria-current');
+    return [
+      ['checked', e.checked === true || aria(e, 'checked')],
+      ['selected', e.selected === true || aria(e, 'selected')],
+      ['expanded', aria(e, 'expanded')],
+      ['disabled', e.disabled === true || aria(e, 'disabled')],
+      ['current', current !== null && current !== 'false'],
+    ].filter(([, on]) => on).map(([name]) => name);
+  };
+  const LANDMARKS = {nav: 'navigation', main: 'main', header: 'banner',
+                     aside: 'complementary', footer: 'contentinfo'};
+  const dialogs = new Map();
+  const container = e => {
+    const dialog = e.closest('dialog[open],[role=dialog],[role=alertdialog]');
+    if (dialog) {
+      if (!dialogs.has(dialog)) dialogs.set(dialog, `d${dialogs.size + 1}`);
+      return {container: 'dialog', container_id: dialogs.get(dialog)};
+    }
+    for (let node = e.parentElement; node; node = node.parentElement) {
+      const role = node.getAttribute('role');
+      const landmark = Object.values(LANDMARKS).includes(role) ? role
+        : LANDMARKS[node.tagName.toLowerCase()];
+      if (landmark) return {container: landmark};
+    }
+    return {};
+  };
   const elements = [];
   for (const e of document.querySelectorAll(selector)) {
     if (elements.length >= %(limit)d) break;
@@ -44,15 +75,29 @@ SNAPSHOT = r"""
     const ref = `s${generation}e${elements.length + 1}`;
     e.setAttribute('data-keystone-ref', ref);
     const secret = e.type === 'password';
+    const state = states(e);
     elements.push({
       ref,
       role: e.getAttribute('role') || e.tagName.toLowerCase(),
       name: clean(e.getAttribute('aria-label') || e.getAttribute('title') || e.innerText ||
         e.getAttribute('placeholder') || e.getAttribute('name')),
       value: secret || !('value' in e) || e.tagName === 'BUTTON' ? undefined : clean(e.value),
+      state: state.length ? state : undefined,
+      ...container(e),
     });
   }
-  return {title: clean(document.title), elements,
+  // Cross-origin frames are listed by host and size only, never read or clicked into.
+  const frames = [];
+  for (const f of document.querySelectorAll('iframe')) {
+    if (frames.length >= %(frames)d) break;
+    let source;
+    try { source = new URL(f.src, location.href); } catch { continue; }
+    if (!f.src || source.origin === location.origin || !shown(f)) continue;
+    const box = f.getBoundingClientRect();
+    frames.push({host: source.hostname, width: Math.round(box.width),
+                 height: Math.round(box.height)});
+  }
+  return {title: clean(document.title), elements, frames,
           text: (document.body ? document.body.innerText : '').slice(0, %(text)d)};
 })()
 """
@@ -142,6 +187,29 @@ class Page:
             time.sleep(0.2)
 
 
+def _clipboard(page):
+    """Plain text on the X clipboard, which Chromium and the screen's paste both write."""
+    reader = subprocess.Popen(
+        ["xclip", "-selection", "clipboard", "-out", "-target", "UTF8_STRING"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        reader.wait(timeout=min(2, page.remaining()))
+        data = reader.stdout.read(MAX_CLIPBOARD * 4 + 1)
+    except subprocess.TimeoutExpired:
+        reader.kill()
+        reader.wait()
+        raise ActionError("unavailable") from None
+    finally:
+        reader.stdout.close()
+    # xclip fails when the clipboard holds no text; that is an empty result, not an error.
+    text = data.decode("utf-8", "replace") if reader.returncode == 0 else ""
+    if len(data) > MAX_CLIPBOARD * 4 or len(text) > MAX_CLIPBOARD:
+        raise ActionError("too_large")
+    return text
+
+
 def _text(value, limit):
     if not isinstance(value, str) or len(value) > limit:
         raise ActionError("invalid")
@@ -152,7 +220,9 @@ def run(name, arguments, deadline):
     page = Page(deadline)
     try:
         if name == "snapshot":
-            data = page.evaluate(SNAPSHOT % {"limit": MAX_ELEMENTS, "text": MAX_TEXT})
+            data = page.evaluate(
+                SNAPSHOT % {"limit": MAX_ELEMENTS, "text": MAX_TEXT, "frames": MAX_FRAMES}
+            )
         elif name in {"click", "type"}:
             ref = json.dumps(_text(arguments.get("ref"), 32))
             if name == "click":
@@ -176,6 +246,8 @@ def run(name, arguments, deadline):
             if text is None:
                 raise ActionError("stale")
             data = {"text": text}
+        elif name == "clipboard":
+            data = {"text": _clipboard(page)}
         elif name == "screenshot":
             shot = page.call("Page.captureScreenshot", format="jpeg", quality=60)["data"]
             if len(base64.b64decode(shot)) > MAX_SCREENSHOT:

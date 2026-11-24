@@ -3,7 +3,7 @@ FROM debian:trixie-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates chromium chromium-sandbox \
        fonts-liberation fonts-noto-cjk openbox python3 tigervnc-standalone-server tini \
-       python3-websocket websockify wmctrl x11-utils \
+       python3-websocket websockify wmctrl x11-utils xclip \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 browser \
     && useradd -u 10001 -g browser --create-home browser \
