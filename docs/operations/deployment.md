@@ -97,7 +97,7 @@ docker compose up -d --wait
 | 项 | 约定 |
 |---|---|
 | 配置 | keystone.toml 只读挂载到 init/API/Worker；Compose 固定 env=production、数据库地址和监听地址；秘密放 .env |
-| 入口 | 控制台默认只监听 127.0.0.1:8080，由宿主上的 HTTPS 反向代理对外；production 要求 browser_origins 为 HTTPS。启用交互环境时，反向代理须对 `/api/v1/environments/` 转发 WebSocket 升级，读超时不少于 230 秒（打开和结束会话最长等待提供方约 220 秒） |
+| 入口 | 控制台默认只监听 127.0.0.1:8080，由宿主上的 HTTPS 反向代理对外；production 要求 browser_origins 为 HTTPS。启用交互环境时，反向代理须对以 `/api/v1/environments` 开头的路径转发 WebSocket 升级，读超时不少于 230 秒（打开和结束会话最长等待提供方约 220 秒） |
 | 卷 | postgres_data 为数据库，file_data 同时承载协调目录和本地文件，均按[联合备份](backup-restore.md)处理 |
 | 主机与 Worker 身份 | 容器 hostname 固定为 KEYSTONE_HOST_ID，Worker 身份固定为 KEYSTONE_WORKER_ID，重建容器不改变；增加 Worker 时按[第 4.1 节](#41-共同条件与增加实例)另加固定身份服务 |
 | 停止 | Worker 的 stop_grace_period 默认 60s，须大于 worker_shutdown_seconds 并留出收尾时间 |
