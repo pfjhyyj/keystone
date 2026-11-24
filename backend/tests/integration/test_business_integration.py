@@ -45,7 +45,9 @@ from keystone.platform.identity.services.authorization import load_authorization
 
 
 def install(monkeypatch):
-    monkeypatch.setattr(composition, "BUSINESS_CATALOGS", (("test_notes", DECLARATION),))
+    # Added beside whatever businesses the repository declares, never replacing them.
+    declared = (*composition.BUSINESS_CATALOGS, ("test_notes", DECLARATION))
+    monkeypatch.setattr(composition, "BUSINESS_CATALOGS", declared)
 
 
 @pytest.mark.postgres
@@ -192,7 +194,8 @@ def test_two_applications_keep_catalogs_and_audit_actions_isolated(business_clie
     first = business_client
     login(first)
     pat = token(first, [READ, "role:read"])
-    monkeypatch.setattr(composition, "BUSINESS_CATALOGS", ())
+    declared = tuple(item for item in composition.BUSINESS_CATALOGS if item[0] != "test_notes")
+    monkeypatch.setattr(composition, "BUSINESS_CATALOGS", declared)
     with TestClient(
         create_app(first.app.state.runtime.settings),
         backend_options={"loop_factory": new_event_loop},

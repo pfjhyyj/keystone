@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select, update
 
 from keystone.bootstrap import create_app
-from keystone.composition import PLATFORM_CATALOG, build_catalog
+from keystone.composition import build_catalog
 from keystone.core.asyncio import new_event_loop, run
 from keystone.core.config import Settings
 from keystone.core.database import Database
@@ -169,7 +169,7 @@ def test_lists_batch_only_current_page_associations(client, resource):
         by_key = {row["key"]: row for row in rows}
         assert by_key["empty"]["permissions"] == []
         assert by_key["reader"]["permissions"] == ["audit:read", "dictionary:read"]
-        assert by_key["admin"]["permissions"] == sorted(PLATFORM_CATALOG.permissions)
+        assert by_key["admin"]["permissions"] == sorted(build_catalog().permissions)
 
 
 def test_batched_role_grants_preserve_account_and_token_rules(client):
@@ -207,7 +207,7 @@ def test_batched_role_grants_preserve_account_and_token_rules(client):
         assert set().union(*grouped.values()) == expected
         assert await role_grants(session, UUID(unassigned["id"])) == {}
         admin_roles = await role_grants(session, UUID(admin["id"]))
-        assert set().union(*admin_roles.values()) == set(PLATFORM_CATALOG.permissions)
+        assert set().union(*admin_roles.values()) == set(build_catalog().permissions)
 
         target = await session.get(User, UUID(user["id"]))
         assert await load_authorization_for_target(session, target) == expected
@@ -238,11 +238,11 @@ def test_batched_role_grants_preserve_account_and_token_rules(client):
             (auth, {"dictionary:read"}),
             (
                 await load_authorization(session, UUID(admin["id"])),
-                set(PLATFORM_CATALOG.permissions),
+                set(build_catalog().permissions),
             ),
             (await load_authorization(session, UUID(unassigned["id"])), set()),
         ):
-            for permission in (*PLATFORM_CATALOG.permissions, "dictionary:*", "removed:permission"):
+            for permission in (*build_catalog().permissions, "dictionary:*", "removed:permission"):
                 if permission in allowed:
                     current.require(permission)
                 else:
@@ -415,7 +415,7 @@ def test_pat_scopes_revocation_and_disable_never_revive_credentials(client):
     assert client.delete(f"/api/v1/auth/tokens/{limited['id']}").status_code == 204
     assert client.get("/api/v1/users", headers=bearer(limited["token"])).status_code == 401
     # Last admin cannot be disabled, even by an all-scope PAT.
-    full = token(client, list(PLATFORM_CATALOG.permissions))
+    full = token(client, list(build_catalog().permissions))
     assert (
         client.put(
             f"/api/v1/users/{admin['id']}/active",
@@ -483,7 +483,7 @@ def test_current_grants_pat_intersection_and_management_boundaries(client):
     assert assign(client, admin["id"], reader["id"]).status_code == 403
     # Holding every permission is all the admin role means; there is no extra identity.
     login(client)
-    full_role = role(client, "ordinary-full", list(PLATFORM_CATALOG.permissions))
+    full_role = role(client, "ordinary-full", list(build_catalog().permissions))
     assert assign(client, user["id"], full_role["id"]).status_code == 204
     login(client, "alice", NEW_PASSWORD)
     assert assign(client, admin["id"], reader["id"]).status_code == 204
@@ -730,7 +730,7 @@ def test_admin_role_is_editable_and_recoverable_offline(client):
     assert client.post("/api/v1/roles", json=both).status_code == 422
     created = client.post("/api/v1/roles", json={**everything, "key": "all"})
     assert created.status_code == 201
-    assert created.json()["permissions"] == sorted(PLATFORM_CATALOG.permissions)
+    assert created.json()["permissions"] == sorted(build_catalog().permissions)
     narrow = token(client, ["role:create", "role:update", "user:read"])
     denied = client.post(
         "/api/v1/roles", json={**everything, "key": "escalate"}, headers=bearer(narrow["token"])
@@ -761,13 +761,13 @@ def test_concurrent_last_admin_protection(client):
     second = create_user(client, "second")
     admin_role = next(r for r in client.get("/api/v1/roles").json() if r["key"] == "admin")
     assign(client, second["id"], admin_role["id"])
-    first_pat = token(client, list(PLATFORM_CATALOG.permissions))
+    first_pat = token(client, list(build_catalog().permissions))
     login(client, "second")
     client.post(
         "/api/v1/auth/password", json={"current_password": PASSWORD, "password": NEW_PASSWORD}
     )
     login(client, "second", NEW_PASSWORD)
-    second_pat = token(client, list(PLATFORM_CATALOG.permissions))
+    second_pat = token(client, list(build_catalog().permissions))
 
     def disable(identifier, secret):
         return client.put(

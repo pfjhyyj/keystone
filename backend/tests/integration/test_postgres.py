@@ -10,6 +10,7 @@ from keystone.bootstrap import build_runtime
 from keystone.core.config import Settings
 from keystone.core.database import Base
 from keystone.core.migrations import migration_config
+from keystone.model_registry import MIGRATION_CHAINS
 from keystone.platform.files.adapters.storage import initialize
 
 
@@ -32,10 +33,10 @@ async def test_empty_database_migration_and_transaction_rollback(empty_database_
             assert not await session.scalar(
                 text("SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='keystone')")
             )
-        config = migration_config(settings)
+        config = migration_config(settings, MIGRATION_CHAINS)
         config.attributes["create_schema"] = True
-        command.upgrade(config, "head")
-        command.upgrade(config, "head")  # Repeated deployment is idempotent.
+        command.upgrade(config, "heads")
+        command.upgrade(config, "heads")  # Repeated deployment is idempotent.
         assert (await runtime.readiness())["status"] == "ready"
         async with runtime.database.engine.connect() as connection:
             diff = await connection.run_sync(
