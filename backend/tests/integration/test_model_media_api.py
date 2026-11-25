@@ -63,7 +63,7 @@ def test_catalog_limits_follow_requested_operation_for_the_same_model(client):
 
 
 @pytest.mark.parametrize("operation", ["generate", "edit", "vision"])
-def test_direct_media_records_one_call_without_a_flow(client, operation):
+def test_direct_media_records_one_call_without_a_flow(client, operation, caplog):
     configure(client)
     body = {"model_key": "media", "prompt": "private-input-do-not-persist", "n": 2}
     if operation in {"edit", "vision"}:
@@ -80,6 +80,8 @@ def test_direct_media_records_one_call_without_a_flow(client, operation):
     assert len(rows) == 1 and str(rows[0].id) == result["invocation_id"]
     assert rows[0].status == "succeeded" and rows[0].flow_context is None
     assert rows[0].worker_id is None and rows[0].cost_amount is not None
+    # Closing the event stream after the recorded result is not an interruption.
+    assert not [r for r in caplog.records if r.message.startswith("model_call_")]
     assert (
         rows[0].operation
         == {"generate": "image.generate", "edit": "image.edit", "vision": "image.understand"}[

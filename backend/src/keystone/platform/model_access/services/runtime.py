@@ -637,6 +637,9 @@ class ModelRuntime:
                         "content": event["content"],
                     }
         except BaseException as error:
+            if isinstance(error, GeneratorExit) and finished:
+                # The consumer closed this generator after the recorded outcome was yielded.
+                raise
             failed(error, "inference")
             http_status, code, detail, status = classify_error(error)
             if not finished:
