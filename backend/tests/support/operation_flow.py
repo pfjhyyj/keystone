@@ -89,6 +89,35 @@ def register():
     async def vision(run_id):
         return await vision_answer(run_id)
 
+    @DBOS.step(name="test.structured_vision.answer", retries_allowed=False)
+    async def structured_vision_answer(run_id):
+        from keystone.platform.model_access.schemas.images import ImageInput
+
+        ctx = flow_context(run_id)
+        inputs = await ctx.inputs()
+        result = await ctx.invoke_structured(
+            "analyze",
+            StructuredRequest(
+                messages=[{"role": "user", "content": inputs["prompt"]}],
+                images=[ImageInput(file_id=inputs["source_file_id"])],
+                output=JsonOutput(
+                    name="Answer",
+                    json_schema={
+                        "type": "object",
+                        "properties": {"answer": {"type": "integer"}},
+                        "required": ["answer"],
+                        "additionalProperties": False,
+                    },
+                ),
+            ),
+            node_key="analyze",
+        )
+        return {**result.content, "invocation_id": str(result.invocation_id)}
+
+    @DBOS.workflow(name=structured_vision_definition.entrypoint)
+    async def structured_vision(run_id):
+        return await structured_vision_answer(run_id)
+
     @DBOS.step(name="test.image.generate", retries_allowed=False)
     async def generate_image(run_id):
         ctx = flow_context(run_id)
@@ -218,6 +247,20 @@ vision_definition = FlowDefinition(
 )
 
 
+structured_vision_definition = FlowDefinition(
+    key="test.structured_vision",
+    name="Structured vision fixture",
+    description="Test only",
+    revision="1",
+    input_model=ImageQuestion,
+    output_model=Answer,
+    entrypoint="test.structured_vision.run",
+    required_permissions=("model:invoke", "test_files.asset:content_read"),
+    file_fields=("source_file_id",),
+    model_roles=(ModelRole("analyze", "Analysis", "text.structured"),),
+)
+
+
 def after_images(run_id, result):
     """Fault boundary: Files are durable; the native step has not checkpointed yet."""
 
@@ -298,6 +341,7 @@ PACKAGE = FlowPackage(
     definitions=(
         definition,
         vision_definition,
+        structured_vision_definition,
         image_definition,
         edit_definition,
         task_definition,

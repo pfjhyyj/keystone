@@ -633,7 +633,9 @@ class FlowContext:
         if request.images:
             # Inputs follow invoke_vision: fixed Run scope, per-file and total byte limits.
             async with self.execution_scope(permissions=("model:invoke",)) as check:
-                model, selected, identifier = await self._model(role, operation="text.structured")
+                model, selected, identifier, definition_key = await self._model(
+                    role, operation="text.structured"
+                )
                 images = await self._image_inputs(request.images)
                 await check()
                 result = await model.invoke_text(
@@ -641,7 +643,9 @@ class FlowContext:
                     images=images,
                     selection=selected,
                     invocation_id=identifier,
-                    context=self._invocation_context(role, node_key=node_key),
+                    context=self._invocation_context(
+                        role, definition_key=definition_key, node_key=node_key
+                    ),
                     worker_identity=_runtime().worker_identity,
                 )
                 content = result["content"]
