@@ -8,6 +8,7 @@ from keystone.platform.model_access.channels import (
     aliyun_bailian,
     deepseek,
     newapi,
+    openai,
     openlux,
     openrouter,
     volcengine,
@@ -18,6 +19,7 @@ from keystone.platform.model_access.schemas.channels import normalize_api_base
 # Console order; legacy channels follow the creatable ones.
 INSTALLED = (
     openrouter.SPEC,
+    openai.SPEC,
     newapi.SPEC,
     yunwu.SPEC,
     aliyun_bailian.SPEC,

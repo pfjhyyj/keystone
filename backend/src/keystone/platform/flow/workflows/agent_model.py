@@ -7,6 +7,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from keystone.core.errors import ServiceError
 from keystone.platform.flow.workflows import context as host
+from keystone.platform.model_access.schemas.invocations import MAX_OUTPUT_TOKENS
 
 
 class FlowModel(Model):
@@ -24,8 +25,10 @@ class FlowModel(Model):
             raise RuntimeError("Agent requests require a durable DBOS step")
         settings = {"max_tokens": 1024, **(model_settings or {})}
         limit = settings["max_tokens"]
-        if type(limit) is not int or not 1 <= limit <= 4096:
-            raise ServiceError(422, "model_invalid_request", "模型输出上限须为 1～4096 token")
+        if type(limit) is not int or not 1 <= limit <= MAX_OUTPUT_TOKENS:
+            raise ServiceError(
+                422, "model_invalid_request", f"模型输出上限须为 1～{MAX_OUTPUT_TOKENS} token"
+            )
         run_id = self.deps["run_id"]
         ctx = host.flow_context(run_id)
         operation = (
@@ -64,6 +67,7 @@ class FlowModel(Model):
             ),
             sdk_request=request,
             reasoning=reasoning,
+            output_tokens=limit,
             worker_identity=host._runtime().worker_identity,
         )
 

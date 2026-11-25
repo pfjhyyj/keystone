@@ -11,10 +11,11 @@ import httpx2
 import pytest
 from support.model_stub import image_bytes
 
+from keystone.core.errors import ServiceError
 from keystone.platform.model_access.adapters.http import HttpClient
 from keystone.platform.model_access.adapters.inference.client import InferenceClient
 from keystone.platform.model_access.adapters.inference.transport import Observation
-from keystone.platform.model_access.channels import CHANNELS
+from keystone.platform.model_access.channels import CHANNELS, channel_adapter
 from keystone.platform.model_access.channels.shared.openai_images import (
     download_host,
     image_size,
@@ -49,6 +50,8 @@ def selected(provider, operation="image.generate"):
         ("yunwu", True, "base64"),
         ("yunwu", True, "url"),
         ("openlux", True, "url"),
+        ("openai", False, "base64"),
+        ("openai", True, "base64"),
     ],
 )
 async def test_image_wire_preserves_registration_receipt_and_nine_reference_files(
@@ -68,6 +71,9 @@ async def test_image_wire_preserves_registration_receipt_and_nine_reference_file
         else ImageGenerateRequest(prompt="draw")
     )
     raw = image_bytes()
+    # Official edits repeat image[]; the relays repeat image. Neither accepts the other.
+    field = "image[]" if provider == "openai" else "image"
+    receipt_header = "x-request-id" if provider == "openai" else "x-api-request-id"
 
     async def register():
         registered.append(True)
@@ -79,7 +85,8 @@ async def test_image_wire_preserves_registration_receipt_and_nine_reference_file
     def respond(request):
         assert registered == [True]
         assert request.headers["authorization"] == "Bearer private-secret"
-        assert request.extensions["timeout"]["read"] == 600
+        # A slow 4K reply must not expire before the protocol's own 1200 s deadline.
+        assert request.extensions["timeout"]["read"] == 1200
         if edit:
             message = BytesParser(policy=default).parsebytes(
                 b"Content-Type: "
@@ -90,11 +97,11 @@ async def test_image_wire_preserves_registration_receipt_and_nine_reference_file
             fields, files = {}, []
             for part in message.iter_parts():
                 name = part.get_param("name", header="content-disposition")
-                if name == "image":
+                if name == field:
                     files.append(part.get_payload(decode=True))
                 else:
                     fields[name] = part.get_payload(decode=True).decode()
-            assert files == [raw] * 9
+            assert files == [raw] * 9 and "image" not in fields and "image[]" not in fields
             assert fields["quality"] == "high" and fields["size"] == "1536x2048"
             assert request.url.path == "/v1/images/edits"
         else:
@@ -108,7 +115,7 @@ async def test_image_wire_preserves_registration_receipt_and_nine_reference_file
             else {"url": "https://cdn.example.test/output.png?signature=private"}
         )
         return httpx2.Response(
-            200, headers={"x-api-request-id": "bill-original"}, json={"created": 1, "data": [item]}
+            200, headers={receipt_header: "bill-original"}, json={"created": 1, "data": [item]}
         )
 
     http = HttpClient()
@@ -129,7 +136,7 @@ async def test_image_wire_preserves_registration_receipt_and_nine_reference_file
     ]
     result = events[0]["content"]
     assert isinstance(result, ImageBatch if kind == "base64" else ImageSources)
-    assert len(calls) == 1 and observation.receipt_ids["x-api-request-id"] == "bill-original"
+    assert len(calls) == 1 and observation.receipt_ids[receipt_header] == "bill-original"
 
 
 def test_exact_sizes_and_image_request_digest_are_stable():
@@ -306,3 +313,96 @@ async def test_download_redirects_preserve_destination_and_never_forward_credent
         == image_bytes()
     )
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    "provider,accepted,rejected",
+    [("openai", "image[]", "image"), ("yunwu", "image", "image[]")],
+)
+def test_reference_field_name_is_fixed_per_site_for_validation_and_pricing(
+    provider, accepted, rejected
+):
+    from keystone.platform.model_access.adapters.inference.pricing import (
+        profile_for,
+        request_context,
+    )
+
+    selection = selected(provider, "image.edit")
+    protocol = CHANNELS[provider].protocol("image.edit", "sync", model="gpt-image-2")
+    target = protocol.request_target(selection)
+    fields = {
+        "model": "gpt-image-2",
+        "prompt": "combine",
+        "n": "1",
+        "size": "1024x1024",
+        "quality": "medium",
+        "output_format": "png",
+    }
+
+    def multipart(name):
+        request = httpx2.Request(
+            "POST",
+            target[0] + target[1],
+            data=fields,
+            files=[(name, (f"reference-{i}", image_bytes(), "image/png")) for i in range(3)],
+        )
+        request.read()
+        return request
+
+    request = multipart(accepted)
+    protocol.validate_request(request, selection, target)
+    context = request_context(request, profile_for(protocol))
+    assert context["reference_images"] == 3 and context["size"] == "1024x1024"
+    with pytest.raises(AdapterError) as error:
+        protocol.validate_request(multipart(rejected), selection, target)
+    assert error.value.code == "model_invalid_request"
+
+
+def test_official_and_relay_image_protocols_share_limits_but_not_models():
+    official = CHANNELS["openai"].protocol("image.generate", "sync", model="gpt-image-2")
+    relay = CHANNELS["yunwu"].protocol("image.generate", "sync", model="gpt-image-2")
+    for protocol in (official, relay):
+        assert protocol.timeout_seconds == 1200
+        assert (protocol.max_images, protocol.max_input_bytes) == (9, 32 * 1024 * 1024)
+    assert "gpt-image-2-c" in relay.models and "gpt-image-2-c" not in official.models
+    assert "gpt-image-2.5-flare-2026-09-08" in official.models
+    assert CHANNELS["openai"].custom_base is False
+    assert channel_adapter("openai", "https://proxy.example.test/v1") is CHANNELS["openai"]
+    with pytest.raises(ServiceError) as error:
+        InferenceClient(None).check_target(
+            "openai", "https://proxy.example.test/v1", "/images/generations"
+        )
+    assert error.value.code == "model_target_not_allowed"
+
+
+def test_largest_protocol_size_png_fits_output_and_response_bounds():
+    """Noise RGB at the largest generated size: far above the old 8 MiB, within 32 MiB."""
+    import random
+    from io import BytesIO
+
+    from PIL import Image
+
+    from keystone.platform.model_access.channels.shared.images import image_batch
+    from keystone.platform.model_access.schemas.images import (
+        MAX_IMAGE_RESPONSE_BYTES,
+        MAX_OUTPUT_IMAGE_BYTES,
+    )
+
+    width, height = map(int, image_size("16:9", "4K").split("x"))
+    assert (width, height) == (3840, 2160)
+    noise = random.Random(0).randbytes(width * height * 3)
+    output = BytesIO()
+    Image.frombytes("RGB", (width, height), noise).save(output, "PNG", compress_level=1)
+    raw = output.getvalue()
+    assert 8 * 1024 * 1024 < len(raw) <= MAX_OUTPUT_IMAGE_BYTES
+    encoded = base64.b64encode(raw).decode()
+    body = json.dumps({"created": 1, "data": [{"b64_json": encoded}] * 2})
+    assert len(body) <= MAX_IMAGE_RESPONSE_BYTES
+    data = ImageGenerateRequest(prompt="draw", n=2, resolution="4K", aspect_ratio="16:9")
+    batch = image_batch(json.loads(body), data, uuid4(), "a" * 64, "image.generate")
+    assert [output.size_bytes for output in batch.manifest.outputs] == [len(raw)] * 2
+    # Base64 beyond the per-output bound is rejected before decoding.
+    oversized = "A" * (((MAX_OUTPUT_IMAGE_BYTES + 2) // 3) * 4 + 4)
+    with pytest.raises(AdapterError) as error:
+        image_batch({"data": [{"b64_json": oversized}]}, data, uuid4(), "a" * 64, "image.generate")
+    assert error.value.code == "model_invalid_output"

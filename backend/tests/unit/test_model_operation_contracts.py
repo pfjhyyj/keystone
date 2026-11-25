@@ -206,7 +206,7 @@ def test_actual_wire_token_allowance_rejects_unbounded_or_multiple_outputs():
     for values in (
         {},
         {"max_tokens": True},
-        {"max_tokens": 4097},
+        {"max_tokens": 16385},
         {"max_tokens": 16, "max_completion_tokens": 16},
         {"max_tokens": 16, "n": 2},
         {"max_tokens": 16, "n": True},
@@ -217,3 +217,4 @@ def test_actual_wire_token_allowance_rejects_unbounded_or_multiple_outputs():
         assert error.value.code == "model_invalid_request"
     for field in ("max_tokens", "max_completion_tokens"):
         assert validate({field: 16}) is None
+        assert validate({field: 16384}) is None

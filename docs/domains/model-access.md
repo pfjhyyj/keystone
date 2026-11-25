@@ -117,6 +117,7 @@ sequenceDiagram
 | 渠道 | 调用与账务范围 |
 |---|---|
 | OpenRouter | 文本、向量、结构化、识图、同步图片；响应/请求 ID 实扣查询，Management Key 余额 |
+| OpenAI | 官方文本、结构化、识图、向量、GPT Image 同步图片；无单次实扣或余额查询，费用仅预估 |
 | NewAPI | 兼容文本、向量、结构化、识图；Bearer 日志查费、账户/Token 额度；图片限已验证站点 |
 | Yunwu/Openlux | 兼容文本、结构化、识图、同步图片；Openlux 另有 Kling 异步图片；原 Token 日志查费，未接账户余额 |
 | 阿里云百炼 | 北京 DashScope 文本、结构化、识图、向量；独立云账务余额/月账单，单次实扣 unavailable |
@@ -232,7 +233,7 @@ FlowModel 经 ModelRuntime.invoke_sdk 接入受控客户端，每个真实请求
 | image.understand | 文本，输入为已授权 File ID |
 | image.generate / image.edit | 受控图片内容与调用 ID；调用方决定保存 |
 
-有效能力取模型声明、已安装协议和 Flow 角色要求的交集。operations 非空、无重复、已知枚举，不按种数另设上限；数据库不重复枚举操作名。delivery 为 sync/async，旧选择缺失按 text.generate/sync 解释。
+有效能力取模型声明、已安装协议和 Flow 角色要求的交集。text.structured 请求附带图片时，模型须同时声明 image.understand，且同一协议支持两种操作；该条件在登记前检查，不满足时拒绝，不降级为纯文本。Flow 受理只核对角色的单一操作，附图条件在调用时检查。operations 非空、无重复、已知枚举，不按种数另设上限；数据库不重复枚举操作名。delivery 为 sync/async，旧选择缺失按 text.generate/sync 解释。
 
 ### 6.2 请求与结果边界
 
@@ -295,4 +296,4 @@ CHANNELS 在代码中显式组合调用和账务协议，随 Keystone 同制品�
 
 ### 发送前容量等待与超时
 
-模型共享容量暂满时，只在调用登记之前按有限策略重新授权并重试准入；默认退避为 3 秒、6 秒，总共至多三次尝试。取得准入后沿用原子登记与唯一物理发送，SDK `max_retries=0` 保持不变；上游 429/5xx 或结果未知不因此自动重发。SDK 与宿主操作使用同一协议超时，开启思考至少 120 秒；准入等待也计入宿主操作期限。
+模型共享容量暂满时，只在调用登记之前按有限策略重新授权并重试准入；默认退避为 3 秒、6 秒，总共至多三次尝试。取得准入后沿用原子登记与唯一物理发送，SDK `max_retries=0` 保持不变；上游 429/5xx 或结果未知不因此自动重发。SDK 与宿主操作使用同一期限，取值见[发送与协调](../reference/model-access.md#发送与协调)；准入等待也计入宿主操作期限。

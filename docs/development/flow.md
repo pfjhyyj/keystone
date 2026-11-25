@@ -69,7 +69,7 @@ from keystone.platform.flow.workflows.context import flow_context
 
 | Context 方法 | operation/delivery | 返回 |
 |---|---|---|
-| invoke_structured | text.structured/sync | StructuredResult，调用 ID＋对象 |
+| invoke_structured | text.structured/sync；附图时模型另须声明 image.understand | StructuredResult，调用 ID＋对象 |
 | invoke_vision | image.understand/sync | TextResult |
 | invoke_embedding | text.embed/sync | EmbeddingResult |
 | invoke_image/edit_image | image.generate/image.edit，sync | ImageResult，调用 ID＋File ID |
@@ -112,7 +112,7 @@ async def generate_images(run_id):
     raise ServiceError(504, "model_task_timeout", "原任务查询已结束")
 ```
 
-平台持久保存原截止/查询次数，重启不重置；下载失败仅取回原结果，不重新生成。同步图片的 600 秒生成、每份 120 秒下载和 Flow 建议至少 900 秒等协议限制见[媒体实现](../reference/model-access.md#媒体与恢复)，业务不保存取回 URL。
+平台持久保存原截止/查询次数，重启不重置；下载失败仅取回原结果，不重新生成。同步图片的生成超时、下载窗口、产物大小和建议 Flow 期限见[媒体实现](../reference/model-access.md#媒体与恢复)，业务不保存取回 URL。
 
 ## 2. 输出验收：结构、业务事实与副作用
 

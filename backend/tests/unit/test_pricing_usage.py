@@ -492,3 +492,30 @@ def test_unverified_write_lifetimes_are_not_priced_as_the_ordinary_write_rate(de
         profile="relay_chat.v3",
     )
     assert result.status == "invalid" and result.reason == "meter_conflict"
+
+
+@pytest.mark.parametrize("model", ["gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"])
+def test_openai_image_reference_prices_split_modalities_in_usd(model):
+    target = {
+        **binding(),
+        "provider": "openai",
+        "api_base": CHANNELS["openai"].api_base,
+        "provider_model": model,
+        "operation": "image.edit",
+    }
+    price = reference(target)
+    assert price.rule.currency == "USD" and price.source.checked_at.startswith("2026-11-25")
+    result, _ = calculate(
+        {
+            "input_tokens": 3000,
+            "output_tokens": 4000,
+            "input_tokens_details": {"text_tokens": 1000, "image_tokens": 2000},
+            "output_tokens_details": {"text_tokens": 0, "image_tokens": 4000},
+        },
+        price.rule,
+        profile=installed("openai", model, "image.edit").id,
+    )
+    # 1000×5 + 2000×8 + 4000×30 per million; cached-input rates are not used for /images.
+    assert result.status == "estimated" and result.currency == "USD"
+    assert Decimal(result.amount) == Decimal("0.141")
+    assert reference({**target, "provider_model": "gpt-image-2-2026-04-21"}) is None

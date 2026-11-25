@@ -375,3 +375,70 @@ def test_compatible_vision_catalog_and_send_match_explicit_model_operations(
     assert "模拟渠道响应" in response.json()["content"]
     assert sent == [base + "/chat/completions"]
     assert len(calls(client)) == 1 and calls(client)[0].operation == "image.understand"
+
+
+def test_structured_images_need_both_declared_operations_and_send_one_strict_request(
+    client, monkeypatch
+):
+    configured = channel(client, "openrouter")
+    entry(client, configured, key="structured-only", operations=["text.structured"])
+    entry(
+        client,
+        configured,
+        key="structured-vision",
+        operations=["text.structured", "image.understand"],
+    )
+    sent = []
+    original = HttpClient.transport
+
+    def transport(self, kind):
+        underlying = original(self, kind)
+
+        async def respond(request):
+            if request.method == "POST":
+                sent.append(json.loads(request.content))
+            return await underlying.handle_async_request(request)
+
+        return httpx2.MockTransport(respond)
+
+    monkeypatch.setattr(HttpClient, "transport", transport)
+    schema = {
+        "type": "object",
+        "properties": {"answer": {"type": "integer"}},
+        "required": ["answer"],
+        "additionalProperties": False,
+    }
+    request = {
+        "model_key": "structured-vision",
+        "images": [source(client), source(client)],
+        "messages": [{"role": "user", "content": "inspect"}],
+        "output": {"name": "Answer", "json_schema": schema},
+        "max_tokens": 8000,
+    }
+    # Declaring text.structured alone does not grant image input; nothing is registered or sent.
+    denied = client.post(
+        "/api/v1/_test/structured-image", json={**request, "model_key": "structured-only"}
+    )
+    assert denied.status_code == 409, denied.text
+    assert denied.json()["code"] == "model_operation_unavailable"
+    too_many = client.post(
+        "/api/v1/_test/structured-image",
+        json={**request, "images": [source(client) for _ in range(5)]},
+    )
+    assert too_many.status_code == 422
+    assert sent == [] and calls(client) == []
+    response = client.post("/api/v1/_test/structured-image", json=request)
+    assert response.status_code == 200, response.text
+    assert response.json()["content"] == {"answer": 7}
+    [body] = sent
+    assert body["max_tokens"] == 8000
+    assert body["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "Answer", "strict": True, "schema": schema},
+    }
+    assert body["provider"]["require_parameters"] is True
+    parts = body["messages"][-1]["content"]
+    assert [part["type"] for part in parts] == ["image_url", "image_url"]
+    assert all(part["image_url"]["url"].startswith("data:image/png;base64,") for part in parts)
+    [call] = calls(client)
+    assert call.operation == "text.structured" and call.status == "succeeded"

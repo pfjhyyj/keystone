@@ -8,6 +8,9 @@ from keystone.core.schemas import Input
 from .operations import Delivery, Operation
 from .types import Key, ModelName
 
+# Per-request output allowance; never reserved or priced before the upstream reports usage.
+MAX_OUTPUT_TOKENS = 16384
+
 
 class Message(Input):
     role: Literal["system", "user", "assistant"]
@@ -27,7 +30,7 @@ class ReasoningOptions(Input):
 
 class TextRequest(Input):
     messages: list[Message] = Field(min_length=1, max_length=32)
-    max_tokens: int = Field(default=1024, ge=1, le=4096)
+    max_tokens: int = Field(default=1024, ge=1, le=MAX_OUTPUT_TOKENS)
     reasoning: ReasoningOptions | None = None
 
     @model_validator(mode="after")
