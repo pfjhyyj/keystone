@@ -49,7 +49,7 @@ API 只加载轻量契约，Worker 按 execution_modules 导入执行。示例�
 }
 ```
 
-模型绑定在 input 外且必须完整。新输入/角色/显式 revision 用新请求键，响应未知原样重试；省略 revision 使用当前唯一安装版本。请求可能产生真实费用。
+模型绑定在 input 外；由管理员在控制台「模型用途」设定默认模型后，业务可省略 `model_bindings` 或只提交需要覆盖的角色，仍未设定的角色返回 `flow_model_unset`。新输入/角色/显式 revision 用新请求键，响应未知原样重试；省略 revision 使用当前唯一安装版本。请求可能产生真实费用。
 
 常用导入：
 

@@ -9,10 +9,12 @@ CATALOG = Catalog(
         "flow:diagnose": "只读排查全部流程及阶段详情",
         "flow:cancel": "取消流程",
         "flow:manage": "扩大流程管理范围",
+        "flow:configure": "设置流程模型用途的默认模型",
     },
     audit_actions={
         "flow.start": {"definition_key"},
         "flow.cancel": set(),
         "flow.complete": {"error_code", "status"},
+        "flow.model_default.save": {"definition_key", "role", "before", "after"},
     },
 )

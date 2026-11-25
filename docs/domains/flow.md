@@ -64,7 +64,21 @@ sequenceDiagram
 | timeout_seconds | 1～86400，默认 3600；整体超时始终存在，恢复沿用现有引擎语义 |
 | queue | 已配置的队列名，默认 keystone-flows |
 
-ModelRole 含 key、label、operation、delivery；key 为 `[a-z][a-z0-9_]{0,63}`，label trim 后 1～128。所有角色必须绑定，不自动默认/回退，多个角色可用同一模型。操作与交付见[模型接入](model-access.md#6-模型操作与产物)。
+ModelRole 含 key、label、operation、delivery；key 为 `[a-z][a-z0-9_]{0,63}`，label trim 后 1～128。受理时每个角色都必须有模型：业务显式提交的绑定优先，未提交的角色使用管理员为该用途设定的默认模型，两者都没有时拒绝受理；平台不按名称、能力或顺序自行挑选模型。多个角色可用同一模型。操作与交付见[模型接入](model-access.md#6-模型操作与产物)。
+
+### 模型用途默认值
+
+管理员按（definition_key、role）为已装配流程的每个模型用途设定一个默认模型，业务发起时可以不提交 model_bindings。默认值是平台配置事实，只影响之后受理的 Run；受理时补齐的绑定与显式绑定一样固定进 Run 快照。
+
+| 事实 | 规则 |
+|---|---|
+| 存储 | `flow_model_defaults` 每个用途一行，保存模型条目 ID、更新时间和更新人；条目 key 创建后不可改，展示时按 ID 取 key |
+| 设定 | 需要 flow:configure 和 model:invoke；保存前按受理时相同的规则校验模型启用、渠道启用并支持该用途的操作与交付；行锁后写入并审计改前、改后 |
+| 可选模型 | 与模型目录相同：启用的条目与渠道、声明并支持该用途的操作和交付 |
+| 模型失效 | 默认值保留，受理按现有规则返回 `model_disabled` 或 `model_provider_unavailable`；控制台标为不可用，由管理员改选 |
+| 删除模型 | 只有从未调用、未被 Run 引用的条目可删除，删除时一并删除指向它的默认值，相关用途回到未设置 |
+| 已移除的流程或角色 | 旧行不再展示也不参与受理，不影响新装配 |
+
 
 队列及其并发沿用现有 QueueDefinition 和 composition 装配。受理时检查队列已配置并将名称固定到 Run 快照，之后按该名称投递；未配置的名称报错。
 
@@ -91,9 +105,9 @@ composition.FLOW_PACKAGES 显式装配；API 只读轻量契约，Worker 导入�
 
 ## 3. 受理与幂等
 
-平台不提供通用发起 HTTP 路由。业务入口在自身事务内调用 start_in_transaction，data 含 definition_key、request_key、input，可选 definition_revision/model_bindings。选择在 input 外，不接受内部 Selection、调用 ID 或限额。
+平台不提供通用发起 HTTP 路由。业务入口在自身事务内调用 start_in_transaction，data 含 definition_key、request_key、input，可选 definition_revision/model_bindings。选择在 input 外，不接受内部 Selection、调用 ID 或限额。model_bindings 可只含部分角色，其余角色按[模型用途默认值](#模型用途默认值)补齐；仍有角色没有模型时返回 409 `flow_model_unset`。
 
-一个事务完成当前授权、查重、规范化、模型绑定、输入引用和审计。查重先于当前定义/模型解析；同键同请求返回原 Run，不同输入、角色、显式版本或原 PAT 冲突。规范输入、完整请求和快照各检查 64 KiB，历史按原摘要先查重。
+一个事务完成当前授权、查重、规范化、模型绑定、输入引用和审计。查重先于当前定义/模型解析；同键同请求返回原 Run，不同输入、显式角色、显式版本或原 PAT 冲突。摘要只覆盖业务提交的请求，默认值变化后以原键原请求重试仍返回原 Run。规范输入、完整请求和快照各检查 64 KiB，历史按原摘要先查重。
 
 锁序：身份/Run → 全部 Entry → 全部 Channel → dispatch → 调用记录 → 按 ID 排序 File，不包含外部 I/O。Worker 从已提交 pending 发现投递。
 
@@ -104,7 +118,7 @@ composition.FLOW_PACKAGES 显式装配；API 只读轻量契约，Worker 导入�
 | statuses_in_transaction(session, run_ids) | 关联 Run 的有界批量状态读取，返回 {run_id: status}，供已授权业务展示 |
 | cancel_in_transaction(session, auth, run_id) | 记录取消意图和审计，重复不重记 |
 
-由上层持 AccessContext 身份事务，入口不提交、不开新事务、不访问执行引擎。完整 Run 读取及取消仍要求 flow:read/cancel 和本人/管理范围。回执丢失以原键原请求重试；业务唯一约束仍负责跨用户幂等。业务页面自行查询输入和模型选项。
+由上层持 AccessContext 身份事务，入口不提交、不开新事务、不访问执行引擎。完整 Run 读取及取消仍要求 flow:read/cancel 和本人/管理范围。回执丢失以原键原请求重试；业务唯一约束仍负责跨用户幂等。需要让用户逐次选择模型的业务页面自行查询输入和模型选项。
 
 人工决定和采用版本由业务 Service 保存，自动阶段分为独立 Flow，批准与后续 Flow 可在同一业务事务受理；不建设通用 HumanTask、人工等待或唤醒 API。
 
@@ -280,6 +294,9 @@ sequenceDiagram
 | GET /flow-runs/{id}/diagnostics | section=all/models/files，默认 50、最高 100，offset 分页 |
 | GET /flow-runs/{id}/step-attempts | flow:diagnose，按 workflow_id 和 step_id 读取最多 50 次已记录的尝试 |
 | GET /flow-runs/{id}/step-attachment | flow:diagnose，按步骤、尝试和附件位置读取显式开放的本次运行文件 |
+| GET /flow-model-defaults | flow:configure，列出已装配流程的模型用途及当前默认模型 key |
+| GET /flow-model-defaults/{definition}/{role}/models | flow:configure＋model:invoke，列出可用于该用途的模型，最多 200 个 |
+| PUT /flow-model-defaults/{definition}/{role} | flow:configure＋model:invoke，设定默认模型，审计 flow.model_default.save |
 
 诊断在短身份事务组合公开 Service，前后复查 Run；模型调用先按独立读取范围过滤，文件仅列当前 Run 的引用，再分页。模型调用不可见时返回 available=false。未请求的板块返回 null，列表通过 truncated/next_offset 分页。
 

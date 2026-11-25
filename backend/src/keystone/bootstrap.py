@@ -159,6 +159,14 @@ class Runtime:
             queues=composition.flow_queues(self.settings),
         )
 
+    def flow_model_defaults(self, identity):
+        from keystone.platform.flow.services.model_defaults import FlowModelDefaults
+        from keystone.platform.model_access.services.entries import ModelEntryService
+
+        return FlowModelDefaults(
+            identity, self.flow_definitions, ModelEntryService(identity, self.models)
+        )
+
     async def readiness(self) -> dict:
         checks = await self.database.readiness(self.heads)
         checks["storage"], sources = await self.storage.readiness()

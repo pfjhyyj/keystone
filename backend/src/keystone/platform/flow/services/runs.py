@@ -17,6 +17,7 @@ from keystone.platform.flow.schemas import view
 from keystone.platform.flow.schemas.files import compile_file_paths, extract_file_ids
 from keystone.platform.flow.schemas.snapshots import read_snapshot
 from keystone.platform.flow.schemas.values import small_json
+from keystone.platform.flow.services.model_defaults import fill_bindings_in_transaction
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access.services.entries import resolve_bindings_in_transaction
 
@@ -115,7 +116,10 @@ class FlowService:
         except ValueError:
             raise ServiceError(422, "flow_invalid_input", "输入文件 ID 无效或数量超限") from None
         bindings = await resolve_bindings_in_transaction(
-            session, auth, roles=definition.model_roles, bindings=data.model_bindings
+            session,
+            auth,
+            roles=definition.model_roles,
+            bindings=await fill_bindings_in_transaction(session, definition, data.model_bindings),
         )
         snapshot = definition.snapshot(
             package_key=self.package_owners.get(definition.key, definition.key),
