@@ -22,6 +22,8 @@ def catalog_entry(row, provider, base=None, *, operation="text.generate", delive
         if adapter and operation.startswith("image.")
         else None
     )
+    options = getattr(image_protocol, "output_options", None)
+    declared = options.parameters if options is not None else {}
     return {
         "key": row.key,
         "name": getattr(row, "name", None) or row.key,
@@ -29,7 +31,10 @@ def catalog_entry(row, provider, base=None, *, operation="text.generate", delive
         "capabilities": ["text", "stream"] if "text.generate" in operations else [],
         **(
             {
-                "image_parameters": list(getattr(image_protocol, "image_parameters", ())),
+                # Optional controls beyond the shared size and format fields.
+                "image_parameters": [
+                    name for name in ("aspect_ratio", "quality") if name in declared
+                ],
                 "max_reference_images": getattr(image_protocol, "max_images", 4),
                 "max_input_bytes": getattr(
                     image_protocol, "max_input_bytes", MAX_INPUT_IMAGE_BYTES
@@ -232,6 +237,58 @@ async def select_model(session, key, *, lock=False, operation="text.generate", d
         operation=operation,
         delivery=delivery,
     )
+
+
+def output_options(protocol, operation):
+    """Declared output options of a protocol for one image operation, else None."""
+    declared = getattr(protocol, "output_options", None)
+    if declared is None or operation not in {"image.generate", "image.edit"}:
+        return None
+    edit = operation == "image.edit"
+    return {
+        **declared.view(),
+        "max_reference_images": getattr(protocol, "max_images", 4) if edit else None,
+        "max_input_bytes": getattr(protocol, "max_input_bytes", MAX_INPUT_IMAGE_BYTES)
+        if edit
+        else None,
+    }
+
+
+async def describe_binding_in_transaction(session, entry_id, *, operation, delivery):
+    """Public identity, availability and output options of one entry for a role's operation.
+
+    Applies the same checks as a start without locking. The caller owns authorization;
+    channel, API base, credentials, provider model and prices never leave this module.
+    """
+    row = (
+        await session.execute(
+            select(ModelEntry, Channel)
+            .join(Channel, ModelEntry.channel_id == Channel.id)
+            .where(ModelEntry.id == entry_id)
+        )
+    ).first()
+    if row is None:
+        return None
+    entry, channel = row
+    adapter = channel_adapter(channel.provider, channel.api_base)
+    protocol = (
+        adapter.protocol(operation, delivery, model=entry.provider_model)
+        if adapter is not None and channel.api_base == adapter.api_base
+        else None
+    )
+    if not entry.is_active or not channel.is_active:
+        reason = "model_disabled"
+    elif protocol is None or operation not in entry.operations:
+        reason = "model_provider_unavailable"
+    else:
+        reason = None
+    return {
+        "key": entry.key,
+        "name": entry.name or entry.key,
+        "available": reason is None,
+        "unavailable_reason": reason,
+        "output_options": output_options(protocol, operation) if reason is None else None,
+    }
 
 
 async def entry_keys_in_transaction(session, identifiers):

@@ -13,13 +13,14 @@ from keystone.platform.files.services.references import (
     describe_inputs_in_transaction,
 )
 from keystone.platform.flow.models import TERMINAL, FlowRun
-from keystone.platform.flow.schemas import view
+from keystone.platform.flow.schemas import outcome, view
 from keystone.platform.flow.schemas.files import compile_file_paths, extract_file_ids
 from keystone.platform.flow.schemas.snapshots import read_snapshot
 from keystone.platform.flow.schemas.values import small_json
 from keystone.platform.flow.services.model_defaults import fill_bindings_in_transaction
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access.services.entries import resolve_bindings_in_transaction
+from keystone.platform.model_access.services.invocations import unresolved_runs_in_transaction
 
 
 def scope(auth, *, diagnose=False):
@@ -27,6 +28,13 @@ def scope(auth, *, diagnose=False):
         return []
     auth.require("flow:read")
     return [] if "flow:manage" in auth.permissions else [FlowRun.actor_id == auth.user.id]
+
+
+def bounded(identifiers):
+    ids = set(identifiers) - {None}
+    if len(ids) > 100:
+        raise ValueError("At most 100 run statuses are supported")
+    return ids
 
 
 class FlowService:
@@ -175,11 +183,30 @@ class FlowService:
 
     async def statuses_in_transaction(self, session, identifiers):
         """Status only for a bounded set of Run IDs authorized by the owning caller."""
-        ids = set(identifiers) - {None}
-        if len(ids) > 100:
-            raise ValueError("At most 100 run statuses are supported")
-        rows = await session.execute(select(FlowRun.id, FlowRun.status).where(FlowRun.id.in_(ids)))
+        rows = await session.execute(
+            select(FlowRun.id, FlowRun.status).where(FlowRun.id.in_(bounded(identifiers)))
+        )
         return dict(rows.all())
+
+    async def outcomes_in_transaction(self, session, identifiers):
+        """Status, public error code and unknown model result for caller-authorized Run IDs.
+
+        The business already authorized its own objects referencing these Runs, so no
+        flow:read is required. Unknown or unrelated IDs are omitted.
+        """
+        rows = (
+            await session.execute(
+                select(FlowRun.id, FlowRun.status, FlowRun.error_code).where(
+                    FlowRun.id.in_(bounded(identifiers))
+                )
+            )
+        ).all()
+        ended = [row.id for row in rows if row.status in {"failed", "cancelled"}]
+        unresolved = await unresolved_runs_in_transaction(session, ended) if ended else set()
+        return {
+            row.id: outcome(row.status, row.error_code, unresolved=row.id in unresolved)
+            for row in rows
+        }
 
     async def get_in_transaction(self, session, auth, identifier, *, diagnose=False):
         """Current Run view under the existing read/actor scope, without another transaction."""

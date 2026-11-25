@@ -237,7 +237,7 @@ FlowModel 经 ModelRuntime.invoke_sdk 接入受控客户端，每个真实请求
 | image.understand | 文本，输入为已授权 File ID |
 | image.generate / image.edit | 受控图片内容与调用 ID；调用方决定保存 |
 
-有效能力取模型声明、已安装协议和 Flow 角色要求的交集。text.structured 请求附带图片时，模型须同时声明 image.understand，且同一协议支持两种操作；该条件在登记前检查，不满足时拒绝，不降级为纯文本。Flow 受理只核对角色的单一操作，附图条件在调用时检查。operations 非空、无重复、已知枚举，不按种数另设上限；数据库不重复枚举操作名。delivery 为 sync/async，旧选择缺失按 text.generate/sync 解释。
+有效能力取模型声明、已安装协议和 Flow 角色要求的交集。图片输出可选值由协议声明，见[图片输出选项](../reference/model-access.md#图片输出选项)；业务按 Flow 用途读取当前模型的选项见 [Flow](flow.md#当前模型与输出选项)。text.structured 请求附带图片时，模型须同时声明 image.understand，且同一协议支持两种操作；该条件在登记前检查，不满足时拒绝，不降级为纯文本。Flow 受理只核对角色的单一操作，附图条件在调用时检查。operations 非空、无重复、已知枚举，不按种数另设上限；数据库不重复枚举操作名。delivery 为 sync/async，旧选择缺失按 text.generate/sync 解释。
 
 ### 6.2 请求与结果边界
 

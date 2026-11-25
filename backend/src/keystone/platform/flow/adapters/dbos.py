@@ -9,6 +9,19 @@ from keystone.core.errors import ServiceError
 from keystone.platform.flow.schemas.errors import ERRORS as ERRORS
 
 QUEUE = "keystone-flows"
+CLOCK_SKEW_MS = 60_000
+
+
+def timed_out(row):
+    """The engine cancels an expired execution at or after its deadline.
+
+    The deadline comes from the Worker clock and completion from the database clock,
+    so a bounded skew is allowed.
+    """
+    if row.status != "CANCELLED":
+        return False
+    deadline, completed = row.workflow_deadline_epoch_ms, row.completed_at
+    return deadline is not None and completed is not None and completed >= deadline - CLOCK_SKEW_MS
 
 
 def workflow_id(identifier):
@@ -48,6 +61,7 @@ class Engine:
         code = error.code if isinstance(error, ServiceError) else str(error)
         return {
             "status": row.status,
+            "timed_out": timed_out(row),
             "result": row.output,
             "error_code": code if code in ERRORS else "flow_execution_failed",
             "version": row.app_version,

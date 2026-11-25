@@ -6,13 +6,19 @@ from urllib.parse import urlsplit
 from keystone.platform.model_access.channels.shared.limits import retry_after
 from keystone.platform.model_access.channels.shared.metering import make_profile
 from keystone.platform.model_access.schemas.errors import AdapterError, QueryLater
-from keystone.platform.model_access.schemas.images import ImageTaskReceipt
+from keystone.platform.model_access.schemas.images import (
+    ImageOutputOption,
+    ImageOutputOptions,
+    ImageTaskReceipt,
+)
 
 ORIGIN = "https://api.openlux.ai"
 BASE = ORIGIN + "/v1"
 SUBMIT = "/kling/v1/images/generations"
 QUERY = SUBMIT + "/{id}"
 MODELS = {"kling-v1", "kling-v1-5", "kling-v2", "kling-v2-1"}
+# ImageTaskRequest carries resolution only; the task protocol has no format or ratio field.
+OUTPUT_OPTIONS = ImageOutputOptions({"resolution": ImageOutputOption(("1K", "2K"), "1K")})
 PROFILE = make_profile(
     "kling_images.v1",
     {"none": []},
@@ -159,6 +165,7 @@ class KlingImages:
     # Empty unless channel composition explicitly grants saved provider/base identities.
     allowed_targets: frozenset[tuple[str, str]] = frozenset()
     pricing_meter = "kling_images.v1"
+    output_options = OUTPUT_OPTIONS
     operations = frozenset({"image.generate"})
     delivery = "async"
     models = frozenset(MODELS)

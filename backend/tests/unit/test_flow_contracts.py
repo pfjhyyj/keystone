@@ -208,6 +208,39 @@ async def test_flow_projects_only_declared_execution_error_codes():
     ] == "flow_execution_failed"
 
 
+@pytest.mark.parametrize(
+    "status,deadline,completed,expected",
+    [
+        ("CANCELLED", 10_000, 10_500, True),
+        # Worker and database clocks may differ slightly around the deadline.
+        ("CANCELLED", 10_000, 9_000, True),
+        ("CANCELLED", 100_000, 10_000, False),
+        ("CANCELLED", None, 10_000, False),
+        ("ERROR", 10_000, 10_500, False),
+    ],
+)
+async def test_engine_reports_deadline_cancellation_as_timeout(
+    status, deadline, completed, expected
+):
+    engine = Engine.__new__(Engine)
+    engine.client = SimpleNamespace(
+        list_workflows_async=AsyncMock(
+            return_value=[
+                SimpleNamespace(
+                    status=status,
+                    output=None,
+                    error=None,
+                    app_version="test",
+                    name="document_review",
+                    workflow_deadline_epoch_ms=deadline,
+                    completed_at=completed,
+                )
+            ]
+        )
+    )
+    assert (await engine.state(uuid4()))["timed_out"] is expected
+
+
 async def test_execution_version_is_queried_again_at_each_authorization(monkeypatch):
     current = "original"
     run = SimpleNamespace(

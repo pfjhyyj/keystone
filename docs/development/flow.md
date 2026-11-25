@@ -15,6 +15,24 @@ guard 签名 `(session, auth, run_id, definition_key, inputs)`，在平台核原
 
 bind 内再导入执行模块，用 Runtime 和 ExecutionIdentity(runtime, run_id) 构造原身份 Service；不在导入时建连接或第二 Runtime。guard/句柄不进快照。实例见 test_business_flow_hooks.py，无需修改平台授权或 Worker 主入口。
 
+业务列表展示 Run 结果和按当前模型渲染输出设置的写法（契约见[结束原因](../domains/flow.md#结束原因)与[当前模型与输出选项](../domains/flow.md#当前模型与输出选项)）：
+
+```python
+async with identity.access("example.job:read") as (session, auth):
+    jobs = await load_jobs(session, auth)  # 业务先授权自己的对象
+    outcomes = await runtime.flow_service(identity).outcomes_in_transaction(
+        session, [job.run_id for job in jobs]
+    )
+    for job in jobs:
+        outcome = outcomes.get(job.run_id)
+        job.can_retry = outcome is not None and outcome.status in {"failed", "cancelled"}
+        job.needs_review = outcome is not None and outcome.model_result_unknown
+        job.can_retry &= not job.needs_review
+
+current = await runtime.flow_model_defaults(identity).current("example.render", "render")
+options = current["output_options"]  # None：未设置、不可用或该操作没有输出选项
+```
+
 ## 1. 接入与目录
 
 可复用示例与测试共用一份代码：

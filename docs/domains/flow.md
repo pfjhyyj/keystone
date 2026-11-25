@@ -43,6 +43,7 @@ sequenceDiagram
 | pending | 执行开始 | running |
 | pending/running | 执行成功，结果和输出引用提交 | succeeded |
 | pending/running | 确认执行失败 | failed |
+| pending/running | 整体超时，引擎按期限停止且未登记取消意图 | failed（flow_timeout） |
 | pending/running | 确认停止并完成 I/O 收尾 | cancelled |
 
 不变量：受理后输入、契约和模型绑定固定；执行使用原身份/PAT；结果和引用原子保存，终态不被旧观察覆盖；已发生的调用、费用和文件按事实保留。
@@ -82,6 +83,21 @@ ModelRole 含 key、label、operation、delivery；key 为 `[a-z][a-z0-9_]{0,63}
 
 队列及其并发沿用现有 QueueDefinition 和 composition 装配。受理时检查队列已配置并将名称固定到 Run 快照，之后按该名称投递；未配置的名称报错。
 
+### 当前模型与输出选项
+
+业务页面按将要使用的模型展示输出设置（比例、分辨率、质量、格式、参考图数量），而不是写死。FlowModelDefaults.current(definition_key, role, definition_revision=None) 及事务内的 current_in_transaction(session, auth, ...) 返回该用途的当前默认模型和其协议声明的输出选项；HTTP 为 `GET /flow-model-defaults/{definition}/{role}/current`。
+
+| 字段 | 内容 |
+|---|---|
+| definition_key/definition_revision/role/operation/delivery | 当前装配的定义与用途；提交的 definition_revision 与之不同时返回 409 flow_revision_conflict |
+| status/error_code | unset/flow_model_unset；available/null；unavailable/model_disabled 或 model_provider_unavailable，即省略该角色绑定的受理当前会得到的结果 |
+| model | 默认模型的 key 与显示名，未设置时为 null |
+| output_options | 仅 available 且用途为 image.generate/image.edit 时给出，否则为 null |
+
+output_options 来自绑定协议的声明，见[图片输出选项](../reference/model-access.md#图片输出选项)：parameters 以请求字段名为键，给出 choices 与省略时实际使用的 default，协议不接受的字段不出现；另有 max_outputs，image.edit 还有 max_reference_images、max_input_bytes。文本等其他协议不声明输出选项，接口不推测。
+
+授权与省略该角色的受理相同：flow:start、定义的 required_permissions 及 model:invoke；不要求 flow:configure，也不因 flow:configure 放行。读取不加锁、不审计，结果只是读取时的观察，受理仍按当时事实校验；业务显式绑定其他模型时自行使用模型目录。不返回渠道、上游模型名、api_base、凭据或价格。
+
 ### FlowPackage
 
 包含 key、host_api_version=1、definitions、execution_modules，可选 execution_packages/required_resources。PackageResource 指定顶层包和相对资源，拒绝绝对路径、越界、符号链接、缺失资源及不兼容宿主。
@@ -116,9 +132,30 @@ composition.FLOW_PACKAGES 显式装配；API 只读轻量契约，Worker 导入�
 | start_in_transaction(session, auth, data) | 受理及幂等回执 |
 | get_in_transaction(session, auth, run_id) | 当前授权下读取，刷新当前行，不使用旧缓存 |
 | statuses_in_transaction(session, run_ids) | 关联 Run 的有界批量状态读取，返回 {run_id: status}，供已授权业务展示 |
+| outcomes_in_transaction(session, run_ids) | 同上，返回 {run_id: RunOutcome}，见[结束原因](#结束原因) |
 | cancel_in_transaction(session, auth, run_id) | 记录取消意图和审计，重复不重记 |
 
 由上层持 AccessContext 身份事务，入口不提交、不开新事务、不访问执行引擎。完整 Run 读取及取消仍要求 flow:read/cancel 和本人/管理范围。回执丢失以原键原请求重试；业务唯一约束仍负责跨用户幂等。需要让用户逐次选择模型的业务页面自行查询输入和模型选项。
+
+### 结束原因
+
+业务在自己的列表里展示 Run 结果时，需要区分可直接重新发起的已知失败、模型请求可能已发出并计费但结果不可得的失败，以及取消和超时。outcomes_in_transaction 在调用方事务内按 Run ID 批量返回 RunOutcome，每批最多 100 个，不存在或无关的 ID 不出现在结果中。
+
+| 字段 | 含义 |
+|---|---|
+| status | 与 FlowRun 相同 |
+| error_code | failed/cancelled 时的公开错误码，取自 `schemas.errors.ERRORS` 白名单，其他值投影为 flow_execution_failed；不含消息、凭据或供应商原文 |
+| model_result_unknown | 仅 failed/cancelled 可能为 true：本 Run 有模型调用仍为 running/unknown，或因 model_result_unavailable 失败（已登记的调用没有可恢复结果） |
+
+| 业务读到的结果 | 含义与建议处理 |
+|---|---|
+| succeeded | 结果已提交，业务按自身记录展示 |
+| failed，model_result_unknown=false | 已知失败；用户可用新请求键重新发起 |
+| failed/cancelled，model_result_unknown=true | 结果未知；新 Run 会再次发送并可能再次计费，先展示为待核实，由用户确认后再发起 |
+| failed，error_code=flow_timeout | 整体超时，与流程内部超时同码 |
+| cancelled | 取消意图已生效 |
+
+该入口与 statuses_in_transaction 一样不要求 flow:read：调用方已对引用这些 Run 的业务对象授权，只取得状态级事实，完整 Run 仍经 get_in_transaction 授权读取。model_result_unknown 只汇总调用状态，不暴露调用 ID、费用或回执；调用明细仍按模型记录权限读取。
 
 人工决定和采用版本由业务 Service 保存，自动阶段分为独立 Flow，批准与后续 Flow 可在同一业务事务受理；不建设通用 HumanTask、人工等待或唤醒 API。
 
@@ -297,6 +334,7 @@ sequenceDiagram
 | GET /flow-model-defaults | flow:configure，列出已装配流程的模型用途及当前默认模型 key |
 | GET /flow-model-defaults/{definition}/{role}/models | flow:configure＋model:invoke，列出可用于该用途的模型，最多 200 个 |
 | PUT /flow-model-defaults/{definition}/{role} | flow:configure＋model:invoke，设定默认模型，审计 flow.model_default.save |
+| GET /flow-model-defaults/{definition}/{role}/current | 受理同等权限，当前默认模型与输出选项，见[当前模型与输出选项](#当前模型与输出选项) |
 
 诊断在短身份事务组合公开 Service，前后复查 Run；模型调用先按独立读取范围过滤，文件仅列当前 Run 的引用，再分页。模型调用不可见时返回 available=false。未请求的板块返回 null，列表通过 truncated/next_offset 分页。
 

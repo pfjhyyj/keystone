@@ -12,10 +12,24 @@ from keystone.platform.model_access.schemas.errors import AdapterError
 from keystone.platform.model_access.schemas.images import (
     MAX_IMAGE_BYTES,
     MAX_RELAY_INPUT_BYTES,
+    ImageOutputOption,
+    ImageOutputOptions,
     ImageSources,
 )
 
 RATIOS = {"1:1": (1, 1), "16:9": (16, 9), "9:16": (9, 16), "4:3": (4, 3), "3:4": (3, 4)}
+RESOLUTIONS = ("1K", "2K", "4K")
+QUALITIES = ("low", "medium", "high")
+FORMATS = ("png", "jpeg", "webp")
+DEFAULT_RATIO, DEFAULT_QUALITY = "1:1", "medium"
+OUTPUT_OPTIONS = ImageOutputOptions(
+    {
+        "aspect_ratio": ImageOutputOption(tuple(RATIOS), DEFAULT_RATIO),
+        "resolution": ImageOutputOption(RESOLUTIONS, "1K"),
+        "quality": ImageOutputOption(QUALITIES, DEFAULT_QUALITY),
+        "output_format": ImageOutputOption(FORMATS, "png"),
+    }
+)
 MODELS = frozenset(
     {"gpt-image-2", "gpt-image-2-c", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"}
 )
@@ -23,7 +37,7 @@ MODELS = frozenset(
 
 def image_size(ratio, resolution):
     """Exact ratios, multiples of 16, within the GPT Image 2 pixel/edge envelope."""
-    w, h = RATIOS[ratio or "1:1"]
+    w, h = RATIOS[ratio or DEFAULT_RATIO]
     preferred = {"1K": 1024, "2K": 2048, "4K": 3840}[resolution]
     quantum = math.lcm(16 // math.gcd(w, 16), 16 // math.gcd(h, 16))
     candidates = [
@@ -129,9 +143,9 @@ def validate_request(request, selected, target, *, image_field="image"):
             or not 1 <= len(payload["prompt"]) <= 16000
             or type(payload["n"]) is not int
             or not 1 <= payload["n"] <= 2
-            or payload["quality"] not in {"low", "medium", "high"}
-            or payload["output_format"] not in {"png", "jpeg", "webp"}
-            or payload["size"] not in {image_size(r, t) for r in RATIOS for t in ("1K", "2K", "4K")}
+            or payload["quality"] not in QUALITIES
+            or payload["output_format"] not in FORMATS
+            or payload["size"] not in {image_size(r, t) for r in RATIOS for t in RESOLUTIONS}
         ):
             raise ValueError()
     except (KeyError, TypeError, ValueError, AttributeError, UnicodeError):
@@ -144,7 +158,7 @@ class OpenAIImages:
     models: frozenset = MODELS
     image_field: str = "image"
     pricing_meter = "openai_images.v2"
-    image_parameters = ("aspect_ratio", "quality")
+    output_options = OUTPUT_OPTIONS
     operations = frozenset({"image.generate", "image.edit"})
     delivery = "sync"
     paths = {"/images/generations": "POST", "/images/edits": "POST"}
@@ -167,7 +181,7 @@ class OpenAIImages:
             prompt=data.prompt,
             n=data.n,
             size=image_size(data.aspect_ratio, data.resolution),
-            quality=data.quality or "medium",
+            quality=data.quality or DEFAULT_QUALITY,
             output_format=data.output_format,
         )
         files = None
