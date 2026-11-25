@@ -288,6 +288,51 @@ main()
     assert "data:image" not in str(done)
 
 
+def test_flow_structured_request_sends_run_images(client, tmp_path, monkeypatch):
+    from io import BytesIO
+
+    from PIL import Image
+    from support.operation_flow import PACKAGE, structured_vision_definition
+    from test_files_dictionary import upload
+    from test_flow import wait_run, worker
+
+    install_package(client, monkeypatch, PACKAGE)
+    entry(client, channel(client), operations=["text.structured", "image.understand"])
+    image = BytesIO()
+    Image.new("RGB", (2, 2), "red").save(image, format="PNG")
+    uploaded = upload(
+        client, image.getvalue(), key="input.png", name="input.png", content_type="image/png"
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    response = client.post(
+        "/api/v1/_test/review",
+        json={
+            "definition_key": structured_vision_definition.key,
+            "request_key": "structured-vision",
+            "input": {"prompt": "Answer", "source_file_id": uploaded.json()["id"]},
+            "model_bindings": {"analyze": "chat"},
+        },
+    )
+    assert response.status_code == 202, response.text
+    code = """from keystone import composition
+from support.operation_flow import PACKAGE
+composition.FLOW_PACKAGES = (PACKAGE,)
+composition.execution_version.cache_clear()
+from keystone.entrypoints.worker import main
+main()
+"""
+    with worker(client, tmp_path, code=code) as (process, log):
+        done = wait_run(client, response.json()["id"], process, log)
+        assert done["status"] == "succeeded", (done, log.read_text())
+    assert done["result"]["answer"] == 7
+    calls = query(client, lambda s: s.scalars(select(ModelInvocation))).all()
+    assert len(calls) == 1 and calls[0].status == "succeeded"
+    assert calls[0].operation == "text.structured"
+    assert calls[0].flow_context["model_role"] == "analyze"
+    assert calls[0].flow_context["definition_key"] == structured_vision_definition.key
+    assert "data:image" not in str(done)
+
+
 def test_native_structured_agent_uses_its_declared_operation(client, monkeypatch, tmp_path):
     from support.operation_flow import PACKAGE, agent_definition
     from test_flow import wait_run, worker
