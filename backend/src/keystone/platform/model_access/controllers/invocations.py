@@ -11,13 +11,17 @@ from keystone.platform.model_access.schemas.statistics import (
     StatisticsQuery,
 )
 from keystone.platform.model_access.services.invocations import InvocationService
-from keystone.platform.model_access.services.statistics import StatisticsService
 
 router = APIRouter(prefix="/api/v1", tags=["models"])
 
 
 def _service(request: Request) -> InvocationService:
     return InvocationService(access_context(request), request.app.state.runtime.models)
+
+
+def _statistics(request: Request):
+    # Assembled with Flow's public definition names for the flow_definition dimension.
+    return request.app.state.runtime.model_statistics(access_context(request))
 
 
 @router.get("/model-invocations/summary")
@@ -27,12 +31,12 @@ async def summary(request: Request, query: Annotated[InvocationFilters, Query()]
 
 @router.get("/model-invocations/statistics")
 async def statistics(request: Request, query: Annotated[StatisticsQuery, Query()]):
-    return await StatisticsService(access_context(request)).statistics(query)
+    return await _statistics(request).statistics(query)
 
 
 @router.get("/model-invocations/options")
 async def statistics_options(request: Request, query: Annotated[StatisticsOptionsQuery, Query()]):
-    return await StatisticsService(access_context(request)).options(query)
+    return await _statistics(request).options(query)
 
 
 @router.get("/model-invocations")

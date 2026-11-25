@@ -4,21 +4,13 @@ import {
   dimensions,
   duration,
   percent,
-  sourceLabels,
-  feeSourceLabels,
   type Dimension,
   type UsageGroup,
 } from '../../../api/modelUsage'
-import {
-  callStates,
-  costCheckStates,
-  operationLabels,
-  type ModelOperation,
-} from '../../../api/models'
+import { groupLabel } from '../usageSeries'
 import AppSelect from '../../../components/AppSelect.vue'
 import MoneyAmount from '../../../components/MoneyAmount.vue'
 import ListPager from '../../../components/ListPager.vue'
-import { estimateStates } from '../../../api/pricing'
 const props = defineProps<{
   rows: UsageGroup[]
   dimension: Dimension
@@ -54,21 +46,7 @@ const ordering = computed({
       unit: value === 'calls' ? props.unit : value,
     }),
 })
-function label(row: UsageGroup) {
-  if (row.key === null) return row.label
-  if (props.dimension === 'estimate_status') return estimateStates[row.key] ?? row.label
-  return props.dimension === 'source'
-    ? (sourceLabels[row.key] ?? row.label)
-    : props.dimension === 'cost_source'
-      ? (feeSourceLabels[row.key] ?? row.label)
-      : props.dimension === 'operation'
-        ? (operationLabels[row.key as ModelOperation] ?? row.label)
-        : props.dimension === 'status'
-          ? (callStates[row.key] ?? row.label)
-          : props.dimension === 'cost_status'
-            ? (costCheckStates[row.key] ?? row.label)
-            : row.label
-}
+const label = (row: UsageGroup) => groupLabel(props.dimension, row)
 </script>
 <template>
   <section aria-label="维度分析" class="usage-panel">

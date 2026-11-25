@@ -69,6 +69,8 @@ class ResolvedModelBinding(Input):
 
 class InvocationContext(Input):
     flow_run_id: UUID
+    # The Run's fixed definition key; calls registered before it was recorded have none.
+    definition_key: str | None = Field(None, min_length=1, max_length=100)
     node_key: str = Field(min_length=1, max_length=100)
     model_role: str | None = Field(None, pattern=r"^[a-z][a-z0-9_]{0,63}$")
     agent_key: str | None = Field(None, min_length=1, max_length=100)

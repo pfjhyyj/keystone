@@ -66,6 +66,7 @@ def facts(client):
                     "confirmed",
                     {
                         "flow_run_id": str(run),
+                        "definition_key": "document.review",
                         "node_key": "summarize",
                         "model_role": "writer",
                         "agent_key": "planner",
@@ -174,6 +175,7 @@ def test_exact_money_unknown_coverage_timezone_and_paginated_groups(client, fact
         "user",
         "source",
         "flow_run",
+        "flow_definition",
         "node",
         "model_role",
         "agent",
@@ -203,7 +205,7 @@ def test_permission_filter_applies_to_all_aggregates_and_selector_names(client, 
     assert own["summary"]["calls"] == 3 and [cost["unit"] for cost in own["summary"]["costs"]] == [
         "credits"
     ]
-    for dimension in ["user", "channel", "model", "flow_run", "node", "agent"]:
+    for dimension in ["user", "channel", "model", "flow_run", "flow_definition", "node", "agent"]:
         response = client.get(
             "/api/v1/model-invocations/options",
             params={**BOUNDS, "dimension": dimension},
@@ -214,6 +216,7 @@ def test_permission_filter_applies_to_all_aggregates_and_selector_names(client, 
             "analyst" not in response.text
             and facts["other"] not in response.text
             and facts["run"] not in response.text
+            and "document.review" not in response.text
         )
     assert statistics(client, {"user_id": facts["other"]}, headers)["summary"]["calls"] == 0
     forbidden = bearer(token(client, ["model:manage"])["token"])
@@ -296,3 +299,94 @@ def test_cost_ranking_keeps_decimal_precision_beyond_default_context(client, fac
     result = statistics(client, {"order_by": "cost", "sort_unit": "credits"})
     assert result["groups"][0]["key"] == expected
     assert result["summary"]["costs"][0]["amount"] == "20000000000000000000.000000000000000003"
+
+
+def test_flow_definition_series_label_scope_and_shanghai_days(client, facts, monkeypatch):
+    from document_review.contracts import PACKAGE
+    from support.flow_packages import install_package
+
+    install_package(client, monkeypatch, PACKAGE, engine=False)
+    admin = UUID(client.get("/api/v1/auth/me").json()["user"]["id"])
+
+    async def retired(session):
+        # A definition no longer assembled keeps its key; the two calls straddle Shanghai midnight.
+        for timestamp, amount in (("2026-10-19T15:59:59Z", "2"), ("2026-10-19T16:00:00Z", "3")):
+            created = datetime.fromisoformat(timestamp)
+            session.add(
+                ModelInvocation(
+                    id=uuid4(),
+                    user_id=admin,
+                    channel_id=UUID(facts["channels"][0]["id"]),
+                    model_entry_id=UUID(facts["entries"][0]["id"]),
+                    provider_model="upstream-0",
+                    operation="text.generate",
+                    status="succeeded",
+                    cost_amount=Decimal(amount),
+                    cost_unit="credits",
+                    cost_source="query",
+                    cost_check_status="confirmed",
+                    created_at=created,
+                    finished_at=created,
+                    flow_context={
+                        "flow_run_id": str(uuid4()),
+                        "definition_key": "retired.flow",
+                        "node_key": "draft",
+                    },
+                )
+            )
+
+    query(client, retired)
+    result = statistics(client, {"group_by": "flow_definition", "series": "true", "limit": 20})
+    groups = {row["key"]: row for row in result["groups"]}
+    assert set(groups) == {None, "document.review", "retired.flow"}
+    # Calls registered without the field, Flow or not, stay unassociated rather than guessed.
+    assert groups[None]["label"] == "未关联" and groups[None]["calls"] == 4
+    assert groups[None]["filters"] == {"missing": "flow_definition"}
+    review = groups["document.review"]
+    assert review["label"] == "文本文件审查" and review["calls"] == 1
+    assert [point["label"][:10] for point in review["trend"]] == ["2026-10-20"]
+    assert review["trend"][0]["costs"][0]["amount"] == "0.123000000000000000"
+    old = groups["retired.flow"]
+    assert old["label"] == "retired.flow"
+    assert [(p["label"], p["costs"][0]["amount"]) for p in old["trend"]] == [
+        ("2026-10-19T00:00:00+08:00", "2.000000000000000000"),
+        ("2026-10-20T00:00:00+08:00", "3.000000000000000000"),
+    ]
+    for row in result["groups"]:
+        assert sum(point["calls"] for point in row["trend"]) == row["calls"]
+        for point in row["trend"]:
+            # An unknown cost stays unknown inside a group's day, never a zero amount.
+            assert all(cost["known_calls"] for cost in point["costs"])
+            calls = client.get(
+                "/api/v1/model-invocations", params={**BOUNDS, **point["filters"]}
+            ).json()
+            assert len(calls) == point["calls"]
+            assert {(c["flow_context"] or {}).get("definition_key") for c in calls} == {row["key"]}
+    unassociated = [p for p in groups[None]["trend"] if p["unknown_cost_calls"]]
+    assert unassociated and all(cost["unit"] != "USD" for p in unassociated for cost in p["costs"])
+    assert "trend" not in statistics(client, {"group_by": "flow_definition"})["groups"][0]
+    month = statistics(
+        client, {"group_by": "flow_definition", "series": "true", "limit": 20, "bucket": "month"}
+    )
+    assert [p["label"] for p in next(r for r in month["groups"] if r["key"])["trend"]] == [
+        "2026-10-01T00:00:00+08:00"
+    ]
+
+    # Read scope bounds groups, names and searchable options alike.
+    own = bearer(token(client, ["model_invocation:read"])["token"])
+    mine = statistics(client, {"group_by": "flow_definition", "series": "true", "limit": 20}, own)
+    assert {row["key"] for row in mine["groups"]} == {None, "retired.flow"}
+    assert "文本文件审查" not in str(mine)
+    for headers, expected in ((own, []), (None, [("document.review", "文本文件审查")])):
+        response = client.get(
+            "/api/v1/model-invocations/options",
+            params={**BOUNDS, "dimension": "flow_definition", "q": "文本"},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert [(row["id"], row["label"]) for row in response.json()["items"]] == expected
+    response = client.get(
+        "/api/v1/model-invocations/statistics",
+        params={**BOUNDS, "group_by": "flow_definition", "series": "true", "limit": 21},
+    )
+    assert response.status_code == 422

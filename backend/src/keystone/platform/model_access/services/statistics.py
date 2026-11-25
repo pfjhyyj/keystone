@@ -27,6 +27,7 @@ DIMENSIONS = {
     "user": (cast(Call.user_id, String), "user_id"),
     "source": (invocation_source(), "source"),
     "flow_run": (Call.flow_context["flow_run_id"].astext, "flow_run_id"),
+    "flow_definition": (Call.flow_context["definition_key"].astext, "definition_key"),
     "node": (Call.flow_context["node_key"].astext, "node_key"),
     "model_role": (Call.flow_context["model_role"].astext, "model_role"),
     "agent": (Call.flow_context["agent_key"].astext, "agent_key"),
@@ -124,11 +125,29 @@ def group_order(row, query):
     return (False, -row["calls"], row["key"] or "")
 
 
+def bucket_end(start, bucket, zone):
+    local = start.astimezone(zone)
+    if bucket == "month":
+        return local.replace(year=local.year + (local.month == 12), month=local.month % 12 + 1)
+    if bucket == "hour":
+        return start.astimezone(UTC) + timedelta(hours=1)
+    return local + timedelta(days=1)
+
+
 class StatisticsService:
-    def __init__(self, identity):
+    def __init__(self, identity, *, definition_names=None):
+        # definition_names() -> {key: name} of the assembled Flow definitions, supplied by
+        # Flow's public service; None leaves definition keys unlabelled.
         self.identity = identity
+        self.definition_names = definition_names
+
+    def flow_definition_names(self):
+        return dict(self.definition_names()) if self.definition_names is not None else {}
 
     async def labels(self, session, dimension, keys):
+        if dimension == "flow_definition":
+            names = self.flow_definition_names()
+            return {key: names[key] for key in keys if key in names}
         ids = [UUID(key) for key in keys if key is not None]
         if dimension == "user":
             return {
@@ -223,6 +242,12 @@ class StatisticsService:
                         tuple_(f.unit),
                         tuple_(f.key, f.unit),
                         tuple_(f.bucket, f.unit),
+                        # Masks 1 and 0: per-group buckets, only when series are requested.
+                        *(
+                            (tuple_(f.key, f.bucket), tuple_(f.key, f.bucket, f.unit))
+                            if query.series
+                            else ()
+                        ),
                     )
                 )
                 .cte("aggregated")
@@ -264,7 +289,7 @@ class StatisticsService:
                             or_(
                                 a.mask.in_((7, 6, 5, 4)),
                                 and_(
-                                    a.mask.in_((3, 2)),
+                                    a.mask.in_((3, 2, 1, 0)),
                                     exists(
                                         select(1)
                                         .select_from(page)
@@ -279,49 +304,63 @@ class StatisticsService:
                 .all()
             )
             summary = next(row for row in rows if row["mask"] == 7)
-            groups, trend, totals = {}, {}, []
+            estimated = query.cost_basis == "estimated"
+            zone = ZoneInfo(STATISTICS_TIMEZONE)
+
+            def point(row, filters=None):
+                start = row["bucket"]
+                end = bucket_end(start, query.bucket, zone)
+                return {
+                    "start": start.isoformat(),
+                    "label": start.astimezone(zone).isoformat(),
+                    **metrics(row, estimated=estimated),
+                    "costs": [],
+                    "filters": {
+                        **(filters or {}),
+                        "since": max(start, since).isoformat(),
+                        "until": min(end - timedelta(microseconds=1), until).isoformat(),
+                    },
+                }
+
+            groups, trend, series, totals = {}, {}, {}, []
             for row in rows:
                 if row["mask"] == 3:
                     groups[row["key"]] = {
                         "key": row["key"],
-                        **metrics(row, estimated=query.cost_basis == "estimated"),
+                        **metrics(row, estimated=estimated),
                         "costs": [],
                         "filters": drill_filter(query.group_by, row["key"]),
                     }
-                if row["mask"] == 5:
-                    trend[row["bucket"]] = {
-                        "start": row["bucket"].isoformat(),
-                        **metrics(row, estimated=query.cost_basis == "estimated"),
-                        "costs": [],
-                    }
-                if row["mask"] == 6 and (value := cost(row)) is not None:
+                elif row["mask"] == 5:
+                    trend[row["bucket"]] = point(row)
+                elif row["mask"] == 1:
+                    series[row["key"], row["bucket"]] = point(
+                        row, drill_filter(query.group_by, row["key"])
+                    )
+                elif row["mask"] == 6 and (value := cost(row)) is not None:
                     totals.append(value)
             for row in rows:
-                value = cost(row) if row["mask"] in (2, 4) else None
-                if value is not None:
-                    (groups[row["key"]] if row["mask"] == 2 else trend[row["bucket"]])[
-                        "costs"
-                    ].append(value)
+                value = cost(row) if row["mask"] in (2, 4, 0) else None
+                if value is None:
+                    continue
+                if row["mask"] == 2:
+                    groups[row["key"]]["costs"].append(value)
+                elif row["mask"] == 4:
+                    trend[row["bucket"]]["costs"].append(value)
+                else:
+                    series[row["key"], row["bucket"]]["costs"].append(value)
             names = (
                 await self.labels(session, query.group_by, list(groups))
-                if query.group_by in {"channel", "model", "user"}
+                if query.group_by in {"channel", "model", "user", "flow_definition"}
                 else {}
             )
-            zone = ZoneInfo(STATISTICS_TIMEZONE)
-            for start, item in trend.items():
-                local = start.astimezone(zone)
-                end = (
-                    local.replace(year=local.year + (local.month == 12), month=local.month % 12 + 1)
-                    if query.bucket == "month"
-                    else start.astimezone(UTC) + timedelta(hours=1)
-                    if query.bucket == "hour"
-                    else local + timedelta(days=1)
-                )
-                item["filters"] = {
-                    "since": max(start, since).isoformat(),
-                    "until": min(end - timedelta(microseconds=1), until).isoformat(),
-                }
-                item["label"] = local.isoformat()
+            for points in (trend.values(), series.values()):
+                for item in points:
+                    item["costs"].sort(key=lambda value: value["unit"])
+            if query.series:
+                for key, item in groups.items():
+                    buckets = sorted(bucket for owner, bucket in series if owner == key)
+                    item["trend"] = [series[key, bucket] for bucket in buckets]
             for key, item in groups.items():
                 item["label"] = (
                     names.get(key, key)
@@ -374,7 +413,11 @@ class StatisticsService:
                 if has_system and query.offset == 0:
                     rows.insert(0, {"id": "system", "label": "系统调用"})
             else:
-                label = column
+                label, named = column, []
+                if query.dimension == "flow_definition":
+                    # Names live in the assembled code catalog; match them before the scoped SQL.
+                    names = self.flow_definition_names()
+                    named = [key for key, name in names.items() if query.q.lower() in name.lower()]
                 statement = select(column.label("id"))
                 if query.dimension in {"channel", "model"}:
                     model = Channel if query.dimension == "channel" else ModelEntry
@@ -395,6 +438,7 @@ class StatisticsService:
                         or_(
                             column.icontains(query.q, autoescape=True),
                             label.icontains(query.q, autoescape=True),
+                            column.in_(named),
                         ),
                     )
                     .distinct()
@@ -403,4 +447,7 @@ class StatisticsService:
                     .limit(query.limit + 1)
                 )
                 rows = [dict(row) for row in (await session.execute(statement)).mappings()]
+                if query.dimension == "flow_definition":
+                    for row in rows:
+                        row["label"] = names.get(row["id"], row["id"])
             return {"items": rows[: query.limit], "has_more": len(rows) > query.limit}

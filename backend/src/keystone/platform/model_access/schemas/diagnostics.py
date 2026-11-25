@@ -69,7 +69,9 @@ def diagnostic(row):
     context = row.flow_context if isinstance(row.flow_context, dict) else {}
     values = {key: context[key] for key in InvocationContext.model_fields if key in context}
     try:
-        values = InvocationContext.model_validate(values).model_dump(exclude={"flow_run_id"})
+        values = InvocationContext.model_validate(values).model_dump(
+            exclude={"flow_run_id", "definition_key"}
+        )
     except ValueError:
         values = {}  # Historical invalid observations never expose arbitrary JSON.
     return InvocationDiagnostic(

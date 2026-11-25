@@ -303,7 +303,9 @@ class FlowContext:
     async def run_process(self, argv, **bounded_options):
         return await _run_process(self.run_id, argv, **bounded_options)
 
-    def _invocation_context(self, role, *, node_key, agent_key=None, agent_call_id=None):
+    def _invocation_context(
+        self, role, *, definition_key, node_key, agent_key=None, agent_call_id=None
+    ):
         from dbos import DBOS
 
         from keystone.platform.model_access.schemas.invocations import InvocationContext
@@ -312,6 +314,7 @@ class FlowContext:
             raise RuntimeError("Model correlation requires a durable DBOS step")
         return InvocationContext(
             flow_run_id=self.run_id,
+            definition_key=definition_key,
             node_key=node_key,
             model_role=role,
             agent_key=agent_key,
@@ -331,7 +334,7 @@ class FlowContext:
 
         if DBOS.workflow_id is None or DBOS.step_id is None:
             raise RuntimeError("Model calls require a durable DBOS step")
-        binding = await _resources(self.run_id).model_binding(role)
+        definition_key, binding = await _resources(self.run_id).model_binding(role)
         selected = Selection.model_validate(binding["selection"])
         if selected.operation != operation or selected.delivery != delivery:
             from keystone.core.errors import ServiceError
@@ -347,15 +350,18 @@ class FlowContext:
             ),
             selected,
             identifier,
+            definition_key,
         )
 
     async def _text(self, role, request, *, node_key, operation="text.generate"):
-        model, selected, identifier = await self._model(role, operation=operation)
+        model, selected, identifier, definition_key = await self._model(role, operation=operation)
         result = await model.invoke_text(
             request,
             selection=selected,
             invocation_id=identifier,
-            context=self._invocation_context(role, node_key=node_key),
+            context=self._invocation_context(
+                role, definition_key=definition_key, node_key=node_key
+            ),
             worker_identity=_runtime().worker_identity,
         )
         return identifier, result["content"]
@@ -381,12 +387,16 @@ class FlowContext:
         if isinstance(request, EmbeddingRequest):
             request = request.model_dump(mode="json")
         request = EmbeddingRequest.model_validate(request)
-        model, selected, identifier = await self._model(role, operation="text.embed")
+        model, selected, identifier, definition_key = await self._model(
+            role, operation="text.embed"
+        )
         vectors = await model.invoke_embedding(
             request,
             selection=selected,
             invocation_id=identifier,
-            context=self._invocation_context(role, node_key=node_key),
+            context=self._invocation_context(
+                role, definition_key=definition_key, node_key=node_key
+            ),
             worker_identity=_runtime().worker_identity,
         )
         # The completed attempt keeps its receipts; cancellation/revocation must
@@ -405,12 +415,14 @@ class FlowContext:
         handle, tasks, selected, context = None, None, None, None
         try:
             async with self.execution_scope(permissions=("model:invoke",)):
-                model, selected, identifier = await self._model(
+                model, selected, identifier, definition_key = await self._model(
                     role,
                     operation="image.generate",
                     delivery="async",
                 )
-                context = self._invocation_context(role, node_key=node_key)
+                context = self._invocation_context(
+                    role, definition_key=definition_key, node_key=node_key
+                )
                 tasks = ImageTaskService(model.service, runtime=model)
                 handle = await tasks.submit(
                     request,
@@ -437,10 +449,12 @@ class FlowContext:
         tasks, selected, context = None, None, None
         try:
             async with self.execution_scope(permissions=("model:invoke",)):
-                model, selected, _ = await self._model(
+                model, selected, _, definition_key = await self._model(
                     role, operation="image.generate", delivery="async"
                 )
-                context = self._invocation_context(role, node_key=node_key)
+                context = self._invocation_context(
+                    role, definition_key=definition_key, node_key=node_key
+                )
                 tasks = ImageTaskService(model.service, runtime=model)
                 evidence = await tasks.evidence(identifier, selected, context)
                 if isinstance(evidence, ImageManifest):
@@ -534,8 +548,12 @@ class FlowContext:
 
         permissions = ("model:invoke",)
         async with self.execution_scope(permissions=permissions) as check:
-            model, selected, identifier = await self._model(role, operation=operation)
-            context = self._invocation_context(role, node_key=node_key)
+            model, selected, identifier, definition_key = await self._model(
+                role, operation=operation
+            )
+            context = self._invocation_context(
+                role, definition_key=definition_key, node_key=node_key
+            )
             manifest = await model.image_manifest(
                 identifier,
                 data=request,
@@ -585,7 +603,9 @@ class FlowContext:
             request = request.model_dump(mode="json")
         request = VisionRequest.model_validate(request)
         async with self.execution_scope(permissions=("model:invoke",)) as check:
-            model, selected, identifier = await self._model(role, operation="image.understand")
+            model, selected, identifier, definition_key = await self._model(
+                role, operation="image.understand"
+            )
             images = await self._image_inputs(request.images)
             await check()
             content = await model.invoke_vision(
@@ -593,7 +613,9 @@ class FlowContext:
                 images=images,
                 selection=selected,
                 invocation_id=identifier,
-                context=self._invocation_context(role, node_key=node_key),
+                context=self._invocation_context(
+                    role, definition_key=definition_key, node_key=node_key
+                ),
                 worker_identity=_runtime().worker_identity,
             )
             return TextResult(invocation_id=identifier, content=content)

@@ -47,6 +47,7 @@ async def history_filters(
     channel_id=None,
     status=None,
     flow_run_id=None,
+    definition_key=None,
     model_entry_id=None,
     provider_model=None,
     user_id=None,
@@ -88,6 +89,7 @@ async def history_filters(
         (ModelInvocation.estimate_status, estimate_status),
         (ModelInvocation.estimate_currency if cost_basis == "estimated" else unit, cost_unit),
         (ModelInvocation.error_code, error_code),
+        (ModelInvocation.flow_context["definition_key"].astext, definition_key),
         (ModelInvocation.flow_context["node_key"].astext, node_key),
         (ModelInvocation.flow_context["model_role"].astext, model_role),
         (ModelInvocation.flow_context["agent_key"].astext, agent_key),
@@ -111,6 +113,7 @@ async def history_filters(
     for dimension in missing.split(",") if missing else []:
         columns = {
             "flow_run": ModelInvocation.flow_context["flow_run_id"].astext,
+            "flow_definition": ModelInvocation.flow_context["definition_key"].astext,
             "node": ModelInvocation.flow_context["node_key"].astext,
             "model_role": ModelInvocation.flow_context["model_role"].astext,
             "agent": ModelInvocation.flow_context["agent_key"].astext,

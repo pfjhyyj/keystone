@@ -204,6 +204,7 @@ async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
                 SimpleNamespace(invoke_sdk=invoke, sdk_settings=prepare_settings),
                 selected,
                 uuid4(),
+                "document.review",
             )
         ),
     )
@@ -239,6 +240,7 @@ async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
     assert "keystone_reasoning" not in request.call_args.args[1]
     assert prepare_settings.call_args.kwargs["reasoning"].effort == "high"
     assert invocations[-1]["reasoning"] is prepare_settings.call_args.kwargs["reasoning"]
+    assert invocations[-1]["flow_context"].definition_key == "document.review"
     before = request.await_count
     for invalid in [None, True, 0, 16385, "2048"]:
         with pytest.raises(ServiceError) as caught:

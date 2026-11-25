@@ -564,3 +564,109 @@ it('uses Shanghai for shortcuts and datetime inputs without exposing a timezone 
   expect(wrapper.get('[aria-label="已应用筛选"]').text()).toContain('上海时间')
   expect(paths.some((path) => new URLSearchParams(path.split('?')[1]).has('timezone'))).toBe(false)
 })
+
+it('draws per Flow definition series on the analysis tab and exports every group as CSV', async () => {
+  authorize(['model_invocation:read'])
+  const paths: string[] = []
+  const day = (start: string, extra: Partial<UsageMetrics> = {}) => ({
+    ...metrics,
+    start,
+    label: start,
+    filters: { since: start, until },
+    ...extra,
+  })
+  const review = {
+    ...metrics,
+    key: 'document.review',
+    label: '文本文件审查',
+    filters: { definition_key: 'document.review' },
+    trend: [day('2026-10-19T16:00:00Z', { costs: [], unknown_cost_calls: 2 })],
+  }
+  const unassociated = {
+    ...metrics,
+    key: null,
+    label: '未关联',
+    filters: { missing: 'flow_definition' },
+    trend: [day('2026-10-18T16:00:00Z', { unknown_cost_calls: 0 })],
+  }
+  fakeApi((path) => {
+    paths.push(path)
+    if (path.startsWith('/model-invocations?')) return []
+    if (!path.includes('/statistics')) return { items: [], has_more: false }
+    const params = new URLSearchParams(path.split('?')[1])
+    if (params.get('series') !== 'true') return result()
+    const offset = Number(params.get('offset'))
+    return result({
+      total_groups: 21,
+      groups:
+        offset === 0
+          ? [review, unassociated]
+          : offset === 20
+            ? [{ ...review, key: 'x=1', label: '=1' }]
+            : [],
+    })
+  })
+  const created: Blob[] = []
+  vi.stubGlobal(
+    'URL',
+    class extends URL {
+      static createObjectURL = (blob: Blob) => (created.push(blob), 'blob:csv')
+      static revokeObjectURL = () => {}
+    },
+  )
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+  const { wrapper, router } = await page({ tab: 'analysis', group_by: 'flow_definition' })
+  const series = paths.filter((path) => path.includes('series=true'))
+  expect(series).toHaveLength(1)
+  const params = new URLSearchParams(series[0]!.split('?')[1])
+  expect(params.get('group_by')).toBe('flow_definition')
+  expect(params.get('limit')).toBe('8')
+  const chart = wrapper.get('[aria-label="分组趋势"]')
+  expect(chart.text()).toContain('分组趋势：Flow 定义')
+  expect(chart.text()).toContain('文本文件审查')
+  expect(chart.text()).toContain('共 21 组')
+  // Group drill from the legend narrows the call list to that definition.
+  await chart.findAll('.legend button')[0]!.trigger('click')
+  await flushPromises()
+  expect(router.currentRoute.value.query.definition_key).toBe('document.review')
+  await router.push({
+    path: '/model-usage',
+    query: { since, until, tab: 'analysis', group_by: 'flow_definition' },
+  })
+  await flushPromises()
+  paths.length = 0
+  await wrapper
+    .findAll('button')
+    .find((node) => node.text() === '导出 CSV')!
+    .trigger('click')
+  await flushPromises()
+  expect(
+    paths
+      .filter((path) => path.includes('series=true'))
+      .map((path) => new URLSearchParams(path.split('?')[1]).get('offset')),
+  ).toEqual(['0', '20'])
+  expect(click).toHaveBeenCalledOnce()
+  const text = await created[0]!.text()
+  const lines = text.replace('﻿', '').trim().split('\r\n')
+  expect(lines[0]).toContain('Flow 定义')
+  expect(lines[0]).toContain('预估费用已知金额（USD）')
+  // Unknown stays blank; a fully known bucket without that unit is a real zero.
+  expect(lines[1]).toMatch(/^2026-10-20 00:00:00,文本文件审查,document\.review,2,.*,$/)
+  expect(lines[2]).toMatch(/^2026-10-19 00:00:00,未关联,,2,.*,0$/)
+  expect(lines[3]).toContain(",'=1,x=1,")
+  click.mockRestore()
+})
+
+it('builds Shanghai bucket starts across month and day boundaries', async () => {
+  const { bucketStarts } = await import('../views/usage/usageSeries')
+  const iso = (values: number[]) => values.map((value) => new Date(value).toISOString())
+  expect(iso(bucketStarts('2026-10-30T17:00:00Z', '2026-11-01T15:00:00Z', 'day'))).toEqual([
+    '2026-10-30T16:00:00.000Z',
+    '2026-10-31T16:00:00.000Z',
+  ])
+  expect(iso(bucketStarts('2026-10-15T00:00:00Z', '2026-12-01T00:00:00Z', 'month'))).toEqual([
+    '2026-09-30T16:00:00.000Z',
+    '2026-10-31T16:00:00.000Z',
+    '2026-11-30T16:00:00.000Z',
+  ])
+})

@@ -35,13 +35,14 @@ class FlowResourceService:
                 raise
 
     async def model_binding(self, role):
+        """The role's fixed binding and the Run's definition key for call correlation."""
         async with self.identity.access("model:invoke") as (session, _):
             run = await session.get(FlowRun, self.identity.run_id)
             snapshot = read_snapshot(run.definition_snapshot)
             binding = snapshot["model_bindings"].get(role)
             if binding is None:
                 raise ServiceError(409, "flow_model_role_unavailable", "模型角色未绑定")
-            return binding
+            return run.definition_key, binding
 
     async def read_file(self, identifier, *, max_bytes):
         await self.require_file(identifier)
