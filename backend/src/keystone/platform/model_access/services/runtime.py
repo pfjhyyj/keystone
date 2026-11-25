@@ -22,6 +22,7 @@ from keystone.platform.model_access.adapters.inference.transport import Observat
 from keystone.platform.model_access.channels.shared.billing.contracts import Receipt
 from keystone.platform.model_access.models import Channel, ModelEntry, ModelInvocation
 from keystone.platform.model_access.schemas.images import (
+    MAX_IMAGE_RESPONSE_BYTES,
     ImageBatch,
     ImageDownloadReceipt,
     ImageManifest,
@@ -91,6 +92,7 @@ class ModelRuntime:
         flow_context=None,
         worker_identity=None,
         reasoning=None,
+        output_tokens=None,
     ):
         """Trusted internal request, with a fixed target and stable ID; no public Invoke payload."""
         if invocation_id is None or not callable(sdk_request):
@@ -103,6 +105,7 @@ class ModelRuntime:
                 sdk_request=sdk_request,
                 worker_identity=worker_identity,
                 reasoning=reasoning,
+                output_tokens=output_tokens,
             )
         )
         return result["content"]
@@ -247,9 +250,13 @@ class ModelRuntime:
             flow_context=context,
             worker_identity=worker_identity,
             reasoning=data.reasoning,
+            output_tokens=data.max_tokens,
         )
 
-    async def invoke_text(self, data, *, selection, invocation_id, context, worker_identity):
+    async def invoke_text(
+        self, data, *, selection, invocation_id, context, worker_identity, images=()
+    ):
+        from keystone.platform.model_access.schemas.images import MAX_INPUT_IMAGE_BYTES
         from keystone.platform.model_access.schemas.invocations import TextRequest
         from keystone.platform.model_access.schemas.structured import StructuredRequest
 
@@ -258,6 +265,30 @@ class ModelRuntime:
             raise ServiceError(422, "model_invalid_request", "文本操作与请求类型不匹配")
         contract = StructuredRequest if expected == "text.structured" else TextRequest
         data = contract.model_validate(data.model_dump(mode="json"))
+        if len(images) != len(getattr(data, "images", ())):
+            raise ServiceError(422, "model_invalid_request", "图片输入与请求不匹配")
+        if images:
+            # Same input bounds as image.understand; capability is checked before registration.
+            if sum(len(image[1]) for image in images) > MAX_INPUT_IMAGE_BYTES:
+                raise ServiceError(413, "model_input_too_large", "图片累计大小超过上限")
+            self.clients.inference.check_structured_images(selection)
+
+            async def send(sdk):
+                return await self.clients.inference.vision(sdk, selection, data, images)
+
+            return await completed(
+                self._events(
+                    selection,
+                    invocation_id=invocation_id,
+                    flow_context=context,
+                    sdk_request=send,
+                    worker_identity=worker_identity,
+                    reasoning=data.reasoning,
+                    required_operations=("image.understand",),
+                    image_count=len(images),
+                    output_tokens=data.max_tokens,
+                )
+            )
         return await completed(
             self._events(
                 selection,
@@ -292,6 +323,9 @@ class ModelRuntime:
         sdk_request=None,
         worker_identity=None,
         reasoning=None,
+        required_operations=(),
+        image_count=0,
+        output_tokens=None,
     ):
         identifier = invocation_id or uuid4()
         started = monotonic()
@@ -329,6 +363,14 @@ class ModelRuntime:
                     model=selected.provider_model,
                     api_base=selected.api_base,
                 )
+                for operation in required_operations:
+                    self.clients.inference.check_operation(
+                        provider,
+                        operation,
+                        selected.delivery,
+                        model=selected.provider_model,
+                        api_base=selected.api_base,
+                    )
             adapter = self.clients.billing.adapter(provider, selected.api_base)
         except BaseException as error:
             failed(error, "preflight")
@@ -343,7 +385,7 @@ class ModelRuntime:
 
         observation = Observation(
             observed,
-            max_bytes=24 * 1024 * 1024
+            max_bytes=MAX_IMAGE_RESPONSE_BYTES
             if selected.operation in {"image.generate", "image.edit"}
             else 4 * 1024 * 1024,
         )
@@ -391,6 +433,10 @@ class ModelRuntime:
                     if selected.operation not in entry.operations:
                         raise ServiceError(
                             409, "model_configuration_changed", "原模型操作能力已移除"
+                        )
+                    if not set(required_operations) <= set(entry.operations):
+                        raise ServiceError(
+                            409, "model_operation_unavailable", "模型未声明本次请求所需的操作"
                         )
                     if not entry.is_active or not channel.is_active:
                         raise ServiceError(409, "model_disabled", "模型或渠道已停用")
@@ -560,6 +606,8 @@ class ModelRuntime:
                     data=data,
                     sdk_request=sdk_request,
                     reasoning=reasoning,
+                    image_count=image_count,
+                    output_tokens=output_tokens,
                 )
             ) as events:
                 async for event in events:

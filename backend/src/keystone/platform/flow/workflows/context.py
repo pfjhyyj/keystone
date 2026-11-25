@@ -608,9 +608,25 @@ class FlowContext:
         if isinstance(request, StructuredRequest):
             request = request.model_dump(mode="json")
         request = StructuredRequest.model_validate(request)
-        identifier, content = await self._text(
-            role, request, node_key=node_key, operation="text.structured"
-        )
+        if request.images:
+            # Inputs follow invoke_vision: fixed Run scope, per-file and total byte limits.
+            async with self.execution_scope(permissions=("model:invoke",)) as check:
+                model, selected, identifier = await self._model(role, operation="text.structured")
+                images = await self._image_inputs(request.images)
+                await check()
+                result = await model.invoke_text(
+                    request,
+                    images=images,
+                    selection=selected,
+                    invocation_id=identifier,
+                    context=self._invocation_context(role, node_key=node_key),
+                    worker_identity=_runtime().worker_identity,
+                )
+                content = result["content"]
+        else:
+            identifier, content = await self._text(
+                role, request, node_key=node_key, operation="text.structured"
+            )
         return StructuredResult(
             invocation_id=identifier, content=parse_structured(content, request.output)
         )

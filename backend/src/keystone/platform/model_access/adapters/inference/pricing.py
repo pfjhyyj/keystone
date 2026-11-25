@@ -109,7 +109,8 @@ def request_context(request, profile):
         body, references = {}, 0
         for part in message.iter_parts():
             name = part.get_param("name", header="content-disposition")
-            if name == "image":
+            # The protocol validator has already fixed which of the two spellings this site uses.
+            if name in {"image", "image[]"}:
                 references += 1
             elif f"context.{name}" in profile.context_fields:
                 body[name] = part.get_payload(decode=True).decode()

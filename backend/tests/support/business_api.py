@@ -26,6 +26,7 @@ from keystone.platform.model_access.schemas.images import (
     VisionRequest,
 )
 from keystone.platform.model_access.schemas.operations import Delivery, Operation
+from keystone.platform.model_access.schemas.structured import StructuredRequest, parse_structured
 from keystone.platform.model_access.schemas.types import Key
 from keystone.platform.model_access.services.runtime import safe_error
 from support.business_catalog import PREFIX
@@ -40,6 +41,10 @@ class ImageEditInvoke(ImageEditRequest):
 
 
 class VisionInvoke(VisionRequest):
+    model_key: Key
+
+
+class StructuredImageInvoke(StructuredRequest):
     model_key: Key
 
 
@@ -287,17 +292,7 @@ def create_app(settings):
             events(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"}
         )
 
-    async def image(data, request, operation):
-        rt = request.app.state.runtime
-        identity = access_context(request)
-        model = rt.model_service(identity)
-        selected = await model.service.selection(data.model_key, operation=operation)
-        contract = {
-            "image.generate": ImageGenerateRequest,
-            "image.edit": ImageEditRequest,
-            "image.understand": VisionRequest,
-        }[operation]
-        data = contract.model_validate(data.model_dump(mode="json", exclude={"model_key"}))
+    async def image_inputs(rt, identity, model, selected, data):
         maximum, max_bytes = model.image_limits(selected)
         if len(getattr(data, "images", ())) > maximum:
             raise ServiceError(422, "model_invalid_request", "图片数量超过协议上限")
@@ -312,6 +307,20 @@ def create_app(settings):
                 images.append((reader.content_type, body, reference.detail))
                 if sum(len(value[1]) for value in images) > max_bytes:
                     raise ServiceError(413, "model_input_too_large", "图片累计大小超过上限")
+        return images
+
+    async def image(data, request, operation):
+        rt = request.app.state.runtime
+        identity = access_context(request)
+        model = rt.model_service(identity)
+        selected = await model.service.selection(data.model_key, operation=operation)
+        contract = {
+            "image.generate": ImageGenerateRequest,
+            "image.edit": ImageEditRequest,
+            "image.understand": VisionRequest,
+        }[operation]
+        data = contract.model_validate(data.model_dump(mode="json", exclude={"model_key"}))
+        images = await image_inputs(rt, identity, model, selected, data)
         identifier = uuid4()
         if operation == "image.understand":
             value = await model.invoke_vision(
@@ -360,6 +369,27 @@ def create_app(settings):
     @router.post("/understand-image")
     async def vision(data: VisionInvoke, request: Request):
         return await image(data, request, "image.understand")
+
+    @router.post("/structured-image")
+    async def structured_image(data: StructuredImageInvoke, request: Request):
+        rt = request.app.state.runtime
+        identity = access_context(request)
+        model = rt.model_service(identity)
+        selected = await model.service.selection(data.model_key, operation="text.structured")
+        data = StructuredRequest.model_validate(data.model_dump(mode="json", exclude={"model_key"}))
+        images = await image_inputs(rt, identity, model, selected, data)
+        result = await model.invoke_text(
+            data,
+            images=images,
+            selection=selected,
+            invocation_id=uuid4(),
+            context=None,
+            worker_identity=None,
+        )
+        return {
+            "invocation_id": result["invocation_id"],
+            "content": parse_structured(result["content"], data.output),
+        }
 
     app.include_router(router)
     return app

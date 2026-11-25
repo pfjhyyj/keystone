@@ -14,6 +14,7 @@ def test_channel_options_descriptors_and_legacy_capabilities():
     descriptors = {item["id"]: item for item in options["channels"]}
     expected = {
         "openrouter": ("OpenRouter", "key", True, False),
+        "openai": ("OpenAI", "none", False, False),
         "newapi": ("NewAPI", "none", True, False),
         "yunwu": ("Yunwu", "none", False, False),
         "aliyun_bailian": ("阿里云百炼（DashScope）", "cloud", True, True),
@@ -48,7 +49,7 @@ def test_channel_options_descriptors_and_legacy_capabilities():
         else:
             assert fields == []
     creatable = [item["id"] for item in options["channels"] if item["creatable"]]
-    assert creatable == ["openrouter", "newapi", "yunwu", "aliyun_bailian", "volcengine"]
+    assert creatable == ["openrouter", "openai", "newapi", "yunwu", "aliyun_bailian", "volcengine"]
     assert sorted(options) == ["channels", "legacy_sites"]
     assert options["legacy_sites"] == [
         {

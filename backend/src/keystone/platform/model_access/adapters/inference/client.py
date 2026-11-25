@@ -16,6 +16,10 @@ from keystone.platform.model_access.channels.shared.chat import validate_request
 from keystone.platform.model_access.channels.shared.discovery import discover
 from keystone.platform.model_access.channels.shared.images import verify_image
 
+# Output allowances above the former 4096-token bound get a window for slow decoding.
+LONG_OUTPUT_TOKENS = 4096
+LONG_OUTPUT_SECONDS = 600
+
 
 class InferenceClient:
     def __init__(self, http, channels=None):
@@ -55,6 +59,13 @@ class InferenceClient:
             api_base=selected.api_base,
         )
 
+    def check_structured_images(self, selected):
+        """Structured output with images needs one protocol serving both operations."""
+        protocol = self.protocol(selected)
+        if selected.operation != "text.structured" or "image.understand" not in protocol.operations:
+            raise ServiceError(409, "model_operation_unavailable", "协议不支持图片结构化输出")
+        return protocol
+
     def check_target(self, provider, base, path, *, method="POST"):
         if not self.adapter(provider, base).allows_target(base, path, method):
             raise ServiceError(
@@ -73,7 +84,7 @@ class InferenceClient:
         self.check_target(provider, selected.api_base, target[1])
         return target
 
-    def validate_request(self, request, provider, selected, *, reasoning=None):
+    def validate_request(self, request, provider, selected, *, reasoning=None, image_count=0):
         target = self.request_target(provider, selected)
         protocol = self.protocol(selected, provider=provider)
         with adapter_errors():
@@ -98,12 +109,17 @@ class InferenceClient:
                     elif key in payload:
                         raise AdapterError(422, "model_invalid_request", "请求包含未批准的思考参数")
             if hasattr(protocol, "validate_request"):
+                if image_count:
+                    raise ServiceError(409, "model_operation_unavailable", "协议不支持附加图片")
                 return protocol.validate_request(request, selected, target)
+            if image_count:
+                self.check_structured_images(selected)
             return validate_request(
                 request,
                 selected,
                 target,
                 require_parameters=protocol.require_parameters,
+                image_count=image_count,
             )
 
     def image_limits(self, selected):
@@ -125,6 +141,8 @@ class InferenceClient:
         identifier,
         *,
         reasoning=None,
+        image_count=0,
+        output_tokens=None,
     ):
         from .pricing import profile_for
 
@@ -134,6 +152,8 @@ class InferenceClient:
         seconds = getattr(protocol, "timeout_seconds", 60)
         if reasoning is not None and reasoning.mode == "on":
             seconds = max(seconds, 120)
+        if output_tokens is not None and output_tokens > LONG_OUTPUT_TOKENS:
+            seconds = max(seconds, LONG_OUTPUT_SECONDS)
         maximum = (
             getattr(protocol, "max_input_bytes", 0) + 128 * 1024
             if selected.operation == "image.edit" and hasattr(protocol, "max_input_bytes")
@@ -146,7 +166,7 @@ class InferenceClient:
                 observation,
                 on_receipt,
                 lambda request: self.validate_request(
-                    request, provider, selected, reasoning=reasoning
+                    request, provider, selected, reasoning=reasoning, image_count=image_count
                 ),
                 identifier,
                 authorize=self.adapter(provider, selected.api_base).authorize,
@@ -181,6 +201,8 @@ class InferenceClient:
         data=None,
         sdk_request=None,
         reasoning=None,
+        image_count=0,
+        output_tokens=None,
     ):
         protocol = self.protocol(selected, provider=provider)
         async with self.connect(
@@ -191,6 +213,8 @@ class InferenceClient:
             on_receipt,
             identifier,
             reasoning=data.reasoning if data is not None else reasoning,
+            image_count=image_count,
+            output_tokens=getattr(data, "max_tokens", None) if data is not None else output_tokens,
         ) as sdk:
             # Trusted SDK callbacks still pass through the same physical send boundary.
             if sdk_request is not None:
@@ -237,7 +261,8 @@ class InferenceClient:
 
         redirects = 0
         with adapter_errors():
-            async with asyncio.timeout(120):
+            # Sized for the largest output: one GET may spend 60 s on 32 MiB, all within 180 s.
+            async with asyncio.timeout(180):
                 for attempt in range(3):
                     while True:
                         await authorize()
@@ -248,7 +273,7 @@ class InferenceClient:
                                 hostname=download_host(url),
                                 limit=MAX_OUTPUT_IMAGE_BYTES,
                                 check_status=check,
-                                timeout=30,
+                                timeout=60,
                             )
                         except Redirect as redirect:
                             if redirects >= 2 or not isinstance(redirect.args[0], str):

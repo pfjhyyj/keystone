@@ -8,7 +8,7 @@ ModelEntry.pricing 为 inherit/override/disabled，新条目默认 inherit/revis
 
 规则按 provider、规范化 api_base、精确上游模型、operation/delivery 解析，不按名称前缀或角色猜测。中转站和 ep-* 不继承直连厂商价格。改绑目标/操作重新校验覆盖，改名不改价格。
 
-默认规则随制品发布，包含来源 URL、核对时间和版本，不在调用期间抓价。参考数据分别由 `channels/aliyun_bailian/pricing.py`、`channels/volcengine/pricing.py` 列举，通过本渠道 SPEC 的 `reference_prices` 注册并由 `channels/__init__.py` 聚合：百炼北京 Qwen Max/Plus/Flash 及六个向量模型；方舟北京 Seed Evolving、2.1/2.0 系列的核实版本。共用规则构造函数在 `channels/rules.py`；完整 ID 和价格以代码数据为准。本文代码路径相对 `backend/src/keystone/platform/model_access/`。
+默认规则随制品发布，包含来源 URL、核对时间和版本，不在调用期间抓价。参考数据分别由 `channels/aliyun_bailian/pricing.py`、`channels/volcengine/pricing.py`、`channels/openai/pricing.py` 列举，通过本渠道 SPEC 的 `reference_prices` 注册并由 `channels/__init__.py` 聚合：百炼北京 Qwen Max/Plus/Flash 及六个向量模型；方舟北京 Seed Evolving、2.1/2.0 系列的核实版本；OpenAI gpt-image-2、gpt-image-2.5-sunburst/flare 的生成与编辑，按 [Standard 价格](https://developers.openai.com/api/docs/pricing)（2026-11-25 核对，USD）以 modality 分区计价，文本输出显式为 0；官方说明缓存输入价仅适用于 Responses API 生成的图片，/images 不使用。共用规则构造函数在 `channels/rules.py`；完整 ID 和价格以代码数据为准。本文代码路径相对 `backend/src/keystone/platform/model_access/`。
 
 百炼输入档位按 K=1000，方舟按接口整数边界（32K=32768、128K=131072）；完整输入选档后对全部数量用该档价格。qwen-plus 按实际思考用量；百炼上下文缓存按请求实际模式分支：隐式命中为该档输入单价的 20%，显式创建 125%、命中 10%，创建量来自响应的 `cache_creation_input_tokens`。官方另有价格例外的 qwen3.8 系列未列入目录，需取得控制台报价后覆盖。方舟默认仅标准服务，fast/flex/auto 需覆盖价。未核实的缓存单价不猜测。
 
@@ -33,7 +33,7 @@ prompt、正文、URL、密钥不进入估价事实。max_tokens、请求 n、�
 | Chat：文本、结构化、识图、Agent、SSE | 真实输入/输出 token、缓存读取与写入（含上游报告的 5m/1h 生命周期拆分）、完整上下文档位、已确认成功请求数；不从图片数推 token |
 | Embeddings | prompt_tokens，或规范明确的全输入 total_tokens；16 文本仍为 1 请求，输出 token 为结构性零 |
 | OpenRouterImages | 已报告 token、受控生成张数、成功请求数和有效参数 |
-| Yunwu/Openlux OpenAIImages | GPT Image 输入/输出及文本/图片细分、生成张数、实际 size/quality |
+| OpenAI/Yunwu/Openlux OpenAIImages | GPT Image 输入/输出及文本/图片细分、生成张数、实际 size/quality |
 | KlingImages | 原任务成功生成张数及请求数，不提供计费秒或 credits；轮询不计次 |
 | 未装配视频/音频等 | 不允许通过配置启用计量 |
 

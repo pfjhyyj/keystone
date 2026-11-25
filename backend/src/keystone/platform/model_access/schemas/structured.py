@@ -8,7 +8,11 @@ from pydantic import Field, model_validator
 
 from keystone.core.errors import ServiceError
 from keystone.core.schemas import Input
-from keystone.platform.model_access.schemas.invocations import TextRequest
+from keystone.platform.model_access.schemas.images import ImageInput
+from keystone.platform.model_access.schemas.invocations import MAX_OUTPUT_TOKENS, TextRequest
+
+# A full output allowance at up to 16 bytes per token, as raw text and as the parsed object.
+MAX_STRUCTURED_BYTES = MAX_OUTPUT_TOKENS * 16
 
 
 def bounded_json(value, limit):
@@ -59,6 +63,8 @@ class JsonOutput(Input):
 
 class StructuredRequest(TextRequest):
     output: JsonOutput
+    # Optional authorized File IDs; the model must also declare and support image.understand.
+    images: list[ImageInput] = Field(default=[], max_length=4)
 
 
 class StructuredResult(Input):
@@ -67,13 +73,13 @@ class StructuredResult(Input):
 
     @model_validator(mode="after")
     def bounded_content(self):
-        bounded_json(self.content, 65536)
+        bounded_json(self.content, MAX_STRUCTURED_BYTES)
         return self
 
 
 def parse_structured(content, output):
     try:
-        bounded_json(content, 65536)
+        bounded_json(content, MAX_STRUCTURED_BYTES)
 
         def unique_object(pairs):
             result = {}
@@ -84,7 +90,7 @@ def parse_structured(content, output):
             return result
 
         value = json.loads(content, object_pairs_hook=unique_object)
-        bounded_json(value, 65536)
+        bounded_json(value, MAX_STRUCTURED_BYTES)
         Draft202012Validator(output.json_schema, format_checker=FormatChecker()).validate(value)
         return value
     except Exception:

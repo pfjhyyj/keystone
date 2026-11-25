@@ -25,7 +25,11 @@ class VisionRequest(TextRequest):
     images: list[ImageInput] = Field(min_length=1, max_length=4)
 
 
-MAX_OUTPUT_IMAGE_BYTES = 8 * 1024 * 1024
+# Covers real-photo PNGs at the largest protocol size (3840x2160). A few poorly compressible
+# extremes can exceed it and are rejected rather than truncated.
+MAX_OUTPUT_IMAGE_BYTES = 32 * 1024 * 1024
+# One JSON reply carrying both Manifest outputs as Base64, plus 1 MiB for usage and keys.
+MAX_IMAGE_RESPONSE_BYTES = 2 * ((MAX_OUTPUT_IMAGE_BYTES + 2) // 3) * 4 + 1024 * 1024
 
 
 class ImageGenerateRequest(Input):

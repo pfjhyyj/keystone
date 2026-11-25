@@ -5,12 +5,17 @@ from dataclasses import dataclass
 
 from keystone.platform.model_access.channels.shared import images
 from keystone.platform.model_access.schemas.errors import AdapterError
+from keystone.platform.model_access.schemas.invocations import MAX_OUTPUT_TOKENS
 from keystone.platform.model_access.schemas.structured import JsonOutput, StructuredRequest
 
 
-def validate_request(request, selected, target, *, require_parameters=False):
+def validate_request(request, selected, target, *, require_parameters=False, image_count=0):
+    """image_count is the host-approved number of inline images for structured output."""
     base, path, model_field = target
-    limit = 12 * 1024 * 1024 if selected.operation in {"image.understand", "image.edit"} else 262144
+    if image_count and selected.operation != "text.structured":
+        raise AdapterError(422, "model_operation_unavailable", "该角色不允许附加图片")
+    media = selected.operation in {"image.understand", "image.edit"} or image_count
+    limit = 12 * 1024 * 1024 if media else 262144
     if len(request.content) > limit:
         raise AdapterError(413, "model_input_too_large", "模型请求超过本操作上限")
     payload = json.loads(request.content)
@@ -24,16 +29,24 @@ def validate_request(request, selected, target, *, require_parameters=False):
     if selected.operation in {"text.generate", "text.structured", "image.understand"}:
         if payload.get("modalities", ["text"]) != ["text"] or "audio" in payload:
             raise AdapterError(422, "model_operation_unavailable", "该角色不允许媒体输出")
+        allowed = {"text", "image_url"} if media else {"text"}
+        inline = 0
         for message in payload.get("messages", ()):
             content = message.get("content")
             if isinstance(content, list) and any(
-                part.get("type")
-                not in (
-                    {"text", "image_url"} if selected.operation == "image.understand" else {"text"}
-                )
-                for part in content
+                part.get("type") not in allowed for part in content
             ):
                 raise AdapterError(422, "model_operation_unavailable", "该角色不允许此类媒体输入")
+            for part in content if isinstance(content, list) else ():
+                if part.get("type") == "image_url":
+                    url = (part.get("image_url") or {}).get("url")
+                    if image_count and not (isinstance(url, str) and url.startswith("data:image/")):
+                        raise AdapterError(
+                            422, "model_invalid_request", "结构化图片须为本次已校验的内联图片"
+                        )
+                    inline += 1
+        if image_count and inline != image_count:
+            raise AdapterError(422, "model_invalid_request", "结构化请求的图片数量与受理请求不一致")
         if any(tool.get("type") != "function" for tool in payload.get("tools", ())):
             raise AdapterError(422, "model_operation_unavailable", "该角色不允许原生媒体工具")
         output = payload.get("response_format", {})
@@ -59,11 +72,22 @@ def validate_request(request, selected, target, *, require_parameters=False):
         maximum = payload.get("max_completion_tokens", payload.get("max_tokens"))
         if (
             type(maximum) is not int
-            or not 1 <= maximum <= 4096
+            or not 1 <= maximum <= MAX_OUTPUT_TOKENS
             or "max_completion_tokens" in payload
             and "max_tokens" in payload
         ):
             raise AdapterError(422, "model_invalid_request", "文本请求须明确受控输出 token 上限")
+
+
+def structured_format(data):
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": data.output.name,
+            "strict": True,
+            "schema": data.output.json_schema,
+        },
+    }
 
 
 @dataclass(frozen=True)
@@ -71,6 +95,8 @@ class ChatCompletions:
     operations: frozenset = frozenset({"text.generate"})
     require_parameters: bool = False
     pricing_meter: str = "chat.v3"
+    # Official OpenAI reasoning models reject the legacy max_tokens name.
+    token_limit: str = "max_tokens"
     delivery = "sync"
     models = None
     paths = {"/chat/completions": "POST"}
@@ -104,20 +130,13 @@ class ChatCompletions:
             dict(
                 model=selected.provider_model,
                 messages=[m.model_dump() for m in data.messages],
-                max_tokens=data.max_tokens,
+                **{self.token_limit: data.max_tokens},
             )
             if data is not None
             else None
         )
         if isinstance(data, StructuredRequest):
-            args["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": data.output.name,
-                    "strict": True,
-                    "schema": data.output.json_schema,
-                },
-            }
+            args["response_format"] = structured_format(data)
         if args is not None:
             args = self.sdk_settings(
                 selected.operation, args, model=selected.provider_model, reasoning=data.reasoning
@@ -158,12 +177,17 @@ class ChatCompletions:
             )
         messages = [message.model_dump(mode="json") for message in data.messages]
         messages.append({"role": "user", "content": parts})
+        args = {
+            "model": selected.provider_model,
+            "messages": messages,
+            self.token_limit: data.max_tokens,
+        }
+        if isinstance(data, StructuredRequest):
+            # Same strict schema as text-only structured output; parsing stays with the caller.
+            args["response_format"] = structured_format(data)
         response = await sdk.chat.completions.create(
             **self.sdk_settings(
-                selected.operation,
-                dict(model=selected.provider_model, messages=messages, max_tokens=data.max_tokens),
-                model=selected.provider_model,
-                reasoning=data.reasoning,
+                selected.operation, args, model=selected.provider_model, reasoning=data.reasoning
             )
         )
         if not response.choices or response.choices[0].finish_reason is None:

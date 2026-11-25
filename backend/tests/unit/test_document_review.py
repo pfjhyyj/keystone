@@ -226,9 +226,12 @@ async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
         (None, 1024),
         ({"max_tokens": 2048}, 2048),
         ({"max_tokens": 4096}, 4096),
+        ({"max_tokens": 16384}, 16384),
     ]:
         assert await model.request([], settings, ModelRequestParameters()) == "accepted"
         assert request.call_args.args[1]["max_tokens"] == expected
+        # The host widens its send window from the same validated allowance.
+        assert invocations[-1]["output_tokens"] == expected
         assert request.call_args.args[1]["temperature"] == 0.25
     await model.request(
         [], {"keystone_reasoning": {"mode": "on", "effort": "high"}}, ModelRequestParameters()
@@ -237,7 +240,7 @@ async def test_model_output_limit_is_passed_to_sdk_callback(monkeypatch):
     assert prepare_settings.call_args.kwargs["reasoning"].effort == "high"
     assert invocations[-1]["reasoning"] is prepare_settings.call_args.kwargs["reasoning"]
     before = request.await_count
-    for invalid in [None, True, 0, 4097, "2048"]:
+    for invalid in [None, True, 0, 16385, "2048"]:
         with pytest.raises(ServiceError) as caught:
             await model.request([], {"max_tokens": invalid}, ModelRequestParameters())
         assert caught.value.code == "model_invalid_request"

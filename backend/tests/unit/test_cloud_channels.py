@@ -1,4 +1,4 @@
-"""Cloud channel wire contracts through the real SDK and controlled transport."""
+"""Cloud and official channel wire contracts through the real SDK and controlled transport."""
 
 import json
 from uuid import uuid4
@@ -24,6 +24,9 @@ from keystone.platform.model_access.schemas.invocations import Invoke, Selection
         ("aliyun_bailian", "image.understand"),
         ("volcengine", "image.understand"),
         ("aliyun_bailian", "text.embed"),
+        ("openai", "text.generate"),
+        ("openai", "image.understand"),
+        ("openai", "text.embed"),
     ],
 )
 async def test_cloud_wire_keeps_usage_registration_and_bounded_requests(provider, operation):
@@ -70,7 +73,9 @@ async def test_cloud_wire_keeps_usage_registration_and_bounded_requests(provider
                 },
             )
         assert str(request.url) == adapter.api_base + "/chat/completions"
-        assert body["max_tokens"] == 1024
+        limit = "max_completion_tokens" if provider == "openai" else "max_tokens"
+        assert body[limit] == 1024
+        assert set(body) & {"max_tokens", "max_completion_tokens"} == {limit}
         if provider == "aliyun_bailian":
             assert body["enable_thinking"] is False
         if operation == "image.understand":

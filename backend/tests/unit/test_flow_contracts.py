@@ -316,7 +316,7 @@ async def test_text_context_revalidates_models_before_any_model_io(monkeypatch):
     messages = [{"role": "user", "content": "hello"}]
     for request in (
         Invoke(model_key="chat", messages=messages, stream=True),
-        TextRequest(messages=messages).model_copy(update={"max_tokens": 9999}),
+        TextRequest(messages=messages).model_copy(update={"max_tokens": 16385}),
         {"messages": messages, "stream": True},
     ):
         with pytest.raises(ValidationError):

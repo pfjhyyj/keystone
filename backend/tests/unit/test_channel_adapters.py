@@ -25,6 +25,11 @@ from keystone.platform.model_access.schemas.structured import (
 from keystone.platform.model_access.services.entries import catalog_entry
 
 
+def token_limit(provider):
+    # The official API rejects the legacy name on reasoning models; relays keep it.
+    return "max_completion_tokens" if provider == "openai" else "max_tokens"
+
+
 @pytest.mark.parametrize(
     "provider,operation,delivery,model,supported",
     [
@@ -39,6 +44,12 @@ from keystone.platform.model_access.services.entries import catalog_entry
         ("deepseek", "text.generate", "sync", "chat", False),
         ("aliyun_bailian", "text.embed", "sync", "chat", True),
         ("volcengine", "text.embed", "sync", "chat", False),
+        ("openai", "text.structured", "sync", "chat", True),
+        ("openai", "text.embed", "sync", "embedding", True),
+        ("openai", "image.edit", "sync", "gpt-image-2", True),
+        # Official image models are declared separately from relay-only aliases.
+        ("openai", "image.generate", "sync", "gpt-image-2-c", False),
+        ("openai", "image.generate", "async", "gpt-image-2", False),
         ("unknown", "text.generate", "sync", "chat", False),
         ("openrouter", "video.generate", "async", "video", False),
     ],
@@ -80,6 +91,7 @@ def test_catalog_and_sender_use_the_same_channel_capabilities(
         ("yunwu", True),
         ("aliyun_bailian", False),
         ("volcengine", False),
+        ("openai", False),
     ],
 )
 async def test_shared_chat_wire_keeps_channel_receipts_and_actual_cost_semantics(
@@ -126,7 +138,8 @@ async def test_shared_chat_wire_keeps_channel_receipts_and_actual_cost_semantics
             assert request.headers["Authorization"] == "Bearer private-secret"
         assert str(request.url) == adapter.api_base + "/chat/completions"
         body = json.loads(request.content)
-        assert body["model"] == "chat" and body["max_tokens"] == 1024
+        assert body["model"] == "chat" and body[token_limit(provider)] == 1024
+        assert set(body) & {"max_tokens", "max_completion_tokens"} == {token_limit(provider)}
         if provider == "aliyun_bailian":
             assert body["enable_thinking"] is False
         calls.append(body)
@@ -182,14 +195,15 @@ async def test_shared_chat_wire_keeps_channel_receipts_and_actual_cost_semantics
             "amount": "0.0012",
             "unit": "credits",
         }
-    elif provider in {"aliyun_bailian", "volcengine"}:
+    elif provider in {"aliyun_bailian", "volcengine", "openai"}:
         assert final.request_id == "response-id" and final.fee is None
     else:
         assert final.request_id == "billing-id" and final.fee is None
 
 
 @pytest.mark.parametrize(
-    "provider", ["openrouter", "openlux", "yunwu", "newapi", "aliyun_bailian", "volcengine"]
+    "provider",
+    ["openrouter", "openlux", "yunwu", "newapi", "aliyun_bailian", "volcengine", "openai"],
 )
 async def test_structured_wire_registers_once_and_keeps_each_channel_contract(
     monkeypatch, provider
@@ -231,7 +245,8 @@ async def test_structured_wire_registers_once_and_keeps_each_channel_contract(
         body = json.loads(request.content)
         if provider == "aliyun_bailian":
             assert body["enable_thinking"] is False
-        assert body["model"] == "structured-model" and body["max_tokens"] == 1024
+        assert body["model"] == "structured-model" and body[token_limit(provider)] == 1024
+        assert set(body) & {"max_tokens", "max_completion_tokens"} == {token_limit(provider)}
         assert body["messages"] == [{"role": "user", "content": "Answer"}]
         assert body["response_format"] == {
             "type": "json_schema",
@@ -325,3 +340,200 @@ async def test_protocol_errors_are_translated_only_at_the_host_boundary():
     with pytest.raises(ServiceError) as unknown:
         BillingClient(None).adapter("unknown")
     assert unknown.value.code == "model_provider_unavailable"
+
+
+def structured_images_request(count=2, max_tokens=8000):
+    from keystone.platform.model_access.schemas.structured import StructuredRequest
+
+    return StructuredRequest(
+        messages=[{"role": "user", "content": "inspect"}],
+        images=[{"file_id": uuid4()} for _ in range(count)],
+        output=JsonOutput(
+            name="Answer",
+            json_schema={
+                "type": "object",
+                "properties": {"answer": {"type": "integer"}},
+                "required": ["answer"],
+                "additionalProperties": False,
+            },
+        ),
+        max_tokens=max_tokens,
+    )
+
+
+@pytest.mark.parametrize(
+    "provider", ["openrouter", "openai", "yunwu", "newapi", "aliyun_bailian", "volcengine"]
+)
+async def test_structured_images_share_the_vision_wire_and_strict_schema(monkeypatch, provider):
+    from support.model_stub import image_bytes
+
+    base = (
+        "https://relay.example/gateway/v1" if provider == "newapi" else CHANNELS[provider].api_base
+    )
+    selected = Selection(
+        model_entry_id=uuid4(),
+        channel_id=uuid4(),
+        provider=provider,
+        api_base=base,
+        provider_model="vision-model",
+        operation="text.structured",
+    )
+    data = structured_images_request()
+    registrations, bodies = [], []
+
+    async def register():
+        registrations.append(True)
+        return "secret"
+
+    async def receipt():
+        pass
+
+    def respond(request):
+        assert registrations == [True]
+        # Above the former 4096 bound the host waits up to 600 s for slow decoding.
+        assert request.extensions["timeout"]["read"] == 600
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(
+            200,
+            json={
+                "id": "structured-vision",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": '{"answer":7}'},
+                    }
+                ],
+            },
+        )
+
+    http = HttpClient()
+    monkeypatch.setattr(http, "transport", lambda _: httpx2.MockTransport(respond))
+    client = InferenceClient(http)
+    images = [("image/png", image_bytes(), "auto")] * 2
+
+    async def send(sdk):
+        return await client.vision(sdk, selected, data, images)
+
+    events = [
+        event
+        async for event in client.events(
+            provider,
+            selected,
+            Observation(lambda _: None),
+            register,
+            receipt,
+            uuid4(),
+            sdk_request=send,
+            image_count=2,
+            output_tokens=data.max_tokens,
+        )
+    ]
+    assert parse_structured(events[0]["content"], data.output) == {"answer": 7}
+    [body] = bodies
+    assert body[token_limit(provider)] == 8000
+    assert body["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "Answer", "strict": True, "schema": data.output.json_schema},
+    }
+    assert body.get("provider", {}).get("require_parameters", False) is (provider == "openrouter")
+    parts = body["messages"][-1]["content"]
+    assert [part["image_url"]["url"][:22] for part in parts] == ["data:image/png;base64,"] * 2
+
+
+@pytest.mark.parametrize("case", ["no_vision_protocol", "count", "remote", "undeclared", "text"])
+async def test_structured_image_mismatches_are_rejected_before_registration(monkeypatch, case):
+    from keystone.platform.model_access.channels.shared import CHAT
+
+    channels = dict(CHANNELS)
+    if case == "no_vision_protocol":
+        text_only = replace(CHAT, operations=frozenset({"text.generate", "text.structured"}))
+        channels["openrouter"] = replace(CHANNELS["openrouter"], protocols=(text_only,))
+    selected = Selection(
+        model_entry_id=uuid4(),
+        channel_id=uuid4(),
+        provider="openrouter",
+        api_base=CHANNELS["openrouter"].api_base,
+        provider_model="vision-model",
+        operation="text.generate" if case == "text" else "text.structured",
+    )
+    url = "data:image/png;base64,AAAA" if case != "remote" else "https://cdn.invalid/a.png"
+    parts = [{"type": "image_url", "image_url": {"url": url}}]
+    body = {
+        "model": "vision-model",
+        "messages": [{"role": "user", "content": parts * (1 if case == "count" else 2)}],
+        "max_tokens": 1024,
+        "provider": {"require_parameters": True},
+    }
+    request = httpx2.Request(
+        "POST", selected.api_base + "/chat/completions", content=json.dumps(body)
+    )
+    client = InferenceClient(HttpClient(), channels)
+    expected = {
+        "no_vision_protocol": "model_operation_unavailable",
+        "count": "model_invalid_request",
+        "remote": "model_invalid_request",
+        "undeclared": "model_operation_unavailable",
+        "text": "model_operation_unavailable",
+    }[case]
+    with pytest.raises(ServiceError) as error:
+        # The host declares the approved count; images without it stay text-only.
+        client.validate_request(
+            request, "openrouter", selected, image_count=0 if case == "undeclared" else 2
+        )
+    assert error.value.code == expected
+    if case == "no_vision_protocol":
+        with pytest.raises(ServiceError) as error:
+            client.check_structured_images(selected)
+        assert error.value.code == "model_operation_unavailable"
+
+
+def test_structured_image_and_output_bounds():
+    from pydantic import ValidationError
+
+    from keystone.platform.model_access.schemas.invocations import MAX_OUTPUT_TOKENS
+
+    assert MAX_OUTPUT_TOKENS == 16384
+    assert structured_images_request(count=4, max_tokens=16384).max_tokens == 16384
+    for count, tokens in ((5, 1024), (1, 16385), (1, 0)):
+        with pytest.raises(ValidationError):
+            structured_images_request(count=count, max_tokens=tokens)
+    assert structured_images_request(count=0).images == []
+
+
+async def test_structured_image_bytes_and_count_are_checked_before_any_send():
+    from keystone.platform.model_access.services.runtime import ModelRuntime
+
+    class Runtime(ModelRuntime):
+        def _events(self, *args, **kwargs):
+            pytest.fail("Invalid image input reached registration")
+
+    service = SimpleNamespace(
+        identity=SimpleNamespace(database=None, settings=None),
+        clients=SimpleNamespace(inference=InferenceClient(None)),
+    )
+    runtime = Runtime(service)
+    selected = Selection(
+        model_entry_id=uuid4(),
+        channel_id=uuid4(),
+        provider="openrouter",
+        api_base=CHANNELS["openrouter"].api_base,
+        provider_model="vision-model",
+        operation="text.structured",
+    )
+    data = structured_images_request(count=2)
+    oversized = [("image/png", b"x" * (4 * 1024 * 1024 + 1), "auto")] * 2
+    for images, code in (
+        (oversized[:1], "model_invalid_request"),
+        (oversized, "model_input_too_large"),
+    ):
+        with pytest.raises(ServiceError) as error:
+            await runtime.invoke_text(
+                data,
+                images=images,
+                selection=selected,
+                invocation_id=uuid4(),
+                context=None,
+                worker_identity=None,
+            )
+        assert error.value.code == code

@@ -36,7 +36,7 @@
 | `[file_storages.<源名>]` | `KEYSTONE_FILE_STORAGES__<源名>__<字段>` | 逐项配置内容源，见第 4 节 |
 | `file_coordination_root` | `KEYSTONE_FILE_COORDINATION_ROOT` | 本地共享协调目录，示例为 `../.data/files` |
 | `file_default_storage` | `KEYSTONE_FILE_DEFAULT_STORAGE` | `local`，必须指向已配置源 |
-| `file_max_bytes` | `KEYSTONE_FILE_MAX_BYTES` | 默认 16 MiB；本地可配置到 1 TiB，同时受代理限制；S3 保留 64 MiB 上限 |
+| `file_max_bytes` | `KEYSTONE_FILE_MAX_BYTES` | 默认 16 MiB；本地可配置到 1 TiB，同时受代理限制；S3 保留 64 MiB 上限；保存同步图片产物的要求见[产物证据](../reference/model-access.md#产物证据) |
 | `file_min_free_bytes` | `KEYSTONE_FILE_MIN_FREE_BYTES` | 默认 1 GiB，范围 0–1 TiB；协调卷、临时卷及本地正式存储各自保留的最低可用空间 |
 | `file_upload_timeout_seconds` | `KEYSTONE_FILE_UPLOAD_TIMEOUT_SECONDS` | 默认 3600 秒，范围 1–86400；包含上传接收、写入与确认的总期限 |
 | `file_unreferenced_grace_seconds` | `KEYSTONE_FILE_UNREFERENCED_GRACE_SECONDS` | 默认未设置、不回收无引用 active 文件；显式设为 1–31536000 秒前，须核对调用方及存量引用 |

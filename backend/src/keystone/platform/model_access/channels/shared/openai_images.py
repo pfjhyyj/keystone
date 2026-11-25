@@ -2,6 +2,7 @@
 
 import json
 import math
+from dataclasses import dataclass
 from email.parser import BytesParser
 from email.policy import default
 from urllib.parse import urlsplit
@@ -82,7 +83,7 @@ def result(response, data, identifier, digest, operation):
         raise AdapterError(502, "model_invalid_output", "图片响应缺少有效结果") from None
 
 
-def validate_request(request, selected, target):
+def validate_request(request, selected, target, *, image_field="image"):
     try:
         if request.method != "POST" or str(request.url) != target[0] + target[1]:
             raise ValueError()
@@ -102,7 +103,7 @@ def validate_request(request, selected, target):
                 content = part.get_payload(decode=True)
                 if part.get_content_disposition() != "form-data" or not isinstance(content, bytes):
                     raise ValueError()
-                if name == "image":
+                if name == image_field:
                     count += 1
                     total += len(content)
                     if (
@@ -137,15 +138,19 @@ def validate_request(request, selected, target):
         raise AdapterError(422, "model_invalid_request", "图片请求不符合受控协议") from None
 
 
+@dataclass(frozen=True)
 class OpenAIImages:
+    # Sites differ in accepted models and in the repeated multipart field for reference images.
+    models: frozenset = MODELS
+    image_field: str = "image"
     pricing_meter = "openai_images.v2"
     image_parameters = ("aspect_ratio", "quality")
     operations = frozenset({"image.generate", "image.edit"})
     delivery = "sync"
-    models = MODELS
     paths = {"/images/generations": "POST", "/images/edits": "POST"}
     require_parameters = False
-    timeout_seconds = 600
+    # Slow 4K replies arrive after 600 s; an expired send is unknown and never resent.
+    timeout_seconds = 1200
     max_input_bytes = MAX_RELAY_INPUT_BYTES
     max_images = 9
 
@@ -153,7 +158,8 @@ class OpenAIImages:
         path = "/images/edits" if selected.operation == "image.edit" else "/images/generations"
         return selected.api_base, path, "model"
 
-    validate_request = staticmethod(validate_request)
+    def validate_request(self, request, selected, target):
+        return validate_request(request, selected, target, image_field=self.image_field)
 
     async def invoke(self, sdk, selected, data, inputs, identifier, digest, run_sync):
         body = dict(
@@ -169,7 +175,7 @@ class OpenAIImages:
             files = []
             for index, (mime, content, _) in enumerate(inputs):
                 await run_sync(images.verify_image, content, mime)
-                files.append(("image", (f"reference-{index}", content, mime)))
+                files.append((self.image_field, (f"reference-{index}", content, mime)))
         response = await sdk.post(
             self.request_target(selected)[1],
             body=body,

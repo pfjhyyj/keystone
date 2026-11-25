@@ -4,13 +4,14 @@
 
 ## 渠道与模型列表
 
-新建可选 OpenRouter、NewAPI、Yunwu、阿里云百炼和火山方舟；已有 openlux 内部标识保留，界面归 Yunwu 类。DeepSeek 仅保留声明。`deepseek`、`openrouter`、`aliyun_bailian`、`newapi`、`openlux`、`yunwu`、`volcengine` 的 ID 全部保持不变；Openlux、DeepSeek 为 `creatable=False` 的 legacy 声明，不在 UI 提供新建，但历史渠道、回执和快照仍须解析，不能删除注册项或重写 ID。模型能力由代码协议和条目 operations 决定，不由模型列表推断。
+新建可选 OpenRouter、OpenAI、NewAPI、Yunwu、阿里云百炼和火山方舟；已有 openlux 内部标识保留，界面归 Yunwu 类。DeepSeek 仅保留声明。`openai`、`deepseek`、`openrouter`、`aliyun_bailian`、`newapi`、`openlux`、`yunwu`、`volcengine` 的 ID 全部保持不变；Openlux、DeepSeek 为 `creatable=False` 的 legacy 声明，不在 UI 提供新建，但历史渠道、回执和快照仍须解析，不能删除注册项或重写 ID。模型能力由代码协议和条目 operations 决定，不由模型列表推断。
 
 能力范围见[渠道能力](../domains/model-access.md#33-渠道能力)，本表只列地址与协议差异。
 
 | 渠道 | 地址与协议差异 |
 |---|---|
 | OpenRouter | 固定 https://openrouter.ai/api/v1 |
+| OpenAI | 固定 https://api.openai.com/v1，Bearer；文本上限以 max_completion_tokens 发送；兼容代理按 NewAPI/Yunwu 类新建 |
 | NewAPI | 默认 https://newapiai.com/v1，可配置 HTTPS 站点及路径前缀 |
 | Yunwu / Openlux | https://yunwu.ai/v1、https://api.openlux.ai/v1 |
 | 百炼 | 固定 https://dashscope.aliyuncs.com/compatible-mode/v1；北京按量付费，未指定 reasoning 时保持 enable_thinking=false；显式设置按型号与操作校验，见[请求级思考](../domains/model-access.md#64-请求级思考控制) |
@@ -34,6 +35,7 @@ GET /api/v1/model-channels/{id}/models 使用推理 Key，在事务外有界查�
 | OpenRouter | usage.cost，或原 generation ID 查询 total_cost；单位 credits | 同账户 Management Key 查询 /credits，total_credits−total_usage |
 | NewAPI | Bearer GET /api/log/token，网关请求编号精确匹配，quota/quota_per_unit，系统 USD | 普通 Key GET /api/usage/token/，user_quota 为账户，token_items 为 Key |
 | Yunwu/Openlux | 原 Token 的 Key 参数分页日志；other.request_id 匹配 x-api-request-id | 未接入，不把 Token 用量当账户余额 |
+| OpenAI | 无推理 Key 可用的按请求查费；响应体 ID/x-request-id 仅作回执，费用只按价格规则预估 | 未接入 |
 | 百炼/方舟 | 尚无按推理请求 ID 确认单次金额的已接协议 | 独立云 AK/SK，见下一节 |
 | DeepSeek | 对话用量，未提供单次金额 | 解析声明保留，首版不开放刷新 |
 
@@ -120,16 +122,16 @@ Yunwu 页最多 256 KiB，NewAPI 最近日志 4 MiB，公开口径 1 MiB；拒�
 
 每次物理 POST 前复查原身份/PAT、model:invoke、固定模型/渠道启用和当前秘密；唯一登记与发送资格同事务提交，之后才鉴权发送。SDK/transport retries=0，不自动跳转，trust_env=False。公开请求不能提供内部调用 ID、身份、固定目标或 Flow 上下文。
 
-NewAPI 自定义 api_base 为完整 HTTPS 前缀，拒绝内嵌凭据、查询、片段、路径穿越。使用系统 DNS，不做公网 IP 预判或固定解析，支持内网/Fake-IP；OpenRouter 仅固定 origin 及已实现路径。
+NewAPI 自定义 api_base 为完整 HTTPS 前缀，拒绝内嵌凭据、查询、片段、路径穿越。使用系统 DNS，不做公网 IP 预判或固定解析，支持内网/Fake-IP；OpenRouter、OpenAI 仅固定 origin 及已实现路径。
 
 明确拒绝的 4xx 为 failed（402→model_insufficient_credits）；超时、5xx、断流、解析异常和 HTTP 200 error/finish_reason=error 为 unknown。SSE 须有完成原因及结束标记，缺 usage/cost 可成功但保持未知。明确 400/413/422 的 context_length_exceeded 映射受控错误，连接异常保留 unknown。
 
 | 边界 | 当前值 |
 |---|---|
 | 文本消息/正文 | 最多 32 条，总计 64 KiB |
-| max_tokens | 默认 1024，最高 4096 |
+| max_tokens | 默认 1024，最高 16384；只是单次输出许可，不预留、不参与估价 |
 | 本地调用/查询并发 | 4；实际推理另受跨进程共享容量 |
-| 文本窗口/SDK I/O | 60 秒/30 秒 |
+| 文本宿主与 SDK 期限 | 60 秒；开启思考至少 120 秒；max_tokens 超过 4096 时至少 600 秒 |
 | 文本请求/响应/SSE 单事件 | 256 KiB/4 MiB/64 KiB |
 | 发送后取消事实收尾 | 最多 5 秒 |
 | 余额刷新 | HTTP 10 秒，本进程 2，同渠道会话锁串行 |
@@ -144,20 +146,22 @@ ModelDispatchScope 保存 next_send_at、blocked_until、updated_at，站点/Tok
 
 ### 输入与向量
 
-结构化使用严格 response_format.json_schema，本地验证，Schema 有界且仅本地引用，验证失败不修正重发。OpenRouter 要求 provider.require_parameters。图片输入校验实际解码、MIME、单帧 PNG/JPEG/WebP，单份最多 4 MiB/16M 像素。
+结构化使用严格 response_format.json_schema，本地验证，Schema 有界且仅本地引用，验证失败不修正重发；原文与解析对象各最多 256 KiB。OpenRouter 要求 provider.require_parameters。结构化请求可附 1～4 份图片，规则见[操作与固定选择](../domains/model-access.md#61-操作与固定选择)；报文沿用识图的内联 data URI，校验份数与宿主受理数一致，协议须同时声明两种操作。图片输入校验实际解码、MIME、单帧 PNG/JPEG/WebP，单份最多 4 MiB/16M 像素。
 
 | 场景 | 输入上限 |
 |---|---|
-| 图片理解、OpenRouter 编辑 | 4 份、合计 8 MiB |
-| Yunwu/Openlux 编辑 | 9 份、合计 32 MiB |
+| 图片理解、结构化附图、OpenRouter 编辑 | 4 份、合计 8 MiB |
+| GPT Image 编辑 | 9 份、合计 32 MiB |
 | 普通媒体报文 | 12 MiB |
-| Yunwu/Openlux multipart | 32 MiB＋128 KiB |
+| GPT Image multipart | 32 MiB＋128 KiB |
 
-EmbeddingRequest(texts, dimensions) 每次 1～16 非空文本，每条 8 KiB、合计 32 KiB，维度 1～4096，float 输出。OpenRouter/NewAPI/DashScope 装配 /embeddings，验证模型、序号、数量、维度、有限非零向量。请求/结果不存调用账本，Flow 大结果须另存文件或业务索引；不预留输出 token，不增加向量库。
+EmbeddingRequest(texts, dimensions) 每次 1～16 非空文本，每条 8 KiB、合计 32 KiB，维度 1～4096，float 输出。OpenRouter/OpenAI/NewAPI/DashScope 装配 /embeddings，验证模型、序号、数量、维度、有限非零向量。请求/结果不存调用账本，Flow 大结果须另存文件或业务索引；不预留输出 token，不增加向量库。
 
 ### 产物证据
 
-ImageManifest format=1，保存 request_digest、operation、outputs；每项仅稳定 artifact_key、SHA-256、size_bytes、content_type，键由 invocation_id＋序号派生。最多两份、每份 8 MiB、总计 16 MiB，result_context 私有，不与 cost_context 混用。
+ImageManifest format=1，保存 request_digest、operation、outputs；每项仅稳定 artifact_key、SHA-256、size_bytes、content_type，键由 invocation_id＋序号派生。最多两份、每份 32 MiB、总计 64 MiB，result_context 私有，不与 cost_context 混用。32 MiB 覆盖 4K（协议最大 3840x2160）实拍类 PNG；少数难压缩的极端内容可能超出，届时拒绝，不截断。同步图片响应体相应限为两份 Base64 加 1 MiB；正文和解码内容只在进程内，DBOS 检查点和数据库只存 Manifest 摘要与文件 ID。
+
+产物另存为 File 时受部署 `file_max_bytes` 约束，默认 16 MiB 不足以保存 2K/4K PNG。使用同步图片的部署须将其设为至少 33554432（32 MiB）；否则保存返回 file_too_large，而调用已成功、费用照常发生，Base64 结果不能再次取回，平台不截断或降级内容。
 
 恢复先核原身份、角色、操作、固定目标和摘要；已保存 Manifest 则验证原文件，缺不可取回内容时失败；无调用才可登记发送。模型层先确认生成事实与 Manifest，并返回受控图片内容；Flow 再逐份保存 File/Run 引用，返回自身的轻量 ImageResult。只有哈希不能取回丢失 Base64；文件已保存则按原稳定键复用。
 
@@ -169,21 +173,28 @@ submit_image 返回 invocation_id，image_result 返回 ImagePending 或 ImageRe
 
 Manifest 可保留 TaskReceipt，以便生成成功后重新取原产物；摘要不符拒绝覆盖。CDN 只允许适配器声明的 HTTPS/443，无凭据、无跳转，不携渠道 Authorization，URL 不存日志或公共回执。撤权/取消阻止新查询、下载与发布，本地中断不重建或承诺取消远端任务。
 
-### Yunwu/Openlux 同步图片
+### GPT Image 同步图片
 
-两个站点共用 OpenAIImages，支持 gpt-image-2、gpt-image-2-c、gpt-image-2.5-sunburst、gpt-image-2.5-flare。生成 POST /images/generations JSON，编辑 /images/edits multipart，重复 image 字段；模型声明仍须包含操作。
+Yunwu/Openlux 与 OpenAI 共用 OpenAIImages，模型集合和编辑字段按协议实例声明，模型声明仍须包含操作。生成 POST /images/generations JSON，编辑 /images/edits multipart，参考图逐份重复同一字段，校验拒绝另一种写法。
+
+| 站点 | 模型 | 参考图字段 |
+|---|---|---|
+| Yunwu/Openlux | gpt-image-2、gpt-image-2-c、gpt-image-2.5-sunburst、gpt-image-2.5-flare | image |
+| OpenAI | gpt-image-2、gpt-image-2.5-sunburst、gpt-image-2.5-flare 及其官方日期快照 | image[] |
+
+OpenAI 只登记官方文档声明支持任意 WIDTHxHEIGHT 的型号；固定尺寸的旧型号不登记。官方结果为 b64_json，不返回 URL。2.6 待实际调用确认自定义尺寸后再登记。
 
 可选 aspect_ratio 为 1:1、16:9、9:16、4:3、3:4，quality 为 low/medium/high，默认 1:1/medium；resolution 为 1K/2K/4K，转换成符合比例、16 倍数及像素/边长限制的 size，输出 png/jpeg/webp。OpenRouter 不接受这组新增控制；请求摘要使用完整的当前 DTO。
 
-该协议宿主操作与 SDK 超时为 600 秒（其他协议默认 60 秒），发送前准入与协调等待计入其中，节奏等待仍受上述 55 秒上限。建议图片 Flow timeout_seconds 至少 900 秒覆盖下载/保存，旧快照不自动延长。
+该协议宿主操作与 SDK 超时为 1200 秒（其他协议默认 60 秒），覆盖 600 秒以上才返回的高分辨率请求；超时仍为 unknown，不重发。发送前准入与协调等待计入其中，节奏等待仍受上述 55 秒上限。建议图片 Flow timeout_seconds 至少 1800 秒，覆盖 1200 秒请求、180 秒下载及两份产物保存，旧快照不自动延长。
 
 b64_json（含匹配 MIME 的 data URI）验证后形成 Manifest。URL 回应先加密存 ImageDownloadReceipt，绑定渠道/调用/操作/摘要；最多两份、每 URL 3072 字符，证据/Manifest 最多 16 KiB。本地取回凭据最长 1 小时，上游可更早失效。
 
-每份下载最多 3 次、2 次跳转、总窗口 120 秒、每请求 30 秒、最多 8 MiB。每次及跳转复查原身份、固定目标和来源，仅 HTTPS/443，系统 DNS，不携渠道 Token；只重试 GET。URL 有效回应落库即确认调用成功，文件或 Run 仍可能失败；重启复用原凭据、Manifest 或 File，不重新生成或复活终态 Run。
+每份下载最多 3 次、2 次跳转、总窗口 180 秒、每请求 60 秒、最多 32 MiB。每次及跳转复查原身份、固定目标和来源，仅 HTTPS/443，系统 DNS，不携渠道 Token；只重试 GET。URL 有效回应落库即确认调用成功，文件或 Run 仍可能失败；重启复用原凭据、Manifest 或 File，不重新生成或复活终态 Run。
 
-费用仍以原 Token 的 x-api-request-id 精确匹配日志，响应体 id、usage.cost、余额差不作本渠道实扣。缺回执 unavailable，缺日志 pending，口径/模型冲突 blocked，生成失败也可保存查实费用。
+Yunwu/Openlux 费用仍以原 Token 的 x-api-request-id 精确匹配日志，响应体 id、usage.cost、余额差不作本渠道实扣。缺回执 unavailable，缺日志 pending，口径/模型冲突 blocked，生成失败也可保存查实费用。OpenAI 不查实扣，按 openai_images.v2 计量与模型价格规则预估，参考价见[费用预估](model-pricing.md)。
 
-依据：[OpenRouter 结构化](https://openrouter.ai/docs/guides/features/structured-outputs)、[图片理解](https://openrouter.ai/docs/guides/overview/multimodal/image-understanding)、[图片生成](https://openrouter.ai/docs/guides/overview/multimodal/image-generation)、[云雾结构化](https://lrbebhrbp1.apifox.cn/api-417728203)、[识图](https://lrbebhrbp1.apifox.cn/api-417728221)、[Openlux Kling](https://doc.openlux.ai/api/docs/public/specs/platform/kling)、[NewAPI 图片说明](https://github.com/QuantumNous/new-api-docs-v1/blob/main/content/docs/en/plugins/usage.mdx)。
+依据：[OpenRouter 结构化](https://openrouter.ai/docs/guides/features/structured-outputs)、[图片理解](https://openrouter.ai/docs/guides/overview/multimodal/image-understanding)、[图片生成](https://openrouter.ai/docs/guides/overview/multimodal/image-generation)、[云雾结构化](https://lrbebhrbp1.apifox.cn/api-417728203)、[识图](https://lrbebhrbp1.apifox.cn/api-417728221)、[Openlux Kling](https://doc.openlux.ai/api/docs/public/specs/platform/kling)、[NewAPI 图片说明](https://github.com/QuantumNous/new-api-docs-v1/blob/main/content/docs/en/plugins/usage.mdx)、[OpenAI 图片编辑](https://developers.openai.com/api/reference/resources/images/methods/edit)。
 
 ## 接口与控制台
 
