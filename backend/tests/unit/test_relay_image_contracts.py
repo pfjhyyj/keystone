@@ -406,3 +406,83 @@ def test_largest_protocol_size_png_fits_output_and_response_bounds():
     with pytest.raises(AdapterError) as error:
         image_batch({"data": [{"b64_json": oversized}]}, data, uuid4(), "a" * 64, "image.generate")
     assert error.value.code == "model_invalid_output"
+
+
+def image_protocols():
+    seen = {}
+    for spec in CHANNELS.values():
+        for protocol in (*spec.protocols, *(spec.custom_protocols or ())):
+            if protocol.operations & {"image.generate", "image.edit"}:
+                seen[id(protocol)] = protocol
+    return list(seen.values())
+
+
+def test_declared_output_options_are_accepted_by_request_contracts():
+    from typing import get_args
+
+    from keystone.platform.model_access.schemas.images import ImageTaskRequest
+
+    protocols = image_protocols()
+    assert {type(p).__name__ for p in protocols} >= {
+        "OpenAIImages",
+        "OpenRouterImages",
+        "KlingImages",
+    }
+    for protocol in protocols:
+        declared = protocol.output_options
+        contract = ImageTaskRequest if protocol.delivery == "async" else ImageGenerateRequest
+        assert declared.max_outputs == contract.model_fields["n"].metadata[-1].le
+        for name, option in declared.parameters.items():
+            field = contract.model_fields[name]
+            accepted = {value for arg in get_args(field.annotation) for value in get_args(arg)}
+            accepted |= set(get_args(field.annotation))
+            assert set(option.choices) <= accepted, (protocol, name)
+            if field.default is not None:
+                assert option.default == field.default, (protocol, name)
+
+
+def test_gpt_image_wire_accepts_exactly_the_declared_options():
+    from itertools import product
+
+    from keystone.platform.model_access.channels.shared.openai_images import OpenAIImages
+
+    protocol = channel_adapter("yunwu").protocol("image.generate", "sync", model="gpt-image-2")
+    assert isinstance(protocol, OpenAIImages)
+    selection = selected("yunwu")
+    target = protocol.request_target(selection)
+    options = protocol.output_options.parameters
+
+    def wire(**values):
+        return httpx2.Request(
+            "POST",
+            target[0] + target[1],
+            json={"model": "gpt-image-2", "prompt": "draw", "n": 1, **values},
+        )
+
+    for ratio, tier, quality, fmt in product(
+        *(
+            options[name].choices
+            for name in ("aspect_ratio", "resolution", "quality", "output_format")
+        )
+    ):
+        protocol.validate_request(
+            wire(size=image_size(ratio, tier), quality=quality, output_format=fmt),
+            selection,
+            target,
+        )
+    for rejected in ({"quality": "auto"}, {"output_format": "gif"}):
+        with pytest.raises(AdapterError):
+            protocol.validate_request(
+                wire(
+                    **{
+                        "size": image_size("1:1", "1K"),
+                        "quality": "medium",
+                        "output_format": "png",
+                        **rejected,
+                    }
+                ),
+                selection,
+                target,
+            )
+    # Omitted controls are sent as the declared defaults.
+    assert image_size(None, "1K") == image_size(options["aspect_ratio"].default, "1K")

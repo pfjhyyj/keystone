@@ -51,7 +51,8 @@ backend/.venv/bin/python scripts/check.py --scope full
 | 需要 | 做法 |
 |---|---|
 | Worker 中的业务代码（Flow 步骤、消息命令、发送时取内容）使用 Runtime | 在 `tasks/` 层写 `bind(runtime)` 并登记到 `WORKFLOW_BINDINGS`；在 bind 内导入执行模块，API 不加载它们 |
-| 业务知道自己每段 Flow 的结果 | 平台只向业务开放 Run 状态（`FlowService.statuses_in_transaction`）。段的最后一步以原身份把业务结果写入业务表；Run 失败、取消或超时时没有业务结果，由状态推导 |
+| 业务知道自己每段 Flow 的结果 | 平台向业务开放 Run 的结束原因（`FlowService.outcomes_in_transaction`，返回状态、公开错误码和 model_result_unknown，见[结束原因](../domains/flow.md#结束原因)）。段的最后一步以原身份把业务结果写入业务表；Run 失败、取消或超时时没有业务结果，按结束原因区分可重新发起与待核实 |
+| 业务页面的输出设置跟随当前模型 | 按 Flow 用途读取当前默认模型及其协议声明的输出选项（`FlowModelDefaults.current` 或 `GET /flow-model-defaults/{definition}/{role}/current`，见[当前模型与输出选项](../domains/flow.md#当前模型与输出选项)），不在业务里写死比例、分辨率或格式 |
 | Flow 失败等平台不执行业务代码的情况仍要处理（如回复命令） | 用 `BUSINESS_TASKS` 声明业务自己的计划任务 |
 | 短期保存凭据类结果（如订阅链接） | 用 core 的 `CredentialVault` 加密写入业务表并设到期时间，读取时过期即清除；不进入 Step 返回值、日志、审计和投递记录，发送时用 `supplied` 取内容 |
 | 入口地址跳到事先不知道的站点 | 见[交互环境 7.2](../domains/environments/README.md#72-业务接入接口) 中的 `ScopeViolation` |

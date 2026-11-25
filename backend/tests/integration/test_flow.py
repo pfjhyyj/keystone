@@ -383,6 +383,10 @@ host._upload = crash
     assert after[0]["status"] == ("unknown" if point == "registered" else "succeeded")
     if point == "artifact":
         assert file_count(client) == 2
+    flow = client.app.state.runtime.flow_service(None)
+    outcome = query(client, lambda s: flow.outcomes_in_transaction(s, [UUID(run["id"])]))
+    # Business lists must not offer a plain resend after a registered call lost its result.
+    assert outcome[UUID(run["id"])].model_result_unknown is (point != "artifact")
 
 
 def test_pat_revocation_blocks_execution_but_new_session_can_cancel(client, tmp_path, flow_engine):

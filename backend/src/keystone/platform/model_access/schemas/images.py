@@ -1,5 +1,6 @@
 """File-based media requests; bytes and supplier locations stay internal."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Literal
@@ -39,6 +40,39 @@ class ImageGenerateRequest(Input):
     output_format: Literal["png", "jpeg", "webp"] = "png"
     aspect_ratio: Literal["1:1", "16:9", "9:16", "4:3", "3:4"] | None = None
     quality: Literal["low", "medium", "high"] | None = None
+
+
+@dataclass(frozen=True)
+class ImageOutputOption:
+    """Accepted values of one image request field, and the value used when it is omitted."""
+
+    choices: tuple[str, ...]
+    default: str
+
+    def __post_init__(self):
+        if not self.choices or self.default not in self.choices:
+            raise ValueError("An image output option needs choices including its default")
+
+
+@dataclass(frozen=True)
+class ImageOutputOptions:
+    """Protocol declaration of the output fields it honors; omitted fields are not sent.
+
+    Keys are request field names (aspect_ratio, resolution, quality, output_format); every
+    choice must be accepted by the request DTO and by the protocol's wire validation.
+    """
+
+    parameters: Mapping[str, ImageOutputOption]
+    max_outputs: int = 2
+
+    def view(self):
+        return {
+            "parameters": {
+                name: {"choices": list(option.choices), "default": option.default}
+                for name, option in self.parameters.items()
+            },
+            "max_outputs": self.max_outputs,
+        }
 
 
 class ImageEditRequest(ImageGenerateRequest):

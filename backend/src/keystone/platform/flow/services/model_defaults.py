@@ -9,6 +9,7 @@ from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.flow.models import FlowModelDefault
 from keystone.platform.model_access.services.entries import (
+    describe_binding_in_transaction,
     entry_keys_in_transaction,
     resolve_bindings_in_transaction,
 )
@@ -76,6 +77,61 @@ class FlowModelDefaults:
                 for definition in sorted(self.definitions.values(), key=lambda d: d.key)
                 for role in definition.model_roles
             ]
+
+    async def current(self, definition_key, role_key, *, definition_revision=None):
+        async with self.identity.access() as (session, auth):
+            return await self.current_in_transaction(
+                session, auth, definition_key, role_key, definition_revision=definition_revision
+            )
+
+    async def current_in_transaction(
+        self, session, auth, definition_key, role_key, *, definition_revision=None
+    ):
+        """The role's current default model and the output options its protocol declares.
+
+        Same functional checks as a start that leaves the role unbound: flow:start, the
+        definition's permissions and model:invoke. Reads without locks or audit.
+        """
+        auth.require("flow:start")
+        definition = self.definitions.get(definition_key)
+        if definition is None:
+            raise ServiceError(404, "definition_unavailable", "流程定义不可用")
+        if definition_revision is not None and definition_revision != definition.revision:
+            raise ServiceError(409, "flow_revision_conflict", "流程契约版本已改变，请刷新目录")
+        for permission in definition.required_permissions:
+            auth.require(permission)
+        _, role = _role(self.definitions, definition_key, role_key)
+        auth.require("model:invoke")
+        entry_id = await session.scalar(
+            select(FlowModelDefault.model_entry_id).where(
+                FlowModelDefault.definition_key == definition.key,
+                FlowModelDefault.role == role.key,
+            )
+        )
+        model = (
+            await describe_binding_in_transaction(
+                session, entry_id, operation=role.operation, delivery=role.delivery
+            )
+            if entry_id is not None
+            else None
+        )
+        if model is None:
+            status, code = "unset", "flow_model_unset"
+        else:
+            code = model["unavailable_reason"]
+            status = "available" if code is None else "unavailable"
+        return {
+            "definition_key": definition.key,
+            "definition_revision": definition.revision,
+            "role": role.key,
+            "operation": role.operation,
+            "delivery": role.delivery,
+            "status": status,
+            # The code a start leaving this role unbound would currently return.
+            "error_code": code,
+            "model": model and {"key": model["key"], "name": model["name"]},
+            "output_options": model and model["output_options"],
+        }
 
     async def choices(self, definition_key, role_key):
         """Active models that can serve the role; listing them also needs model:invoke."""

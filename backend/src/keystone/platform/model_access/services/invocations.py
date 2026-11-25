@@ -1,4 +1,5 @@
 from decimal import localcontext
+from uuid import UUID
 
 from sqlalchemy import func, select
 
@@ -20,6 +21,26 @@ from keystone.platform.model_access.services.queries import (
     history_filters,
     history_scope,
 )
+
+
+async def unresolved_runs_in_transaction(session, run_ids):
+    """Run IDs with a model call whose provider outcome is not confirmed.
+
+    A call is unresolved while recorded as unknown, or still running. The caller owns
+    Run authorization; only Run IDs leave this module, never invocation facts.
+    """
+    ids = {str(identifier) for identifier in run_ids}
+    if len(ids) > 100:
+        raise ValueError("At most 100 runs are supported")
+    if not ids:
+        return set()
+    run = ModelInvocation.flow_context["flow_run_id"].astext
+    rows = await session.scalars(
+        select(run)
+        .where(run.in_(ids), ModelInvocation.status.in_(("running", "unknown")))
+        .distinct()
+    )
+    return {UUID(value) for value in rows}
 
 
 class InvocationService:

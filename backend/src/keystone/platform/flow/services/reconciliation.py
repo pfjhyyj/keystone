@@ -129,7 +129,11 @@ async def project(runtime, identifier, state, *, submission_error=None):
             else:
                 await finish(session, current, "failed", error=state["error_code"])
         elif status == "CANCELLED":
-            await finish(session, current, "cancelled")
+            if current.cancel_requested_at is None and state.get("timed_out"):
+                # Engine-enforced overall timeout, not a requested cancellation.
+                await finish(session, current, "failed", error="flow_timeout")
+            else:
+                await finish(session, current, "cancelled")
         elif status == "PENDING":
             current.status = "running"
 

@@ -7,6 +7,15 @@ from keystone.platform.model_access.channels.shared.metering import (
     make_profile,
 )
 from keystone.platform.model_access.schemas.errors import AdapterError
+from keystone.platform.model_access.schemas.images import ImageOutputOption, ImageOutputOptions
+
+# No aspect ratio or quality controls: such requests are rejected before sending.
+OUTPUT_OPTIONS = ImageOutputOptions(
+    {
+        "resolution": ImageOutputOption(("1K", "2K", "4K"), "1K"),
+        "output_format": ImageOutputOption(("png", "jpeg", "webp"), "png"),
+    }
+)
 
 PROFILE = make_profile(
     "openrouter_images.v2",
@@ -27,6 +36,7 @@ PROFILE = make_profile(
 
 class OpenRouterImages:
     pricing_meter = "openrouter_images.v2"
+    output_options = OUTPUT_OPTIONS
     operations = frozenset({"image.generate", "image.edit"})
     delivery = "sync"
     models = None

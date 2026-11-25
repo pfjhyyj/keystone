@@ -184,7 +184,7 @@ Yunwu/Openlux 与 OpenAI 共用 OpenAIImages，模型集合和编辑字段按协
 
 OpenAI 只登记官方文档声明支持任意 WIDTHxHEIGHT 的型号；固定尺寸的旧型号不登记。官方结果为 b64_json，不返回 URL。2.6 待实际调用确认自定义尺寸后再登记。
 
-可选 aspect_ratio 为 1:1、16:9、9:16、4:3、3:4，quality 为 low/medium/high，默认 1:1/medium；resolution 为 1K/2K/4K，转换成符合比例、16 倍数及像素/边长限制的 size，输出 png/jpeg/webp。OpenRouter 不接受这组新增控制；请求摘要使用完整的当前 DTO。
+可选值见[图片输出选项](#图片输出选项)；resolution 与 aspect_ratio 转换成符合比例、16 倍数及像素/边长限制的 size。请求摘要使用完整的当前 DTO。
 
 该协议宿主操作与 SDK 超时为 1200 秒（其他协议默认 60 秒），覆盖 600 秒以上才返回的高分辨率请求；超时仍为 unknown，不重发。发送前准入与协调等待计入其中，节奏等待仍受上述 55 秒上限。建议图片 Flow timeout_seconds 至少 1800 秒，覆盖 1200 秒请求、180 秒下载及两份产物保存，旧快照不自动延长。
 
@@ -195,6 +195,18 @@ b64_json（含匹配 MIME 的 data URI）验证后形成 Manifest。URL 回应�
 Yunwu/Openlux 费用仍以原 Token 的 x-api-request-id 精确匹配日志，响应体 id、usage.cost、余额差不作本渠道实扣。缺回执 unavailable，缺日志 pending，口径/模型冲突 blocked，生成失败也可保存查实费用。OpenAI 不查实扣，按 openai_images.v2 计量与模型价格规则预估，参考价见[费用预估](model-pricing.md)。
 
 依据：[OpenRouter 结构化](https://openrouter.ai/docs/guides/features/structured-outputs)、[图片理解](https://openrouter.ai/docs/guides/overview/multimodal/image-understanding)、[图片生成](https://openrouter.ai/docs/guides/overview/multimodal/image-generation)、[云雾结构化](https://lrbebhrbp1.apifox.cn/api-417728203)、[识图](https://lrbebhrbp1.apifox.cn/api-417728221)、[Openlux Kling](https://doc.openlux.ai/api/docs/public/specs/platform/kling)、[NewAPI 图片说明](https://github.com/QuantumNous/new-api-docs-v1/blob/main/content/docs/en/plugins/usage.mdx)、[OpenAI 图片编辑](https://developers.openai.com/api/reference/resources/images/methods/edit)。
+
+### 图片输出选项
+
+每个图片协议在类属性 `output_options`（`schemas/images.py` 的 ImageOutputOptions）声明它接受的输出字段：以请求字段名为键，列出可选值及省略时实际发送的默认值，另有单次最多输出份数。声明是可选值的唯一来源：协议报文校验使用同一组常量，模型目录的 image_parameters 和 [Flow 当前模型与输出选项](../domains/flow.md#当前模型与输出选项)都由它派生；参考图份数与总大小沿用协议的 max_images、max_input_bytes。
+
+| 协议 | aspect_ratio | resolution | quality | output_format | 份数 |
+|---|---|---|---|---|---|
+| GPT Image（Yunwu/Openlux/OpenAI） | 1:1、16:9、9:16、4:3、3:4，默认 1:1 | 1K/2K/4K，默认 1K | low/medium/high，默认 medium | png/jpeg/webp，默认 png | 1～2 |
+| OpenRouter 图片 | 不接受，提交即拒绝 | 1K/2K/4K，默认 1K | 不接受，提交即拒绝 | png/jpeg/webp，默认 png | 1～2 |
+| Kling 异步图片 | — | 1K/2K，默认 1K | — | — | 1～2 |
+
+新增图片协议必须声明 `output_options`，只列出报文校验实际接受的值；单元测试核对声明是请求 DTO 的子集，并逐个组合通过 GPT Image 报文校验。
 
 ## 接口与控制台
 
@@ -257,7 +269,8 @@ keystone recover-model-calls --confirm-api-stopped
 1. 新建 `channels/<id>/` 包，在该目录实现必要的协议、`billing.py`、发现或 `pricing.py`；通用实现复用 `channels/shared/`。在包内导出一份 `SPEC`，用 `channels/spec.py` 的声明类型组合固定地址、能力、账务、计量 profile、参考价格和 UI 描述；不能用配置宣称尚未实现的能力。
 2. 在 `channels/__init__.py` 导入该包，并向 `INSTALLED` 注册一项 `<id>.SPEC`；`CHANNELS`、可新建类型、参考价格和 `/model-access/options` 描述由注册表派生。仅增加使用现有配置字段的渠道，无须修改数据库迁移或前端供应商分支，也不用另维护 Provider ID 枚举。下线时保留 ID/SPEC 并设 `creatable=False`，继续支持历史解析。
 3. `SPEC.fields` 只描述已有受支持字段，不是任意字段存储机制。若渠道需要新的额外字段，必须补齐数据库列/必要迁移、请求与响应 DTO、校验、保存读取和权限/审计支持，再添加字段描述；复杂交互还需相应前端支持，不能承诺任意字段仅声明即可无迁移接入。
-4. 使用本地 HTTP 协议桩验证准入、报文、计量、账务和错误脱敏，并运行 `backend/tests/unit/test_architecture.py`；涉及持久化或恢复时补充真实 PostgreSQL/DBOS 用例，不发起付费请求。
+4. 图片协议声明 `output_options`，见[图片输出选项](#图片输出选项)。
+5. 使用本地 HTTP 协议桩验证准入、报文、计量、账务和错误脱敏，并运行 `backend/tests/unit/test_architecture.py`；涉及持久化或恢复时补充真实 PostgreSQL/DBOS 用例，不发起付费请求。
 
 InvocationContext 的 workflow_id 长 1～512，step_id 为 0～2³¹−1 整数，保存原发送位置，异步查询不覆盖。image_sources_in_transaction 每批最多 100，在同 Run 与当前可见记录内核对 Manifest 和登记字节元数据，只返回确认来源。
 
