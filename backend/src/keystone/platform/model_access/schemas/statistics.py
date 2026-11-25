@@ -17,6 +17,7 @@ Dimension = Literal[
     "user",
     "source",
     "flow_run",
+    "flow_definition",
     "node",
     "model_role",
     "agent",
@@ -41,6 +42,7 @@ class InvocationFilters(Input):
     provider_model: str | None = Field(None, min_length=1, max_length=128)
     user_id: UUID | Literal["system"] | None = None
     flow_run_id: UUID | None = None
+    definition_key: str | None = Field(None, min_length=1, max_length=100)
     node_key: str | None = Field(None, min_length=1, max_length=100)
     model_role: str | None = Field(None, min_length=1, max_length=64)
     agent_key: str | None = Field(None, min_length=1, max_length=100)
@@ -74,7 +76,8 @@ class InvocationFilters(Input):
     @classmethod
     def missing_dimensions(cls, value):
         if value is not None and (
-            not set(value.split(",")) <= {"flow_run", "node", "model_role", "agent", "error"}
+            not set(value.split(","))
+            <= {"flow_run", "flow_definition", "node", "model_role", "agent", "error"}
             or len(value.split(",")) != len(set(value.split(",")))
         ):
             raise ValueError("Invalid missing dimensions")
@@ -89,11 +92,22 @@ class InvocationListQuery(InvocationFilters):
     limit: int = Field(50, ge=1, le=100)
 
 
+MAX_SERIES_GROUPS = 20
+
+
 class StatisticsQuery(InvocationListQuery):
     group_by: Dimension = "channel"
     order_by: Literal["calls", "cost"] = "calls"
     sort_unit: str = Field("USD", min_length=1, max_length=32)
     bucket: Literal["hour", "day", "month"] = "day"
+    # Per-group time series for the current page of groups only.
+    series: bool = False
+
+    @model_validator(mode="after")
+    def bounded_series(self):
+        if self.series and self.limit > MAX_SERIES_GROUPS:
+            raise ValueError(f"Series accept at most {MAX_SERIES_GROUPS} groups per page")
+        return self
 
 
 class StatisticsOptionsQuery(InvocationListQuery):

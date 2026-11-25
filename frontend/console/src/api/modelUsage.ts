@@ -7,6 +7,7 @@ export const dimensions = {
   user: '用户 / 系统',
   source: '调用来源',
   flow_run: 'Flow 运行',
+  flow_definition: 'Flow 定义',
   node: '流程步骤',
   model_role: '模型角色',
   agent: 'Agent',
@@ -25,6 +26,7 @@ export const dimensionFilters: Record<Dimension, string> = {
   user: 'user_id',
   source: 'source',
   flow_run: 'flow_run_id',
+  flow_definition: 'definition_key',
   node: 'node_key',
   model_role: 'model_role',
   agent: 'agent_key',
@@ -56,6 +58,7 @@ export const filterKeys = [
   'user_id',
   'source',
   'flow_run_id',
+  'definition_key',
   'node_key',
   'model_role',
   'agent_key',
@@ -102,6 +105,8 @@ export interface UsageGroup extends UsageMetrics {
   key: string | null
   label: string
   filters: Record<string, string>
+  // Present only when statistics are requested with series=true.
+  trend?: UsagePoint[]
 }
 export interface UsagePoint extends UsageMetrics {
   start: string

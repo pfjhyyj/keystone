@@ -162,7 +162,7 @@ execution_guard(session, auth, run_id, definition_key, input) 在原身份和权
 
 ## 6. 执行统计与单次操作限制
 
-Flow 不维护累计模型次数、token、工具调用、循环次数或文件总量配额，也不获取每 Run 操作许可。模型调用和 token/费用统计查询 ModelInvocation，按 Run、节点、角色和 Agent 聚合；上游未报告的用量保持未知。步骤、工具执行和重试查询 DBOS 历史，业务可记录带 run_id 的结构化阶段日志，不保存正文或凭据。
+Flow 不维护累计模型次数、token、工具调用、循环次数或文件总量配额，也不获取每 Run 操作许可。模型调用和 token/费用统计查询 ModelInvocation，按 Run、定义、节点、角色和 Agent 聚合；上游未报告的用量保持未知。步骤、工具执行和重试查询 DBOS 历史，业务可记录带 run_id 的结构化阶段日志，不保存正文或凭据。
 
 每次请求仍校验协议、目标、输入大小和输出参数；Flow 整体超时和 Agent 单次 run 的 request_limit 是有界的执行上限（不是费用预算），示例默认 100 次请求。文件保留单文件限制与引用幂等，workspace(max_bytes=...) 保留明确的单次工作区上限，原生进程保留超时、stdout/stderr 和输出文件上限。模型、媒体及后台队列继续按实际资源控制并发。取消须等待 I/O、进程和文件清理完成。调用登记、未知结果保护与统计不依赖预算账本。
 

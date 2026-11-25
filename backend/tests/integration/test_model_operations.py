@@ -215,6 +215,7 @@ main()
     call = query(client, lambda s: s.get(ModelInvocation, UUID(done["result"]["invocation_id"])))
     assert call.model_entry_id == UUID(selected["id"]) and call.status == "succeeded"
     assert call.flow_context["model_role"] == "analyze"
+    assert call.flow_context["definition_key"] == done["definition_key"]
     update = client.patch(
         f"/api/v1/model-entries/{selected['id']}",
         json={
@@ -319,3 +320,4 @@ main()
     assert (
         calls[0].flow_context["agent_call_id"] and calls[0].flow_context["model_role"] == "analyze"
     )
+    assert calls[0].flow_context["definition_key"] == done["definition_key"]

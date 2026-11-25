@@ -150,6 +150,13 @@ class Runtime:
             FileReferenceService(identity),
         )
 
+    def model_statistics(self, identity):
+        from keystone.platform.model_access.services.statistics import StatisticsService
+
+        return StatisticsService(
+            identity, definition_names=self.flow_service(identity).definition_names
+        )
+
     def flow_service(self, identity):
         return FlowService(
             identity,

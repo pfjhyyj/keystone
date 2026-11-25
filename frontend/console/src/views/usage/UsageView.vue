@@ -30,6 +30,8 @@ import StatisticsPicker from './components/StatisticsPicker.vue'
 import UsageSummary from './components/UsageSummary.vue'
 import UsageTrend from './components/UsageTrend.vue'
 import UsageGroups from './components/UsageGroups.vue'
+import UsageGroupTrend from './components/UsageGroupTrend.vue'
+import { downloadText, seriesGroups, usageCsv } from './usageSeries'
 import UsageCalls from './components/UsageCalls.vue'
 const route = useRoute(),
   router = useRouter()
@@ -107,6 +109,7 @@ const rollingPresets = ['today', '7', '30', 'month']
 const fields: { dimension: Dimension; key: (typeof filterKeys)[number]; label: string }[] = [
   { dimension: 'upstream_model', key: 'provider_model', label: '上游模型' },
   { dimension: 'flow_run', key: 'flow_run_id', label: 'Flow 运行' },
+  { dimension: 'flow_definition', key: 'definition_key', label: 'Flow 定义' },
   { dimension: 'node', key: 'node_key', label: '流程步骤' },
   { dimension: 'model_role', key: 'model_role', label: '模型角色' },
   { dimension: 'agent', key: 'agent_key', label: 'Agent' },
@@ -114,7 +117,8 @@ const fields: { dimension: Dimension; key: (typeof filterKeys)[number]; label: s
 ]
 let alive = true,
   statsGeneration = 0,
-  callsGeneration = 0
+  callsGeneration = 0,
+  seriesGeneration = 0
 let detailOrigin: { field: string; id: string; path: string } | null = null
 function openDetail(field: 'invocation' | 'run', id: string) {
   detailOrigin = { field, id, path: route.fullPath }
@@ -229,6 +233,71 @@ async function loadCalls() {
   }
 }
 watch([callsKey, allowed], loadCalls, { immediate: true })
+// Per-group series load only on the analysis tab; the chart draws the first page of groups.
+const series = ref<UsageStatistics | null>(null),
+  seriesScope = ref(''),
+  seriesError = ref(''),
+  seriesLoading = ref(false),
+  exporting = ref(false)
+const seriesParams = computed(() => ({
+  ...current.value,
+  group_by: grouping.value,
+  order_by: ordering.value,
+  sort_unit: sortUnit.value,
+  bucket: bucket.value,
+}))
+const seriesKey = computed(() =>
+  JSON.stringify({ ...seriesParams.value, active: tab.value === 'analysis', scope: scope.value }),
+)
+async function loadSeries() {
+  const generation = ++seriesGeneration,
+    owner = scope.value
+  seriesError.value = ''
+  seriesLoading.value = false
+  if (seriesScope.value !== owner) series.value = null
+  if (!allowed.value || tab.value !== 'analysis' || !(await ensureRange())) return
+  seriesLoading.value = true
+  try {
+    const result = await usageApi.statistics({
+      ...seriesParams.value,
+      series: 'true',
+      offset: '0',
+      limit: '8',
+    })
+    if (alive && generation === seriesGeneration && allowed.value) {
+      series.value = result
+      seriesScope.value = owner
+    }
+  } catch (reason) {
+    if (alive && generation === seriesGeneration && allowed.value)
+      seriesError.value = reason instanceof Error ? reason.message : '分组趋势查询失败'
+  } finally {
+    if (alive && generation === seriesGeneration) seriesLoading.value = false
+  }
+}
+watch([seriesKey, allowed], loadSeries, { immediate: true })
+async function exportCsv() {
+  const params: Record<string, string> = { ...seriesParams.value },
+    dimension = grouping.value,
+    basis = costBasis.value,
+    owner = scope.value
+  exporting.value = true
+  seriesError.value = ''
+  try {
+    const groups = await seriesGroups(params)
+    if (!alive || owner !== scope.value || !allowed.value) return
+    const day = (value?: string) => (value ? shanghaiInput(value).slice(0, 10) : '')
+    downloadText(
+      `usage-${dimension}-${params.bucket}-${day(params.since)}-${day(params.until)}.csv`,
+      usageCsv(groups, dimension, basis),
+    )
+  } catch (reason) {
+    if (alive && owner === scope.value)
+      seriesError.value = `导出失败：${reason instanceof Error ? reason.message : '统计查询失败'}`
+  } finally {
+    exporting.value = false
+  }
+}
 const rangeFor = statisticsRange
 function setPreset(value: string) {
   preset.value = value
@@ -320,7 +389,7 @@ async function refresh(advance = true) {
       return
     }
   }
-  await Promise.all([loadStatistics(), loadCalls()])
+  await Promise.all([loadStatistics(), loadCalls(), loadSeries()])
 }
 function drill(filters: Record<string, string>) {
   const next = { ...current.value, ...filters }
@@ -369,6 +438,7 @@ const filterNames: Record<string, string> = {
   cost_unit: '单位',
   provider_model: '上游模型',
   flow_run_id: '运行',
+  definition_key: 'Flow 定义',
   node_key: '步骤',
   model_role: '模型角色',
   agent_key: 'Agent',
@@ -402,6 +472,7 @@ onScopeDispose(() => {
   alive = false
   statsGeneration++
   callsGeneration++
+  seriesGeneration++
 })
 </script>
 <template>
@@ -683,7 +754,23 @@ onScopeDispose(() => {
               @drill="drill" /></template
         ></el-tab-pane>
         <el-tab-pane label="维度分析" name="analysis"
-          ><UsageGroups
+          ><el-alert v-if="seriesError" role="alert" type="error" :closable="false">{{
+            seriesError
+          }}</el-alert
+          ><UsageGroupTrend
+            v-if="series && seriesScope === scope"
+            :groups="series.groups"
+            :total="series.total_groups"
+            :dimension="grouping"
+            :since="series.since"
+            :until="series.until"
+            :timezone="series.timezone"
+            :bucket="bucket"
+            :units="series.summary.costs.map((cost) => cost.unit)"
+            :loading="seriesLoading"
+            :exporting="exporting"
+            @drill="drill"
+            @export="exportCsv" /><UsageGroups
             v-if="statistics"
             :rows="statistics.groups"
             :dimension="grouping"

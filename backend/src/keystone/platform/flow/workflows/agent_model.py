@@ -33,7 +33,7 @@ class FlowModel(Model):
             if model_request_parameters.output_mode == "native"
             else "text.generate"
         )
-        runtime, selected, invocation_id = await ctx._model(
+        runtime, selected, invocation_id, definition_key = await ctx._model(
             self.deps["model_role"], operation=operation
         )
         from pydantic import ValidationError
@@ -58,6 +58,7 @@ class FlowModel(Model):
             selection=selected,
             flow_context=ctx._invocation_context(
                 self.deps["model_role"],
+                definition_key=definition_key,
                 node_key=self.deps["node_key"],
                 agent_key=self.deps["agent_key"],
                 agent_call_id=UUID(self.deps["agent_call_id"]),

@@ -50,7 +50,7 @@ id、固定唯一 key、可改 name、channel_id、provider_model、operations�
 
 | 字段组 | 含义 |
 |---|---|
-| id、user_id、flow_context | 本地尝试 ID、可信归属、可选 Run/角色/节点/Agent/Step 关联 |
+| id、user_id、flow_context | 本地尝试 ID、可信归属、可选 Run/定义/角色/节点/Agent/Step 关联 |
 | model_entry_id、channel_id、provider_model、operation | 实际目标及语义操作快照 |
 | upstream_request_id、result_context | 上游回执及私有任务/产物恢复证据 |
 | status、created_at、finished_at、updated_at、error_code | running/succeeded/failed/unknown、登记及收尾时间、安全错误分类 |
@@ -164,6 +164,10 @@ sequenceDiagram
 
 Token 汇总沿用输入、输出两项，输出直接使用包含推理分项的上游输出总量，不再次加上推理 token。缓存读取和缓存写入各自汇总并给出报告覆盖次数，写入口径按上游报告的写入总量；缺失用量保持未知，不显示为 0。现有调用详情保留上游已报告的推理分项。费用使用对应模型的价格规则，计量分区见[费用预估](../reference/model-pricing.md#计量与分区)。
 
+按 Flow 定义统计使用登记时写入 flow_context 的 definition_key，即 Run 受理时固定的定义 key；同一 key 的不同 revision 合为一组，版本按 Run 下钻查看。统计不跨模块读取 Run，也不为缺少该字段的历史调用补造归属，这些调用与普通调用一样归入“未关联”，可再按来源区分。分组名称取自当前装配定义的名称（经 Flow 公开 Service），只标注调用者可见范围内已出现的 key；已移除的定义显示原 key。
+
+分组趋势按所选维度给出每组在每个上海时区时段的指标，口径与总体趋势相同：预估与实扣二选一，金额按单位分列且只含已知部分，并给出未知与待确认次数；某组某时段无调用即为零，有未知费用时不显示为零。导出 CSV 每行一个分组与时段，覆盖当前筛选的全部分组，每个单位一列，未知金额留空。
+
 ## 4. 权限与审计
 
 | 权限 | 范围 |
@@ -261,7 +265,7 @@ FlowModel 经 ModelRuntime.invoke_sdk 接入受控客户端，每个真实请求
 
 真实站点/Token 的 HMAC 范围跨 Channel、API、Worker 共用节奏；领取发送资格与调用登记同事务，外部等待不持业务事务。429 持久保存共享冷却，本次不自动重发；配置见[发送协调](../reference/model-access.md#发送与协调)。
 
-Run 关联只保存受控标识和原 Step 位置，不是权限凭据。诊断按[Flow 规则](flow.md#8-api授权与诊断)过滤，不套默认 30 天窗口，也不公开恢复证据。
+Run 关联只保存受控标识（Run、定义 key、角色、节点、Agent）和原 Step 位置，不是权限凭据。诊断按[Flow 规则](flow.md#8-api授权与诊断)过滤，不套默认 30 天窗口，也不公开恢复证据。
 
 ## 8. 多渠道模型接入设计
 

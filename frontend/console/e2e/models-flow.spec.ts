@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
 import { choose, more, watchWindowErrors } from './controls'
 
@@ -317,6 +318,31 @@ test('OpenRouter and configurable NewAPI channels and a real DBOS Flow through t
   await page.getByRole('dialog').getByRole('tab', { name: '执行与结果', exact: true }).click()
   await expect(page.getByRole('dialog')).toContainText('模拟审查已完成')
   await page.getByRole('dialog').getByRole('button', { name: '关闭对话框' }).click()
+  // Per-definition trend: the Run's fixed definition is named; direct calls stay unassociated.
+  await page.goto('model-usage?tab=analysis&group_by=flow_definition')
+  const groupTrend = page.getByRole('region', { name: '分组趋势', exact: true })
+  await expect(groupTrend.locator('.legend')).toContainText('文本文件审查')
+  await expect(groupTrend.locator('.legend')).toContainText('未关联')
+  await choose(groupTrend, '分组趋势指标', '已知费用 · CNY')
+  await groupTrend.getByRole('img', { name: /趋势图/ }).hover()
+  await expect(groupTrend.getByRole('status')).toContainText('文本文件审查')
+  await page.screenshot({ path: testInfo.outputPath('usage-flow-definition.png'), fullPage: true })
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    groupTrend.getByRole('button', { name: '导出 CSV', exact: true }).click(),
+  ])
+  const csv = readFileSync(await download.path(), 'utf8')
+  expect(csv.split('\n')[0]).toContain('预估费用已知金额（CNY）')
+  expect(csv).toContain(',文本文件审查,document.review,2,')
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  )
+  await page.screenshot({
+    path: testInfo.outputPath('usage-flow-definition-mobile.png'),
+    fullPage: true,
+  })
+  await page.setViewportSize({ width: 1440, height: 1000 })
   await renameAndDeleteUnusedConfiguration(page)
   expect(errors).toEqual([])
 })

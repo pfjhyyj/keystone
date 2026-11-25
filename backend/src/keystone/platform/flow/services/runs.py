@@ -45,6 +45,13 @@ class FlowService:
         self.package_owners = dict(package_owners or {})
         self.queues = frozenset(queues)
 
+    def definition_names(self):
+        """Display names of the assembled definitions, keyed by definition key.
+
+        Code-declared catalog text only; callers label keys their own scoped reads returned.
+        """
+        return {key: definition.name for key, definition in self.flow_definitions.items()}
+
     @staticmethod
     async def has_running_work(session, actor_id):
         return await session.scalar(
