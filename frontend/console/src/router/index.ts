@@ -17,6 +17,7 @@ export const navigation = [
   },
   { path: '/model-usage', label: '用量与费用', permissions: ['model_invocation:read'] },
   { path: '/flows', label: 'Flow 运行', permissions: ['flow:read', 'flow:diagnose'] },
+  { path: '/flow-model-defaults', label: '模型用途', permissions: ['flow:configure'] },
   { path: '/messaging', label: '消息渠道', permissions: ['messaging:manage'] },
   { path: '/messaging/records', label: '消息记录', permissions: ['message_delivery:read'] },
 ]
@@ -58,6 +59,10 @@ export function makeRouter(history: RouterHistory = createWebHistory(import.meta
       { path: '/models', component: () => import('../views/models/ModelsView.vue') },
       { path: '/model-usage', component: () => import('../views/usage/UsageView.vue') },
       { path: '/flows', component: () => import('../views/flows/FlowsView.vue') },
+      {
+        path: '/flow-model-defaults',
+        component: () => import('../views/flows/ModelDefaultsView.vue'),
+      },
       {
         path: '/environments',
         component: () => import('../views/environments/EnvironmentsView.vue'),

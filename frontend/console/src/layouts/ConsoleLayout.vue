@@ -6,6 +6,7 @@ import {
   ChatDotRound,
   Coin,
   Collection,
+  Cpu,
   Document,
   Fold,
   Grid,
@@ -41,7 +42,7 @@ const groups = [
     title: '运行与消费',
     paths: ['/platform', '/model-usage', '/models', '/flows', '/messaging', '/messaging/records'],
   },
-  { title: '基础配置', paths: ['/dictionary'] },
+  { title: '基础配置', paths: ['/dictionary', '/flow-model-defaults'] },
   { title: '访问与审计', paths: ['/users', '/roles', '/audit'] },
 ]
 const icons = {
@@ -55,6 +56,7 @@ const icons = {
   '/models': Setting,
   '/model-usage': Coin,
   '/flows': Management,
+  '/flow-model-defaults': Cpu,
   '/messaging': ChatDotRound,
   '/messaging/records': Tickets,
 }

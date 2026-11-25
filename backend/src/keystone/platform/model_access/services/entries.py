@@ -234,6 +234,16 @@ async def select_model(session, key, *, lock=False, operation="text.generate", d
     )
 
 
+async def entry_keys_in_transaction(session, identifiers):
+    """Stable model keys for entry IDs held by other modules; caller owns authorization."""
+    if not identifiers:
+        return {}
+    rows = await session.execute(
+        select(ModelEntry.id, ModelEntry.key).where(ModelEntry.id.in_(set(identifiers)))
+    )
+    return dict(rows.tuples().all())
+
+
 async def resolve_bindings_in_transaction(session, auth, *, roles, bindings):
     """Caller owns identity transaction. Acquire every Entry before any Channel."""
     from keystone.platform.model_access.schemas.invocations import ResolvedModelBinding

@@ -289,7 +289,7 @@ def test_generated_migration_downgrades_without_touching_the_platform(business):
     create(client)
     config = migrations.migration_config(client.app.state.runtime.settings)
     heads = set(ScriptDirectory.from_config(config).get_heads())
-    expected = {"0009", f"{NAMESPACE}_0001"}
+    expected = {"0010", f"{NAMESPACE}_0001"}
     # Any other head belongs to a business the repository already declares.
     assert expected <= heads and all(
         any(head.startswith(f"{chain}_") for chain in model_registry.MIGRATION_CHAINS)

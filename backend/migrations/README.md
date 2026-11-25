@@ -15,8 +15,9 @@
 | `0007_worker_initial.py` / `0007` | Worker | worker_registrations、worker_heartbeats |
 | `0008_environments_initial.py` / `0008` | 交互环境 | environments、environment_sessions |
 | `0009_messaging_initial.py` / `0009` | 消息渠道 | message_channels、message_destinations、message_external_accounts、message_deliveries、message_inbounds、message_bind_codes、message_connections |
+| `0010_flow_model_defaults.py` / `0010` | Flow | flow_model_defaults（模型用途默认模型，条目删除时级联删除） |
 
-九份迁移依序维护 27 张领域表，平台 head 为 `0009`。身份基线的角色直接包含非空、默认 false 的全部权限标记，内置 admin 角色由初始化写入该标记。Files 基线直接创建可空的 `completed_at`、回收索引，以及删除失败计数和失败上传与 S3 删除墓碑的迟到残留检查计数，两者均为非空、默认 0、约束 0～3。模型接入基线直接包含火山方舟、百炼业务空间和费用预估字段及约束。
+十份迁移依序维护 28 张领域表，平台 head 为 `0010`。身份基线的角色直接包含非空、默认 false 的全部权限标记，内置 admin 角色由初始化写入该标记。Files 基线直接创建可空的 `completed_at`、回收索引，以及删除失败计数和失败上传与 S3 删除墓碑的迟到残留检查计数，两者均为非空、默认 0、约束 0～3。模型接入基线直接包含火山方舟、百炼业务空间和费用预估字段及约束。
 
 模型接入基线包含渠道凭据密文、操作声明（含 `text.embed`）、调用归属、费用与回执、受限结果证据、发送间隔/冷却表、NewAPI 渠道类型、可修改的模型显示名称，以及 Run 关联调用表达式索引。显示名称为空时按固定 key 展示；改名不改变 key、选择或历史调用。条目 `operations` 默认仅 `text.generate`，调用 `operation` 默认 `text.generate`、`result_context` 可空，不按模型名推断媒体能力。Flow 基线只保存运行快照、状态与协调字段，调用及用量统计使用实际模型记录。Worker 基线包含固定身份登记、心跳及其约束和索引。
 
