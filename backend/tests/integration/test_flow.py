@@ -66,12 +66,13 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
     recovery deadlines and shutdown budgets are unchanged.
     """
     settings = client.app.state.runtime.settings
+    # Configuration comes only from the test API's Settings: an empty config file instead of
+    # the developer's keystone.toml, and no KEYSTONE_ variables inherited from the shell.
+    config = tmp_path / "worker-keystone.toml"
+    config.write_text("", encoding="utf8")
     env = {
-        **{
-            key: value
-            for key, value in os.environ.items()
-            if not key.startswith("KEYSTONE_FILE_STORAGES")
-        },
+        **{key: value for key, value in os.environ.items() if not key.startswith("KEYSTONE_")},
+        "KEYSTONE_CONFIG_FILE": str(config),
         "PYTHONPATH": os.pathsep.join(
             filter(
                 None,
@@ -149,6 +150,29 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
             yield process, log
         finally:
             stop_process(process)
+
+
+def test_worker_ignores_local_configuration(client, tmp_path, monkeypatch):
+    local = tmp_path / "checkout"
+    local.mkdir()
+    (local / "keystone.toml").write_text(
+        'opensandbox_url = "http://127.0.0.1:9"\nlog_level = "DEBUG"\n', encoding="utf8"
+    )
+    monkeypatch.chdir(local)
+    monkeypatch.setenv("KEYSTONE_BROWSER_RUNTIME_IMAGE", "local-only:image")
+    code = (
+        "from keystone.core.config import Settings; s = Settings(); "
+        "print(s.opensandbox_url, s.log_level, s.browser_runtime_image, s.env)"
+    )
+    with worker(client, tmp_path, code=code, stub=False) as (process, log):
+        process.wait(timeout=30)
+    settings = client.app.state.runtime.settings
+    assert log.read_text(encoding="utf8").split() == [
+        "None",
+        settings.log_level,
+        str(settings.browser_runtime_image),
+        "test",
+    ]
 
 
 def wait_run(client, identifier, process, log, timeout=35):
