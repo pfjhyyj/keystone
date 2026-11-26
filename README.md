@@ -14,7 +14,7 @@
 python scripts/dev.py
 ```
 
-脚本缺配置时从示例复制，不启动数据库；配置的数据库连不上时提示后退出。每次启动执行 `keystone init`，切换分支后自动应用新迁移，首次初始化提示设置 `admin` 密码。之后在同一终端运行 API、Worker 和控制台，日志带进程前缀；任一进程退出或按 Ctrl+C 会停止全部进程。后端代码改动后需重新运行，前端由 Vite 热更新。用 IDE 调试器单独启动某个进程时，加 `--skip api` 或 `--skip worker`，入口为 `backend/` 下的 `keystone.entrypoints.api:main` 或 `keystone.entrypoints.worker:main`。
+脚本缺配置时从示例复制，不启动数据库；配置的数据库连不上时提示后退出。每次启动执行 `keystone init`，切换分支后自动应用新迁移，首次初始化提示设置 `admin` 密码。之后在同一终端运行 API、Worker 和控制台，前端开发代理指向 `keystone.toml` 中配置的 API 地址（可用 `KEYSTONE_API_PROXY` 覆盖），日志带进程前缀；任一进程退出或按 Ctrl+C 会停止全部进程。后端代码改动后需重新运行，前端由 Vite 热更新。用 IDE 调试器单独启动某个进程时，加 `--skip api` 或 `--skip worker`，入口为 `backend/` 下的 `keystone.entrypoints.api:main` 或 `keystone.entrypoints.worker:main`。
 
 ### 1. 配置数据库并启动 API
 
