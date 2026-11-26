@@ -1,4 +1,4 @@
-"""Run init, API, Worker and console in one terminal against an already running database."""
+"""Run init, API, Worker and the frontends in one terminal against an already running database."""
 
 import argparse
 import os
@@ -14,10 +14,17 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
-CONSOLE = ROOT / "frontend/console"
 CONFIG = BACKEND / "keystone.toml"
 WINDOWS = os.name == "nt"
-COLORS = {"api": "36", "worker": "35", "web": "32"}
+# (process name, directory, address printed at start). Downstream repositories append
+# their own frontends here and leave the console entry as it is.
+FRONTENDS = (("web", "frontend/console", "http://127.0.0.1:5173/console/"),)
+PALETTE = ("32", "33", "34", "31", "92", "93")
+COLORS = {
+    "api": "36",
+    "worker": "35",
+    **{name: PALETTE[index % len(PALETTE)] for index, (name, *_) in enumerate(FRONTENDS)},
+}
 
 
 def executable(name):
@@ -40,13 +47,19 @@ def reachable(host, port):
         return False
 
 
+def api_address(config):
+    """The address the API listens on, so frontend dev servers proxy to it."""
+    host = os.environ.get("KEYSTONE_HOST") or config.get("host", "127.0.0.1")
+    port = os.environ.get("KEYSTONE_PORT") or config.get("port", 8000)
+    return f"http://{'127.0.0.1' if host in {'0.0.0.0', '::'} else host}:{port}"
+
+
 def prepare(args):
     if not CONFIG.exists():
         shutil.copyfile(BACKEND / "keystone.toml.example", CONFIG)
         print("created backend/keystone.toml from the example")
-    database_url = os.environ.get("KEYSTONE_DATABASE_URL") or tomllib.loads(
-        CONFIG.read_text(encoding="utf-8")
-    ).get("database_url", "")
+    config = tomllib.loads(CONFIG.read_text(encoding="utf-8"))
+    database_url = os.environ.get("KEYSTONE_DATABASE_URL") or config.get("database_url", "")
     # Starting a database is the developer's choice; only report how to reach one.
     address = urlsplit(database_url)
     if not reachable(address.hostname or "127.0.0.1", address.port or 5432):
@@ -59,8 +72,10 @@ def prepare(args):
     run([uv, "sync", "--locked"], BACKEND)
     # Applies new migrations after a branch switch; prompts for the admin password only once.
     run([uv, "run", "--locked", "keystone", "init"], BACKEND)
-    if "web" not in args.skip and not (CONSOLE / "node_modules").exists():
-        run([executable("pnpm"), "install", "--frozen-lockfile"], CONSOLE)
+    for name, directory, _ in FRONTENDS:
+        if name not in args.skip and not (ROOT / directory / "node_modules").exists():
+            run([executable("pnpm"), "install", "--frozen-lockfile"], ROOT / directory)
+    return api_address(config)
 
 
 def pipe(name, process, width):
@@ -70,8 +85,8 @@ def pipe(name, process, width):
         sys.stdout.flush()
 
 
-def start(name, command, cwd, width):
-    env = {**os.environ, "PYTHONUNBUFFERED": "1", "FORCE_COLOR": "1"}
+def start(name, command, cwd, width, env=None):
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "FORCE_COLOR": "1", **(env or {})}
     options = (
         {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
         if WINDOWS
@@ -136,17 +151,26 @@ def main():
     for name in ("SIGTERM", "SIGBREAK", "SIGHUP"):
         if hasattr(signal, name):
             signal.signal(getattr(signal, name), interrupt)
-    prepare(args)
+    api = prepare(args)
     uv = executable("uv")
+    # An explicit KEYSTONE_API_PROXY still wins, e.g. to point a frontend at another API.
+    web_env = {"KEYSTONE_API_PROXY": os.environ.get("KEYSTONE_API_PROXY") or api}
     commands = {
-        "api": ([uv, "run", "--locked", "keystone-api"], BACKEND),
-        "worker": ([uv, "run", "--locked", "keystone-worker"], BACKEND),
-        "web": ([executable("pnpm"), "dev"], CONSOLE),
+        "api": ([uv, "run", "--locked", "keystone-api"], BACKEND, None),
+        "worker": ([uv, "run", "--locked", "keystone-worker"], BACKEND, None),
+        **{
+            name: ([executable("pnpm"), "dev"], ROOT / directory, web_env)
+            for name, directory, _ in FRONTENDS
+        },
     }
     names = [name for name in commands if name not in args.skip]
     width = max(map(len, names), default=0)
-    processes = {name: start(name, *commands[name], width) for name in names}
-    print("console: http://127.0.0.1:5173/console/  (Ctrl+C stops everything)")
+    processes = {name: start(name, *commands[name][:2], width, commands[name][2]) for name in names}
+    print(f"api: {api}")
+    for name, _, address in FRONTENDS:
+        if name not in args.skip:
+            print(f"{name}: {address}")
+    print("Ctrl+C stops everything")
     try:
         while all(process.poll() is None for process in processes.values()):
             threading.Event().wait(0.5)

@@ -19,6 +19,7 @@ git remote add upstream https://github.com/pfjhyyj/keystone.git
 | `backend/migrations/businesses/<namespace>/` | 下游 | 新增，链内只追加，见[迁移说明](../../backend/migrations/README.md#平台链与业务链) |
 | `composition.py`（`BUSINESS_CATALOGS`、`FLOW_PACKAGES`、`BUSINESS_ENVIRONMENT_KEYS`、`MESSAGE_*`、`BUSINESS_TASKS`、`WORKFLOW_BINDINGS` 等）、`model_registry.py`、`bootstrap.py` 中的业务声明 | 下游 | 只在已有元组和装配位置追加，不改平台条目 |
 | `frontend/console/src/views/<namespace>/`、路由与菜单条目 | 下游 | 新增页面，路由和菜单只追加条目 |
+| 独立前端 `frontend/<app>/` 及 `scripts/dev.py` 的 `FRONTENDS` 条目 | 下游 | 新增工程；`FRONTENDS` 只追加 `(进程名, 目录, 访问地址)`，由 dev.py 一起启动并代理到配置的 API |
 | 业务文档 `docs/<namespace>.md`、业务运维说明 | 下游 | 新增；平台文档只在上游维护 |
 | `core/`、`platform/`、平台迁移、运行镜像、控制台框架、平台文档 | 上游 | 下游不修改 |
 
