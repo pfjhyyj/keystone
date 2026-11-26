@@ -21,6 +21,7 @@ from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
 from keystone.core.migrations import migration_config
 from keystone.entrypoints.cli import initialize
+from keystone.model_registry import MIGRATION_CHAINS
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.worker.health import worker_status
 from keystone.worker.models import WorkerRegistration
@@ -57,7 +58,7 @@ def shared(database_url, root, key=None):
 
 
 def upgrade(settings, revision="heads"):
-    config = migration_config(settings)
+    config = migration_config(settings, MIGRATION_CHAINS)
     config.attributes["create_schema"] = True
     command.upgrade(config, revision)
     return config
