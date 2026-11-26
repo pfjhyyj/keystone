@@ -63,6 +63,7 @@ rg --fixed-strings '替换为调用记录 UUID 或 X-Request-ID' .artifacts/logs
 | `revision` | — | 输出数据库当前迁移 revision |
 | `init-admin` | `--username NAME [--display-name NAME]` | 交互输入并确认密码创建管理员；已有任何用户时拒绝 |
 | `init-storage` | — | 只初始化节点本地目录和 filesystem 源，不连接数据库，不创建 S3 bucket |
+| `init-credential-key` | — | 向私有 TOML 写入随机密钥，不连接数据库，见[凭据加密密钥](configuration.md#41-凭据加密密钥) |
 | `recover-model-calls` | `--confirm-api-stopped` | 停止全部 API 后收尾普通 API 调用，见[第 4.3 节](#43-api-调用的离线收尾) |
 | `retire-worker` / `reactivate-worker` | `--worker-id ID` | 退役或重新启用固定 Worker 身份，见[第 4.4 节](#44-故障恢复与缩容退役) |
 | `retry-file-delete` | `--file-id UUID` | 重新排队已停止自动重试的文件删除，见[文件清理积压](#文件清理积压) |

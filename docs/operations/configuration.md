@@ -103,10 +103,12 @@ S3 凭据由运行环境注入（如 `KEYSTONE_FILE_STORAGES__CLOUD__ACCESS_KEY`
 - **仅 S3**：即使不使用渠道也必填，所有节点的 API、Worker 和 CLI 使用同一个值；更换值会与绑定指纹冲突。
 - **含 `filesystem`**：启动可不配置，但保存或使用模型、消息渠道的加密凭据时必填。
 
-新部署可在 `backend/` 生成密钥。**输出是秘密**：存入受保护的私有配置或秘密管理系统，不进 Git、日志或镜像。已有密文需要原密钥。
+新部署准备好私有 `keystone.toml` 后，在 `backend/` 执行：
 
 ```sh
-uv run --locked python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode("ascii"))'
+uv run --locked keystone init-credential-key
 ```
+
+命令不连接数据库，不打印密钥，不覆盖已有有效值。可用 `KEYSTONE_CONFIG_FILE` 指向其他目录下名为 `keystone.toml` 的私有文件。跨机部署只生成一次，再通过私有配置或秘密管理系统分发同一密钥；已有密文需要原密钥。
 
 配置变更后统一重启 API 和 Worker；密钥按[备份与恢复](backup-restore.md)单独保护。

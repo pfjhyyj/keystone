@@ -30,9 +30,8 @@ file_upload_timeout_seconds = 3600
 # model_cooldown_seconds = 5
 # model_cooldown_max_seconds = 300
 
-# Fernet key for channel credentials; required with S3-only storage.
-# Replace the placeholder with a generated Fernet key before uncommenting.
-credential_key = "keystone"
+# Generate a private Fernet key with `keystone init-credential-key`.
+# credential_key = ""
 
 # Optional OpenSandbox: docs/development/environment.md.
 # opensandbox_url = "http://127.0.0.1:8090"

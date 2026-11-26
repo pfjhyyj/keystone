@@ -127,6 +127,7 @@ def main() -> None:
             "revision",
             "check",
             "init-admin",
+            "init-credential-key",
             "init-storage",
             "recover-model-calls",
             "retry-file-delete",
@@ -190,6 +191,14 @@ def main() -> None:
     if args.confirm_api_stopped and args.command != "recover-model-calls":
         parser.error("--confirm-api-stopped is only valid with recover-model-calls")
     try:
+        if args.command == "init-credential-key":
+            from keystone.entrypoints.credential_key import initialize_credential_key
+
+            if initialize_credential_key():
+                print("已在私有 keystone.toml 中配置 credential_key；请重启 API 和 Worker。")
+            else:
+                print("私有 keystone.toml 已配置 credential_key，未更改。")
+            return
         settings = Settings()
         configure_logging(settings.log_level)
         if args.command == "init-storage":
