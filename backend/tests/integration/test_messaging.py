@@ -9,9 +9,9 @@ import httpx2
 import pytest
 from sqlalchemy import select, update
 from test_files_dictionary import client as client
+from test_files_dictionary import open_client
 from test_identity import create_user, query
 
-from keystone.core.credentials import KEY_FILE
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.messaging.adapters import feishu_app, feishu_webhook
@@ -252,20 +252,21 @@ def test_history_cleanup_removes_only_finished_deliveries_past_retention(client,
     assert client.portal.call(partial(prune, apply=True))["message_deliveries"] == 0
 
 
-def test_missing_key_is_not_replaced_while_ciphertexts_exist(client):
-    configure(client)
-    key_file = client.app.state.runtime.settings.file_coordination_root / KEY_FILE
-    key_file.unlink()
-    response = client.post(
-        ROOT + "/channels",
-        json={
-            "name": "新群",
-            "provider": "feishu_webhook",
-            "credential": {"url": HOOK},
-            "destination_key": "ops.new",
-        },
-    )
-    assert response.status_code == 503 and not key_file.exists()
+def test_messaging_credentials_require_configured_key(client):
+    settings = client.app.state.runtime.settings
+    with open_client(settings.model_copy(update={"credential_key": None})) as keyless:
+        response = keyless.post(
+            ROOT + "/channels",
+            json={
+                "name": "新群",
+                "provider": "feishu_webhook",
+                "credential": {"url": HOOK},
+                "destination_key": "ops.new",
+            },
+        )
+        assert response.status_code == 503
+        assert response.json()["code"] == "message_credential_unavailable"
+        assert keyless.get(ROOT + "/channels").json() == []
 
 
 def test_deleting_a_channel_removes_its_key_and_history_unless_a_send_is_running(client, sender):

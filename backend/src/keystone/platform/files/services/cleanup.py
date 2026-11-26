@@ -6,6 +6,7 @@ from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
+from keystone.platform.files.adapters.coordination import file_lease
 from keystone.platform.files.adapters.storage import blocking
 from keystone.platform.files.models import File, FileReference
 from keystone.platform.files.services import access as policy
@@ -109,130 +110,127 @@ async def cleanup(database, storage, *, limit=20, unreferenced_grace_seconds=Non
         )
     for identifier in identifiers:
         try:
-            with storage.lease(identifier):
-                async with database.transaction() as session:
-                    file = await policy.locked(session, identifier)
-                    if file.status == "deleting" and (
-                        file.delete_failures >= MAX_DELETE_FAILURES
-                        or (file.delete_failures and file.updated_at > retry_cutoff)
-                    ):
-                        continue
-                    if (
-                        file.status in {"failed", "deleted"}
-                        and file.residue_checks >= MAX_RESIDUE_CHECKS
-                    ):
-                        continue
-                    # Reference creation locks this same row. Recheck after admission,
-                    # then commit deleting before performing any external deletion.
-                    if file.status == "active":
-                        eligible = await session.scalar(
-                            select(File.id).where(
-                                File.id == identifier,
-                                expired_unreferenced(unreferenced_grace_seconds),
-                            )
-                        )
-                        if eligible is None:
-                            continue
-                        file.status, file.updated_at, file.updated_by = "deleting", utcnow(), None
-                        await audit.record(
-                            session,
-                            "file.delete.request",
-                            Actor("system"),
-                            "file",
-                            identifier,
-                            details={"reason": "unreferenced_expired"},
-                        )
-                    if file.status == "uploading" and file.updated_at < cutoff:
-                        file.status, file.updated_at, file.updated_by = "failed", utcnow(), None
-                        await audit.record(
-                            session,
-                            "file.upload.failure",
-                            Actor("system"),
-                            "file",
-                            identifier,
-                            outcome="failure",
-                            details={"reason": "abandoned_upload"},
-                        )
-                    if file.status not in {"deleting", "failed", "deleted"}:
-                        continue
-                    await require_unreferenced(session, identifier)
-                    status, storage_key, fingerprint, key = (
-                        file.status,
-                        file.storage_key,
-                        file.storage_fingerprint,
-                        file.object_key,
-                    )
-                if status in {"deleted", "failed"}:
-                    # A timed-out PUT may complete after DELETE. Keep the immutable
-                    # tombstone or retryable failure and re-delete its exact registered key,
-                    # never list a bucket; only an actual removal is audited.
-                    removed = await blocking(
-                        storage.get(storage_key).remove_residue, fingerprint, key
-                    )
-                    async with database.transaction() as session:
-                        file = await policy.locked(session, identifier)
-                        if file.status == status:
-                            file.residue_checks = min(file.residue_checks + 1, MAX_RESIDUE_CHECKS)
-                            file.updated_at, file.updated_by = utcnow(), None
-                            if removed:
-                                await audit.record(
-                                    session,
-                                    "file.upload.residue_cleanup",
-                                    Actor("system"),
-                                    "file",
-                                    identifier,
-                                )
-                    continue
+            async with file_lease(database, storage, identifier) as lease:
+                transaction = lease.transaction
                 try:
-                    await blocking(storage.get(storage_key).delete, fingerprint, key)
-                except ServiceError as error:
-                    if error.code != "file_busy":
-                        # Persist before releasing the file lease so another pass sees the count.
-                        async with database.transaction() as session:
-                            file = await policy.locked(session, identifier)
-                            file.delete_failures += 1
-                            file.updated_at, file.updated_by = utcnow(), None
-                            await audit.record(
-                                session,
-                                "file.cleanup.failure",
-                                Actor("system"),
-                                "file",
-                                identifier,
-                                outcome="failure",
-                                details={"reason": error.code, "attempt": file.delete_failures},
-                            )
-                    continue
-                async with database.transaction() as session:
-                    file = await policy.locked(session, identifier)
-                    if file.status != "deleting":
-                        continue
-                    await require_unreferenced(session, identifier)
-                    file.status, file.deleted_at = "deleted", utcnow()
-                    file.delete_failures = 0
-                    file.updated_at, file.updated_by = file.deleted_at, None
-                    await audit.record(
-                        session,
-                        "file.delete.complete",
-                        Actor("system"),
-                        "file",
+                    await _cleanup_file(
+                        transaction,
+                        storage,
                         identifier,
+                        cutoff,
+                        retry_cutoff,
+                        unreferenced_grace_seconds,
+                        remote_keys,
                     )
+                except ServiceError as error:
+                    if error.code in {"file_busy", "file_coordination_lost"}:
+                        raise
+                    await _cleanup_failure(transaction, identifier, error)
         except ServiceError as error:
             if error.code != "file_busy":
-                async with database.transaction() as session:
-                    file = await policy.locked(session, identifier)
-                    if file.status in {"failed", "deleting", "deleted"}:
-                        # Rotate failed candidates so one broken object cannot starve the batch.
-                        file.updated_at, file.updated_by = utcnow(), None
-                    if file.status in {"failed", "deleted"}:
-                        # A failed check still counts, so residue sweeps stay bounded.
-                        file.residue_checks = min(file.residue_checks + 1, MAX_RESIDUE_CHECKS)
+                raise
+
+
+async def _cleanup_file(transaction, storage, identifier, cutoff, retry_cutoff, grace, remote_keys):
+    async with transaction() as session:
+        file = await policy.locked(session, identifier)
+        if file.status == "deleting" and (
+            file.delete_failures >= MAX_DELETE_FAILURES
+            or (file.delete_failures and file.updated_at > retry_cutoff)
+        ):
+            return
+        if file.status in {"failed", "deleted"} and (
+            file.residue_checks >= MAX_RESIDUE_CHECKS
+            or file.updated_at >= cutoff
+            or (file.status == "deleted" and file.storage_key not in remote_keys)
+        ):
+            return
+        # Reference creation locks this same row. Recheck after admission,
+        # then commit deleting before performing any external deletion.
+        if file.status == "active":
+            eligible = await session.scalar(
+                select(File.id).where(File.id == identifier, expired_unreferenced(grace))
+            )
+            if eligible is None:
+                return
+            file.status, file.updated_at, file.updated_by = "deleting", utcnow(), None
+            await audit.record(
+                session,
+                "file.delete.request",
+                Actor("system"),
+                "file",
+                identifier,
+                details={"reason": "unreferenced_expired"},
+            )
+        if file.status == "uploading" and file.updated_at < cutoff:
+            file.status, file.updated_at, file.updated_by = "failed", utcnow(), None
+            await audit.record(
+                session,
+                "file.upload.failure",
+                Actor("system"),
+                "file",
+                identifier,
+                outcome="failure",
+                details={"reason": "abandoned_upload"},
+            )
+        if file.status not in {"deleting", "failed", "deleted"}:
+            return
+        await require_unreferenced(session, identifier)
+        status, storage_key, fingerprint, key = (
+            file.status,
+            file.storage_key,
+            file.storage_fingerprint,
+            file.object_key,
+        )
+    if status in {"deleted", "failed"}:
+        # A timed-out PUT may complete after DELETE. Recheck only this registered key;
+        # a failed S3 row cannot reactivate, and filesystem retries take the physical lock.
+        removed = await blocking(storage.get(storage_key).remove_residue, fingerprint, key)
+        async with transaction() as session:
+            file = await policy.locked(session, identifier)
+            if file.status == status:
+                file.residue_checks = min(file.residue_checks + 1, MAX_RESIDUE_CHECKS)
+                file.updated_at, file.updated_by = utcnow(), None
+                if removed:
                     await audit.record(
-                        session,
-                        "file.cleanup.failure",
-                        Actor("system"),
-                        "file",
-                        identifier,
-                        outcome="failure",
-                        details={"reason": error.code},
+                        session, "file.upload.residue_cleanup", Actor("system"), "file", identifier
                     )
+        return
+    try:
+        await blocking(storage.get(storage_key).delete, fingerprint, key)
+    except ServiceError as error:
+        await _cleanup_failure(transaction, identifier, error, delete_attempt=True)
+        return
+    async with transaction() as session:
+        file = await policy.locked(session, identifier)
+        if file.status != "deleting":
+            return
+        await require_unreferenced(session, identifier)
+        file.status, file.deleted_at = "deleted", utcnow()
+        file.delete_failures = 0
+        file.updated_at, file.updated_by = file.deleted_at, None
+        await audit.record(session, "file.delete.complete", Actor("system"), "file", identifier)
+
+
+async def _cleanup_failure(transaction, identifier, error, *, delete_attempt=False):
+    async with transaction() as session:
+        file = await policy.locked(session, identifier)
+        if delete_attempt or file.status in {"failed", "deleting", "deleted"}:
+            # Rotate failed candidates so one broken object cannot starve the batch.
+            file.updated_at, file.updated_by = utcnow(), None
+        details = {"reason": error.code}
+        if delete_attempt:
+            file.delete_failures += 1
+            details["attempt"] = file.delete_failures
+        elif file.status in {"failed", "deleted"}:
+            # A failed check still counts, so residue sweeps stay bounded.
+            file.residue_checks = min(file.residue_checks + 1, MAX_RESIDUE_CHECKS)
+        await audit.record(
+            session,
+            "file.cleanup.failure",
+            Actor("system"),
+            "file",
+            identifier,
+            outcome="failure",
+            details=details,
+        )

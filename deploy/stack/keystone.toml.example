@@ -1,6 +1,7 @@
-# Copy to deploy/stack/keystone.toml; mounted read-only into init, API and Worker.
-# Compose sets env, database_url, host and port; secrets stay in deploy/stack/.env.
-# Exact HTTPS origins of the reverse proxy in front of the console port.
+# Copy to deploy/stack/keystone.toml. Reference: docs/operations/configuration.md.
+# Set the Fernet key for channel credentials in the private TOML.
+# credential_key = ""
+# Public HTTPS origin of the console.
 browser_origins = ["https://keystone.example.com"]
 
 file_coordination_root = "/data/files"
@@ -9,4 +10,3 @@ file_default_storage = "local"
 [file_storages.local]
 driver = "filesystem"
 root = "/data/files"
-# Other parameters and S3 sources: docs/operations/configuration.md.

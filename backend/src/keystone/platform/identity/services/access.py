@@ -28,11 +28,14 @@ class AccessContext:
         target_id=None,
         session_only=False,
         allow_password=False,
+        transaction_owner=None,
     ):
+        """Authorize and audit on the caller's transaction owner when one is supplied."""
+        owner = self.database if transaction_owner is None else transaction_owner
         actor = Actor()
         credential_id = None
         try:
-            async with self.database.transaction() as session:
+            async with owner.transaction() as session:
                 await identity_lock(session, identity_write=identity_write)
                 auth = await self.authorize(session)
                 actor = Actor("user", auth.user.id)
@@ -49,15 +52,16 @@ class AccessContext:
         except Exception as error:
             if isinstance(error, IntegrityError):
                 error = ServiceError(409, "conflict", "记录已存在或仍被引用")
-            if action:
+            code = error.code if isinstance(error, ServiceError) else "internal_error"
+            if action and not (transaction_owner is not None and code == "file_coordination_lost"):
                 await audit.failed(
-                    self.database,
+                    owner,
                     action,
                     actor,
                     target,
                     target_id,
                     self.correlation_id,
-                    error.code if isinstance(error, ServiceError) else "internal_error",
+                    code,
                     isinstance(error, ServiceError) and error.status in {401, 403},
                     credential_id=credential_id,
                 )

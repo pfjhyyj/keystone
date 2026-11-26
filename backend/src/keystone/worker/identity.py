@@ -53,6 +53,10 @@ def config_digest(settings):
         raise TypeError("Unsupported shared configuration value")
 
     data = settings.model_dump(include=set(fields))
+    if settings.s3_only_storage:
+        del data["file_coordination_root"], data["file_min_free_bytes"]
+    if settings.credential_key is not None:
+        data["credential_key"] = settings.credential_key
     return hashlib.sha256(
         json.dumps(data, sort_keys=True, separators=(",", ":"), default=serialize).encode()
     ).hexdigest()

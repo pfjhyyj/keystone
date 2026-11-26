@@ -184,9 +184,7 @@ def test_identity_checks_do_not_overlap_another_transaction_on_same_connection(c
     runtime = client.app.state.runtime
 
     async def exercise():
-        async with identity_lease(
-            runtime.database, runtime.storage, runtime.settings.worker_id
-        ) as lease:
+        async with identity_lease(runtime.database, runtime.settings.worker_id) as lease:
             entered, release = asyncio.Event(), asyncio.Event()
 
             async def transaction():
@@ -238,7 +236,7 @@ def test_recovery_preserves_committed_batches_and_original_identity_can_finish(c
     async def recover(*, disconnect=False):
         nonlocal recorded
         health = WorkerHealth(runtime.database, runtime.settings, execution_version())
-        async with identity_lease(runtime.database, runtime.storage, health.worker_id) as lease:
+        async with identity_lease(runtime.database, health.worker_id) as lease:
             await health.claim(runtime.storage.coordination.fingerprint(), lease)
 
             async def disconnected(session, action, *args, **kwargs):

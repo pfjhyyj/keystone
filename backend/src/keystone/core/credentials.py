@@ -1,21 +1,12 @@
-"""Write-only stored credentials, encrypted with a key in the shared coordination volume.
+"""Encrypt write-only credentials with the configured key, bound to an owner and purpose."""
 
-Each ciphertext is bound to an owner ID and a namespaced purpose, so a value copied to another
-record or reused for another purpose fails to decrypt. The payload layout and key file name are
-stable: existing model channel credentials keep decrypting.
-"""
-
+import hmac
 import json
-import os
-from pathlib import Path
-from uuid import uuid4
 
 from cryptography.fernet import Fernet, InvalidToken
+from pydantic import SecretStr
 
 from keystone.core.errors import ServiceError
-from keystone.core.local_leases import LocalLeases
-
-KEY_FILE = ".model-credentials.key"
 
 
 def credential_unavailable():
@@ -23,69 +14,37 @@ def credential_unavailable():
 
 
 class CredentialVault:
-    def __init__(self, root, *, unavailable=credential_unavailable, stored=None):
-        self.root = Path(root).resolve() if root else None
-        self.leases = LocalLeases(root)
+    def __init__(self, key: SecretStr | None, *, unavailable=credential_unavailable):
+        self._key = key
         self.unavailable = unavailable
-        # Composition supplies one check across every module that keeps ciphertexts.
-        self.stored = stored
 
-    async def may_create(self, session):
-        """A missing key may be generated only while no module holds a ciphertext.
+    def _key_bytes(self) -> bytes:
+        if self._key is None:
+            raise self.unavailable()
+        return self._key.get_secret_value().encode("ascii")
 
-        Otherwise the key was lost and must be restored; a new one would orphan old values.
-        """
-        return self.stored is not None and not await self.stored(session)
-
-    def cipher(self, *, create=False):
-        self.leases.fingerprint()
-        path = self.root / KEY_FILE
-        if not path.exists() and create:
-            temporary = self.root / (KEY_FILE + ".tmp-" + uuid4().hex)
-            try:
-                descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-                with os.fdopen(descriptor, "wb") as stream:
-                    stream.write(Fernet.generate_key())
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                # Publish a complete key without replacing a concurrent initializer's key.
-                try:
-                    os.link(temporary, path)
-                except FileExistsError:
-                    pass
-            finally:
-                temporary.unlink(missing_ok=True)
-            if os.name != "nt":
-                descriptor = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
-                try:
-                    os.fsync(descriptor)
-                finally:
-                    os.close(descriptor)
-        return Fernet(path.read_bytes())
-
-    def key(self):
-        """Raw key bytes for keyed digests; verifies the initialized volume first."""
+    def _keyed_digest(self, message):
         try:
-            self.cipher()
-            return (self.root / KEY_FILE).read_bytes()
-        except (OSError, ValueError, TypeError, ServiceError):
+            key = self._key_bytes()
+            Fernet(key)
+            return hmac.digest(key, message, "sha256").hex()
+        except (ValueError, TypeError):
             raise self.unavailable() from None
 
-    def encrypt(self, value, owner_id, purpose, *, create=False):
+    def encrypt(self, value, owner_id, purpose):
         try:
             payload = json.dumps(
-                # "channel" is the historical name of the owner binding.
                 {"channel": str(owner_id), "purpose": purpose, "value": value.get_secret_value()}
             ).encode()
-            return self.cipher(create=create).encrypt(payload).decode("ascii")
-        except (OSError, ValueError, TypeError, ServiceError):
+            return Fernet(self._key_bytes()).encrypt(payload).decode("ascii")
+        except (ValueError, TypeError):
             raise self.unavailable() from None
 
     def decrypt(self, value, owner_id, purpose):
         if not value:
             raise self.unavailable()
         try:
-            payload = json.loads(self.cipher().decrypt(value.encode("ascii")))
+            payload = json.loads(Fernet(self._key_bytes()).decrypt(value.encode("ascii")))
             if (
                 payload["channel"] != str(owner_id)
                 or payload["purpose"] != purpose
@@ -94,5 +53,5 @@ class CredentialVault:
             ):
                 raise ValueError("Invalid credential binding")
             return payload["value"]
-        except (OSError, ValueError, TypeError, KeyError, InvalidToken, ServiceError):
+        except (ValueError, TypeError, KeyError, InvalidToken):
             raise self.unavailable() from None

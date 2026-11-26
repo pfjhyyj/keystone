@@ -13,7 +13,9 @@ from keystone.core.storage_config import StorageConfig
 
 @contextmanager
 def s3_endpoint():
-    state = SimpleNamespace(objects={}, calls=[], fail_put=False, unavailable=False)
+    state = SimpleNamespace(
+        objects={}, calls=[], fail_put=False, unavailable=False, before_delete=None
+    )
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -43,6 +45,8 @@ def s3_endpoint():
                 else:
                     self.respond(200)
             elif self.command == "DELETE":
+                if state.before_delete is not None:
+                    state.before_delete()
                 state.objects.pop(path, None)
                 self.respond(204)
             elif path in state.objects:

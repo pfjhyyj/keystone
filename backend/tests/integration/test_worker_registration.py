@@ -1,7 +1,6 @@
 """Hot addition, durable membership and retirement under real identity locks."""
 
 import asyncio
-import time
 from contextlib import asynccontextmanager
 from functools import partial
 from threading import Event
@@ -163,25 +162,10 @@ def test_retirement_holds_target_identity_against_concurrent_real_start(
     )
     try:
         assert entered.wait(3)
-        code = """
-from keystone.entrypoints import worker as entry
-original = entry.run_executor
-async def observed(*args, **kwargs):
-    try: return await original(*args, **kwargs)
-    except Exception as error:
-        print('identity_rejected:' + getattr(error, 'code', type(error).__name__), flush=True)
-        raise
-entry.run_executor = observed
-entry.main()
-"""
-        with worker(client, tmp_path, worker_id=SECOND, code=code) as (process, log):
-            deadline = time.monotonic() + 7
-            while "identity_rejected:file_busy" not in log.read_text(encoding="utf8"):
-                assert time.monotonic() < deadline, log.read_text(encoding="utf8")
-                time.sleep(0.02)
+        with worker(client, tmp_path, worker_id=SECOND) as (process, log):
+            assert process.wait(timeout=15) == 1, log.read_text(encoding="utf8")
+            assert "worker_identity_busy" in log.read_text(encoding="utf8")
             assert member(client).state == "registered"
-            release.set()
-            assert process.wait(timeout=12) == 1
     finally:
         release.set()
         future.result(timeout=5)
@@ -201,7 +185,7 @@ def test_admission_rolls_back_when_identity_connection_is_lost(client, monkeypat
             runtime.settings.model_copy(update={"worker_id": SECOND}),
             execution_version(),
         )
-        async with identity_lease(runtime.database, runtime.storage, SECOND) as lease:
+        async with identity_lease(runtime.database, SECOND) as lease:
 
             async def lost(session, *args, **kwargs):
                 row = await original(session, *args, **kwargs)
@@ -228,7 +212,7 @@ def test_final_stop_and_same_identity_restart_use_consistent_row_lock_order(clie
     async def exercise():
         async def admitted():
             health = WorkerHealth(runtime.database, runtime.settings, execution_version())
-            async with identity_lease(runtime.database, runtime.storage, FIRST) as lease:
+            async with identity_lease(runtime.database, FIRST) as lease:
                 await health.claim(runtime.storage.coordination.fingerprint(), lease)
             return health
 
@@ -316,7 +300,7 @@ def test_last_registration_slot_is_atomic_and_offline_members_keep_their_slots(c
             runtime.settings.model_copy(update={"worker_id": name}),
             execution_version(),
         )
-        async with identity_lease(runtime.database, runtime.storage, name) as lease:
+        async with identity_lease(runtime.database, name) as lease:
             await health.claim(runtime.storage.coordination.fingerprint(), lease)
         return name
 

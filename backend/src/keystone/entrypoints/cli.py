@@ -49,46 +49,55 @@ async def check_database(settings: Settings) -> bool:
         await runtime.close()
 
 
+async def _initialize_admin(runtime, data):
+    if (await runtime.readiness())["status"] != "ready":
+        raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
+    identifier = await initialize_admin(runtime.database, Passwords(), data)
+    logging.getLogger(__name__).info("administrator_initialized user_id=%s", identifier)
+
+
 async def init_admin(settings, data):
     runtime = build_runtime(settings)
     try:
-        if (await runtime.readiness())["status"] != "ready":
-            raise ServiceError(503, "database_not_ready", "请先运行 keystone init")
-        identifier = await initialize_admin(runtime.database, Passwords(), data)
-        logging.getLogger(__name__).info("administrator_initialized user_id=%s", identifier)
+        await _initialize_admin(runtime, data)
     finally:
         await runtime.close()
 
 
+def _prompt_admin_password():
+    password = getpass.getpass("Administrator password (8–128 characters): ")
+    if password != getpass.getpass("Confirm password: "):
+        raise ServiceError(400, "password_mismatch", "Passwords do not match")
+    return password
+
+
 async def ensure_admin(settings, *, username="admin", display_name="管理员", non_interactive=False):
     """Bootstrap an empty installation; never reset an existing account."""
-    database = Database(settings, catalog=build_catalog())
+    runtime = build_runtime(settings)
     try:
-        async with database.transaction() as session:
+        await runtime.bind_deployment()
+        async with runtime.database.transaction() as session:
             if await session.scalar(select(User.id).limit(1)):
                 logging.getLogger(__name__).info("administrator_already_initialized")
                 return
+        password = settings.initial_admin_password
+        if password is None:
+            if non_interactive:
+                raise ServiceError(
+                    400,
+                    "initial_admin_password_required",
+                    "首次启动请设置 KEYSTONE_INITIAL_ADMIN_PASSWORD",
+                )
+            password = _prompt_admin_password()
+        data = UserCreate(username=username, display_name=display_name, password=password)
+        try:
+            await _initialize_admin(runtime, data)
+        except ServiceError as error:
+            # Another initializer may have won the identity lock in the meantime.
+            if error.code != "already_initialized":
+                raise
     finally:
-        await database.close()
-    password = settings.initial_admin_password
-    if password is None:
-        if non_interactive:
-            raise ServiceError(
-                400,
-                "initial_admin_password_required",
-                "首次启动请设置 KEYSTONE_INITIAL_ADMIN_PASSWORD",
-            )
-        value = getpass.getpass("Administrator password (8–128 characters): ")
-        if value != getpass.getpass("Confirm password: "):
-            raise ServiceError(400, "password_mismatch", "Passwords do not match")
-        password = value
-    data = UserCreate(username=username, display_name=display_name, password=password)
-    try:
-        await init_admin(settings, data)
-    except ServiceError as error:
-        # Another initializer may have won the identity lock in the meantime.
-        if error.code != "already_initialized":
-            raise
+        await runtime.close()
 
 
 def initialize(settings, *, username="admin", display_name="管理员", non_interactive=False):
@@ -286,13 +295,11 @@ def main() -> None:
         if args.command == "init-admin":
             if not args.username:
                 parser.error("init-admin requires --username")
-            password = getpass.getpass("Administrator password (8–128 characters): ")
-            if password != getpass.getpass("Confirm password: "):
-                raise ServiceError(400, "password_mismatch", "Passwords do not match")
             data = UserCreate(
-                username=args.username, display_name=args.display_name, password=password
+                username=args.username,
+                display_name=args.display_name,
+                password=_prompt_admin_password(),
             )
-            del password
             run_async(init_admin(settings, data))
             return
         command.current(migration_config(settings, MIGRATION_CHAINS))

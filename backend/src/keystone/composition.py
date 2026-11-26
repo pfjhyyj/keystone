@@ -256,18 +256,6 @@ def build_environment_keys():
     return environment_keys(BUSINESS_ENVIRONMENT_KEYS)
 
 
-async def credentials_stored(session):
-    """Every module that seals credentials with the shared key, listed explicitly."""
-    from keystone.platform.messaging.services.channels import (
-        credentials_stored as messaging_credentials,
-    )
-    from keystone.platform.model_access.services.channels import (
-        credentials_stored as model_credentials,
-    )
-
-    return await model_credentials(session) or await messaging_credentials(session)
-
-
 def build_model_clients(settings, database):
     from keystone.platform.flow.services.model_references import model_referenced
     from keystone.platform.model_access.adapters.billing.registry import BillingClient
@@ -283,7 +271,7 @@ def build_model_clients(settings, database):
         http,
         InferenceClient(http, CHANNELS),
         BillingClient(http, CHANNELS),
-        ChannelCredentials(settings.file_coordination_root, stored=credentials_stored),
+        ChannelCredentials(settings.credential_key),
         QueryCoordination(database, settings),
         model_referenced,
     )

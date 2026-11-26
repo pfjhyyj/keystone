@@ -1,7 +1,7 @@
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
@@ -20,23 +20,6 @@ def check_fields(provider, data):
     declared = {item.name for item in spec.fields} if spec is not None else set()
     if data.workspace_id is not None and "workspace_id" not in declared:
         raise ServiceError(422, "model_workspace_invalid", "当前渠道不支持业务空间 ID")
-
-
-async def credentials_stored(session):
-    """Whether any model channel holds a sealed credential; used by composition."""
-    return (
-        await session.scalar(
-            select(Channel.id)
-            .where(
-                or_(
-                    Channel.api_key_encrypted.is_not(None),
-                    Channel.billing_api_key_encrypted.is_not(None),
-                )
-            )
-            .limit(1)
-        )
-        is not None
-    )
 
 
 class ChannelService:
@@ -65,7 +48,7 @@ class ChannelService:
                     )
                 return {"items": items}
 
-    async def update_keys(self, session, row, data):
+    def update_keys(self, row, data):
         if data.api_key is None and not row.api_key_encrypted:
             raise ServiceError(422, "model_api_key_required", "请填写渠道 API Key")
         billing_key = data.billing_api_key
@@ -76,17 +59,13 @@ class ChannelService:
                     422, "model_billing_credentials_invalid", "当前渠道不使用云账务凭据"
                 )
             billing_key = data.billing_credentials.encoded()
-        if data.api_key is not None or billing_key is not None:
-            create = await self.clients.credentials.may_create(session)
-            for field, purpose, value in (
-                ("api_key", "inference", data.api_key),
-                ("billing_api_key", "billing", billing_key),
-            ):
-                if value is not None:
-                    encrypted = self.clients.credentials.encrypt(
-                        value, row.id, purpose, create=create
-                    )
-                    setattr(row, field + "_encrypted", encrypted)
+        for field, purpose, value in (
+            ("api_key", "inference", data.api_key),
+            ("billing_api_key", "billing", billing_key),
+        ):
+            if value is not None:
+                encrypted = self.clients.credentials.encrypt(value, row.id, purpose)
+                setattr(row, field + "_encrypted", encrypted)
         if data.clear_billing_api_key:
             row.billing_api_key_encrypted = None
 
@@ -154,7 +133,7 @@ class ChannelService:
                     )
                 before = self.snapshot(row, values)
                 previous_config = balance_config(row)
-                await self.update_keys(session, row, data)
+                self.update_keys(row, data)
                 for key, value in values.items():
                     setattr(row, key, value)
                 if balance_config(row) != previous_config:
@@ -169,7 +148,7 @@ class ChannelService:
                 row = Channel(
                     id=uuid4(), **values, created_by=auth.user.id, updated_by=auth.user.id
                 )
-                await self.update_keys(session, row, data)
+                self.update_keys(row, data)
                 session.add(row)
             bind_channel(row, self.clients)
             await session.flush()

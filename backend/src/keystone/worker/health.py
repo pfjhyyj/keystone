@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from keystone.worker.identity import WorkerIdentity, config_digest
 from keystone.worker.models import WorkerHeartbeat, WorkerRegistration
-from keystone.worker.registration import admit
+from keystone.worker.registration import admit, registration_transaction
 
 MAX_AGE_SECONDS = 30
 IO_TIMEOUT_SECONDS = 3
@@ -39,7 +39,7 @@ class WorkerHealth:
     async def claim(self, coordination_id, lease):
         # All admission writes commit on the connection that holds this identity's lock.
         self.coordination_id = coordination_id
-        async with lease.transaction() as session:
+        async with registration_transaction(lease) as session:
             registration = await admit(
                 session,
                 self.worker_id,

@@ -2,7 +2,7 @@
 
 日常启动见[Quickstart](../../README.md#quickstart)。本页维护构建、发布、运维命令、Worker 运维和历史清理；deploy/compose.yaml 只启动开发用 PostgreSQL，单宿主应用栈见 [2.3 节](#23-单宿主-compose)。
 
-[构建与初始化](#1-构建镜像) · [运维命令](#22-运维命令) · [单宿主 Compose](#23-单宿主-compose) · [更新与恢复](#3-更新与恢复) · [Worker 管理](#4-多-worker-部署与发布) · [健康排障](#worker-健康检查排障) · [历史清理](#历史保留与清理)
+[构建与初始化](#1-构建镜像) · [运维命令](#22-运维命令) · [单宿主 Compose](#23-单宿主-compose) · [S3 跨宿主](#24-s3-跨宿主部署) · [更新与恢复](#3-更新与恢复) · [Worker 管理](#4-多-worker-部署与发布) · [健康排障](#worker-健康检查排障) · [历史清理](#历史保留与清理)
 
 ## 1. 构建镜像
 
@@ -25,26 +25,15 @@ API 与 Worker 使用同一份代码、锁文件和镜像，分别启动进程�
 
 ## 2. 运行配置与初始化
 
-由实际部署环境配置应用进程、数据库连接、文件卷、精确的浏览器 Origin 和入口代理；后端参数见[配置说明](configuration.md)。API/Worker 镜像以 UID 10001 运行，挂载的协调目录和本地文件目录须可写。控制台镜像默认通过 Docker 内部 DNS 转发到同网络中名为 `api` 的服务、端口 8000；其他部署拓扑需调整 `frontend/console/docker/nginx.conf` 后构建。
+由实际部署环境配置应用进程、数据库连接、文件卷、精确的浏览器 Origin 和入口代理；后端参数见[配置说明](configuration.md)。API/Worker 镜像以 UID 10001 运行，挂载的节点目录和本地正式文件目录须可写。控制台镜像默认通过 Docker 内部 DNS 转发到同网络中名为 `api` 的服务、端口 8000；其他部署拓扑需调整 `frontend/console/docker/nginx.conf` 后构建。
 
-后端统一读取 `keystone.toml`。在运行时将同一份配置只读挂载到初始化进程、API 和 Worker 的 `/app/keystone.toml`，不将真实配置或秘密写入镜像。也可通过 `KEYSTONE_CONFIG_FILE=/etc/keystone/keystone.toml` 指定挂载位置。相对文件路径以配置文件目录为基准；容器内建议使用绝对挂载路径，例如：
+容器运行时将配置只读挂载到 init、API、Worker 的 `/app/keystone.toml`（可用 `KEYSTONE_CONFIG_FILE` 覆盖位置），不把真实配置或秘密写入镜像。容器内建议使用绝对挂载路径，见[单宿主配置示例](../../deploy/stack/keystone.toml.example)。
 
-```toml
-file_coordination_root = "/data/files"
-file_default_storage = "local"
+API、Worker 和 CLI 使用同一制品、PostgreSQL 数据库和公共配置。会话级 advisory lock 要求直连 PostgreSQL 或使用会话级连接池代理，不支持事务或语句级代理池。
 
-[file_storages.local]
-driver = "filesystem"
-root = "/data/files"
-```
+先在实际运行环境执行 `keystone init`，再启动 API 和 Worker；初始化和启动不发起模型请求。只有 `keystone init` 写入 `keystone.deployment_binding`；API、Worker 和 `retire-worker` / `reactivate-worker` 只核验已有绑定，不认领也不迁移。
 
-进程环境变量覆盖 TOML，适合注入 `KEYSTONE_DATABASE_URL`、`KEYSTONE_INITIAL_ADMIN_PASSWORD` 或 `KEYSTONE_FILE_STORAGES__CLOUD__SECRET_KEY` 等秘密。容器默认通过 `KEYSTONE_HOST=0.0.0.0` 监听网络接口。纯环境变量部署也可运行，文件源逐项注入；具体规则见[配置说明](configuration.md)。
-
-在应用的实际运行环境中手动执行一次 `keystone init`，然后分别运行 API 与 Worker。API/Worker 自身启动只检查依赖，不迁移数据库；Worker 启动 DBOS 与维护计划。升级时按[更新流程](#3-更新与恢复)处理在途执行，迁移链与不兼容旧库的处理以[迁移说明](../../backend/migrations/README.md#初始化与已有数据库)为准；保留原协调卷、调用和费用事实，不推测回填历史归属。
-
-模型凭据、渠道和模型由操作者按需在控制台手动配置，步骤见 [README](../../README.md#模型配置手动)。未配置模型时平台仍可启动；启动和初始化不发起真实模型请求。
-
-`/api/v1/health` 检查 API 存活，`/api/v1/ready` 检查数据库、业务版本及存储；Worker 使用独立日志或[健康探针](#worker-健康检查排障)。凭据、审计及维护任务的自动历史清理默认关闭，启用前见[历史清理](#历史保留与清理)。
+API 的 `/api/v1/health` 只报告存活：绑定缺失、不匹配或数据库不可用时仍返回 200，`/api/v1/ready` 返回 503，业务路由拒绝请求。正确初始化或数据库恢复后，只要绑定和依赖检查通过，API 无需重启即可恢复。Worker 在绑定缺失或不匹配时启动失败，见[健康探针](#worker-健康检查排障)。
 
 ### 2.1 调用失败排查
 
@@ -69,11 +58,11 @@ rg --fixed-strings '替换为调用记录 UUID 或 X-Request-ID' .artifacts/logs
 
 | 命令 | 参数 | 用途 |
 |---|---|---|
-| `init` | `[--username admin] [--display-name 管理员] [--non-interactive]` | 升级平台链与已登记业务链到各自的 head、应用 DBOS 迁移、初始化文件存储，空安装时创建初始管理员；重复执行保留已有数据、密码和卷标识。`--non-interactive` 要求空安装已设置 `KEYSTONE_INITIAL_ADMIN_PASSWORD` |
-| `check` | — | 检查数据库、迁移版本和存储，就绪退出 0，否则 1 |
+| `init` | `[--username admin] [--display-name 管理员] [--non-interactive]` | 升级平台链与已登记业务链到各自的 head、应用 DBOS 迁移、初始化文件存储并认领或核验数据库绑定，空安装时创建初始管理员；重复执行保留已有数据、密码和卷标识。`--non-interactive` 要求空安装已设置 `KEYSTONE_INITIAL_ADMIN_PASSWORD` |
+| `check` | — | 检查数据库、迁移版本、存储和部署绑定；就绪退出 0，否则 1 |
 | `revision` | — | 输出数据库当前迁移 revision |
 | `init-admin` | `--username NAME [--display-name NAME]` | 交互输入并确认密码创建管理员；已有任何用户时拒绝 |
-| `init-storage` | — | 只初始化协调目录和 filesystem 源，不连接数据库，不创建 S3 bucket |
+| `init-storage` | — | 只初始化节点本地目录和 filesystem 源，不连接数据库，不创建 S3 bucket |
 | `recover-model-calls` | `--confirm-api-stopped` | 停止全部 API 后收尾普通 API 调用，见[第 4.3 节](#43-api-调用的离线收尾) |
 | `retire-worker` / `reactivate-worker` | `--worker-id ID` | 退役或重新启用固定 Worker 身份，见[第 4.4 节](#44-故障恢复与缩容退役) |
 | `retry-file-delete` | `--file-id UUID` | 重新排队已停止自动重试的文件删除，见[文件清理积压](#文件清理积压) |
@@ -83,7 +72,7 @@ rg --fixed-strings '替换为调用记录 UUID 或 X-Request-ID' .artifacts/logs
 
 ### 2.3 单宿主 Compose
 
-`deploy/stack/compose.yaml` 在一台宿主上运行 PostgreSQL、API、单个 Worker 和控制台，使用第 1 节预先构建的固定镜像，不在部署时构建。`up` 不执行迁移：init 服务只在显式运行时启动，未初始化时 Worker 拒绝启动、API 的 ready 保持 503，控制台等待 API 就绪。
+`deploy/stack/compose.yaml` 在一台宿主上运行 PostgreSQL、API、单个 Worker 和控制台，使用预构建镜像。`up` 不运行 init；控制台等待 API 就绪。
 
 ```bash
 cd deploy/stack
@@ -96,28 +85,47 @@ docker compose up -d --wait
 
 | 项 | 约定 |
 |---|---|
-| 配置 | keystone.toml 只读挂载到 init/API/Worker；Compose 固定 env=production、数据库地址和监听地址；秘密放 .env |
+| 配置 | Compose 固定 `env=production`、数据库地址和监听地址。Compose 所需变量放私有 `.env`；凭据加密密钥写入私有挂载 TOML，该栈不从 `.env` 转发 `KEYSTONE_CREDENTIAL_KEY` |
 | 入口 | 控制台默认只监听 127.0.0.1:8080，由宿主上的 HTTPS 反向代理对外；production 要求 browser_origins 为 HTTPS。启用交互环境时，反向代理须对以 `/api/v1/environments` 开头的路径转发 WebSocket 升级，读超时不少于 230 秒（打开和结束会话最长等待提供方约 220 秒） |
-| 卷 | postgres_data 为数据库，file_data 同时承载协调目录和本地文件，均按[联合备份](backup-restore.md)处理 |
+| 卷 | `postgres_data` 为数据库，`file_data` 承载节点目录和本地正式文件，按[联合备份](backup-restore.md)处理 |
 | 主机与 Worker 身份 | 容器 hostname 固定为 KEYSTONE_HOST_ID，Worker 身份固定为 KEYSTONE_WORKER_ID，重建容器不改变；增加 Worker 时按[第 4.1 节](#41-共同条件与增加实例)另加固定身份服务 |
 | 停止 | Worker 的 stop_grace_period 默认 60s，须大于 worker_shutdown_seconds 并留出收尾时间 |
 | 日志 | json-file，单文件 50 MB、保留 5 个 |
 
 升级时先按[第 3 节](#3-更新与恢复)停写、排空并停止全部应用服务（`docker compose stop api worker console`），备份后更新 .env 中的镜像，再执行 `docker compose run --rm init` 和 `docker compose up -d --wait`。Compose 健康检查只在宿主内可见，unhealthy 不会自动重启容器；存活告警须由外部监控读取 `/api/v1/ready`、`keystone-worker --check` 或容器健康状态。
 
+### 2.4 S3 跨宿主部署
+
+1. 按[存储配置](configuration.md#4-文件存储与部署拓扑)配置相同的 S3 源和[密钥](configuration.md#41-凭据加密密钥)，不为临时文件添加 `filesystem` 源。
+2. 每个节点配置独立的本地 `file_coordination_root`，运行 `uv run --locked keystone init-storage`。只在一个节点执行 `uv run --locked keystone init`；新增节点不重复初始化数据库。
+3. 启动 API 和 Worker，给每个 Worker 分配[固定身份](#41-共同条件与增加实例)并核对就绪。无需 Docker。
+
 ## 3. 更新与恢复
 
-发布前先停止接收新业务写入，使未完成 Flow 在原版本下完成或受控取消并同步终态，再停止全部旧 API/Worker，联合备份数据库、文件及当前发布制品。取消受理不代表已发送模型请求或原生文件 I/O 已结束，停止前仍需核对事实收尾。按[迁移说明](../../backend/migrations/README.md#初始化与已有数据库)选择初始化目标。已有兼容库执行一次 `keystone init`，旧基线先初始化新库并迁移所需数据。核对后分别启动应用进程。所有实例保持同一制品，同身份的新旧 Worker 不并行运行；无法处理的旧业务执行保留原版本恢复路径，不交给新版本强行接管。不兼容升级失败时，不能只退代码而保留新 schema。
+发布前停写，在原版本排空或受控取消 Flow，同步终态并核对外部请求及文件 I/O 已收尾。停止所有节点的旧 API、Worker 和 CLI，禁用自动重启后再[联合备份](backup-restore.md)和迁移。不支持滚动升级或混跑；保留旧执行的原版本恢复路径。迁移边界见[迁移说明](../../backend/migrations/README.md#初始化与已有数据库)。
 
-完整备份边界见[备份与恢复](backup-restore.md)；协调目录下的 `.transfers` 是可重建的工作副本，不是正式内容或恢复依据。媒体容量及代理时限见[配置](configuration.md#2-应用参数)，部署前可执行[媒体验收](../../backend/tests/README.md#本地媒体专项验收)。
+`0011` 只建绑定表，不回填记录。首次认领不改写已有文件或 Worker 登记：
+
+- 含 `filesystem`：保留原宿主、节点目录、正式文件和存储标识；已有未退役 Worker 登记的宿主名或节点目录标识不匹配时拒绝认领。
+- 仅 S3：所有未删除文件的源名和位置指纹必须与配置的 S3 源匹配，否则拒绝认领。旧 Worker 登记不用于推断存储拓扑或限制 S3 首次认领。
+
+媒体容量及代理时限见[配置](configuration.md#2-应用参数)，部署前可执行[媒体验收](../../backend/tests/README.md#本地媒体专项验收)。
+
+### 3.1 初始化与绑定排障
+
+| 现象 | 处理 |
+|---|---|
+| 绑定缺失 | 确认连接正确的数据库并完成 `keystone init` |
+| 绑定冲突 | 核对[已绑定拓扑](configuration.md#4-文件存储与部署拓扑)、原节点目录或原密钥；Worker 还须核对制品与公共配置 |
+| `deployment_binding_busy` | 检查 PostgreSQL 可用性和绑定锁竞争 |
+| `storage_unavailable` | 核对源配置、实际目录及权限、S3 连通性与授权；不要用空卷替代原 filesystem 目录 |
 
 ## 4. 多 Worker 部署与发布
 
-同宿主、同版本、固定身份，最多四个未退役身份；离线或普通停止的登记仍计入名额。登记、准入、恢复与退役语义见[任务执行](../execution.md#73-多-worker恢复与发布)，本节只列操作。数量上限不是吞吐保证，部署前仍需核算资源。
+登记、身份上限、准入与退役语义见[任务执行](../execution.md#73-多-worker恢复与发布)，本节只列操作。数量上限不是吞吐保证，部署前仍需核算资源。
 
 ### 4.1 共同条件与增加实例
 
-API、全部 Worker 和初始化进程使用同一制品、依赖、数据库与 DBOS schema，以及相同的执行、预算和文件配置。协调目录是同宿主可靠本地共享卷，保留 `.keystone-storage` 卷标识、模型加密密钥和永久锁文件；内容可在 filesystem/NAS/S3，协调目录不支持跨宿主或 NFS。Worker 准入拒绝同路径挂载了不同卷的实例，不要复制空卷冒充原卷。
 
 worker_id 同时用作 DBOS executor_id，默认 `keystone-worker`；由部署者固定指定，不随机生成，也不因故障更名。增加实例只需在新进程指定新身份，在 `backend/` 执行：
 
@@ -125,9 +133,7 @@ worker_id 同时用作 DBOS executor_id，默认 `keystone-worker`；由部署�
 KEYSTONE_WORKER_ID=keystone-worker-02 uv run --locked keystone-worker
 ```
 
-新身份自动登记并由 API 动态发现，无需修改配置、重启 API/原 Worker、初始化或迁移，也不提高共享预算。重复身份、已退役身份（`worker_retired`）、主机/版本/公共配置/协调卷冲突（`worker_deployment_conflict`）及超出名额（`worker_capacity_full`）均拒绝启动；不要随机更换身份绕过。
-
-容器使用不同固定服务身份、相同只读执行配置和真实共享卷，不能直接 scale 同身份服务；同宿主容器须统一进程读取的 hostname，统一名称不能替代实际共享本地卷。进程管理器按原身份重启。
+新身份自动登记并由 API 动态发现，无需重启 API/原 Worker 或再迁移，也不提高共享预算。身份锁已占用（`worker_identity_busy`）、身份已退役（`worker_retired`）、配置冲突或超出名额（`worker_capacity_full`）均拒绝启动。排查原进程、恢复正确配置或安全退役，不要随机更换身份绕过。容器不能直接 scale 同身份服务；进程管理器按原身份重启。
 
 SIGINT/SIGTERM 使 Worker 报告 draining 并停止领取，按 `worker_shutdown_seconds` 有界等待，运行时、请求事实和本进程资源完成退出后才释放身份锁并报告 stopped。终止宽限期须大于该值并为事实收尾/文件 I/O 留出时间；等待超时仍可能有待恢复 DBOS 记录，退出不等于业务取消或可以删除身份。
 
@@ -147,7 +153,7 @@ uv run --locked keystone recover-model-calls --confirm-api-stopped
 
 ### 4.4 故障恢复与缩容退役
 
-**单实例故障**：确认旧进程确实退出，以原身份、原兼容制品和原配置/协调卷重启，其他实例保持运行。启动先收尾自身旧实例的模型调用再恢复 DBOS；新身份不能代替故障身份恢复。故障登记一直计入名额，不能按心跳过期、退役或改名绕过。身份连接丢失或启动收尾超时会退出；恢复数据库后仍按原身份重启，不删除调用或审计。
+**单实例故障**：先确认旧进程确实退出，并确保不会与恢复进程同时重启，再以原 `worker_id`、原兼容制品和公共配置启动，其他实例可保持运行。filesystem 必须留在绑定的宿主并挂载原目录；仅 S3 可以在另一台已执行 `init-storage` 的宿主恢复同一身份。心跳超时或锁空闲不能替代原进程退出确认。没有自动跨宿主接替，不以新身份代替恢复，也不自动重发未知的外部请求。身份连接丢失或启动收尾超时后仍按原身份恢复，不删除调用或审计。
 
 **缩容退役**：
 
@@ -172,11 +178,11 @@ KEYSTONE_WORKER_ID=keystone-worker-02 uv run --locked keystone-worker
 
 代码版本、公共预算、执行或存储配置变化按[第 3 节](#3-更新与恢复)停机发布，不混跑新旧版本；同版本增员/退役不走此流程。迁移后按原身份启动同一新制品，不因配置冲突换身份绕过。旧版本未完成的业务保留原制品/身份恢复路径；可重建的维护执行可按第 4.4 节退役，避免旧 PENDING 占住容量，但不删除真实业务记录、防重发记录或把未知费用当作零。费用待办不因发布重置原 Token、期限或金额。
 
-回退前停止新写入和全部新进程，核对新版本已产生的运行及外部副作用。只有 schema、配置和检查点兼容且原版本能安全恢复时才只回退代码；否则恢复同一停写窗口的数据库（含 Worker 登记及退役状态）、全部内容源、协调目录（卷标识、密钥、锁文件）、配置及原制品，先用原版本与原身份核对，再考虑升级。不能按当下在线进程重建成员。真实上游费用不随数据库回滚，ready 不构成重发许可。
+回退前停止新写入和全部新进程，核对新版本已产生的运行及外部副作用。只有 schema、配置和检查点兼容且原版本能安全恢复时才只回退代码；否则按[联合恢复](backup-restore.md)恢复同一停写窗口的数据、密钥与制品，先用原版本与原身份核对，再考虑升级。不能按当下在线进程重建成员。真实上游费用不随数据库回滚，ready 不构成重发许可。
 
 ### 4.6 部署验收
 
-发布前运行[完整检查](../../backend/tests/README.md)，在隔离环境验证迁移、双 Worker、取消、崩溃恢复和联合备份恢复。实际部署另外验证存储吞吐、磁盘/连接预算、共享维护进度及进程管理器按原身份重启；本地模拟上游的测试结果不代表生产容量。
+发布前运行[完整检查](../../backend/tests/README.md)，在隔离环境验证迁移、双 Worker、取消、崩溃恢复和联合备份恢复；仅 S3 跨宿主部署另验收跨节点文件可见性、拒绝重复身份及原身份跨宿主恢复。实际部署另外验证存储吞吐、磁盘/连接预算、共享维护进度及进程管理器按原身份重启；本地模拟上游的测试结果不代表生产容量。
 
 ## Worker 健康检查（排障）
 

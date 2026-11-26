@@ -1,10 +1,11 @@
 """Single settings loader shared by the API, Worker, and CLI."""
 
 import os
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict, TomlConfigSettingsSource
 from sqlalchemy.engine import make_url
 
@@ -40,6 +41,7 @@ class Settings(
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     database_url: SecretStr | None = None
     database_connect_timeout_seconds: int = Field(default=10, ge=1, le=60)
+    credential_key: SecretStr | None = Field(default=None, repr=False)
 
     @classmethod
     def settings_customise_sources(
@@ -81,9 +83,29 @@ class Settings(
         return self
 
     @model_validator(mode="after")
+    def require_credential_key_for_s3_only_storage(self):
+        if self.credential_key is None and self.s3_only_storage:
+            raise ValueError("S3-only file storage requires KEYSTONE_CREDENTIAL_KEY")
+        return self
+
+    @model_validator(mode="after")
     def secure_production_origins(self):
         self.validate_browser_origins(production=self.env == "production")
         return self
+
+    @field_validator("credential_key")
+    @classmethod
+    def valid_credential_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None:
+            encoded = value.get_secret_value()
+            try:
+                raw = urlsafe_b64decode(encoded)
+                # Require the canonical spelling so equivalent Fernet keys cannot split scopes.
+                if len(raw) != 32 or urlsafe_b64encode(raw).decode("ascii") != encoded:
+                    raise ValueError
+            except ValueError:
+                raise ValueError("KEYSTONE_CREDENTIAL_KEY must be a URL-safe Fernet key") from None
+        return value
 
     @field_validator("database_url")
     @classmethod
@@ -97,3 +119,16 @@ class Settings(
         except Exception:
             raise ValueError("Use a postgresql+psycopg URL with an explicit database") from None
         return value
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def hide_credential_error_input(cls, values, handler):
+        try:
+            return handler(values)
+        except ValidationError as error:
+            if not isinstance(values, dict) or values.get("credential_key") is None:
+                raise
+            # Model-level errors can include the original settings mapping, even with SecretStr.
+            raise ValidationError.from_exception_data(
+                error.title, error.errors(include_input=False), hide_input=True
+            ) from None

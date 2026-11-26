@@ -1,37 +1,30 @@
 import asyncio
 import hashlib
 import sys
+from contextlib import contextmanager
 from datetime import timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from alembic import command
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text, update
 from support.business_api import create_app
 from support.business_catalog import install_catalog
-from test_identity import PASSWORD, bearer, login, query, token
+from test_identity import bearer, initialize_database, login, query, token
 
-from keystone.composition import build_catalog
-from keystone.core.asyncio import new_event_loop, run
+from keystone.core.asyncio import new_event_loop
 from keystone.core.config import Settings
-from keystone.core.database import Database
 from keystone.core.errors import ServiceError
-from keystone.core.migrations import migration_config
 from keystone.core.time import utcnow
 from keystone.entrypoints import cli
-from keystone.model_registry import MIGRATION_CHAINS
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.dictionary.services import dictionaries
-from keystone.platform.files.adapters.storage import initialize
 from keystone.platform.files.models import File
 from keystone.platform.files.services import cleanup as file_cleanup
 from keystone.platform.files.services.cleanup import cleanup
 from keystone.platform.files.services.references import FileReferences
-from keystone.platform.identity.adapters.security import Passwords
-from keystone.platform.identity.schemas import UserCreate
 from keystone.platform.identity.services.authorization import identity_lock, load_authorization
-from keystone.platform.identity.services.initialize import initialize_admin
 
 pytestmark = pytest.mark.postgres
 FILE_PERMISSIONS = [
@@ -87,39 +80,33 @@ def test_dictionary_audits_all_written_defaults(client):
         assert log["details"]["before"].keys() == log["details"]["after"].keys()
 
 
-@pytest.fixture
-def client(empty_database_url, tmp_path, monkeypatch):
-    install_catalog(monkeypatch)
-    initialize(tmp_path / "storage")
-    settings = Settings(
-        config_file=None,
-        database_url=empty_database_url,
-        env="test",
-        file_coordination_root=tmp_path / "storage",
-        file_storages={"local": {"driver": "filesystem", "root": tmp_path / "storage"}},
-        file_max_bytes=1024,
-    )
-    # Every registered chain, as `keystone init` does, so downstream business tables exist.
-    config = migration_config(settings, MIGRATION_CHAINS)
-    config.attributes["create_schema"] = True
-    command.upgrade(config, "heads")
-
-    async def initialize_user():
-        database = Database(settings, catalog=build_catalog())
-        try:
-            await initialize_admin(
-                database,
-                Passwords(),
-                UserCreate(username="admin", display_name="管理员", password=PASSWORD),
-            )
-        finally:
-            await database.close()
-
-    run(initialize_user())
+@contextmanager
+def open_client(settings):
     with TestClient(
         create_app(settings), backend_options={"loop_factory": new_event_loop}
     ) as browser:
         login(browser)
+        yield browser
+
+
+def make_file_settings(empty_database_url, tmp_path, monkeypatch):
+    install_catalog(monkeypatch)
+    return Settings(
+        config_file=None,
+        database_url=empty_database_url,
+        env="test",
+        credential_key=Fernet.generate_key().decode("ascii"),
+        file_coordination_root=tmp_path / "storage",
+        file_storages={"local": {"driver": "filesystem", "root": tmp_path / "storage"}},
+        file_max_bytes=1024,
+    )
+
+
+@pytest.fixture
+def client(empty_database_url, tmp_path, monkeypatch):
+    settings = make_file_settings(empty_database_url, tmp_path, monkeypatch)
+    initialize_database(settings)
+    with open_client(settings) as browser:
         yield browser
 
 

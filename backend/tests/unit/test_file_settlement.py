@@ -32,11 +32,10 @@ async def test_repeated_cancellation_waits_for_failure_transaction(monkeypatch):
     audit = AsyncMock()
     monkeypatch.setattr("keystone.platform.files.services.access.locked", locked)
     monkeypatch.setattr("keystone.platform.files.services.files.audit.record", audit)
-    identity = SimpleNamespace(
-        database=SimpleNamespace(transaction=transaction), correlation_id="failure-request"
-    )
+    identity = SimpleNamespace(correlation_id="failure-request")
+    lease = SimpleNamespace(transaction=transaction)
     service = FileService(identity, None)
-    task = asyncio.create_task(service._fail_upload(identifier))
+    task = asyncio.create_task(service._fail_upload(identifier, lease=lease))
     try:
         await asyncio.wait_for(entered.wait(), 5)
         for _ in range(2):

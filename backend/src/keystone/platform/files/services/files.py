@@ -13,6 +13,7 @@ from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor
+from keystone.platform.files.adapters.coordination import file_lease, operation_lease
 from keystone.platform.files.adapters.keys import new_object_key
 from keystone.platform.files.adapters.storage import blocking, opened
 from keystone.platform.files.adapters.transfers import CHUNK_BYTES, StagedUpload
@@ -246,17 +247,21 @@ class FileService:
         key = digest(["file.upload", str(user_id), data.request_key or str(uuid4())])
         metadata = [data.name, data.content_type, data.expected_size, data.checksum_sha256]
         # Serialize same upload request before discovering its stable file ID.
-        with self.storage.lease("upload:" + key):
-            async with self.identity.database.transaction() as session:
+        database = self.identity.database
+        async with operation_lease(database, "upload:" + key) as request_lease:
+            async with request_lease.transaction() as session:
                 previous = await session.scalar(select(File).where(File.upload_key == key))
                 identifier = previous.id if previous else uuid4()
                 storage_key = data.storage_key or (
                     previous.storage_key if previous else self.storage.default_key
                 )
             storage = self.storage.get(storage_key)
+            self.prepare_upload(data.expected_size, storage_key)
             fingerprint = await blocking(storage.fingerprint)
             original = digest([*metadata, storage_key, fingerprint])
-            with self.storage.lease(identifier):
+            async with file_lease(
+                database, self.storage, identifier, existing=request_lease
+            ) as lease:
                 return await self._upload(
                     identifier,
                     key,
@@ -268,6 +273,8 @@ class FileService:
                     reference,
                     storage_key,
                     fingerprint,
+                    storage=storage,
+                    lease=lease,
                 )
 
     async def _upload(
@@ -282,11 +289,15 @@ class FileService:
         reference,
         storage_key,
         fingerprint,
+        *,
+        storage,
+        lease,
     ):
-        storage = self.storage.get(storage_key)
         async with self.identity.access(
-            action="file.upload.start", target="file", target_id=identifier
+            action="file.upload.start", target="file", target_id=identifier, transaction_owner=lease
         ) as (session, auth):
+            if auth.user.id != user_id:
+                raise ServiceError(409, "idempotency_conflict", "文件不属于本次上传请求")
             file = await session.get(File, identifier, with_for_update=True)
             if file is not None:
                 if file.owner_id != user_id or file.upload_key != key:
@@ -302,6 +313,10 @@ class FileService:
                     return view(file)
                 if file.status not in {"failed", "uploading"}:
                     raise ServiceError(409, "upload_unavailable", "该文件不能重试上传")
+                if storage.config.driver == "s3":
+                    # A disconnected writer or residue DELETE can still reach S3. Never
+                    # activate a key that either operation could modify after taking over.
+                    raise ServiceError(409, "upload_unavailable", "请使用新的上传请求键")
                 file.status, file.residue_checks = "uploading", 0
                 self.identity.touch(file, auth)
             else:
@@ -330,15 +345,14 @@ class FileService:
             )
             fingerprint, object_key = file.storage_fingerprint, file.object_key
         try:
-            # Same-key retries can only write identical validated bytes. This also makes
-            # delayed S3 PUTs harmless to a completed retry; deletion uses tombstone sweeps.
+            # Filesystem retries write identical bytes under the same physical file lock.
             if isinstance(content, StagedUpload):
                 await blocking(
                     storage.write, fingerprint, object_key, content, on_cancel=content.cancelled.set
                 )
             else:
                 await blocking(storage.write, fingerprint, object_key, content)
-            async with self.identity.database.transaction() as session:
+            async with lease.transaction() as session:
                 file = await policy.locked(session, identifier)
                 if file.status == "uploading":
                     file.status, file.size_bytes, file.checksum_sha256 = (
@@ -360,11 +374,17 @@ class FileService:
                     )
                 elif file.status != "deleting":
                     raise ServiceError(409, "upload_unavailable", "文件状态已改变")
-        except BaseException:
-            # The registered object remains recoverable even if DB/storage is unavailable.
-            await self._fail_upload(identifier)
+        except BaseException as error:
+            # Never try to settle an old operation after losing its advisory lock.
+            if isinstance(error, ServiceError) and error.code == "file_coordination_lost":
+                raise
+            try:
+                await self._fail_upload(identifier, lease=lease)
+            except ServiceError:
+                if not isinstance(error, asyncio.CancelledError):
+                    raise
             raise
-        async with self.identity.access() as (session, auth):
+        async with self.identity.access(transaction_owner=lease) as (session, auth):
             return await self._receipt(session, auth, identifier, key)
 
     async def _retain_upload(self, session, file, user_id, key, reference):
@@ -375,10 +395,10 @@ class FileService:
         owner, slot = reference
         await retain_artifact(session, owner, file, slot)
 
-    async def _fail_upload(self, identifier):
+    async def _fail_upload(self, identifier, *, lease):
         async def mark():
             try:
-                async with asyncio.timeout(5), self.identity.database.transaction() as session:
+                async with asyncio.timeout(5), lease.transaction() as session:
                     file = await policy.locked(session, identifier)
                     if file.status == "uploading":
                         file.status, file.updated_at, file.updated_by = "failed", utcnow(), None
@@ -392,7 +412,9 @@ class FileService:
                             correlation_id=self.identity.correlation_id,
                             details={"reason": "upload_interrupted"},
                         )
-            except Exception:
+            except Exception as error:
+                if isinstance(error, ServiceError) and error.code == "file_coordination_lost":
+                    raise
                 # Worker recovers abandoned uploading rows; no unregistered content exists.
                 import logging
 

@@ -111,6 +111,8 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
         "message_delivery_retention_days",
     ):
         env["KEYSTONE_" + name.upper()] = str(getattr(settings, name))
+    if settings.credential_key is not None:
+        env["KEYSTONE_CREDENTIAL_KEY"] = settings.credential_key.get_secret_value()
     for key, source in settings.file_storages.items():
         for field, value in source.model_dump(mode="json", exclude_none=True).items():
             if field in {"access_key", "secret_key"}:
@@ -836,7 +838,7 @@ def test_recovery_only_closes_flow_calls_not_live_api_calls(client):
 
     async def recover():
         runtime = client.app.state.runtime
-        async with identity_lease(runtime.database, runtime.storage, owner.worker_id) as lease:
+        async with identity_lease(runtime.database, owner.worker_id) as lease:
             return await recover_interrupted_calls(runtime.database, owner, lease=lease)
 
     assert client.portal.call(recover) == 1

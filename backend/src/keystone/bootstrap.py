@@ -2,7 +2,8 @@ from collections.abc import Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
-from fastapi import FastAPI, Request, Response
+from fastapi import Depends, FastAPI, Request, Response
+from starlette.requests import HTTPConnection
 
 from keystone import __version__, composition
 from keystone.composition import (
@@ -17,6 +18,8 @@ from keystone.composition import (
 )
 from keystone.core.config import Settings
 from keystone.core.database import Database
+from keystone.core.deployment import Deployment, bind_deployment, require_deployment
+from keystone.core.errors import ServiceError
 from keystone.core.execution.dispatch import TaskClient
 from keystone.core.http import install_errors, validate_http_routes
 from keystone.core.migrations import expected_heads
@@ -91,11 +94,7 @@ class Runtime:
         from keystone.core.credentials import CredentialVault
         from keystone.platform.messaging.services.channels import credential_unavailable
 
-        return CredentialVault(
-            self.settings.file_coordination_root,
-            unavailable=credential_unavailable,
-            stored=composition.credentials_stored,
-        )
+        return CredentialVault(self.settings.credential_key, unavailable=credential_unavailable)
 
     def environment_automation(self, identity):
         from keystone.platform.environments.services.automation import EnvironmentAutomation
@@ -174,9 +173,28 @@ class Runtime:
             identity, self.flow_definitions, ModelEntryService(identity, self.models)
         )
 
+    async def bind_deployment(self) -> None:
+        deployment = Deployment.configured(self.settings, coordination=self.storage.coordination)
+        fingerprints = (
+            {key: source.fingerprint() for key, source in self.storage.sources.items()}
+            if deployment.topology == "shared"
+            else {}
+        )
+        await bind_deployment(self.database, deployment, storage_fingerprints=fingerprints)
+
+    async def require_deployment(self) -> Deployment:
+        return await require_deployment(
+            self.database, self.settings, coordination=self.storage.coordination
+        )
+
     async def readiness(self) -> dict:
         checks = await self.database.readiness(self.heads)
         checks["storage"], sources = await self.storage.readiness()
+        if all(value == "ok" for value in checks.values()):
+            try:
+                await self.require_deployment()
+            except ServiceError:
+                checks["storage"] = "unavailable"
         return {
             "status": "ready" if all(v == "ok" for v in checks.values()) else "unavailable",
             "checks": checks,
@@ -239,13 +257,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.runtime = runtime
         app.state.passwords = Passwords()
         app.state.login_limiter = LoginLimiter()
+        app.state.deployment_verified = False
         try:
             app.state.opensandbox = runtime.opensandbox
             yield
         finally:
             await runtime.close()
 
-    app = FastAPI(title="Keystone", version=__version__, lifespan=lifespan)
+    async def require_bound_deployment(connection: HTTPConnection):
+        state = connection.app.state
+        if (
+            not state.deployment_verified
+            and settings.database_url
+            and state.runtime.storage.sources
+            and connection.url.path not in {"/api/v1/health", "/api/v1/ready"}
+        ):
+            await state.runtime.require_deployment()
+            state.deployment_verified = True
+
+    app = FastAPI(
+        title="Keystone",
+        version=__version__,
+        lifespan=lifespan,
+        dependencies=[Depends(require_bound_deployment)],
+    )
     app.add_middleware(BrowserSessionRenewal, has_active_work=FlowService.has_running_work)
     install_errors(app)
 
@@ -257,6 +292,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/ready", tags=["health"])
     async def ready(response: Response):
         result = await app.state.runtime.readiness()
+
         response.status_code = 200 if result["status"] == "ready" else 503
         response.headers["Cache-Control"] = "no-store"
         return result

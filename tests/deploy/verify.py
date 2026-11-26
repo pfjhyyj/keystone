@@ -18,6 +18,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import httpx
+from cryptography.fernet import Fernet
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE = ROOT / "tests/deploy/compose.yaml"
@@ -77,7 +78,7 @@ def login(client, username="admin", password=PASSWORD):
 
 
 class Deployment:
-    def __init__(self, directory, images, password):
+    def __init__(self, directory, images, password, credential_key):
         self.project = "keystone-verify-" + uuid4().hex[:12]
         self.directory = directory / self.project
         self.directory.mkdir()
@@ -97,6 +98,7 @@ class Deployment:
                 "POSTGRES_PASSWORD": password,
                 "KEYSTONE_DATABASE_URL": f"postgresql+psycopg://keystone:{password}@postgres:5432/keystone",
                 "KEYSTONE_ENV": "test",
+                "KEYSTONE_CREDENTIAL_KEY": credential_key,
                 "KEYSTONE_INITIAL_ADMIN_PASSWORD": PASSWORD,
                 "KEYSTONE_BROWSER_ORIGINS": json.dumps([self.origin]),
                 "KEYSTONE_BACKEND_IMAGE": images["backend"],
@@ -585,18 +587,24 @@ def exercise(source, restored, checks):
             "--single-transaction",
             "/tmp/database.dump",
         )
-        # A fresh but unrelated marker must not make old files readable.
+        # Start without --wait: API health in Compose requires readiness, which must fail here.
         restored.compose("run", "--rm", "--no-deps", "init", "keystone", "init-storage")
-        restored.compose("up", "-d", "--no-deps", "--wait", "api", "console")
+        restored.compose("up", "-d", "--no-deps", "--no-build", "--pull", "never", "api", "console")
+        with restored.client() as recovered:
+            wait(lambda: recovered.get("/api/v1/health").status_code == 200)
+            assert request(recovered, "GET", "/ready", 503)["checks"] == {
+                "database": "ok",
+                "schema": "ok",
+                "storage": "unavailable",
+            }
+        passed("database-only restore stays unready with an unrelated storage fingerprint")
+        restored.compose("stop", "console", "api")
+        restored.archive_files(backup, restore=True)
+        restored.up()
         with restored.client() as recovered:
             recovered.cookies.update(client.cookies)
             me = request(recovered, "GET", "/auth/me")
             recovered.headers["X-CSRF-Token"] = me["csrf_token"]
-            assert recovered.get(f"/api/v1/_test/materials/{file['id']}/content").status_code == 503
-            restored.compose("stop", "console", "api")
-            restored.archive_files(backup, restore=True)
-            passed("database-only restore refuses file reads with an unrelated storage fingerprint")
-            restored.up()
             assert recovered.get(f"/api/v1/_test/materials/{file['id']}/content").content == SOURCE
             assert (
                 recovered.get(f"/api/v1/_test/materials/{report}/content").content == report_bytes
@@ -701,7 +709,8 @@ def main():
         )
     images["postgres"] = inspected.stdout.strip()
     password = secrets.token_hex(24)
-    source, restored = [Deployment(directory, images, password) for _ in range(2)]
+    credential_key = Fernet.generate_key().decode("ascii")
+    source, restored = [Deployment(directory, images, password, credential_key) for _ in range(2)]
     checks = []
     outcome = "failed"
     try:

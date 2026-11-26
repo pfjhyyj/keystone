@@ -4,6 +4,7 @@ import hashlib
 from uuid import UUID
 
 import pytest
+from cryptography.fernet import Fernet
 from pydantic import ValidationError
 from support.storage_support import cloud_config
 from support.storage_support import s3 as s3
@@ -34,7 +35,7 @@ def test_configuration_validation_and_secret_redaction(tmp_path, s3, monkeypatch
         )
     with pytest.raises(ValidationError, match="file_coordination_root"):
         Settings(config_file=None, file_storages=sources)
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="file_coordination_root"):
         Settings(
             config_file=None,
             file_storages={"cloud": cloud_config(s3)},
@@ -45,6 +46,7 @@ def test_configuration_validation_and_secret_redaction(tmp_path, s3, monkeypatch
         file_storages={"cloud": cloud_config(s3)},
         file_default_storage="cloud",
         file_coordination_root=tmp_path,
+        credential_key=Fernet.generate_key().decode("ascii"),
     )
     assert set(cloud_only.file_storages) == {"cloud"}
     for changes in (

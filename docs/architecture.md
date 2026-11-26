@@ -2,7 +2,7 @@
 
 Keystone 是单企业内的分层模块化单体。业务与平台共用工程、PostgreSQL 和发布制品，通过进程内 Python Service 协作。
 
-默认一个 Worker，优先简单开发和部署；同宿主可增加同版本 Worker。多租户、跨宿主和独立业务发布按实际需求另行设计。以下是设计基线，入口与协作见第 3 节，具体契约以各模块文档为准。
+默认一个 Worker，优先简单开发和部署；可按[存储拓扑](#14-外部依赖)增加同版本 Worker。多租户和独立业务发布按实际需求另行设计。以下是设计基线，入口与协作见第 3 节，具体契约以各模块文档为准。
 
 ## 1. 架构视图
 
@@ -14,7 +14,7 @@ flowchart TB
   orch["<b>编排与治理</b><br/>Flow：持久运行 · 取消 · 恢复<br/>Task 队列 · 定时计划 · Worker<br/>身份 · 角色 · PAT、审计、字典"]
   model["<b>模型接入</b><br/>多渠道 · 文本与图片操作<br/>用量 · 费用 · 实扣核对"]
   conn["<b>外部系统连接</b><br/>文件：本地 / S3<br/>交互环境：浏览器 · 手机容器 · 真机<br/>消息渠道：统一接口，多渠道适配<br/>外部事件入口<br/>业务系统适配：由业务实现"]
-  infra["<b>基础设施</b><br/>配置 · 连接 · 锁 · 日志 · 重试<br/>PostgreSQL、本地协调卷"]
+  infra["<b>基础设施</b><br/>配置 · 连接 · 锁 · 日志 · 重试<br/>PostgreSQL、节点本地磁盘"]
   ext["外部系统"]
 
   biz --> orch & model & conn
@@ -70,8 +70,7 @@ flowchart TB
   end
 
   subgraph data["持久数据"]
-    pg[("PostgreSQL<br/>keystone：领域数据、Run、待办<br/>dbos：队列、执行状态、检查点")]
-    vol[("本地协调卷<br/>跨进程锁、容量记录、凭据加密密钥")]
+    pg[("PostgreSQL<br/>keystone：领域数据、Run、待办<br/>dbos：队列、执行状态、检查点<br/>共享协调：部署绑定、会话锁")]
   end
 
   user -- HTTP --> api
@@ -79,7 +78,6 @@ flowchart TB
   api -- 持久入队或保存 Run/待办 --> pg
   worker -- 领取执行、保存检查点 --> pg
   cli --> pg
-  procs -. 锁与密钥 .-> vol
 ```
 
 API、Worker、CLI 独立启动，共用代码，公共配置保持一致，进程专属参数分别设置；每个 Worker 使用不同的 worker_id。Service 是各进程内的对象；DBOS 在 Worker 内运行，API 与 Worker 通过持久数据衔接执行，不通过内部 HTTP 调用。
@@ -90,9 +88,9 @@ API、Worker、CLI 独立启动，共用代码，公共配置保持一致，进�
 flowchart LR
   backend["Keystone 后端<br/>API / Worker / CLI"]
 
-  subgraph required["数据、存储与协调（必需）"]
-    pg[("PostgreSQL<br/>领域数据、DBOS 状态")]
-    vol[("本地协调卷<br/>锁、容量记录、加密密钥")]
+  subgraph required["基础设施（必需）"]
+    pg[("PostgreSQL<br/>持久数据、共享协调")]
+    scratch[("节点本地目录<br/>临时文件、磁盘预留")]
   end
 
   subgraph storage["文件存储（至少一种，可同时使用）"]
@@ -110,9 +108,7 @@ flowchart LR
   backend -.-> upstream
 ```
 
-当前部署需要 PostgreSQL、本地协调卷和至少一个文件存储后端（本地文件系统或 S3，可同时配置）；模型、账务接口按业务需要接入。
-
-PostgreSQL 的 keystone schema 保存领域数据，dbos schema 保存执行状态和检查点；本地协调卷保存跨进程锁、容量记录和凭据加密密钥。
+PostgreSQL 是唯一的共享协调服务；节点本地目录只负责临时文件、磁盘预留及本地 I/O 保护。含 `filesystem` 源的部署限单宿主，仅 S3 可跨宿主，见[存储拓扑](operations/configuration.md#4-文件存储与部署拓扑)。
 
 ## 2. 模块职责与协作
 
@@ -155,7 +151,7 @@ DBOS 同时支持定时触发。提交成功不等于执行完成，业务结果
 - 每次独立操作检查当前身份、功能和对象范围；PAT 为当前权限与原范围交集，Flow 使用原用户/原 PAT。
 - 业务变更与成功审计同事务，失败/拒绝审计在回滚后独立尝试；跨模块原子操作由上层协调同一身份事务，被调 Service 不另开事务、不自行提交；外部 HTTP、文件和进程 I/O 不持长业务事务。
 - 模型发送前唯一登记，SDK 不隐藏重试，未知结果不换 ID 重发。生成、文件保存和业务提交分别确认，已发生事实受限保存。
-- 需保存的外部凭据使用 core 的 `CredentialVault` 加密，密文绑定所属对象 ID 和用途（新模块按 `模块.用途` 命名），密钥位于共享协调卷、首次保存时生成；结果、审计、日志与检查点不含明文，密钥丢失时拒绝操作而不重新生成。
+- 外部凭据由 `CredentialVault` 加密，密文绑定对象 ID 与用途（新模块按 `模块.用途` 命名）；缺少[配置密钥](operations/configuration.md#41-凭据加密密钥)则拒绝加解密，不回退。结果、审计、日志和检查点不含明文。
 - 有副作用的外部写入不隐藏重试；结果未知时，仅在对方支持幂等键或可按原请求查询时用原标识重试或确认，否则交由业务决定。
 - 取消和撤权阻止新操作；反复取消也须等待已启动 I/O、进程及文件清理完成后再释放句柄/许可，终态按事实确认。等待、并发、批次、输出和重试有界。
 
@@ -163,9 +159,7 @@ DBOS 同时支持定时触发。提交成功不等于执行完成，业务结果
 
 业务按模块接入现有工程，控制台可直接承载业务页面。代码分层、目录和显式装配见[接入规范](development/business.md#模块分层与代码规范)，完整示例见[最小业务](development/business.md#快速接入)与 [Flow 开发](development/flow.md)。
 
-API/Worker/CLI 使用同一制品，迁移由 CLI 显式执行，服务启动只检查。默认单 Worker，多实例须同宿主、同版本并共用协调卷；失锁停止，版本变更保留原制品处理在途执行。
-
-队列、计划与 Worker 恢复规则见[任务执行](execution.md#7-worker-与资源)，命令和发布步骤见[部署](operations/deployment.md)。数据库两个 schema、文件和协调卷按[联合备份](operations/backup-restore.md)恢复。
+队列、计划与 Worker 恢复见[任务执行](execution.md#7-worker-与资源)；初始化与发布见[部署](operations/deployment.md)，持久数据保护见[联合备份](operations/backup-restore.md)。
 
 ## 6. 验证
 

@@ -1,6 +1,6 @@
 # 应用配置与环境变量
 
-默认开发流程中，Compose 只运行 PostgreSQL，API、Worker 和前端在本机运行。后端统一使用 TOML；前端和依赖 Compose 保留各自配置方式。平台启动不需要模型 Key。
+默认开发流程中，Compose 只运行 PostgreSQL，API、Worker 和前端在本机运行。
 
 | 配置文件 | 使用方 | 默认是否需要 |
 |---|---|---|
@@ -34,10 +34,11 @@
 | `session_hours` / `pat_max_days` | `KEYSTONE_SESSION_HOURS` / `KEYSTONE_PAT_MAX_DAYS` | 72 小时 / 90 天 |
 | 历史保留与自动清理 | `KEYSTONE_HISTORY_CLEANUP_ENABLED` 等 | 自动删除默认关闭；见[历史清理](deployment.md#历史保留与清理) |
 | `[file_storages.<源名>]` | `KEYSTONE_FILE_STORAGES__<源名>__<字段>` | 逐项配置内容源，见第 4 节 |
-| `file_coordination_root` | `KEYSTONE_FILE_COORDINATION_ROOT` | 本地共享协调目录，示例为 `../.data/files` |
+| `file_coordination_root` | `KEYSTONE_FILE_COORDINATION_ROOT` | 节点本地目录，供临时文件、磁盘预留与本地锁使用；示例为 `../.data/files` |
+| `credential_key` | `KEYSTONE_CREDENTIAL_KEY` | 见[凭据加密密钥](#41-凭据加密密钥) |
 | `file_default_storage` | `KEYSTONE_FILE_DEFAULT_STORAGE` | `local`，必须指向已配置源 |
 | `file_max_bytes` | `KEYSTONE_FILE_MAX_BYTES` | 默认 16 MiB；本地可配置到 1 TiB，同时受代理限制；S3 保留 64 MiB 上限；保存同步图片产物的要求见[产物证据](../reference/model-access.md#产物证据) |
-| `file_min_free_bytes` | `KEYSTONE_FILE_MIN_FREE_BYTES` | 默认 1 GiB，范围 0–1 TiB；协调卷、临时卷及本地正式存储各自保留的最低可用空间 |
+| `file_min_free_bytes` | `KEYSTONE_FILE_MIN_FREE_BYTES` | 默认 1 GiB，范围 0–1 TiB；节点临时文件所在磁盘及本地正式存储各自保留的最低可用空间 |
 | `file_upload_timeout_seconds` | `KEYSTONE_FILE_UPLOAD_TIMEOUT_SECONDS` | 默认 3600 秒，范围 1–86400；包含上传接收、写入与确认的总期限 |
 | `file_unreferenced_grace_seconds` | `KEYSTONE_FILE_UNREFERENCED_GRACE_SECONDS` | 默认未设置、不回收无引用 active 文件；显式设为 1–31536000 秒前，须核对调用方及存量引用 |
 | `flow_worker_concurrency` | `KEYSTONE_FLOW_WORKER_CONCURRENCY` | 默认 2，范围 1–16；单 Worker 的持久队列并发 |
@@ -56,15 +57,24 @@
 
 ## 3. 配置变更
 
-执行、预算、文件和交互环境提供方配置进入 Worker 公共配置校验，API/Worker 必须一致，修改时停止全部旧进程后统一发布（见[更新与恢复](deployment.md#3-更新与恢复)）；固定身份不参与。本地媒体可设置 `file_max_bytes = 17179869184`（16 GiB），容量预留与错误语义见[文件容量](../domains/files.md#51-文件容量与临时目录)。不要手动清理协调目录下的 `.capacity`、`.locks` 或受管 `files`。默认 Nginx API 正文上限为 16 MiB；接入大文件业务时只给实际上传/内容路由设置正文上限、传输期限及 `proxy_request_buffering off` / `proxy_buffering off`，与后端限制一致。实际 NAS 吞吐及容量须部署时实测。
+执行、预算、文件和交互环境提供方配置进入 Worker 公共配置校验，API/Worker 必须一致，修改时停止全部旧进程后统一发布（见[更新与恢复](deployment.md#3-更新与恢复)）；固定身份不参与。本地媒体可设置 `file_max_bytes = 17179869184`（16 GiB），容量预留与错误语义见[文件容量](../domains/files.md#51-文件容量与临时目录)。不要手动清理节点目录下的 `.capacity`、`.locks` 或受管 `files`。默认 Nginx API 正文上限为 16 MiB；接入大文件业务时只给实际上传/内容路由设置正文上限、传输期限及 `proxy_request_buffering off` / `proxy_buffering off`，与后端限制一致。实际 NAS 吞吐及容量须部署时实测。
 
-模型渠道和凭据在控制台手动配置，步骤见 [README](../../README.md#模型配置手动)，保存后无需重启；加密密钥首次保存时写入协调目录。渠道与查费方式见[模型实现参考](../reference/model-access.md#渠道与模型列表)。
+模型渠道和凭据在[控制台手动配置](../domains/model-access.md#51-配置)，保存后无需重启。
 
 更改开发数据库密码或宿主端口时，同步修改 `database_url`（URL 特殊字符需编码）。`POSTGRES_PASSWORD` 仅初始化空数据库卷，已有数据库改密须执行实际数据库操作。修改浏览器入口或 API 地址时同步 Origin 与 Vite 代理。
 
-## 4. 同时配置本地与 S3
+## 4. 文件存储与部署拓扑
 
-顶层字段放在存储源分节前面；只用本地存储时省略 `cloud` 分节：
+至少配置一个文件源；部署拓扑由全部 `file_storages` 决定，与默认源无关：
+
+| 内容源 | 数据库绑定 | 节点本地目录 |
+|---|---|---|
+| 含 `filesystem`（含混合存储） | 进程可见的宿主名及 `file_coordination_root` 的 `.keystone-storage` 标识 | 限单宿主，所有进程共用同一实际节点目录和正式文件目录。不能用相同路径、伪造宿主名或 NFS 替代共用本地目录 |
+| 仅 `s3` | 共享拓扑与凭据加密密钥指纹，不绑定宿主或节点目录 | 各节点使用自己的可写本地目录，同节点进程共用；路径和磁盘余量可按节点配置 |
+
+绑定建立后不能靠改配置切换拓扑；不要删改绑定记录。写入和校验规则见[部署初始化](deployment.md#2-运行配置与初始化)。
+
+下面是混合源示例，顶层字段须放在源分节之前。仅用本地存储时省略 `cloud`；仅用 S3 时移除整个 `local` 分节、将 `file_default_storage` 设为 `cloud`，并按下节配置密钥：
 
 ```toml
 file_coordination_root = "../.data/files"
@@ -84,6 +94,19 @@ prefix = "documents"
 
 S3 凭据由运行环境注入（如 `KEYSTONE_FILE_STORAGES__CLOUD__ACCESS_KEY` / `__SECRET_KEY`），或写在本机未跟踪的 TOML 对应分节。S3 要求 endpoint、bucket 和凭据，region 默认 `us-east-1`，prefix 可选且不能含路径穿越；bucket 需预先存在，使用 path-style 请求，不读取主机默认 AWS 凭据或 EC2 metadata。需要前缀对象的读写删除权限，就绪探针按所用 OpenDAL 版本可能还需要 ListBucket。
 
-上传可使用 `storage_key=cloud`，省略时使用默认源；切换默认源只影响新请求。已有文件使用中的源名称和位置身份必须保留：更换 bucket、endpoint、prefix 或 region 时创建新源并迁移业务数据，凭据轮换不改变身份；删除源配置后其历史文件不可读、不可清理。协调目录和内容目录可共用路径，API 与 Worker 须共享同一宿主协调卷，不支持 NFS 或多宿主锁。
+上传可使用 `storage_key=cloud`，省略时使用默认源；切换默认源只影响新请求。保留已有文件使用的源名与[位置身份](../reference/files.md#存储与身份)，否则文件不能读取或清理。
 
-`keystone init` 报 `storage_unavailable` 并提示 `file_storages` 时，说明尚未配置内容源：确认从 `backend/` 启动且已复制 `keystone.toml.example`，按上例补齐 `local` 源后重新执行 `uv run --locked keystone init`，已有数据和管理员不会重置。已有文件数据时保留原目录、源名称和卷标识。
+### 4.1 凭据加密密钥
+
+只从配置取密钥：私有 TOML 的顶层字符串 `credential_key`，或优先级更高的 `KEYSTONE_CREDENTIAL_KEY`。值为 Fernet 格式（32 字节密钥的规范 URL-safe Base64，保留 `=` 填充）；未配置时省略，不填空字符串。不会生成或读取本地密钥文件，也不会回退到明文。
+
+- **仅 S3**：即使不使用渠道也必填，所有节点的 API、Worker 和 CLI 使用同一个值；更换值会与绑定指纹冲突。
+- **含 `filesystem`**：启动可不配置，但保存或使用模型、消息渠道的加密凭据时必填。
+
+新部署可在 `backend/` 生成密钥。**输出是秘密**：存入受保护的私有配置或秘密管理系统，不进 Git、日志或镜像。已有密文需要原密钥。
+
+```sh
+uv run --locked python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode("ascii"))'
+```
+
+配置变更后统一重启 API 和 Worker；密钥按[备份与恢复](backup-restore.md)单独保护。

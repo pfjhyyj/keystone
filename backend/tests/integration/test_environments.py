@@ -92,11 +92,10 @@ def test_backup_replacement_and_restore_only_when_volume_is_missing(client, tmp_
     app = client.app.state.runtime
     settings = Settings(
         config_file=None,
-        file_coordination_root=tmp_path / "coordination",
+        file_coordination_root=app.settings.file_coordination_root,
         file_storages={"local": {"driver": "filesystem", "root": tmp_path / "files"}},
         file_min_free_bytes=0,
     )
-    app.settings.file_coordination_root = settings.file_coordination_root
     app.settings.file_storages = settings.file_storages
     app.settings.browser_backup_key = SecretStr("a" * 64)
     app.storage = StorageRegistry(settings)

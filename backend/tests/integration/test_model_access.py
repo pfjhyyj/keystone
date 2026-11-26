@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import event, update
 from support import model_stub as mock
 from test_files_dictionary import client as client
+from test_files_dictionary import open_client
 from test_identity import PASSWORD, assign, bearer, create_user, login, query, role, token
 
 from keystone.core.errors import ServiceError
@@ -760,17 +761,34 @@ def test_inflight_completion_after_user_revocation_and_channel_disable(client, m
     )
 
 
-def test_missing_key_file_never_sends(client):
-    entry(client, channel(client))
-    from keystone.core.credentials import KEY_FILE
+def test_model_credentials_require_configured_key(client, monkeypatch):
+    stored = channel(client)
+    entry(client, stored)
 
-    (client.app.state.runtime.settings.file_coordination_root / KEY_FILE).unlink()
-    assert invoke(client).json()["code"] == "model_credential_unavailable"
-    assert client.get("/api/v1/model-invocations").json() == []
+    async def unexpected_send(*_):
+        pytest.fail("Unexpected provider call")
+
+    settings = client.app.state.runtime.settings
+    with open_client(settings.model_copy(update={"credential_key": None})) as keyless:
+        assert keyless.get("/api/v1/ready").status_code == 200
+        install_transport(keyless, monkeypatch, unexpected_send)
+        created = keyless.post(
+            "/api/v1/model-channels",
+            json={
+                "name": "new",
+                "provider": "openrouter",
+                "api_base": "https://openrouter.ai/api/v1",
+                "api_key": SECRET,
+            },
+        )
+        assert created.status_code == 503, created.text
+        assert created.json()["code"] == "model_credential_unavailable"
+        assert [row["id"] for row in keyless.get("/api/v1/model-channels").json()] == [stored["id"]]
+        assert invoke(keyless).json()["code"] == "model_credential_unavailable"
+        assert keyless.get("/api/v1/model-invocations").json() == []
 
 
-def test_channel_credentials_are_write_only_and_missing_master_key_is_not_replaced(client):
-    from keystone.core.credentials import KEY_FILE
+def test_channel_credentials_are_write_only(client):
     from keystone.platform.model_access.models import Channel
 
     row = channel(client)
@@ -791,10 +809,6 @@ def test_channel_credentials_are_write_only_and_missing_master_key_is_not_replac
     )
     audits = client.get("/api/v1/audit-logs").text
     assert SECRET not in audits and BILLING not in audits and "replacement-key" not in audits
-    key_file = client.app.state.runtime.settings.file_coordination_root / KEY_FILE
-    key_file.unlink()
-    response = edit_channel(client, row, api_key="another-key")
-    assert response.status_code == 503 and not key_file.exists()
 
 
 @pytest.mark.parametrize("failure_phase", ["register", "complete"])

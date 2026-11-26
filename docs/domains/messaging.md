@@ -56,7 +56,7 @@ erDiagram
 | external_user_id、actor_id | 触发人的渠道用户 ID；解析出的执行身份 |
 | occurred_at、status、attempts、error_code、received_at、processed_at | 渠道记录的事件发生时间；状态见 [5.3](#53-入站动作与命令)；attempts 计处理次数 |
 
-渠道固定 provider 与所属企业；换企业、应用或群机器人须新建渠道。群机器人的 webhook 地址和签名密钥按凭据加密保存。凭据按[核心约束](../architecture.md#4-核心约束)加密，绑定渠道 ID 与 `messaging.*` 用途；access token 只缓存在进程内存，不落库。命令消息的原文不保存，只保存匹配到的 command_key。
+渠道固定 provider 与所属企业；换企业、应用或群机器人须新建渠道。凭据（含群机器人 webhook 地址和签名密钥）按[核心约束](../architecture.md#4-核心约束)加密，绑定渠道 ID 与 `messaging.*` 用途。access token 只缓存在进程内存，不落库。命令消息只保存匹配到的 command_key，不保存原文。
 
 ## 3. 渠道适配
 

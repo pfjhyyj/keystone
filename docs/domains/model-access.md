@@ -199,7 +199,7 @@ sequenceDiagram
     M-->>A: 返回模型 key
 ```
 
-渠道与模型保存是独立管理操作，各自与审计同事务。保存配置不发起推理。密钥按[核心约束](../architecture.md#4-核心约束)加密，绑定渠道 ID 和用途（`inference`、`billing` 等）；密钥文件沿用共享协调卷的 `.model-credentials.key`。
+渠道与模型保存是独立管理操作，各自与审计同事务。保存配置不发起推理。凭据按[核心约束](../architecture.md#4-核心约束)加密，绑定渠道 ID 和用途（`inference`、`billing` 等）；密钥见[配置](../operations/configuration.md#41-凭据加密密钥)。
 
 ### 5.2 接口与权限
 

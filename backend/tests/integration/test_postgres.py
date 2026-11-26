@@ -36,7 +36,8 @@ async def test_empty_database_migration_and_transaction_rollback(empty_database_
         config = migration_config(settings, MIGRATION_CHAINS)
         config.attributes["create_schema"] = True
         command.upgrade(config, "heads")
-        command.upgrade(config, "heads")  # Repeated deployment is idempotent.
+        command.upgrade(config, "heads")  # Repeated migration is idempotent.
+        await runtime.bind_deployment()
         assert (await runtime.readiness())["status"] == "ready"
         async with runtime.database.engine.connect() as connection:
             diff = await connection.run_sync(

@@ -6,7 +6,7 @@
 
 ## Quickstart
 
-需要 Python 3.12、uv、Node 24（至少 24.15）、pnpm 11.19.0 和可连接的 PostgreSQL。可以使用自己的数据库；只有通过 Docker 启动本地数据库时才需要 Docker Compose。以下使用标准 shell，每个终端从仓库根目录开始。
+需要 Python 3.12、uv、Node 24（至少 24.15）、pnpm 11.19.0 和 PostgreSQL。仅在用 Compose 启动本地数据库时需要 Docker。以下使用标准 shell，每个终端从仓库根目录开始。
 
 数据库就绪后，本机调试可以一条命令完成下面三步：
 
@@ -49,7 +49,7 @@ uv run --locked keystone init
 uv run --locked keystone-api
 ```
 
-首次初始化会应用数据库迁移，并提示设置 `admin` 密码。示例配置已包含本机文件存储，不需要模型 Key；已有环境升级按[部署说明](docs/operations/deployment.md#3-更新与恢复)操作。
+`keystone init` 应用迁移并建立部署绑定，空库会提示设置 `admin` 密码。默认本地文件存储无需配置密钥即可启动；已有环境见[更新与恢复](docs/operations/deployment.md#3-更新与恢复)。
 
 ### 2. 另开终端启动 Worker
 
@@ -58,7 +58,7 @@ cd backend
 uv run --locked keystone-worker
 ```
 
-默认一个 Worker，文件清理、Flow 协调和自动查费自动运行。扩容、退役与故障恢复按需查阅[部署说明](docs/operations/deployment.md#4-多-worker-部署与发布)；容器化部署见[单宿主 Compose](docs/operations/deployment.md#23-单宿主-compose)。
+默认一个 Worker，执行文件清理、Flow 协调和查费。生产部署见[单宿主 Compose](docs/operations/deployment.md#23-单宿主-compose)、[S3 跨宿主](docs/operations/deployment.md#24-s3-跨宿主部署)及 [Worker 运维](docs/operations/deployment.md#4-多-worker-部署与发布)。
 
 ### 3. 另开终端启动控制台
 
@@ -76,7 +76,7 @@ pnpm dev
 
 ## 模型配置（手动）
 
-在控制台创建渠道和模型条目，按已支持协议填写凭据及操作能力。保存配置不发送模型请求；步骤与能力范围见[模型配置](docs/domains/model-access.md#51-配置)，供应商细节见[实现参考](docs/reference/model-access.md#渠道与模型列表)。
+先配置[凭据加密密钥](docs/operations/configuration.md#41-凭据加密密钥)，再在控制台创建渠道和模型条目。保存配置不发送模型请求；步骤及能力见[模型配置](docs/domains/model-access.md#51-配置)，供应商细节见[实现参考](docs/reference/model-access.md#渠道与模型列表)。
 
 ## 文档
 

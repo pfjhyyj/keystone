@@ -10,25 +10,16 @@ import sys
 import tempfile
 import time
 import urllib.request
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from uuid import uuid4
 
 import psycopg
-from alembic import command
-from dbos import DBOS
+from cryptography.fernet import Fernet
 from psycopg import sql
 
-from keystone.composition import build_catalog
-from keystone.core.asyncio import run
 from keystone.core.config import Settings
-from keystone.core.database import Database
-from keystone.core.migrations import migration_config
-from keystone.model_registry import MIGRATION_CHAINS
-from keystone.platform.files.adapters.storage import initialize
-from keystone.platform.identity.adapters.security import Passwords
-from keystone.platform.identity.schemas import UserCreate
-from keystone.platform.identity.services.initialize import initialize_admin
+from keystone.entrypoints.cli import initialize
 
 
 def _log_tail(path, limit=2000):
@@ -88,40 +79,20 @@ def main():
         connect_timeout=5,
     ) as connection:
         connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-        process = None
-        worker_process = None
         try:
             with _temporary_directory() as directory:
                 root = Path(directory) / "storage"
-                initialize(root)
+                credential_key = Fernet.generate_key().decode("ascii")
                 settings = Settings(
                     config_file=None,
                     env="test",
                     database_url=database_url,
+                    initial_admin_password="test-password-123",
+                    credential_key=credential_key,
                     file_coordination_root=root,
                     file_storages={"local": {"driver": "filesystem", "root": root}},
                 )
-                config = migration_config(settings, MIGRATION_CHAINS)
-                config.attributes["create_schema"] = True
-                command.upgrade(config, "heads")
-                DBOS.migrate(database_url, schema="dbos")
-
-                async def seed():
-                    database = Database(settings, catalog=build_catalog())
-                    try:
-                        await initialize_admin(
-                            database,
-                            Passwords(),
-                            UserCreate(
-                                username="admin",
-                                display_name="管理员",
-                                password="test-password-123",
-                            ),
-                        )
-                    finally:
-                        await database.close()
-
-                run(seed())
+                initialize(settings, non_interactive=True)
                 env = {
                     key: value
                     for key, value in os.environ.items()
@@ -144,6 +115,7 @@ def main():
                         "KEYSTONE_API_PROXY": f"http://127.0.0.1:{port}",
                     }
                 )
+                backend_env = env | {"KEYSTONE_CREDENTIAL_KEY": credential_key}
                 api_path = Path(directory) / "api.log"
                 worker_path = Path(directory) / "worker.log"
                 with (
@@ -162,12 +134,13 @@ def main():
                             "api.main()",
                         ],
                         cwd=directory,
-                        env=env,
+                        env=backend_env,
                         stdout=log,
                         stderr=log,
                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                     )
-                    try:
+                    with ExitStack() as children:
+                        children.callback(stop_process, process, timeout=15)
                         worker_process = subprocess.Popen(
                             [
                                 sys.executable,
@@ -177,11 +150,12 @@ def main():
                                 "from keystone.entrypoints.worker import main; main()",
                             ],
                             cwd=directory,
-                            env=env,
+                            env=backend_env,
                             stdout=worker_log,
                             stderr=worker_log,
                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                         )
+                        children.callback(stop_process, worker_process, timeout=15)
                         for _ in range(100):
                             if process.poll() is not None:
                                 raise RuntimeError(
@@ -222,14 +196,8 @@ def main():
                             env=env,
                             check=False,
                         )
-                    finally:
-                        for child in (worker_process, process):
-                            if child is not None:
-                                stop_process(child, timeout=15)
                 return result.returncode
         finally:
-            if process is not None:
-                stop_process(process, timeout=10)
             connection.execute(
                 sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name))
             )

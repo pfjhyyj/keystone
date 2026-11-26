@@ -222,7 +222,7 @@ Yunwu/Openlux 费用仍以原 Token 的 x-api-request-id 精确匹配日志，�
 | GET /model-invocations/statistics、/options | 同记录权限，统计与当前可见主体搜索 |
 | POST /model-invocations/{id}/cost | manage＋记录读取，补查已结束调用 |
 
-配置 PATCH 提交完整非秘密编辑字段；省略/null 密钥保留，clear_billing_api_key 清账务 Key。provider/key/已确定账户归属不可编辑，原空账户可补录。SecretStr 输入、Fernet 绑定渠道/用途；首次保存原子生成协调卷 .model-credentials.key，Linux/macOS 0600，须联合备份。
+配置 PATCH 提交完整非秘密字段；省略/null 保留原 API Key，`clear_billing_api_key` 清账务 Key。provider/key/已确定账户归属不可编辑，原空账户可补录。凭据用 `SecretStr` 输入；缺少[配置密钥](../operations/configuration.md#41-凭据加密密钥)时，加解密操作返回 `model_credential_unavailable`。
 
 列表默认 50、最高 100。调用查询默认最近 30 天、最多 366 天，范围在 SQL 分页/聚合前应用，汇总同一快照。数值为十进制字符串，cost Numeric(38,18)。Run 诊断显式按 Run 查询，不套默认窗口。
 

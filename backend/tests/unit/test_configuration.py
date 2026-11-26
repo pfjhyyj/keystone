@@ -1,7 +1,8 @@
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from cryptography.fernet import Fernet
+from pydantic import SecretStr, ValidationError
 
 from keystone.core.config import Settings
 from keystone.platform.files.adapters.storage import StorageRegistry
@@ -96,8 +97,6 @@ def test_worker_identity_is_independent_of_shared_config_digest():
 
 
 def test_worker_shared_config_digest_checks_storage_secrets_without_exposing_them(tmp_path):
-    from pydantic import SecretStr
-
     from keystone.worker.identity import config_digest
 
     settings = Settings(config_file=write_config(tmp_path))
@@ -110,7 +109,7 @@ def test_worker_shared_config_digest_checks_storage_secrets_without_exposing_the
     assert "different-storage-secret" not in config_digest(settings)
 
 
-def test_browser_settings_require_complete_runtime_and_local_backup_storage(tmp_path):
+def test_browser_settings_require_complete_runtime_and_local_backup_storage(tmp_path, s3_settings):
     storage = {
         "local": {
             "driver": "filesystem",
@@ -122,13 +121,14 @@ def test_browser_settings_require_complete_runtime_and_local_backup_storage(tmp_
         "opensandbox_key": "runtime-secret",
         "browser_runtime_image": "keystone-browser:test",
     }
-    Settings(
+    settings = Settings(
         config_file=None,
         file_coordination_root=tmp_path / "coordination",
         file_storages=storage,
         browser_backup_key="a" * 64,
         **runtime,
     )
+    assert settings.credential_key is None
 
     with pytest.raises(ValidationError, match="OpenSandbox"):
         Settings(
@@ -166,6 +166,84 @@ def test_browser_settings_require_complete_runtime_and_local_backup_storage(tmp_
             browser_backup_key="a" * 64,
             **runtime,
         )
+    with pytest.raises(ValidationError, match="local filesystem"):
+        Settings(
+            config_file=None,
+            **s3_settings,
+            credential_key=Fernet.generate_key().decode("ascii"),
+            browser_backup_key="a" * 64,
+            **runtime,
+        )
+
+
+@pytest.fixture
+def s3_settings(tmp_path):
+    return {
+        "file_coordination_root": tmp_path / "scratch",
+        "file_default_storage": "cloud",
+        "file_storages": {
+            "cloud": {
+                "driver": "s3",
+                "endpoint": "https://s3.example.test",
+                "bucket": "documents",
+                "access_key": "test-access",
+                "secret_key": "test-secret",
+            }
+        },
+    }
+
+
+def test_environment_overrides_top_level_toml_credential_key(tmp_path, monkeypatch):
+    assert Settings(config_file=None).credential_key is None
+    config = tmp_path / "keystone.toml"
+    toml_key = Fernet.generate_key().decode("ascii")
+    env_key = Fernet.generate_key().decode("ascii")
+    config.write_text(f'credential_key = "{toml_key}"\n', encoding="utf-8")
+    assert Settings(config_file=config).credential_key == SecretStr(toml_key)
+
+    monkeypatch.setenv("KEYSTONE_CREDENTIAL_KEY", env_key)
+    settings = Settings(config_file=config)
+    assert settings.credential_key == SecretStr(env_key)
+    assert toml_key not in repr(settings) and env_key not in repr(settings)
+
+
+def test_only_s3_exclusive_storage_requires_a_key(s3_settings, tmp_path, monkeypatch):
+    with pytest.raises(
+        ValidationError, match="S3-only file storage requires KEYSTONE_CREDENTIAL_KEY"
+    ):
+        Settings(config_file=None, **s3_settings)
+
+    sources = s3_settings["file_storages"] | {
+        "local": {"driver": "filesystem", "root": tmp_path / "files"}
+    }
+    mixed = Settings(config_file=None, **(s3_settings | {"file_storages": sources}))
+    assert mixed.credential_key is None
+
+    key = Fernet.generate_key().decode("ascii")
+    monkeypatch.setenv("KEYSTONE_CREDENTIAL_KEY", key)
+    assert Settings(config_file=None, **s3_settings).credential_key == SecretStr(key)
+
+
+def test_storage_configuration_errors_hide_the_injected_key(s3_settings):
+    key = Fernet.generate_key().decode("ascii")
+    with pytest.raises(ValidationError, match="Default file storage") as rejected:
+        Settings(
+            config_file=None,
+            credential_key=key,
+            **(s3_settings | {"file_default_storage": "missing"}),
+        )
+    assert key not in str(rejected.value) and key not in rejected.value.json()
+
+
+@pytest.mark.parametrize("key", ["", "not-a-fernet-key", "+" + "A" * 42 + "=", "A" * 42 + "B="])
+def test_malformed_credential_key_is_rejected_without_echoing_input(key, monkeypatch):
+    monkeypatch.setenv("KEYSTONE_CREDENTIAL_KEY", key)
+    with pytest.raises(ValidationError, match="URL-safe Fernet key") as rejected:
+        Settings(config_file=None)
+    assert rejected.value.errors()[0]["input"] is None
+    if key:
+        assert key not in str(rejected.value)
+        assert key not in rejected.value.json()
 
 
 @pytest.mark.parametrize("name", ["file_transfer_slots", "file_temp_bytes"])

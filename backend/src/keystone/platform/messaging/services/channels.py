@@ -135,17 +135,7 @@ async def executor_labels(session, rows):
     return {user["id"]: user["label"] for user in users}
 
 
-async def credentials_stored(session):
-    """Whether any message channel holds a sealed credential; used by composition."""
-    return (
-        await session.scalar(
-            select(MessageChannel.id).where(MessageChannel.credential_encrypted != "").limit(1)
-        )
-        is not None
-    )
-
-
-async def seal(session, vault, row, credential):
+def seal(vault, row, credential):
     if not isinstance(credential, CREDENTIAL[row.provider]):
         raise ServiceError(422, "message_credential_invalid", "凭据与渠道类型不匹配")
     if isinstance(credential, AppCredential):
@@ -154,12 +144,7 @@ async def seal(session, vault, row, credential):
         value = {"url": credential.url.get_secret_value()}
         if credential.secret is not None:
             value["secret"] = credential.secret.get_secret_value()
-    return vault.encrypt(
-        SecretStr(json.dumps(value)),
-        row.id,
-        PURPOSE[row.provider],
-        create=await vault.may_create(session),
-    )
+    return vault.encrypt(SecretStr(json.dumps(value)), row.id, PURPOSE[row.provider])
 
 
 def unseal(vault, row):
@@ -261,7 +246,7 @@ class ChannelService:
                     )
                     session.add(destination)
             if data.credential is not None:
-                row.credential_encrypted = await seal(session, self.vault, row, data.credential)
+                row.credential_encrypted = seal(self.vault, row, data.credential)
             await session.flush()
             await self.identity.log(
                 session,

@@ -69,16 +69,25 @@ async def probe(settings):
 
 
 async def run_executor(runtime, stop, *, ready, health):
-    if (await runtime.readiness())["status"] != "ready":
-        raise RuntimeError("Run migrations and initialize storage before starting Worker")
+    checks = await runtime.database.readiness(runtime.heads)
+    if any(value != "ok" for value in checks.values()):
+        raise RuntimeError("Run migrations before starting Worker")
+    try:
+        deployment = await runtime.require_deployment()
+    except ServiceError as error:
+        if error.code == "deployment_binding_conflict":
+            raise ServiceError(409, "worker_deployment_conflict", error.detail) from None
+        raise
+    if (await runtime.storage.readiness())[0] != "ok":
+        raise RuntimeError("Initialize storage before starting Worker")
+
     async with identity_lease(
         runtime.database,
-        runtime.storage,
         runtime.settings.worker_id,
         transaction_timeout=LEASE_CHECK_SECONDS,
     ) as lease:
         async with asyncio.timeout(LEASE_CHECK_SECONDS):
-            await health.claim(runtime.storage.coordination.fingerprint(), lease)
+            await health.claim(deployment.coordination_id, lease)
         runtime.worker_identity = health.identity
         async with AsyncExitStack() as stack:
             queues, installers = register_maintenance(runtime, health)

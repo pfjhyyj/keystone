@@ -9,6 +9,7 @@ x-backend: &backend
     context: ../../backend
   environment:
     KEYSTONE_ENV: ${KEYSTONE_ENV:-development}
+    KEYSTONE_CREDENTIAL_KEY: ${KEYSTONE_CREDENTIAL_KEY:?Set the isolated verification key}
     KEYSTONE_LOG_LEVEL: ${KEYSTONE_LOG_LEVEL:-INFO}
     KEYSTONE_BROWSER_ORIGINS: '${KEYSTONE_BROWSER_ORIGINS:-["http://127.0.0.1:8080","http://localhost:8080"]}'
     KEYSTONE_SESSION_HOURS: ${KEYSTONE_SESSION_HOURS:-72}

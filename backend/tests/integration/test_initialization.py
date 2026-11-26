@@ -7,7 +7,6 @@ from keystone.bootstrap import create_app
 from keystone.composition import build_catalog
 from keystone.core.asyncio import new_event_loop, run
 from keystone.core.config import Settings
-from keystone.core.credentials import KEY_FILE
 from keystone.core.database import Database
 from keystone.core.errors import ServiceError
 from keystone.core.migrations import expected_heads
@@ -45,7 +44,6 @@ def test_init_prepares_all_dependencies_and_preserves_existing_accounts(
     settings.initial_admin_password = None
     initialize(settings, non_interactive=True)
     assert (tmp_path / ".keystone-storage").read_bytes() == marker
-    assert not (tmp_path / KEY_FILE).exists()
 
     with TestClient(
         create_app(settings), backend_options={"loop_factory": new_event_loop}
@@ -96,5 +94,10 @@ def test_init_requires_a_password_only_for_an_empty_installation(empty_database_
     with pytest.raises(ServiceError) as missing:
         initialize(settings, non_interactive=True)
     assert missing.value.code == "initial_admin_password_required"
+    # The database is already claimed, even though no administrator exists yet.
+    other = configuration(empty_database_url, tmp_path / "other")
+    with pytest.raises(ServiceError) as conflict:
+        initialize(other, non_interactive=True)
+    assert conflict.value.code == "deployment_binding_conflict"
     settings.initial_admin_password = SecretStr(PASSWORD)
     initialize(settings, non_interactive=True)

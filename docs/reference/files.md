@@ -8,9 +8,11 @@ OpenDAL 0.47.10 支持多个 filesystem/S3 源，每个 File 只有一份不可�
 
 keystone.toml 的 file_storages 显式声明源，file_default_storage 仅影响新请求；原幂等请求省略源时沿用原源。filesystem 身份来自 .keystone-storage，迁移或恢复须保留标记；S3 身份由 driver、endpoint、bucket、region、prefix 组成，凭据轮换不改变身份。源消失或身份改变即失败，不回退默认源。
 
-配置任一源都须提供 KEYSTONE_FILE_COORDINATION_ROOT，API/Worker 共用同宿主可靠本地卷与标记。LocalLeases 协调请求键、写入和清理，不兼容时立即返回 409/file_busy。不支持多宿主或 NFS 协调，本地锁也不能证明远端请求已停止。init-storage 初始化本地卷/源，不创建 S3 bucket。
+上传请求键、写入与清理使用 PostgreSQL 会话级 advisory lock；受保护的提交使用持锁连接，失锁不能换连接补交，外部 I/O 不持长事务。文件系统上传和清理另持 `LocalLeases` 物理锁，直到 I/O 实际结束，不因 PostgreSQL 会话丢失而提前释放。仅 S3 部署不取物理文件锁，临时目录和磁盘预留仍使用节点本地锁。
 
-默认源和协调卷影响 ready，辅助源故障只标该源 unavailable。S3 就绪探针超时 2 秒，可能需要前缀 ListBucket 权限，只验证连通性；Worker 在数据库可用时继续处理其他源。
+遇 `409/file_busy`，等待持锁操作收尾后按幂等规则有限重试。遇 `503/file_coordination_lost`，恢复 PostgreSQL 后核对提交状态，不能假定旧 I/O 已停止。S3 的 `409/upload_unavailable` 见[上传幂等](../domains/files.md#31-上传幂等)。
+
+默认源和节点目录影响就绪，辅助源故障只标该源 unavailable。S3 探针超时 2 秒，只验证连通性；Worker 在数据库可用时继续处理其他源。
 
 ## 业务内部接口
 
@@ -24,9 +26,9 @@ keystone.toml 的 file_storages 显式声明源，file_default_storage 仅影响
 | read_transfer | 不取数量许可的异步操作作用域；业务授权后调用 transfer.open_content(file_id) |
 | *_in_transaction | 见[引用与事务接口](#引用与事务接口) |
 
-read_transfer 的授权和精确 ID 解析位于实际读取前。Service 不返回 HTTP Response，业务 Controller 可复用 ContentResponse 处理 Range/HEAD。local_file 只供可信本地集成，不能进入普通 HTTP 响应。
+read_transfer 的授权和精确 ID 解析位于实际读取前。Service 不返回 HTTP Response，业务 Controller 可复用 ContentResponse 处理 Range/HEAD。
 
-业务在文件保存后复查当前保存资格，同事务更新自己的关系、FileReferences 和成功审计。FileReferences.replace/release 仅维护调用方已授权的精确关系，不检查 FileGrant，不把引用当作读取权。保存失败不撤销文件事实，已知原请求使用原键重试。
+业务在文件保存后复查当前保存资格，同事务更新自己的关系、FileReferences 和成功审计。FileReferences.replace/release 仅维护调用方已授权的精确关系，不检查 FileGrant，不把引用当作读取权。业务保存失败不撤销已完成的文件上传；重放原上传以取回回执见[上传幂等](../domains/files.md#31-上传幂等)。
 
 ## 上传与容量
 
@@ -90,7 +92,7 @@ workspace 提供受限临时目录 Path，单文件在目录内选择路径；�
 | file_scope_busy | 同一传输作用域并发或递归操作，属于使用错误，不重试 |
 | file_temporary_limit / file_too_large | 本次目录或文件超限，不重试 |
 
-local_file(file_id) 接受已获业务授权的本地文件，作用域内返回 LocalFile(path, size_bytes, checksum_sha256)。共享文件锁保持到作用域退出，与清理 Worker 的排他锁互斥；本地完整性检查不申请文件数量许可。业务负责用户操作或维护资格，路径只在作用域内供可信代码使用。
+`local_file(file_id)` 在业务授权后直接借用本地路径，返回 `LocalFile(path, size_bytes, checksum_sha256)`。只持 OS 共享文件锁，与清理的排他锁互斥；不取 PostgreSQL 租约或数量槽位，不持长事务。路径仅供可信代码在作用域内使用，不进入普通 HTTP 响应。
 
 ## Run 文件诊断
 
@@ -98,4 +100,4 @@ local_file(file_id) 接受已获业务授权的本地文件，作用域内返回
 
 ## 代码组织
 
-models/ 每实体一文件；services/files、references、cleanup 分管生命周期、引用和清理。adapters/storage、capacity、transfers 管存储、容量、传输，LocalLeases 位于 core。任务仅做 DBOS 适配。业务授权在调用方 Service 完成，跨模块不查询其他领域 ORM。
+models/ 每实体一文件；services/files、references、cleanup 分管生命周期、引用和清理。adapters/storage、coordination、capacity、transfers 管存储、文件锁、容量和传输，LocalLeases 位于 core。任务仅做 DBOS 适配。业务授权在调用方 Service 完成，跨模块不查询其他领域 ORM。

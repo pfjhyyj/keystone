@@ -19,7 +19,7 @@ def test_source_migrations_are_independent_of_working_directory(tmp_path, monkey
     settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == source
-    assert migrations.expected_heads(settings) == {"0010"}
+    assert migrations.expected_heads(settings) == {"0011"}
 
 
 def test_installed_package_uses_migrations_beside_working_directory(tmp_path, monkeypatch):
@@ -34,7 +34,7 @@ def test_installed_package_uses_migrations_beside_working_directory(tmp_path, mo
     settings = Settings(config_file=None)
     config = migrations.migration_config(settings)
     assert Path(config.get_main_option("script_location")) == app / "migrations"
-    assert migrations.expected_heads(settings) == {"0010"}
+    assert migrations.expected_heads(settings) == {"0011"}
 
 
 def test_missing_migration_files_fail_before_database_access(tmp_path, monkeypatch):
@@ -63,6 +63,7 @@ def test_module_paths_and_global_sequence_follow_the_native_revision_chain():
         "environments",
         "messaging",
         "flow",
+        "core",
     )
     assert len(chain) == len(modules)
     assert len(script.get_heads()) == 1 and len(script.get_bases()) == 1
@@ -110,11 +111,11 @@ def layout(tmp_path, monkeypatch):
 def test_business_chains_add_their_own_heads_only_when_registered(layout):
     notes = layout / "businesses/notes"
     business_revision(notes, 1, labels=("notes",), depends="0008")
-    business_revision(notes, 2, down="notes_0001", depends="0010")
-    business_revision(layout / "businesses/unlisted", 1, labels=("unlisted",), depends="0010")
+    business_revision(notes, 2, down="notes_0001", depends="0011")
+    business_revision(layout / "businesses/unlisted", 1, labels=("unlisted",), depends="0011")
     settings = Settings(config_file=None)
 
-    assert migrations.expected_heads(settings) == {"0010"}
+    assert migrations.expected_heads(settings) == {"0011"}
     # notes_0002 depends on the platform head, so Alembic records the platform through it.
     assert migrations.expected_heads(settings, ("notes",)) == {"notes_0002"}
     script = migrations.migration_scripts(migrations.migration_config(settings, ("notes",)))

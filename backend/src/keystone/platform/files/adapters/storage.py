@@ -234,6 +234,7 @@ class Storage:
 class StorageRegistry:
     def __init__(self, settings):
         self.default_key = settings.file_default_storage
+        self.shared_files = settings.s3_only_storage
         self.sources = {key: Storage(config) for key, config in settings.file_storages.items()}
         self.coordination = leases.LocalLeases(settings.file_coordination_root)
         from keystone.platform.files.adapters.transfers import Transfers

@@ -43,7 +43,7 @@ HINTS = {
     "send_unconfirmed": "飞书没有明确答复，消息可能已送达；自建应用在去重窗口内用同一投递重试，"
     "群机器人不再重发",
     "send_interrupted": "发送过程中进程中断，消息可能已送达",
-    "credential_unavailable": "渠道凭据或加密密钥不可用，请检查密钥文件或重新填写凭据",
+    "credential_unavailable": "渠道凭据或加密密钥不可用，请检查 credential_key 配置",
     # The Worker's long connection to an app.
     "feishu_ws_1000040350": "长连接数超过飞书上限（每个应用 50 个），"
     "请减少同时运行的 Worker 或环境",

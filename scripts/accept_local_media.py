@@ -17,18 +17,10 @@ from uuid import uuid4
 
 import httpx
 import psycopg
-from alembic import command
 from psycopg import sql
 
-from keystone.composition import build_catalog
-from keystone.core.asyncio import run
 from keystone.core.config import Settings
-from keystone.core.database import Database
-from keystone.core.migrations import migration_config
-from keystone.platform.files.adapters.storage import StorageRegistry
-from keystone.platform.identity.adapters.security import Passwords
-from keystone.platform.identity.schemas import UserCreate
-from keystone.platform.identity.services.initialize import initialize_admin
+from keystone.entrypoints.cli import initialize
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -91,30 +83,11 @@ def exercise(root, database_url, channel):
         config_file=None,
         env="test",
         database_url=database_url,
+        initial_admin_password="test-password-123",
         file_coordination_root=storage,
         file_storages={"local": {"driver": "filesystem", "root": storage}},
     )
-    StorageRegistry(settings).initialize()
-    config = migration_config(settings)
-    config.attributes["create_schema"] = True
-    command.upgrade(config, "head")
-
-    async def seed():
-        database = Database(settings, catalog=build_catalog())
-        try:
-            await initialize_admin(
-                database,
-                Passwords(),
-                UserCreate(
-                    username="admin",
-                    display_name="Acceptance",
-                    password="test-password-123",
-                ),
-            )
-        finally:
-            await database.close()
-
-    run(seed())
+    initialize(settings, display_name="Acceptance", non_interactive=True)
     video = root / "sample.mp4"
     subprocess.run(
         [

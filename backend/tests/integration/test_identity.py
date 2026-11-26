@@ -9,11 +9,10 @@ from alembic import command
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select, update
 
-from keystone.bootstrap import create_app
+from keystone.bootstrap import build_runtime, create_app
 from keystone.composition import build_catalog
 from keystone.core.asyncio import new_event_loop, run
 from keystone.core.config import Settings
-from keystone.core.database import Database
 from keystone.core.migrations import migration_config
 from keystone.core.time import utcnow
 from keystone.model_registry import MIGRATION_CHAINS
@@ -30,26 +29,39 @@ ORIGIN = "http://127.0.0.1:5173"
 BROWSER = {"Origin": ORIGIN, "X-Keystone-Request": "1"}
 
 
-@pytest.fixture
-def client(empty_database_url):
-    settings = Settings(config_file=None, database_url=empty_database_url, env="test")
+def initialize_database(settings):
     # Every registered chain, as `keystone init` does, so downstream business tables exist.
     config = migration_config(settings, MIGRATION_CHAINS)
     config.attributes["create_schema"] = True
     command.upgrade(config, "heads")
 
     async def initialize():
-        database = Database(settings, catalog=build_catalog())
+        runtime = build_runtime(settings)
         try:
+            runtime.storage.initialize()
+            await runtime.bind_deployment()
             await initialize_admin(
-                database,
+                runtime.database,
                 Passwords(),
                 UserCreate(username="admin", display_name="管理员", password=PASSWORD),
             )
         finally:
-            await database.close()
+            await runtime.close()
 
     run(initialize())
+
+
+@pytest.fixture
+def client(empty_database_url, tmp_path):
+    root = tmp_path / "storage"
+    settings = Settings(
+        config_file=None,
+        database_url=empty_database_url,
+        env="test",
+        file_coordination_root=root,
+        file_storages={"local": {"driver": "filesystem", "root": root}},
+    )
+    initialize_database(settings)
     with TestClient(
         create_app(settings), backend_options={"loop_factory": new_event_loop}
     ) as browser:

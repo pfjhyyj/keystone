@@ -15,6 +15,12 @@ class FileSettings(BaseModel):
     file_upload_timeout_seconds: int = Field(default=3600, ge=1, le=86400)
     file_unreferenced_grace_seconds: int | None = Field(default=None, ge=1, le=31536000)
 
+    @property
+    def s3_only_storage(self) -> bool:
+        return bool(self.file_storages) and all(
+            source.driver == "s3" for source in self.file_storages.values()
+        )
+
     @model_validator(mode="after")
     def valid_storage_sources(self):
         if self.file_storages and self.file_default_storage not in self.file_storages:
