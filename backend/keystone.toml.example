@@ -44,3 +44,14 @@ file_upload_timeout_seconds = 3600
 [file_storages.local]
 driver = "filesystem"
 root = "../.data/files"
+
+# Optional S3 source. Set real credentials only in private keystone.toml or via env.
+# Set file_default_storage = "cloud" above to use S3 by default.
+# [file_storages.cloud]
+# driver = "s3"
+# endpoint = "https://s3.example.com"
+# bucket = "keystone-files"
+# region = "us-east-1"
+# prefix = "documents"
+# access_key = ""
+# secret_key = ""
