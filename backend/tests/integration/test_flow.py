@@ -104,6 +104,7 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
         "file_min_free_bytes",
         "file_upload_timeout_seconds",
         "history_cleanup_enabled",
+        "maintenance_cleanup_enabled",
         "session_retention_days",
         "pat_retention_days",
         "audit_retention_days",

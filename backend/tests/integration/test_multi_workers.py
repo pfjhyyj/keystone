@@ -56,7 +56,7 @@ def test_shared_plans_limits_idle_health_and_duplicate_identity(client, tmp_path
         assert b.poll() is None, lb.read_text(encoding="utf8")
         current = status(client)
         assert current["ready_workers"] == current["expected_workers"] == 2
-        assert len(schedules(client)) == 4 + len(business_schedules())
+        assert len(schedules(client)) == 5 + len(business_schedules())
         identity = {row["worker_id"]: row["instance_id"] for row in current["instances"]}
         with worker(client, tmp_path) as (duplicate, log):
             duplicate.wait(timeout=15)

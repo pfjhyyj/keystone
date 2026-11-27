@@ -31,7 +31,7 @@
 | `browser_backup_key` | `KEYSTONE_BROWSER_BACKUP_KEY` | 可选；32 字节十六进制备份密钥。设置后启用浏览器环境备份，且 `file_default_storage` 必须是本地 `filesystem` |
 | `log_level` | `KEYSTONE_LOG_LEVEL` | `INFO` |
 | `session_hours` / `pat_max_days` | `KEYSTONE_SESSION_HOURS` / `KEYSTONE_PAT_MAX_DAYS` | 72 小时 / 90 天 |
-| 历史保留与自动清理 | `KEYSTONE_HISTORY_CLEANUP_ENABLED` 等 | 自动删除默认关闭；见[历史清理](deployment.md#历史保留与清理) |
+| 历史保留与自动清理 | `KEYSTONE_MAINTENANCE_CLEANUP_ENABLED` 等 | 默认仅清理超过 14 天的 DBOS 维护历史；见[历史清理](deployment.md#历史保留与清理) |
 | `[file_storages.<源名>]` | `KEYSTONE_FILE_STORAGES__<源名>__<字段>` | 逐项配置内容源，见第 4 节 |
 | `file_coordination_root` | `KEYSTONE_FILE_COORDINATION_ROOT` | 节点本地目录，供临时文件、磁盘预留与本地锁使用；示例为 `../.data/files` |
 | `credential_key` | `KEYSTONE_CREDENTIAL_KEY` | 见[凭据加密密钥](#41-凭据加密密钥) |

@@ -32,7 +32,7 @@ from keystone.platform.model_access.tasks.definitions import COST_SCHEDULE, COST
         (RECONCILE_SCHEDULE, "*/5 * * * * *", 10),
         (CLEANUP_SCHEDULE, "0 */5 * * * *", 60),
         (COST_SCHEDULE, "0 * * * * *", 45),
-        (HISTORY_SCHEDULE, "0 0 * * * *", 300),
+        (HISTORY_SCHEDULE, "0 */3 * * * *", 60),
     ],
 )
 def test_maintenance_schedule_policies(plan, cron, lateness):

@@ -13,15 +13,17 @@ from test_flow import client as client
 from test_flow import configuration as configuration
 from test_flow import start, worker
 from test_identity import bearer, query, token
-from test_maintenance import schedules, wait_for
+from test_maintenance import executions, schedules, wait_for
 
-from keystone.core.execution.history import prune_maintenance
+from keystone.core.execution.history import HISTORY, HISTORY_SCHEDULE, prune_maintenance
 from keystone.core.time import utcnow
 from keystone.platform.audit.models import AuditLog
+from keystone.platform.environments.tasks.definitions import IDLE_STOP, IDLE_STOP_SCHEDULE
 from keystone.platform.files.models import File
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.services.identity import retained_execution_ids
 from keystone.platform.identity.models import LoginSession, PersonalAccessToken
+from keystone.platform.messaging.tasks.definitions import DISPATCH, DISPATCH_SCHEDULE
 from keystone.platform.model_access.models import ModelEntry, ModelInvocation
 
 pytestmark = [pytest.mark.postgres, pytest.mark.usefixtures("flow_engine")]
@@ -38,14 +40,22 @@ def test_history_retention_never_deletes_another_application_or_its_parent(clien
         for name in ("keystone", "another-application")
     ]
     old = int((utcnow() - timedelta(days=40)).timestamp() * 1000)
+    children = {f"foreign-child-{index}": "owned-parent" for index in range(3)}
+    children["foreign-hidden-child"] = "owned-hidden-parent"
     try:
         for engine, queue, ids in (
             (
                 engines[0],
                 "owned-retention",
-                ("owned-parent", "owned-leaf", "owned-under-foreign", "unclaimed"),
+                (
+                    "owned-parent",
+                    "owned-hidden-parent",
+                    "owned-leaf",
+                    "owned-under-foreign",
+                    "unclaimed",
+                ),
             ),
-            (engines[1], "foreign-retention", ("foreign-root", "foreign-child")),
+            (engines[1], "foreign-retention", ("foreign-root", *children)),
         ):
             engine.register_queue(queue)
             for identifier in ids:
@@ -63,12 +73,19 @@ def test_history_retention_never_deletes_another_application_or_its_parent(clien
             await session.execute(
                 text("UPDATE dbos.workflow_status SET completed_at = :old"), {"old": old}
             )
-            await session.execute(
-                text(
-                    "UPDATE dbos.workflow_status SET parent_workflow_id = 'owned-parent' "
-                    "WHERE workflow_uuid = 'foreign-child'"
+            # One parent's three children fill the first page and hide the other parent's child.
+            for identifier, parent in children.items():
+                await session.execute(
+                    text(
+                        "UPDATE dbos.workflow_status SET parent_workflow_id = :parent, "
+                        "created_at = :created WHERE workflow_uuid = :identifier"
+                    ),
+                    {
+                        "parent": parent,
+                        "created": old if parent == "owned-parent" else old + 1000,
+                        "identifier": identifier,
+                    },
                 )
-            )
             await session.execute(
                 text(
                     "UPDATE dbos.workflow_status SET parent_workflow_id = 'foreign-root' "
@@ -92,8 +109,9 @@ def test_history_retention_never_deletes_another_application_or_its_parent(clien
         }
         assert remaining == {
             "owned-parent",
+            "owned-hidden-parent",
             "foreign-root",
-            "foreign-child",
+            *children,
             "owned-under-foreign",
             "unclaimed",
         }
@@ -102,12 +120,50 @@ def test_history_retention_never_deletes_another_application_or_its_parent(clien
             engine.destroy()
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_worker_history_cleanup_is_explicitly_enabled(client, tmp_path, enabled):
+@pytest.mark.parametrize("policy", ["default", "off", "application-only"])
+def test_worker_history_cleanup_policy(client, tmp_path, monkeypatch, policy):
     runtime = client.app.state.runtime
-    runtime.settings.history_cleanup_enabled = enabled
+    if policy != "default":
+        runtime.settings.maintenance_cleanup_enabled = False
+        runtime.settings.history_cleanup_enabled = policy == "application-only"
+
+    engine = runtime.flow_engine.client
+    queue = "retention-probe"
+    names = (
+        DISPATCH.entrypoint,
+        DISPATCH_SCHEDULE.tick_entrypoint,
+        IDLE_STOP.entrypoint,
+        IDLE_STOP_SCHEDULE.tick_entrypoint,
+    )
+    old_count = 601 if policy == "default" else 1
+    old_ids = [f"retention-probe-{number}" for number in range(old_count)]
+    recent_id = "retention-probe-recent"
+    ids = [*old_ids, recent_id]
+    engine.register_queue(queue)
+    for index, identifier in enumerate(ids):
+        engine.enqueue(
+            {
+                "workflow_name": names[index % len(names)],
+                "queue_name": queue,
+                "workflow_id": identifier,
+            },
+            {},
+        )
+        engine.cancel_workflow(identifier)
 
     async def seed(session):
+        await session.execute(
+            text(
+                "UPDATE dbos.workflow_status SET completed_at = "
+                "CASE WHEN workflow_uuid = :recent_id THEN :recent ELSE :old END "
+                "WHERE workflow_uuid LIKE 'retention-probe-%'"
+            ),
+            {
+                "recent_id": recent_id,
+                "recent": int((utcnow() - timedelta(days=13)).timestamp() * 1000),
+                "old": int((utcnow() - timedelta(days=15)).timestamp() * 1000),
+            },
+        )
         session.add(
             AuditLog(
                 occurred_at=utcnow() - timedelta(days=400),
@@ -118,8 +174,27 @@ def test_worker_history_cleanup_is_explicitly_enabled(client, tmp_path, enabled)
         )
 
     query(client, seed)
+    if policy == "default":
+        parent_queries = []
+        list_workflows = DBOSClient.list_workflows
 
-    def count():
+        def observe_listing(engine, **filters):
+            if parents := filters.get("parent_workflow_id"):
+                parent_queries.append(parents)
+            return list_workflows(engine, **filters)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(DBOSClient, "list_workflows", observe_listing)
+            preview = client.portal.call(runtime.history_retention().execute)
+        assert [len(parents) for parents in parent_queries] == [600]
+        assert preview["maintenance"] == {
+            "examined": 600,
+            "eligible": 600,
+            "deleted": 0,
+            "next_offset": 600,
+        }
+
+    def audit_count():
         return query(
             client,
             lambda session: session.scalar(
@@ -136,11 +211,30 @@ def test_worker_history_cleanup_is_explicitly_enabled(client, tmp_path, enabled)
             log,
             lambda: client.get("/api/v1/worker/status").json()["status"] == "ready",
         )
-        if enabled:
-            wait_for(client, process, log, lambda: count() == 0)
+        plan = schedules(client).get(HISTORY_SCHEDULE.name)
+        if policy == "off":
+            assert plan is None
         else:
-            assert count() == 1
-        assert ("keystone.history.retention" in schedules(client)) is enabled
+            assert plan["schedule"] == "0 */3 * * * *"
+            wait_for(
+                client,
+                process,
+                log,
+                lambda: executions(client, HISTORY.entrypoint, status="SUCCESS"),
+            )
+
+        remaining = {
+            row.workflow_id
+            for row in engine.list_workflows(
+                workflow_ids=ids, load_input=False, load_output=False, limit=len(ids)
+            )
+        }
+        assert recent_id in remaining
+        if policy == "default":
+            assert len(remaining) <= 2
+        else:
+            assert remaining == set(ids)
+        assert audit_count() == (0 if policy == "application-only" else 1)
 
 
 def test_status_requires_current_identity_and_reports_backlog(client):

@@ -17,6 +17,7 @@ from keystone.core.execution.steps import safe_step
 from keystone.core.time import utcnow
 
 TERMINAL = {"SUCCESS", "ERROR", "CANCELLED", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"}
+MAX_BATCH = 600
 HISTORY = TaskDefinition(
     key="history.retention",
     entrypoint="keystone.history.retention",
@@ -28,8 +29,8 @@ HISTORY_SCHEDULE = ScheduleDefinition(
     name="keystone.history.retention",
     tick_entrypoint="keystone.history.tick",
     task_key=HISTORY.key,
-    cron="0 0 * * * *",
-    max_lateness_seconds=300,
+    cron="0 */3 * * * *",
+    max_lateness_seconds=60,
 )
 QUEUE = HISTORY.queue
 
@@ -52,8 +53,28 @@ def register(execute, *, enabled):
     return (task,), register_schedule(HISTORY_SCHEDULE, task, execution_prefix="history-retention")
 
 
-async def prune_maintenance(settings, names, retained_ids, *, apply=False, limit=200, offset=0):
-    if not 1 <= limit <= 200 or not 0 <= offset <= 1_000_000_000:
+async def _leaf_ids(listing, candidates: list[str]) -> list[str]:
+    if not candidates:
+        return []
+    # An empty application filter includes children owned by any application.
+    children = await listing(
+        parent_workflow_id=candidates, application_name=[], limit=len(candidates)
+    )
+    parents = {row.parent_workflow_id for row in children}
+    unmatched = [identifier for identifier in candidates if identifier not in parents]
+    if len(children) < len(candidates) or not unmatched:
+        return unmatched
+    # A full page can hide children of unmatched parents. Split to bound reads under fan-out.
+    middle = (len(unmatched) + 1) // 2
+    return await _leaf_ids(listing, unmatched[:middle]) + await _leaf_ids(
+        listing, unmatched[middle:]
+    )
+
+
+async def prune_maintenance(
+    settings, names, retained_ids, *, apply=False, limit=MAX_BATCH, offset=0
+):
+    if not 1 <= limit <= MAX_BATCH or not 0 <= offset <= 1_000_000_000:
         raise ValueError("Invalid maintenance history page")
     cutoff = utcnow() - timedelta(days=settings.maintenance_retention_days)
     engine = create_engine(
@@ -128,13 +149,7 @@ async def prune_maintenance(settings, names, retained_ids, *, apply=False, limit
                 row = known.get(row.parent_workflow_id)
             return False
 
-        eligible = []
-        for row in rows:
-            # Explicit empty filter includes all applications; None defaults to this client.
-            if safe(row) and not await listing(
-                parent_workflow_id=row.workflow_id, application_name=[], limit=1
-            ):
-                eligible.append(row.workflow_id)
+        eligible = await _leaf_ids(listing, [row.workflow_id for row in rows if safe(row)])
         if apply and eligible:
             from functools import partial
 

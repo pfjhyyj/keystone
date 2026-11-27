@@ -139,11 +139,18 @@ def register_maintenance(runtime, health):
         bindings.extend(tasks)
         installers.append(install)
 
+    application_cleanup = runtime.settings.history_cleanup_enabled
+    maintenance_cleanup = runtime.settings.maintenance_cleanup_enabled
+
     async def prune_history():
-        return await runtime.history_retention().execute(apply=True)
+        return await runtime.history_retention().execute(
+            apply=True,
+            include_application=application_cleanup,
+            include_maintenance=maintenance_cleanup,
+        )
 
     tasks, install = history_jobs.register(
-        prune_history, enabled=runtime.settings.history_cleanup_enabled
+        prune_history, enabled=application_cleanup or maintenance_cleanup
     )
     bindings.extend(tasks)
     installers.append(install)
@@ -195,11 +202,13 @@ def build_history_retention(runtime):
 
     from keystone.core.execution.history import HISTORY, HISTORY_SCHEDULE, prune_maintenance
     from keystone.platform.audit.services.retention import prune_audit
+    from keystone.platform.environments.tasks.definitions import IDLE_STOP, IDLE_STOP_SCHEDULE
     from keystone.platform.files.tasks.definitions import CLEANUP, CLEANUP_SCHEDULE
     from keystone.platform.flow.services.identity import retained_execution_ids, retained_token_ids
     from keystone.platform.flow.tasks.definitions import RECONCILE, RECONCILE_SCHEDULE
     from keystone.platform.identity.services.retention import prune_credentials
     from keystone.platform.messaging.services.retention import prune_messaging
+    from keystone.platform.messaging.tasks.definitions import DISPATCH, DISPATCH_SCHEDULE
     from keystone.platform.model_access.tasks.definitions import (
         COST_SCAN,
         COST_SCHEDULE,
@@ -216,6 +225,10 @@ def build_history_retention(runtime):
         COST_SCAN.entrypoint,
         COST_SCOPE.entrypoint,
         COST_SCHEDULE.tick_entrypoint,
+        DISPATCH.entrypoint,
+        DISPATCH_SCHEDULE.tick_entrypoint,
+        IDLE_STOP.entrypoint,
+        IDLE_STOP_SCHEDULE.tick_entrypoint,
         HISTORY.entrypoint,
         HISTORY_SCHEDULE.tick_entrypoint,
     }

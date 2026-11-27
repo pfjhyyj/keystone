@@ -16,6 +16,7 @@ from test_identity import query
 from keystone.bootstrap import build_runtime
 from keystone.core.asyncio import run
 from keystone.core.execution.contracts import NoInput, TaskDefinition
+from keystone.core.execution.history import HISTORY_SCHEDULE
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.files.models import File
 from keystone.platform.files.tasks import workflows as files_jobs
@@ -73,6 +74,7 @@ def test_schedules_survive_restart_without_duplicate_cleanup(client, tmp_path):
             flow_jobs.SCHEDULE,
             model_jobs.SCHEDULE,
             messaging_jobs.SCHEDULE,
+            HISTORY_SCHEDULE.name,
             *business_schedules(),
         }
         for plan in original.values():

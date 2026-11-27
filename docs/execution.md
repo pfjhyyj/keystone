@@ -85,7 +85,7 @@ Worker 的 enqueue_task 还检查绑定是否启用。Workflow 层保持确定�
 | keystone.flow.reconcile | `*/5 * * * * *` | 5 秒 | 10 秒 |
 | keystone.files.cleanup | `0 */5 * * * *` | 5 分钟 | 60 秒 |
 | keystone.model_access.reconcile_costs | `0 * * * * *` | 1 分钟 | 45 秒 |
-| keystone.history.retention（启用时） | `0 0 * * * *` | 1 小时 | 300 秒 |
+| keystone.history.retention | `0 */3 * * * *` | 3 分钟 | 60 秒 |
 | keystone.environments.idle_stop（配置提供方时） | `0 * * * * *` | 1 分钟 | 45 秒 |
 | keystone.messaging.dispatch | `*/5 * * * * *` | 5 秒 | 10 秒 |
 
