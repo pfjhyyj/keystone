@@ -105,10 +105,12 @@ def worker(client, tmp_path, *, code=None, stub=True, worker_id=None, fast_healt
         "file_upload_timeout_seconds",
         "history_cleanup_enabled",
         "audit_cleanup_enabled",
+        "flow_diagnostic_cleanup_enabled",
         "maintenance_cleanup_enabled",
         "session_retention_days",
         "pat_retention_days",
         "audit_retention_days",
+        "flow_diagnostic_retention_days",
         "maintenance_retention_days",
         "message_delivery_retention_days",
     ):
@@ -195,7 +197,8 @@ def test_real_worker_harness_model_and_report(client, tmp_path, flow_engine):
     response = start(client, file_id)
     assert response.status_code == 202, response.text
     row = response.json()
-    assert len(row) == 18 and row["status"] == "pending"
+    assert len(row) == 19 and row["status"] == "pending"
+    assert row["definition_name"] == "文本文件审查"
     with worker(client, tmp_path) as (process, log):
         done = wait_run(client, row["id"], process, log)
         assert done["status"] == "succeeded", (done, log.read_text(encoding="utf8"))
@@ -231,7 +234,10 @@ def test_real_worker_harness_model_and_report(client, tmp_path, flow_engine):
             select(FileReference).where(FileReference.owner == f"flow:{row['id']}")
         ),
     ).all()
-    assert {r.slot for r in refs} == {"input", "artifact.report", "output"}
+    diagnostic_slots = [r.slot for r in refs if r.slot.startswith("artifact.diagnostic.step.")]
+    business_slots = {r.slot for r in refs if not r.slot.startswith("artifact.diagnostic.step.")}
+    assert business_slots == {"input", "artifact.report", "output"}
+    assert len(diagnostic_slots) == 2
     assert client.delete(f"/api/v1/_test/materials/{file_id}").status_code == 409
 
 
@@ -386,7 +392,16 @@ host._upload = crash
     assert {c["id"] for c in after} == {c["id"] for c in before}
     assert after[0]["status"] == ("unknown" if point == "registered" else "succeeded")
     if point == "artifact":
-        assert file_count(client) == 2
+        non_diagnostic_files = query(
+            client,
+            lambda s: s.scalars(
+                select(FileReference.file_id)
+                .where(~FileReference.slot.startswith("artifact.diagnostic.step."))
+                .distinct()
+            ),
+        ).all()
+        assert len(non_diagnostic_files) == 2
+        assert file_count(client) == 4
     flow = client.app.state.runtime.flow_service(None)
     outcome = query(client, lambda s: flow.outcomes_in_transaction(s, [UUID(run["id"])]))
     # Business lists must not offer a plain resend after a registered call lost its result.

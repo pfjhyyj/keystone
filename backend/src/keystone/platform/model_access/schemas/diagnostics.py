@@ -38,6 +38,10 @@ class InvocationDiagnostic(Input):
     invocation_id: UUID
     operation: Operation
     status: Literal["running", "succeeded", "failed", "unknown"]
+    provider_model: str
+    model_name: str | None = None
+    channel_name: str | None = None
+    duration_ms: int | None = Field(None, ge=0)
     model_role: str | None = None
     node_key: str | None = None
     agent_key: str | None = None
@@ -75,10 +79,19 @@ def diagnostic(row):
         )
     except ValueError:
         values = {}  # Historical invalid observations never expose arbitrary JSON.
+    duration = (
+        round((row.finished_at - row.created_at).total_seconds() * 1000)
+        if row.finished_at is not None and row.finished_at >= row.created_at
+        else None
+    )
     return InvocationDiagnostic(
         invocation_id=row.id,
         operation=row.operation,
         status=row.status,
+        provider_model=row.provider_model,
+        model_name=row.model_name,
+        channel_name=row.channel_name,
+        duration_ms=duration,
         error_code=(row.error_code if row.error_code in SAFE_ERRORS else "model_response_unknown")
         if row.error_code
         else None,

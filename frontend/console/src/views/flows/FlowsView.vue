@@ -75,8 +75,11 @@ onScopeDispose(() => clearInterval(timer))
         >
           <el-table-column label="流程" min-width="180"
             ><template #default="{ row: row }"
-              >{{ row.definition_key
-              }}<small :title="row.id">{{ row.id.slice(0, 8) }}…</small></template
+              >{{ row.definition_name || row.definition_key
+              }}<small :title="row.id"
+                >{{ row.definition_name ? `${row.definition_key} · ` : ''
+                }}{{ row.id.slice(0, 8) }}…</small
+              ></template
             ></el-table-column
           >
           <el-table-column label="受理时间" min-width="180"

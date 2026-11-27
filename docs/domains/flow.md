@@ -331,6 +331,7 @@ sequenceDiagram
 | GET /flow-runs/{id}/diagnostics | section=all/models/files，默认 50、最高 100，offset 分页；include_total=true 返回各可见板块的精确总数 |
 | GET /flow-runs/{id}/step-attempts | flow:diagnose，按 workflow_id 和 step_id 读取最多 50 次已记录的尝试 |
 | GET /flow-runs/{id}/step-attachment | flow:diagnose，按步骤、尝试和附件位置读取显式开放的本次运行文件 |
+| GET /flow-runs/{id}/output-file | flow:diagnose，按 file_id 读取本次运行 `output` 槽位内的输出文件预览 |
 | GET /flow-model-defaults | flow:configure，列出已装配流程的模型用途及当前默认模型 key |
 | GET /flow-model-defaults/{definition}/{role}/models | flow:configure＋model:invoke，列出可用于该用途的模型，最多 200 个 |
 | PUT /flow-model-defaults/{definition}/{role} | flow:configure＋model:invoke，设定默认模型，审计 flow.model_default.save |
@@ -338,16 +339,20 @@ sequenceDiagram
 
 诊断在短身份事务组合公开 Service，前后复查 Run；模型调用先按独立读取范围过滤，文件仅列当前 Run 的引用。分页和总数共用这些过滤条件。模型调用不可见时返回 available=false 且不返回 total；未请求的板块返回 null。默认不返回 total，truncated/next_offset 仍可用于翻页。
 
-- 模型：read/read_all 独立判断，返回调用、操作、角色/节点/Agent、原 Step 位置及安全错误，不因 flow:manage 扩权。
-- 文件：Run 可见后列出关联 File ID/slot，不授予内容读取权；同 Run 可见图片调用与原 Manifest 的产物键、摘要、大小、MIME 全部匹配才补 invocation_id，不按名称/时间猜测。
+- 模型：read/read_all 独立判断，返回调用、操作、模型与渠道显示名、实际使用的上游模型、登记到完成的耗时、角色/节点/Agent、原 Step 位置及安全错误，不因 flow:manage 扩权。未完成或时间不可用时不返回耗时值。
+- 文件：Run 可见后列出关联 File ID/slot，排除内部 `artifact.diagnostic.step.*` 诊断文件，不授予内容读取权；同 Run 可见图片调用与原 Manifest 的产物键、摘要、大小、MIME 全部匹配才补 invocation_id，不按名称/时间猜测。
 
-不返回检查点、私有 result/cost_context、供应商任务/下载地址、原文异常、秘密或本地路径。控制台按板块独立分页，轮询刷新当前页；失权清相应数据，迟到结果丢弃。仅活动 Run 自动轮询，终态缺步骤/费用可手动刷新。
+不返回检查点、私有 result/cost_context、供应商任务/下载地址、原文异常、秘密或本地路径。控制台默认展示运行状态、可用的运行总耗时与每阶段耗时；按步骤聚合可见模型调用摘要，结果区将已知输出文件与模型调用投影为可读内容，技术标识与原始 JSON 按需展开，关联文件仍只提供用途和引用。仅一页数据时隐藏分页控件，各板块独立分页，轮询刷新当前页；失权清相应数据，迟到结果丢弃。仅活动 Run 自动轮询，终态缺步骤/费用可手动刷新。
 
-### 阶段详情
+### 阶段详情与默认模型诊断
 
-控制台在「Flow 运行 → 运行详情 → 步骤记录」按需展开阶段详情。流程显式提供可诊断的输入、输出或产物引用，以及安全错误码和可读说明。每条详情关联 Run、工作流步骤和尝试序号，DBOS 重试分别记录，流程主动发起的格式纠正作为独立步骤显示。记录不超过 64 KiB，保留为 Run 中间产物。单个附件预览上限为 4 MiB，仅提供纯文本、JSON、JPEG 和 PNG，读取前后复查授权及归属。`flow:diagnose` 只授予运行与阶段的读取能力，取消、模型用量和费用仍走既有授权。
+控制台在「Flow 运行 → 运行详情 → 步骤记录」展示每个阶段的起止时间与耗时，展开阶段后直接显示记录的输入、输出、模型调用内容和按输入/输出分组的图片附件预览。
 
-步骤列表以执行历史为准。阶段详情仅来自已登记的诊断记录，历史运行或已清理的阶段可能显示「未记录」。API 与 Worker 的进程日志继续走部署环境的日志查询渠道。
+- **模型调用默认记录**：通过 `FlowContext`（文本、结构化、视觉、向量、图片生成/编辑及异步图片终态）或 Agent `FlowModel` 发起的所有 Flow 模型调用默认记录一份受控阶段诊断，包含操作类型、角色、耗时、受控输入（提示词/消息/参数/输入图片附件）与受控输出（文本/结构化 JSON/生成图片附件或安全错误码）。步骤已使用 `@diagnose_step` 时合并到同一份尝试记录；含敏感正文的步骤可显式关闭自动采集（`capture_model=False` 或 `record_diagnostics=False`）。`ModelInvocation` 本身继续不存提示词与输出正文，保持用量/账务与诊断权限隔离。
+- **范围与上限**：每条详情关联 Run、工作流步骤和尝试序号，包含本次尝试的起止时间与耗时；DBOS 重试分别记录，格式纠正作为独立步骤显示。单条记录不超过 64 KiB JSON，超长文本字段按预算截断并标明原长度，尽量保留输入、输出摘要、错误与附件；单次尝试最多 16 个附件（区分 `input`、`output`、`artifact` 用途）。附件预览与 `output-file` 仅开放纯文本、JSON、JPEG、PNG 和 WebP：纯文本/JSON 上限 4 MiB，图片上限 32 MiB，读取前复查 `flow:diagnose` 及本次运行归属。`flow:diagnose` 只授予运行、输出预览与阶段的读取能力，取消、模型用量和费用仍走既有授权。
+- **保留与过期清理**：阶段诊断文件通过 `artifact.diagnostic.step.*` 槽位引用保留，不改变 Run 终态、费用记录或业务产物引用。`HistoryRetention` 定期扫描已终态且 `finished_at` 超过 `flow_diagnostic_retention_days`（默认 14 天，`flow_diagnostic_cleanup_enabled` 默认开启）的 Run，分批解除 `artifact.diagnostic.step.*` 引用并对已无其他引用的诊断 JSON 文件受理 `deleting`，由现有 `files.cleanup` Worker 异步物理删除；活动 Run 与非诊断文件（`input`、`output`、`artifact.model.*` 及业务引用）不受影响。
+
+步骤列表以执行历史为准。阶段详情仅来自已登记的诊断记录，历史运行、未记录或已过期清理的阶段显示「未记录或已过期清理」。API 与 Worker 的进程日志继续走部署环境的日志查询渠道。
 
 ## 目标与当前实现差异
 

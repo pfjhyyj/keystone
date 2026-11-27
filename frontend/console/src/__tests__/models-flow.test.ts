@@ -503,6 +503,177 @@ it('keeps run state when steps fail and never fetches unauthorized costs', async
   expect(paths.some((path) => path.endsWith('/costs'))).toBe(false)
   expect(wrapper.text()).not.toContain('取消流程')
 })
+it('puts readable execution facts first and leaves result identifiers in raw fields', async () => {
+  authorize(['flow:read'])
+  fakeApi((path) => {
+    if (path.includes('/diagnostics?')) return { files: { items: [], total: 0 } }
+    if (path.endsWith('/steps')) return { items: [], available: false, truncated: false }
+    return {
+      ...flow,
+      definition_name: '文本文件审查',
+      status: 'succeeded',
+      finished_at: new Date(Date.parse(stamp) + 7200).toISOString(),
+      result: { summary: '已生成审查报告', result_file_id: 'private-file-id' },
+    }
+  })
+  const wrapper = mount(FlowRunDialog, { props: { id } })
+  await flushPromises()
+  const overview = wrapper.get('.detail-summary')
+  expect(overview.text()).toContain('文本文件审查')
+  expect(overview.text()).toContain('耗时 7 秒')
+  expect(overview.text()).not.toContain(id)
+  expect(wrapper.get('.result-facts').text()).toContain('已生成审查报告')
+  expect(wrapper.get('.result-facts').text()).not.toContain('private-file-id')
+  expect(wrapper.get('[aria-label="关联模型调用"]').isVisible()).toBe(true)
+  expect(wrapper.get('[aria-label="关联文件"]').isVisible()).toBe(false)
+})
+it('renders step durations, inline step model I/O and auto-loaded images on expand', async () => {
+  authorize(['flow:read', 'flow:diagnose', 'model_invocation:read'])
+  const originalCreate = URL.createObjectURL
+  const originalRevoke = URL.revokeObjectURL
+  const createdUrls: string[] = []
+  const revokedUrls: string[] = []
+  URL.createObjectURL = vi.fn(() => {
+    const value = `blob:test-${createdUrls.length + 1}`
+    createdUrls.push(value)
+    return value
+  })
+  URL.revokeObjectURL = vi.fn((value: string) => {
+    revokedUrls.push(value)
+  })
+  const startMs = Date.parse('2026-11-27T01:29:35Z')
+  const endMs = startMs + 46_000
+  const resultFileId = '356da119-e500-4158-9786-24686669c09f'
+  const callId = '6dd6726f-fc7a-5073-be6b-efb79cfec5e4'
+  fakeApi((path) => {
+    if (path.startsWith(`/flow-runs/${id}/output-file`)) {
+      return new Response(new Blob(['img'], { type: 'image/png' }), {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      })
+    }
+    if (path.startsWith(`/flow-runs/${id}/step-attachment`)) {
+      return new Response(new Blob(['img'], { type: 'image/png' }), {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      })
+    }
+    if (path.startsWith(`/flow-runs/${id}/step-attempts`)) {
+      return {
+        truncated: false,
+        items: [
+          {
+            attempt: 1,
+            label: '编辑生图',
+            kind: 'original',
+            duration_ms: 46_000,
+            input: null,
+            output: null,
+            error: null,
+            model_calls: [
+              {
+                operation: 'image.edit',
+                model_role: 'image',
+                node_key: 'edit',
+                invocation_id: callId,
+                duration_ms: 45_500,
+                input: { prompt: '第一行要求\n第二行要求', aspect_ratio: '3:4' },
+                output: { images: 1 },
+              },
+            ],
+            attachments: [
+              {
+                label: '输入图片 1',
+                file_id: '11111111-1111-4111-8111-111111111112',
+                role: 'input',
+              },
+              { label: '生成图片', file_id: resultFileId, role: 'output' },
+            ],
+          },
+        ],
+      }
+    }
+    if (path.includes('/diagnostics?')) {
+      return path.includes('section=models')
+        ? {
+            run_id: id,
+            models: {
+              available: true,
+              total: 1,
+              truncated: false,
+              next_offset: null,
+              items: [
+                {
+                  invocation_id: callId,
+                  operation: 'image.edit',
+                  status: 'succeeded',
+                  provider_model: 'gemini-image',
+                  model_name: '生图模型',
+                  channel_name: '测试渠道',
+                  duration_ms: 45_500,
+                  model_role: 'image',
+                  node_key: 'edit',
+                  agent_key: null,
+                  agent_call_id: null,
+                  workflow_id: 'wf-1',
+                  step_id: 2,
+                  error_code: null,
+                },
+              ],
+            },
+          }
+        : { run_id: id, files: { total: 0, truncated: false, next_offset: null, items: [] } }
+    }
+    if (path.endsWith('/steps')) {
+      return {
+        available: true,
+        truncated: false,
+        items: [
+          {
+            workflow_id: 'wf-1',
+            step_id: 2,
+            name: 'example.edit',
+            started_at_epoch_ms: startMs,
+            completed_at_epoch_ms: endMs,
+          },
+        ],
+      }
+    }
+    if (path.includes('/costs')) return costs
+    return {
+      ...flow,
+      definition_name: '图片编辑流程',
+      definition_snapshot: { output_file_fields: ['result_file_id'] },
+      status: 'succeeded',
+      finished_at: new Date(Date.parse(stamp) + 47_000).toISOString(),
+      result: { invocation_id: callId, result_file_id: resultFileId },
+    }
+  })
+  try {
+    const wrapper = mount(FlowRunDialog, { props: { id } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('耗时 46 秒')
+    expect(wrapper.find('.output-card img').exists()).toBe(true)
+    expect(wrapper.find('.result-call-chip').text()).toContain('生图模型')
+
+    const stepDetails = wrapper.get('details.step-detail')
+    ;(stepDetails.element as HTMLDetailsElement).open = true
+    await stepDetails.trigger('toggle')
+    await flushPromises()
+
+    expect(stepDetails.text()).toContain('编辑生图')
+    expect(stepDetails.text()).toContain('第一行要求')
+    expect(stepDetails.text()).toContain('输入图片 / 文件')
+    expect(stepDetails.text()).toContain('输出图片 / 产物')
+    expect(stepDetails.findAll('.attachment-card img')).toHaveLength(2)
+
+    wrapper.unmount()
+    expect(revokedUrls.length).toBeGreaterThanOrEqual(3)
+  } finally {
+    URL.createObjectURL = originalCreate
+    URL.revokeObjectURL = originalRevoke
+  }
+})
 it('requires explicit cancel confirmation and waits for execution-side cancellation', async () => {
   const approval = deferred<boolean>()
   vi.spyOn(confirmation, 'confirmAction').mockReturnValueOnce(approval.promise)

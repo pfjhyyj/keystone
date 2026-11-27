@@ -1,4 +1,6 @@
-"""Operator reads for explicit attempt records and their approved attachments."""
+"""Operator reads for explicit attempt records, approved attachments and output previews."""
+
+from contextlib import asynccontextmanager
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -7,13 +9,16 @@ from keystone.core.errors import ServiceError
 from keystone.platform.files.services.references import (
     diagnostic_attempt_files,
     registered_file_ids,
+    require_slot_usage,
     require_usage,
 )
 from keystone.platform.flow.models import FlowRun
 from keystone.platform.flow.schemas.step_diagnostics import (
     ATTACHMENT_TYPES,
+    IMAGE_ATTACHMENT_TYPES,
     MAX_ATTEMPTS,
     MAX_DETAIL_BYTES,
+    MAX_IMAGE_PREVIEW_BYTES,
     MAX_PREVIEW_BYTES,
     StepAttempt,
     StepAttempts,
@@ -60,7 +65,20 @@ class StepDiagnosticService:
             raise ServiceError(409, "flow_diagnostic_changed", "阶段记录已变化，请刷新")
         return StepAttempts(items=items, truncated=len(files) > MAX_ATTEMPTS)
 
-    async def attachment(self, run_id, workflow_id, step_id, attempt, index):
+    @asynccontextmanager
+    async def _open_preview(self, identifier):
+        async with self.files.open_content(identifier, max_bytes=MAX_IMAGE_PREVIEW_BYTES) as reader:
+            if reader.content_type not in ATTACHMENT_TYPES:
+                raise ServiceError(415, "flow_diagnostic_type", "此类型无法预览")
+            if (
+                reader.content_type not in IMAGE_ATTACHMENT_TYPES
+                and reader.size > MAX_PREVIEW_BYTES
+            ):
+                raise ServiceError(413, "file_too_large", "文本或 JSON 预览超过 4 MiB 上限")
+            yield reader
+
+    @asynccontextmanager
+    async def open_attachment(self, run_id, workflow_id, step_id, attempt, index):
         key = attempt_prefix(workflow_id, step_id) + f"{attempt:010d}"
         owner, slot = artifact_location(run_id, key)
 
@@ -81,11 +99,14 @@ class StepDiagnosticService:
         identifier = detail.attachments[index].file_id
         async with self.identity.access("flow:diagnose") as (session, _):
             await check(session, manifest, identifier)
-        async with self.files.open_content(identifier, max_bytes=MAX_PREVIEW_BYTES) as reader:
-            if reader.content_type not in ATTACHMENT_TYPES:
-                raise ServiceError(415, "flow_diagnostic_type", "此类型无法预览")
-            content_type = reader.content_type
-            body = b"".join([chunk async for chunk in reader.chunks()])
+        async with self._open_preview(identifier) as reader:
+            yield reader
+
+    @asynccontextmanager
+    async def open_output_file(self, run_id, file_id):
+        owner = f"flow:{run_id}"
         async with self.identity.access("flow:diagnose") as (session, _):
-            await check(session, manifest, identifier)
-        return body, content_type
+            await self._require_run(session, run_id)
+            await require_slot_usage(session, owner, "output", file_id)
+        async with self._open_preview(file_id) as reader:
+            yield reader

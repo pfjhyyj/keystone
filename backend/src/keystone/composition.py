@@ -141,6 +141,7 @@ def register_maintenance(runtime, health):
 
     application_cleanup = runtime.settings.history_cleanup_enabled
     audit_cleanup = runtime.settings.audit_cleanup_enabled
+    flow_diagnostic_cleanup = runtime.settings.flow_diagnostic_cleanup_enabled
     maintenance_cleanup = runtime.settings.maintenance_cleanup_enabled
 
     async def prune_history():
@@ -148,11 +149,15 @@ def register_maintenance(runtime, health):
             apply=True,
             include_application=application_cleanup,
             include_audit=audit_cleanup,
+            include_flow_diagnostics=flow_diagnostic_cleanup,
             include_maintenance=maintenance_cleanup,
         )
 
     tasks, install = history_jobs.register(
-        prune_history, enabled=application_cleanup or audit_cleanup or maintenance_cleanup
+        prune_history,
+        enabled=(
+            application_cleanup or audit_cleanup or flow_diagnostic_cleanup or maintenance_cleanup
+        ),
     )
     bindings.extend(tasks)
     installers.append(install)
@@ -207,6 +212,7 @@ def build_history_retention(runtime):
     from keystone.platform.environments.tasks.definitions import IDLE_STOP, IDLE_STOP_SCHEDULE
     from keystone.platform.files.tasks.definitions import CLEANUP, CLEANUP_SCHEDULE
     from keystone.platform.flow.services.identity import retained_execution_ids, retained_token_ids
+    from keystone.platform.flow.services.retention import prune_flow_diagnostics
     from keystone.platform.flow.tasks.definitions import RECONCILE, RECONCILE_SCHEDULE
     from keystone.platform.identity.services.retention import prune_credentials
     from keystone.platform.messaging.services.retention import prune_messaging
@@ -260,6 +266,11 @@ def build_history_retention(runtime):
             runtime.settings.message_delivery_retention_days,
         ),
         maintenance,
+        partial(
+            prune_flow_diagnostics,
+            runtime.database,
+            runtime.settings.flow_diagnostic_retention_days,
+        ),
     )
 
 

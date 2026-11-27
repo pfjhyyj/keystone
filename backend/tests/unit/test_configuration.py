@@ -102,6 +102,8 @@ def test_worker_identity_is_independent_of_shared_config_digest():
     [
         ("audit_cleanup_enabled", True, "false", False),
         ("audit_retention_days", 30, "60", 60),
+        ("flow_diagnostic_cleanup_enabled", True, "false", False),
+        ("flow_diagnostic_retention_days", 14, "30", 30),
     ],
 )
 def test_audit_retention_settings_are_shared(field, default, env_value, expected, monkeypatch):

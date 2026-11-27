@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import UUID
 
 from keystone.core.errors import ServiceError
+from keystone.core.time import utcnow
 from keystone.platform.flow.schemas.artifacts import ImageResult
 from keystone.platform.flow.services.identity import ExecutionIdentity
 from keystone.platform.flow.services.resources import FlowResourceService
@@ -366,7 +367,70 @@ class FlowContext:
         )
         return identifier, result["content"]
 
-    async def invoke_text(self, role, request, *, node_key):
+    async def _record_model_diagnostic(
+        self,
+        *,
+        operation,
+        role,
+        node_key,
+        invocation_id=None,
+        input_data=None,
+        output_data=None,
+        error=None,
+        started_at=None,
+        attachments=(),
+        enabled=True,
+    ):
+        from keystone.platform.flow.workflows.diagnostics import record_model_call
+
+        await record_model_call(
+            self.run_id,
+            operation=operation,
+            model_role=role,
+            node_key=node_key,
+            invocation_id=invocation_id,
+            input_data=input_data,
+            output_data=output_data,
+            error=error,
+            started_at=started_at,
+            finished_at=utcnow(),
+            attachments=attachments,
+            enabled=enabled,
+        )
+
+    @staticmethod
+    def _text_input_diagnostic(request, *, output_schema=None):
+        data = {
+            "messages": [{"role": item.role, "content": item.content} for item in request.messages],
+            "max_tokens": request.max_tokens,
+        }
+        if request.reasoning is not None:
+            data["reasoning"] = request.reasoning.model_dump(mode="json", exclude_none=True)
+        if output_schema is not None:
+            data["output_schema"] = output_schema
+        return data
+
+    @staticmethod
+    def _image_attachments(references, *, prefix="输入图片", role="input"):
+        return [
+            {
+                "label": f"{prefix} {index + 1}" if len(references) > 1 else prefix,
+                "file_id": item.file_id if hasattr(item, "file_id") else item["file_id"],
+                "role": role,
+            }
+            for index, item in enumerate(references)
+        ]
+
+    @staticmethod
+    def _image_input_diagnostic(request):
+        data = {"prompt": request.prompt, "n": request.n}
+        for field in ("resolution", "aspect_ratio", "quality", "output_format"):
+            value = getattr(request, field, None)
+            if value is not None:
+                data[field] = value
+        return data
+
+    async def invoke_text(self, role, request, *, node_key, record_diagnostics=True):
         from keystone.platform.model_access.schemas.invocations import (
             TextRequest,
             TextResult,
@@ -375,10 +439,34 @@ class FlowContext:
         if isinstance(request, TextRequest):
             request = request.model_dump(mode="json")
         request = TextRequest.model_validate(request)
-        identifier, content = await self._text(role, request, node_key=node_key)
+        started_at = utcnow()
+        input_data = self._text_input_diagnostic(request)
+        try:
+            identifier, content = await self._text(role, request, node_key=node_key)
+        except Exception as error:
+            await self._record_model_diagnostic(
+                operation="text.generate",
+                role=role,
+                node_key=node_key,
+                input_data=input_data,
+                error=error,
+                started_at=started_at,
+                enabled=record_diagnostics,
+            )
+            raise
+        await self._record_model_diagnostic(
+            operation="text.generate",
+            role=role,
+            node_key=node_key,
+            invocation_id=identifier,
+            input_data=input_data,
+            output_data={"text": content},
+            started_at=started_at,
+            enabled=record_diagnostics,
+        )
         return TextResult(invocation_id=identifier, content=content)
 
-    async def invoke_embedding(self, role, request, *, node_key):
+    async def invoke_embedding(self, role, request, *, node_key, record_diagnostics=True):
         from keystone.platform.model_access.schemas.embeddings import (
             EmbeddingRequest,
             EmbeddingResult,
@@ -387,24 +475,55 @@ class FlowContext:
         if isinstance(request, EmbeddingRequest):
             request = request.model_dump(mode="json")
         request = EmbeddingRequest.model_validate(request)
-        model, selected, identifier, definition_key = await self._model(
-            role, operation="text.embed"
-        )
-        vectors = await model.invoke_embedding(
-            request,
-            selection=selected,
+        started_at = utcnow()
+        input_data = {
+            "count": len(request.texts),
+            "dimensions": request.dimensions,
+            "texts": list(request.texts[:8]),
+        }
+        try:
+            model, selected, identifier, definition_key = await self._model(
+                role, operation="text.embed"
+            )
+            vectors = await model.invoke_embedding(
+                request,
+                selection=selected,
+                invocation_id=identifier,
+                context=self._invocation_context(
+                    role, definition_key=definition_key, node_key=node_key
+                ),
+                worker_identity=_runtime().worker_identity,
+            )
+            # The completed attempt keeps its receipts; cancellation/revocation must
+            # still prevent exposing these vectors to a new business publication.
+            await self.check(permissions=("model:invoke",))
+        except Exception as error:
+            await self._record_model_diagnostic(
+                operation="text.embed",
+                role=role,
+                node_key=node_key,
+                input_data=input_data,
+                error=error,
+                started_at=started_at,
+                enabled=record_diagnostics,
+            )
+            raise
+        await self._record_model_diagnostic(
+            operation="text.embed",
+            role=role,
+            node_key=node_key,
             invocation_id=identifier,
-            context=self._invocation_context(
-                role, definition_key=definition_key, node_key=node_key
-            ),
-            worker_identity=_runtime().worker_identity,
+            input_data=input_data,
+            output_data={
+                "vectors": len(vectors),
+                "dimensions": len(vectors[0]) if vectors else 0,
+            },
+            started_at=started_at,
+            enabled=record_diagnostics,
         )
-        # The completed attempt keeps its receipts; cancellation/revocation must
-        # still prevent exposing these vectors to a new business publication.
-        await self.check(permissions=("model:invoke",))
         return EmbeddingResult(invocation_id=identifier, vectors=vectors)
 
-    async def submit_image(self, role, request, *, node_key):
+    async def submit_image(self, role, request, *, node_key, record_diagnostics=True):
         from keystone.platform.model_access.schemas.images import ImageTaskRequest
         from keystone.platform.model_access.services.image_tasks import ImageTaskService
         from keystone.platform.model_access.services.runtime import settle
@@ -412,6 +531,8 @@ class FlowContext:
         if isinstance(request, ImageTaskRequest):
             request = request.model_dump(mode="json")
         request = ImageTaskRequest.model_validate(request)
+        started_at = utcnow()
+        input_data = self._image_input_diagnostic(request)
         handle, tasks, selected, context = None, None, None, None
         try:
             async with self.execution_scope(permissions=("model:invoke",)):
@@ -431,13 +552,36 @@ class FlowContext:
                     context=context,
                     worker_identity=_runtime().worker_identity,
                 )
-                return handle
+        except Exception as error:
+            if handle is not None:
+                await settle(tasks.abandon(handle.invocation_id, selected, context))
+            await self._record_model_diagnostic(
+                operation="image.generate",
+                role=role,
+                node_key=node_key,
+                input_data=input_data,
+                error=error,
+                started_at=started_at,
+                enabled=record_diagnostics,
+            )
+            raise
         except BaseException:
             if handle is not None:
                 await settle(tasks.abandon(handle.invocation_id, selected, context))
             raise
+        await self._record_model_diagnostic(
+            operation="image.generate",
+            role=role,
+            node_key=node_key,
+            invocation_id=handle.invocation_id,
+            input_data=input_data,
+            output_data={"state": "submitted"},
+            started_at=started_at,
+            enabled=record_diagnostics,
+        )
+        return handle
 
-    async def image_result(self, role, invocation_id, *, node_key):
+    async def image_result(self, role, invocation_id, *, node_key, record_diagnostics=True):
         from keystone.platform.model_access.schemas.images import (
             ImageManifest,
             ImagePending,
@@ -446,6 +590,7 @@ class FlowContext:
         from keystone.platform.model_access.services.runtime import settle
 
         identifier = UUID(str(invocation_id))
+        started_at = utcnow()
         tasks, selected, context = None, None, None
         try:
             async with self.execution_scope(permissions=("model:invoke",)):
@@ -460,17 +605,53 @@ class FlowContext:
                 if isinstance(evidence, ImageManifest):
                     restored = await self._restore_images(evidence)
                     if restored is not None:
-                        return ImageResult(invocation_id=identifier, files=restored)
+                        result_obj = ImageResult(invocation_id=identifier, files=restored)
+                        await self._record_model_diagnostic(
+                            operation="image.generate",
+                            role=role,
+                            node_key=node_key,
+                            invocation_id=identifier,
+                            output_data={"images": len(restored)},
+                            started_at=started_at,
+                            attachments=self._image_attachments(
+                                restored, prefix="生成图片", role="output"
+                            ),
+                            enabled=record_diagnostics,
+                        )
+                        return result_obj
                 result = await tasks.poll(identifier, selected=selected, context=context)
                 if isinstance(result, ImagePending):
                     return result
-                return ImageResult(
-                    invocation_id=identifier, files=await self._publish_images(result)
-                )
+                published = await self._publish_images(result)
+                result_obj = ImageResult(invocation_id=identifier, files=published)
+        except Exception as error:
+            if tasks is not None:
+                await settle(tasks.abandon(identifier, selected, context))
+            await self._record_model_diagnostic(
+                operation="image.generate",
+                role=role,
+                node_key=node_key,
+                invocation_id=identifier,
+                error=error,
+                started_at=started_at,
+                enabled=record_diagnostics,
+            )
+            raise
         except BaseException:
             if tasks is not None:
                 await settle(tasks.abandon(identifier, selected, context))
             raise
+        await self._record_model_diagnostic(
+            operation="image.generate",
+            role=role,
+            node_key=node_key,
+            invocation_id=identifier,
+            output_data={"images": len(published)},
+            started_at=started_at,
+            attachments=self._image_attachments(published, prefix="生成图片", role="output"),
+            enabled=record_diagnostics,
+        )
+        return result_obj
 
     async def _image_inputs(self, references, *, max_total=None):
         from keystone.platform.model_access.schemas.images import (
@@ -525,120 +706,137 @@ class FlowContext:
             files.append({"file_id": file_id})
         return files
 
-    async def invoke_image(self, role, request, *, node_key):
+    async def invoke_image(self, role, request, *, node_key, record_diagnostics=True):
         from keystone.platform.model_access.schemas.images import ImageGenerateRequest
 
         if isinstance(request, ImageGenerateRequest):
             request = request.model_dump(mode="json")
         request = ImageGenerateRequest.model_validate(request)
         return await self._image_result(
-            role, request, node_key=node_key, operation="image.generate"
+            role,
+            request,
+            node_key=node_key,
+            operation="image.generate",
+            record_diagnostics=record_diagnostics,
         )
 
-    async def edit_image(self, role, request, *, node_key):
+    async def edit_image(self, role, request, *, node_key, record_diagnostics=True):
         from keystone.platform.model_access.schemas.images import ImageEditRequest
 
         if isinstance(request, ImageEditRequest):
             request = request.model_dump(mode="json")
         request = ImageEditRequest.model_validate(request)
-        return await self._image_result(role, request, node_key=node_key, operation="image.edit")
+        return await self._image_result(
+            role,
+            request,
+            node_key=node_key,
+            operation="image.edit",
+            record_diagnostics=record_diagnostics,
+        )
 
-    async def _image_result(self, role, request, *, node_key, operation):
+    async def _image_result(self, role, request, *, node_key, operation, record_diagnostics=True):
         from keystone.platform.model_access.schemas.images import ImageManifest
 
         permissions = ("model:invoke",)
-        async with self.execution_scope(permissions=permissions) as check:
-            model, selected, identifier, definition_key = await self._model(
-                role, operation=operation
-            )
-            context = self._invocation_context(
-                role, definition_key=definition_key, node_key=node_key
-            )
-            manifest = await model.image_manifest(
-                identifier,
-                data=request,
-                selection=selected,
-                context=context,
-            )
-            files = []
-            if manifest is not None:
-                files = (
-                    await self._restore_images(manifest)
-                    if isinstance(manifest, ImageManifest)
-                    else None
+        started_at = utcnow()
+        input_data = self._image_input_diagnostic(request)
+        references = getattr(request, "images", ())
+        input_attachments = self._image_attachments(references, prefix="输入图片", role="input")
+        identifier = None
+        try:
+            async with self.execution_scope(permissions=permissions) as check:
+                model, selected, identifier, definition_key = await self._model(
+                    role, operation=operation
                 )
-                if files is None:
-                    if isinstance(manifest, ImageManifest) and manifest.download is None:
-                        raise ServiceError(
-                            409, "model_result_unavailable", "原图片产物未完整保存，禁止重发"
+                context = self._invocation_context(
+                    role, definition_key=definition_key, node_key=node_key
+                )
+                manifest = await model.image_manifest(
+                    identifier,
+                    data=request,
+                    selection=selected,
+                    context=context,
+                )
+                files = []
+                if manifest is not None:
+                    files = (
+                        await self._restore_images(manifest)
+                        if isinstance(manifest, ImageManifest)
+                        else None
+                    )
+                    if files is None:
+                        if isinstance(manifest, ImageManifest) and manifest.download is None:
+                            raise ServiceError(
+                                409, "model_result_unavailable", "原图片产物未完整保存，禁止重发"
+                            )
+                        batch = await model.recover_image(
+                            identifier, selection=selected, context=context, evidence=manifest
                         )
-                    batch = await model.recover_image(
-                        identifier, selection=selected, context=context, evidence=manifest
+                        files = await self._publish_images(batch)
+                else:
+                    max_images, max_total = model.image_limits(selected)
+                    if len(references) > max_images:
+                        raise ServiceError(422, "model_invalid_request", "图片数量超过协议上限")
+                    images = await self._image_inputs(references, max_total=max_total)
+                    await check()
+                    batch = await model.invoke_image(
+                        request,
+                        images=images,
+                        selection=selected,
+                        invocation_id=identifier,
+                        context=context,
+                        worker_identity=_runtime().worker_identity,
                     )
                     files = await self._publish_images(batch)
-            else:
-                max_images, max_total = model.image_limits(selected)
-                references = getattr(request, "images", ())
-                if len(references) > max_images:
-                    raise ServiceError(422, "model_invalid_request", "图片数量超过协议上限")
-                images = await self._image_inputs(references, max_total=max_total)
                 await check()
-                batch = await model.invoke_image(
-                    request,
-                    images=images,
-                    selection=selected,
-                    invocation_id=identifier,
-                    context=context,
-                    worker_identity=_runtime().worker_identity,
-                )
-                files = await self._publish_images(batch)
-            await check()
-            return ImageResult(invocation_id=identifier, files=files)
+        except Exception as error:
+            await self._record_model_diagnostic(
+                operation=operation,
+                role=role,
+                node_key=node_key,
+                invocation_id=identifier,
+                input_data=input_data,
+                error=error,
+                started_at=started_at,
+                attachments=input_attachments,
+                enabled=record_diagnostics,
+            )
+            raise
+        await self._record_model_diagnostic(
+            operation=operation,
+            role=role,
+            node_key=node_key,
+            invocation_id=identifier,
+            input_data=input_data,
+            output_data={"images": len(files)},
+            started_at=started_at,
+            attachments=[
+                *input_attachments,
+                *self._image_attachments(files, prefix="生成图片", role="output"),
+            ],
+            enabled=record_diagnostics,
+        )
+        return ImageResult(invocation_id=identifier, files=files)
 
-    async def invoke_vision(self, role, request, *, node_key):
+    async def invoke_vision(self, role, request, *, node_key, record_diagnostics=True):
         from keystone.platform.model_access.schemas.images import VisionRequest
         from keystone.platform.model_access.schemas.invocations import TextResult
 
         if isinstance(request, VisionRequest):
             request = request.model_dump(mode="json")
         request = VisionRequest.model_validate(request)
-        async with self.execution_scope(permissions=("model:invoke",)) as check:
-            model, selected, identifier, definition_key = await self._model(
-                role, operation="image.understand"
-            )
-            images = await self._image_inputs(request.images)
-            await check()
-            content = await model.invoke_vision(
-                request,
-                images=images,
-                selection=selected,
-                invocation_id=identifier,
-                context=self._invocation_context(
-                    role, definition_key=definition_key, node_key=node_key
-                ),
-                worker_identity=_runtime().worker_identity,
-            )
-            return TextResult(invocation_id=identifier, content=content)
-
-    async def invoke_structured(self, role, request, *, node_key):
-        from keystone.platform.model_access.schemas.structured import (
-            StructuredRequest,
-            StructuredResult,
-            parse_structured,
-        )
-
-        if isinstance(request, StructuredRequest):
-            request = request.model_dump(mode="json")
-        request = StructuredRequest.model_validate(request)
-        if request.images:
-            # Inputs follow invoke_vision: fixed Run scope, per-file and total byte limits.
+        started_at = utcnow()
+        input_data = self._text_input_diagnostic(request)
+        input_attachments = self._image_attachments(request.images, prefix="输入图片", role="input")
+        identifier = None
+        try:
             async with self.execution_scope(permissions=("model:invoke",)) as check:
                 model, selected, identifier, definition_key = await self._model(
-                    role, operation="text.structured"
+                    role, operation="image.understand"
                 )
                 images = await self._image_inputs(request.images)
                 await check()
-                result = await model.invoke_text(
+                content = await model.invoke_vision(
                     request,
                     images=images,
                     selection=selected,
@@ -648,14 +846,98 @@ class FlowContext:
                     ),
                     worker_identity=_runtime().worker_identity,
                 )
-                content = result["content"]
-        else:
-            identifier, content = await self._text(
-                role, request, node_key=node_key, operation="text.structured"
+        except Exception as error:
+            await self._record_model_diagnostic(
+                operation="image.understand",
+                role=role,
+                node_key=node_key,
+                invocation_id=identifier,
+                input_data=input_data,
+                error=error,
+                started_at=started_at,
+                attachments=input_attachments,
+                enabled=record_diagnostics,
             )
-        return StructuredResult(
-            invocation_id=identifier, content=parse_structured(content, request.output)
+            raise
+        await self._record_model_diagnostic(
+            operation="image.understand",
+            role=role,
+            node_key=node_key,
+            invocation_id=identifier,
+            input_data=input_data,
+            output_data={"text": content},
+            started_at=started_at,
+            attachments=input_attachments,
+            enabled=record_diagnostics,
         )
+        return TextResult(invocation_id=identifier, content=content)
+
+    async def invoke_structured(self, role, request, *, node_key, record_diagnostics=True):
+        from keystone.platform.model_access.schemas.structured import (
+            StructuredRequest,
+            StructuredResult,
+            parse_structured,
+        )
+
+        if isinstance(request, StructuredRequest):
+            request = request.model_dump(mode="json")
+        request = StructuredRequest.model_validate(request)
+        started_at = utcnow()
+        input_data = self._text_input_diagnostic(request, output_schema=request.output.name)
+        input_attachments = self._image_attachments(request.images, prefix="输入图片", role="input")
+        identifier = None
+        raw_content = None
+        try:
+            if request.images:
+                # Inputs follow invoke_vision: fixed Run scope, per-file and total byte limits.
+                async with self.execution_scope(permissions=("model:invoke",)) as check:
+                    model, selected, identifier, definition_key = await self._model(
+                        role, operation="text.structured"
+                    )
+                    images = await self._image_inputs(request.images)
+                    await check()
+                    result = await model.invoke_text(
+                        request,
+                        images=images,
+                        selection=selected,
+                        invocation_id=identifier,
+                        context=self._invocation_context(
+                            role, definition_key=definition_key, node_key=node_key
+                        ),
+                        worker_identity=_runtime().worker_identity,
+                    )
+                    raw_content = result["content"]
+            else:
+                identifier, raw_content = await self._text(
+                    role, request, node_key=node_key, operation="text.structured"
+                )
+            parsed = parse_structured(raw_content, request.output)
+        except Exception as error:
+            await self._record_model_diagnostic(
+                operation="text.structured",
+                role=role,
+                node_key=node_key,
+                invocation_id=identifier,
+                input_data=input_data,
+                output_data={"raw_text": raw_content} if raw_content is not None else None,
+                error=error,
+                started_at=started_at,
+                attachments=input_attachments,
+                enabled=record_diagnostics,
+            )
+            raise
+        await self._record_model_diagnostic(
+            operation="text.structured",
+            role=role,
+            node_key=node_key,
+            invocation_id=identifier,
+            input_data=input_data,
+            output_data=parsed,
+            started_at=started_at,
+            attachments=input_attachments,
+            enabled=record_diagnostics,
+        )
+        return StructuredResult(invocation_id=identifier, content=parsed)
 
 
 def flow_context(run_id):

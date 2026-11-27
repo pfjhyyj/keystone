@@ -55,12 +55,19 @@ class PlatformStatus:
 
 
 class HistoryRetention:
-    def __init__(self, credentials, audit, messaging, engine):
+    def __init__(self, credentials, audit, messaging, engine, flow_diagnostics=None):
         self.credentials, self.audit, self.engine = credentials, audit, engine
         self.messaging = messaging
+        self.flow_diagnostics = flow_diagnostics
 
     async def execute(
-        self, *, apply=False, include_application=True, include_audit=True, include_maintenance=True
+        self,
+        *,
+        apply=False,
+        include_application=True,
+        include_audit=True,
+        include_maintenance=True,
+        include_flow_diagnostics=True,
     ):
         result = {"applied": apply}
         try:
@@ -70,6 +77,9 @@ class HistoryRetention:
             if include_audit:
                 async with asyncio.timeout(10):
                     result["audit"] = await self.audit(apply=apply)
+            if include_flow_diagnostics and self.flow_diagnostics is not None:
+                async with asyncio.timeout(10):
+                    result["flow_diagnostics"] = await self.flow_diagnostics(apply=apply)
             if include_application:
                 async with asyncio.timeout(10):
                     result.update(await self.messaging(apply=apply))

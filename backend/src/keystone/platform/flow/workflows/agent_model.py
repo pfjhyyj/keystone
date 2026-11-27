@@ -6,8 +6,52 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from keystone.core.errors import ServiceError
+from keystone.core.time import utcnow
 from keystone.platform.flow.workflows import context as host
+from keystone.platform.flow.workflows.diagnostics import record_model_call
 from keystone.platform.model_access.schemas.invocations import MAX_OUTPUT_TOKENS
+
+
+def _safe_content(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_safe_content(item) for item in value[:32]]
+    if isinstance(value, dict):
+        return {str(key): _safe_content(item) for key, item in list(value.items())[:32]}
+    return str(value)
+
+
+def _project_part(part):
+    kind = getattr(part, "part_kind", type(part).__name__)
+    if kind in {"system-prompt", "user-prompt", "text", "thinking", "retry-prompt"}:
+        return {"kind": kind, "content": _safe_content(getattr(part, "content", ""))}
+    if kind == "tool-call":
+        return {
+            "kind": kind,
+            "tool": getattr(part, "tool_name", ""),
+            "args": _safe_content(getattr(part, "args", None)),
+        }
+    if kind == "tool-return":
+        return {
+            "kind": kind,
+            "tool": getattr(part, "tool_name", ""),
+            "content": _safe_content(getattr(part, "content", None)),
+        }
+    return {"kind": str(kind)}
+
+
+def _project_messages(messages, max_tokens):
+    items = []
+    for message in messages[-24:]:
+        parts = [_project_part(part) for part in getattr(message, "parts", ())]
+        items.append({"role": getattr(message, "kind", "message"), "parts": parts})
+    return {"messages": items, "max_tokens": max_tokens}
+
+
+def _project_response(response):
+    parts = [_project_part(part) for part in getattr(response, "parts", ())]
+    return {"parts": parts}
 
 
 class FlowModel(Model):
@@ -56,21 +100,52 @@ class FlowModel(Model):
             )
             return await model.request(messages, settings, model_request_parameters)
 
-        return await runtime.invoke_sdk(
-            invocation_id=invocation_id,
-            selection=selected,
-            flow_context=ctx._invocation_context(
-                self.deps["model_role"],
-                definition_key=definition_key,
+        started_at = utcnow()
+        input_data = _project_messages(messages, limit)
+        record_enabled = self.deps.get("record_diagnostics", True)
+        try:
+            response = await runtime.invoke_sdk(
+                invocation_id=invocation_id,
+                selection=selected,
+                flow_context=ctx._invocation_context(
+                    self.deps["model_role"],
+                    definition_key=definition_key,
+                    node_key=self.deps["node_key"],
+                    agent_key=self.deps["agent_key"],
+                    agent_call_id=UUID(self.deps["agent_call_id"]),
+                ),
+                sdk_request=request,
+                reasoning=reasoning,
+                output_tokens=limit,
+                worker_identity=host._runtime().worker_identity,
+            )
+        except Exception as error:
+            await record_model_call(
+                run_id,
+                operation=operation,
+                model_role=self.deps["model_role"],
                 node_key=self.deps["node_key"],
-                agent_key=self.deps["agent_key"],
-                agent_call_id=UUID(self.deps["agent_call_id"]),
-            ),
-            sdk_request=request,
-            reasoning=reasoning,
-            output_tokens=limit,
-            worker_identity=host._runtime().worker_identity,
+                invocation_id=invocation_id,
+                input_data=input_data,
+                error=error,
+                started_at=started_at,
+                finished_at=utcnow(),
+                enabled=record_enabled,
+            )
+            raise
+        await record_model_call(
+            run_id,
+            operation=operation,
+            model_role=self.deps["model_role"],
+            node_key=self.deps["node_key"],
+            invocation_id=invocation_id,
+            input_data=input_data,
+            output_data=_project_response(response),
+            started_at=started_at,
+            finished_at=utcnow(),
+            enabled=record_enabled,
         )
+        return response
 
 
 def resolve_model(ctx, model_id):

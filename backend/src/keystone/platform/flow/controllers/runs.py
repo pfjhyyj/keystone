@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response
 
+from keystone.core.content_response import ContentResponse
 from keystone.core.http import ListTotal, Page
 from keystone.platform.flow.schemas.diagnostics import Diagnostics, DiagnosticSection
 from keystone.platform.flow.schemas.step_diagnostics import MAX_ATTACHMENTS, StepAttempts
@@ -68,17 +69,21 @@ async def step_attachment(
     attempt: Annotated[int, Query(ge=1, le=2**31 - 1)],
     index: Annotated[int, Query(ge=0, lt=MAX_ATTACHMENTS)],
 ):
-    content, mime = await _step_service(request).attachment(
-        identifier, workflow_id, step_id, attempt, index
+    return ContentResponse(
+        _step_service(request).open_attachment(identifier, workflow_id, step_id, attempt, index),
+        request,
     )
-    return Response(
-        content,
-        media_type=mime,
-        headers={
-            "Cache-Control": "no-store",
-            "X-Content-Type-Options": "nosniff",
-            "Content-Disposition": "attachment",
-        },
+
+
+@router.get("/flow-runs/{identifier}/output-file")
+async def output_file(
+    identifier: UUID,
+    request: Request,
+    file_id: Annotated[UUID, Query()],
+):
+    return ContentResponse(
+        _step_service(request).open_output_file(identifier, file_id),
+        request,
     )
 
 

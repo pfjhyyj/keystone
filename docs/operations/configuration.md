@@ -32,6 +32,7 @@
 | `log_level` | `KEYSTONE_LOG_LEVEL` | `INFO` |
 | `session_hours` / `pat_max_days` | `KEYSTONE_SESSION_HOURS` / `KEYSTONE_PAT_MAX_DAYS` | 72 小时 / 90 天 |
 | `audit_cleanup_enabled` / `audit_retention_days` | `KEYSTONE_AUDIT_CLEANUP_ENABLED` / `KEYSTONE_AUDIT_RETENTION_DAYS` | 默认开启，保留 30 天 |
+| `flow_diagnostic_cleanup_enabled` / `flow_diagnostic_retention_days` | `KEYSTONE_FLOW_DIAGNOSTIC_CLEANUP_ENABLED` / `KEYSTONE_FLOW_DIAGNOSTIC_RETENTION_DAYS` | 默认开启，终态 Flow 阶段诊断文件保留 14 天后解除引用并交由文件清理回收 |
 | 其他历史保留与自动清理 | `KEYSTONE_MAINTENANCE_CLEANUP_ENABLED` 等 | 默认清理超过 14 天的 DBOS 维护历史；见[历史清理](deployment.md#历史保留与清理) |
 | `[file_storages.<源名>]` | `KEYSTONE_FILE_STORAGES__<源名>__<字段>` | 逐项配置内容源，见第 4 节 |
 | `file_coordination_root` | `KEYSTONE_FILE_COORDINATION_ROOT` | 节点本地目录，供临时文件、磁盘预留与本地锁使用；示例为 `../.data/files` |

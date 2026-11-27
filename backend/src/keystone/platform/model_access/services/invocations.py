@@ -110,6 +110,9 @@ class InvocationService:
             ModelInvocation.status,
             ModelInvocation.flow_context,
             ModelInvocation.error_code,
+            ModelInvocation.provider_model,
+            ModelInvocation.created_at,
+            ModelInvocation.finished_at,
         ).where(
             *history_scope(auth),
             ModelInvocation.flow_context["flow_run_id"].astext == str(run_id),
@@ -117,7 +120,12 @@ class InvocationService:
         total = await list_count(session, statement) if include_total else None
         rows = list(
             await session.execute(
-                statement.order_by(ModelInvocation.created_at, ModelInvocation.id)
+                statement.outerjoin(ModelEntry, ModelEntry.id == ModelInvocation.model_entry_id)
+                .outerjoin(Channel, Channel.id == ModelInvocation.channel_id)
+                .add_columns(
+                    ModelEntry.name.label("model_name"), Channel.name.label("channel_name")
+                )
+                .order_by(ModelInvocation.created_at, ModelInvocation.id)
                 .offset(offset)
                 .limit(limit + 1)
             )

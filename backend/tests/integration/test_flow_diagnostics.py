@@ -57,7 +57,8 @@ def seed(client):
     response, _ = accept(client)
     assert response.status_code == 202, response.text
     run_id = UUID(response.json()["id"])
-    configured = entry(client, channel(client))
+    configured = entry(client, channel(client, name="Diagnostic channel"), name="Diagnostic model")
+    finished_at = utcnow()
     ids = [uuid4() for _ in range(4)]
     files, manifests = [], []
     for index in range(4):
@@ -104,8 +105,8 @@ def seed(client):
                     channel_id=UUID(configured["channel_id"]),
                     provider_model="mock-chat",
                     status="unknown",
-                    finished_at=utcnow(),
-                    created_at=utcnow() - timedelta(days=90, seconds=4 - index),
+                    finished_at=finished_at,
+                    created_at=finished_at - timedelta(days=90, seconds=4 - index),
                     flow_context={
                         "flow_run_id": str(run_id),
                         "node_key": "generate",
@@ -154,6 +155,10 @@ def test_permissions_filter_before_pagination_without_default_history_window(cli
     assert page["items"][0]["workflow_id"] == "workflow-original"
     assert page["items"][0]["step_id"] == 3
     assert page["items"][0]["error_code"] == "model_response_unknown"
+    assert page["items"][0]["model_name"] == "Diagnostic model"
+    assert page["items"][0]["channel_name"] == "Diagnostic channel"
+    assert page["items"][0]["provider_model"] == "mock-chat"
+    assert page["items"][0]["duration_ms"] == (90 * 86400 + 3) * 1000
     second = client.get(path, params={"section": "models", "limit": 1, "offset": 1}).json()[
         "models"
     ]
@@ -402,3 +407,87 @@ def test_same_slot_wrong_file_cannot_borrow_another_files_source_confirmation(cl
     assert rows[(files[1], f"artifact.model.{ids[1]}.1")] is None
     assert rows[(files[1], f"artifact.model.{ids[1]}.2")] is None
     assert rows[(files[1], "artifact.report")] is None
+
+
+def test_step_diagnostics_hidden_from_files_output_preview_and_expiration_prune(
+    client,
+):
+    from keystone.platform.files.models import File
+    from keystone.platform.flow.services.retention import prune_flow_diagnostics
+
+    run_id, _, files = seed(client)
+    login(client)
+    diagnostic_file = upload(
+        client, b'{"attempt":1,"label":"test"}', key="step-diag", content_type="application/json"
+    ).json()["id"]
+    webp_bytes = BytesIO()
+    Image.new("RGB", (4, 4), (20, 80, 160)).save(webp_bytes, format="WEBP")
+    output_webp = upload(
+        client, webp_bytes.getvalue(), key="output-webp", content_type="image/webp"
+    ).json()["id"]
+
+    async def attach(session):
+        from sqlalchemy import delete
+
+        run = await session.get(FlowRun, run_id)
+        run.status = "succeeded"
+        run.result = {"result_file_id": output_webp}
+        run.finished_at = utcnow() - timedelta(days=20)
+        # Drop the test-fixture material reference so diagnostic_file is held solely by this Run.
+        await session.execute(
+            delete(FileReference).where(FileReference.file_id == UUID(diagnostic_file))
+        )
+        session.add_all(
+            [
+                FileReference(
+                    owner=f"flow:{run_id}",
+                    slot="artifact.diagnostic.step.abcd1234.1.0000000001",
+                    file_id=UUID(diagnostic_file),
+                ),
+                FileReference(
+                    owner=f"flow:{run_id}",
+                    slot="output",
+                    file_id=UUID(output_webp),
+                ),
+            ]
+        )
+
+    query(client, attach)
+    # Internal step diagnostic slots never leak into business file diagnostics.
+    diag = client.get(f"/api/v1/flow-runs/{run_id}/diagnostics", params={"section": "files"})
+    assert diag.status_code == 200, diag.text
+    slots = [item["slot"] for item in diag.json()["files"]["items"]]
+    assert not any(slot.startswith("artifact.diagnostic.step.") for slot in slots)
+    assert "output" in slots
+
+    # Output file preview enforces flow:diagnose and output slot membership, and supports WebP.
+    preview = client.get(f"/api/v1/flow-runs/{run_id}/output-file", params={"file_id": output_webp})
+    assert preview.status_code == 200, preview.text
+    assert preview.headers["content-type"] == "image/webp"
+    assert (
+        client.get(
+            f"/api/v1/flow-runs/{run_id}/output-file", params={"file_id": files[0]}
+        ).status_code
+        == 404
+    )
+    no_diagnose = bearer(token(client, ["flow:read"])["token"])
+    assert (
+        client.get(
+            f"/api/v1/flow-runs/{run_id}/output-file",
+            params={"file_id": output_webp},
+            headers=no_diagnose,
+        ).status_code
+        == 403
+    )
+
+    # Retention preview counts expired diagnostic files without mutating; apply prunes only them.
+    database = client.app.state.runtime.database
+    assert client.portal.call(lambda: prune_flow_diagnostics(database, 14, apply=False)) == 1
+    assert client.portal.call(lambda: prune_flow_diagnostics(database, 30, apply=True)) == 0
+    assert client.portal.call(lambda: prune_flow_diagnostics(database, 14, apply=True)) == 1
+    assert client.portal.call(lambda: prune_flow_diagnostics(database, 14, apply=True)) == 0
+
+    diag_file_row = query(client, lambda s: s.get(File, UUID(diagnostic_file)))
+    output_file_row = query(client, lambda s: s.get(File, UUID(output_webp)))
+    assert diag_file_row.status == "deleting"
+    assert output_file_row.status == "active"

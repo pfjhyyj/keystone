@@ -227,7 +227,7 @@ uv run --locked keystone retry-file-delete --file-id <文件 UUID>
 
 ## 历史保留与清理
 
-默认自动清理超过保留期的审计日志和已完成的 DBOS 维护任务。过期凭据、已结束的消息投递与入站记录仍需显式开启自动清理。业务实体、FlowRun、业务工作流检查点、文件引用、ModelInvocation、费用与调用幂等记录不在删除范围内。
+默认自动清理超过保留期的审计日志、终态 Flow 阶段诊断记录文件和已完成的 DBOS 维护任务。过期凭据、已结束的消息投递与入站记录仍需显式开启自动清理。业务实体、FlowRun、业务工作流检查点、业务及输入/输出文件引用、ModelInvocation、费用与调用幂等记录不在删除范围内。
 
 ### 保留规则
 
@@ -235,10 +235,12 @@ uv run --locked keystone retry-file-delete --file-id <文件 UUID>
 |---|---:|---|
 | `maintenance_cleanup_enabled` | true | 是否自动清理 DBOS 维护历史 |
 | `audit_cleanup_enabled` | true | 是否自动清理过期审计日志 |
+| `flow_diagnostic_cleanup_enabled` | true | 是否自动清理终态 Flow 的过期阶段诊断记录文件 |
 | `history_cleanup_enabled` | false | 是否自动清理过期凭据与消息历史 |
 | `session_retention_days` | 30 | 从会话过期或撤销的较早时刻起保留 |
 | `pat_retention_days` | 90 | 从 PAT 过期或撤销的较早时刻起保留；任何 FlowRun 引用均阻止物理删除，包括终态 Run |
 | `audit_retention_days` | 30 | 按 `occurred_at` 保留；删除结果写运行日志，不递归生成审计 |
+| `flow_diagnostic_retention_days` | 14 | 按终态 FlowRun 的 `finished_at` 保留；到期后解除 `artifact.diagnostic.step.*` 引用并对已无引用的诊断 JSON 文件受理 `deleting`，交由现有文件清理 Worker 物理删除；活动 Run 及其他文件引用不受影响 |
 | `maintenance_retention_days` | 14 | 仅删除白名单内、已完成且超过保留期的维护工作流叶节点 |
 | `message_delivery_retention_days` | 30 | 按最后更新时间保留已结束的投递（含不再重试的 unknown）与入站记录；pending、sending 的投递和 received 的入站不删除，过期绑定码直接删除 |
 

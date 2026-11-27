@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, select, text
 
 from keystone.core.database import list_count
 from keystone.core.errors import ServiceError
+from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor, record
 from keystone.platform.files.models import File, FileReference
@@ -64,6 +65,76 @@ async def diagnostic_attempt_files(session, owner, slot_prefix, limit):
             )
         ).tuples()
     )
+
+
+def diagnostic_owners(slot_prefix: str):
+    """SQL subquery owned by Files: owners currently holding diagnostic slot references."""
+    return select(FileReference.owner).where(
+        FileReference.slot.startswith(slot_prefix, autoescape=True)
+    )
+
+
+async def release_diagnostic_files_in_transaction(
+    session, owners, slot_prefix, *, apply=False, reason="flow_diagnostic_expired"
+):
+    """Release expired diagnostic references and queue unreferenced files for deletion."""
+    if not owners:
+        return 0
+    rows = list(
+        (
+            await session.execute(
+                select(FileReference.owner, FileReference.slot, FileReference.file_id)
+                .where(
+                    FileReference.owner.in_(owners),
+                    FileReference.slot.startswith(slot_prefix, autoescape=True),
+                )
+                .order_by(FileReference.owner, FileReference.slot, FileReference.file_id)
+            )
+        ).tuples()
+    )
+    if not apply or not rows:
+        return len(rows)
+    file_ids = sorted({identifier for _, _, identifier in rows})
+    locked = {identifier: await policy.locked(session, identifier) for identifier in file_ids}
+    removed = 0
+    for owner, slot, identifier in rows:
+        result = await session.execute(
+            delete(FileReference).where(
+                FileReference.owner == owner,
+                FileReference.slot == slot,
+                FileReference.file_id == identifier,
+            )
+        )
+        if result.rowcount:
+            removed += result.rowcount
+            await audit.record(
+                session,
+                "file.reference",
+                Actor("system"),
+                "file",
+                identifier,
+                details={"owner": owner, "slot": slot, "added": False},
+            )
+    now = utcnow()
+    for identifier in file_ids:
+        file = locked[identifier]
+        if file.status not in {"active", "disabled"}:
+            continue
+        remaining = await session.scalar(
+            select(FileReference.file_id).where(FileReference.file_id == identifier).limit(1)
+        )
+        if remaining is None:
+            file.status = "deleting"
+            file.updated_at, file.updated_by = now, None
+            await audit.record(
+                session,
+                "file.delete.request",
+                Actor("system"),
+                "file",
+                identifier,
+                details={"reason": reason},
+            )
+    return removed
 
 
 async def registered_file_ids(session, owner, slot):
@@ -165,7 +236,10 @@ class FileReferenceService:
                 File.content_type,
             )
             .join(File, File.id == FileReference.file_id)
-            .where(FileReference.owner == f"flow:{run_id}")
+            .where(
+                FileReference.owner == f"flow:{run_id}",
+                ~FileReference.slot.startswith("artifact.diagnostic.step.", autoescape=True),
+            )
         )
         total = await list_count(session, statement) if include_total else None
         rows = list(
@@ -272,6 +346,21 @@ async def require_usage(session, owner, identifier):
     )
     if exists is None:
         raise ServiceError(403, "file_usage_denied", "文件没有当前业务的使用记录")
+
+
+async def require_slot_usage(session, owner, slot, identifier):
+    """Trusted caller authorizes owner/slot; content authorization remains a separate check."""
+    exists = await session.scalar(
+        select(FileReference.file_id)
+        .where(
+            FileReference.owner == owner,
+            FileReference.slot == slot,
+            FileReference.file_id == identifier,
+        )
+        .limit(1)
+    )
+    if exists is None:
+        raise ServiceError(404, "flow_diagnostic_not_found", "本次运行没有对应输出文件")
 
 
 async def describe_inputs_in_transaction(session, identifiers):

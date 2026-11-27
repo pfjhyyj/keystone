@@ -61,6 +61,10 @@ class FlowService:
         """
         return {key: definition.name for key, definition in self.flow_definitions.items()}
 
+    def _view(self, row):
+        definition = self.flow_definitions.get(row.definition_key)
+        return {**view(row), "definition_name": definition.name if definition else None}
+
     @staticmethod
     async def has_running_work(session, actor_id):
         return await session.scalar(
@@ -108,7 +112,7 @@ class FlowService:
             if old.request_digest != request_digest:
                 raise ServiceError(409, "idempotency_conflict", "同一请求键对应不同流程请求")
             auth.require("flow:read")
-            return view(old)
+            return self._view(old)
         auth.require("flow:start")
         definition = self.flow_definitions.get(data.definition_key)
         if definition is None:
@@ -164,7 +168,7 @@ class FlowService:
         await self.identity.log(
             session, auth, "flow.start", "flow.run", run.id, {"definition_key": definition.key}
         )
-        return view(run)
+        return self._view(run)
 
     async def listing(self, offset, limit, status=None, *, total=None):
         async with self.identity.access() as (session, auth):
@@ -178,7 +182,7 @@ class FlowService:
             )
             await count_list(session, statement, total)
             rows = await session.scalars(statement)
-            return [view(row) for row in rows]
+            return [self._view(row) for row in rows]
 
     async def detail(self, identifier):
         async with self.identity.access() as (session, auth):
@@ -213,7 +217,7 @@ class FlowService:
 
     async def get_in_transaction(self, session, auth, identifier, *, diagnose=False):
         """Current Run view under the existing read/actor scope, without another transaction."""
-        return view(await self.visible(session, auth, identifier, diagnose=diagnose))
+        return self._view(await self.visible(session, auth, identifier, diagnose=diagnose))
 
     async def visible(self, session, auth, identifier, *, lock=False, diagnose=False):
         stmt = select(FlowRun).where(FlowRun.id == identifier, *scope(auth, diagnose=diagnose))
@@ -241,7 +245,7 @@ class FlowService:
         if run.status not in TERMINAL and run.cancel_requested_at is None:
             run.cancel_requested_at = utcnow()
             await self.identity.log(session, auth, "flow.cancel", "flow.run", run.id, {})
-        return view(run)
+        return self._view(run)
 
     async def steps(self, identifier, engine):
         await self.detail(identifier)

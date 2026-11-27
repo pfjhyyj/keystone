@@ -20,6 +20,10 @@ const invocation = (id: string) => ({
   invocation_id: id,
   operation: 'text.generate',
   status: 'succeeded',
+  provider_model: 'provider-model',
+  model_name: '文稿模型',
+  channel_name: '测试渠道',
+  duration_ms: 18300,
   model_role: 'writer',
   node_key: 'draft',
   agent_key: 'author',
@@ -38,6 +42,11 @@ it('keeps an opened invocation through polling and clears it when authority chan
     },
   })
   await flushPromises()
+  const summary = wrapper.get('.invocation-summary')
+  expect(summary.text()).toContain('文稿模型')
+  expect(summary.text()).toContain('文本生成 · 测试渠道 · 耗时 18 秒')
+  expect(summary.get('details').attributes('open')).toBeUndefined()
+  expect(wrapper.get('.flow-invocation-link').text()).toBe('查看调用')
   await wrapper.get('.flow-invocation-link').trigger('click')
   expect(wrapper.findComponent(InvocationDialog).props('id')).toBe(invocationId)
   await wrapper.setProps({ refresh: 2 })
@@ -119,11 +128,16 @@ it('correlates exact workflow and step, agent, role and generated file source', 
     },
   })
   await flushPromises()
-  expect(wrapper.text()).toContain('write-draft · original-workflow / 3')
+  expect(wrapper.text()).toContain('步骤：write-draft')
   expect(wrapper.text()).not.toContain('wrong-step')
-  expect(wrapper.text()).toContain('Agent author')
-  expect(wrapper.text()).toContain('角色 writer')
-  expect(wrapper.text()).toContain(`来源调用 ${invocationId}`)
+  const technical = wrapper.get('.invocation-summary details')
+  expect(technical.text()).toContain('original-workflow / 3')
+  expect(technical.text()).toContain('Agent')
+  expect(technical.text()).toContain(`author / ${invocationId}`)
+  expect(technical.text()).toContain('writer')
+  const file = wrapper.get('[aria-label="关联文件"] details')
+  expect(file.get('summary').text()).toBe('模型产物')
+  expect(file.text()).toContain(invocationId)
 })
 it('polls both sections on their current pages and ignores a superseded page', async () => {
   authorize(['flow:read', 'model_invocation:read'])
@@ -144,12 +158,14 @@ it('polls both sections on their current pages and ignores a superseded page', a
   })
   const wrapper = mount(FlowRunDiagnostics, { props })
   await flushPromises()
-  const [models, files] = wrapper.findAllComponents(ListPager)
-  expect(models!.text()).toContain('共 3 页')
-  expect(files!.text()).toContain('共 1 页')
-  await button(models!, '下一页').trigger('click')
+  const pagers = wrapper.findAllComponents(ListPager)
+  // Single-page files section hides its pager; multi-page models section keeps it.
+  expect(pagers).toHaveLength(1)
+  const models = pagers[0]!
+  expect(models.text()).toContain('共 3 页')
+  await button(models, '下一页').trigger('click')
   await flushPromises()
-  expect(models!.props('loading')).toBe(true)
+  expect(models.props('loading')).toBe(true)
   refreshed = true
   await wrapper.setProps({ refresh: 2 })
   await flushPromises()
@@ -163,7 +179,7 @@ it('polls both sections on their current pages and ignores a superseded page', a
     ['files', '0'],
   ])
   expect(paths.every((path) => query(path).get('include_total') === 'true')).toBe(true)
-  expect(models!.text()).toContain('第 2 页')
+  expect(models.text()).toContain('第 2 页')
   expect(wrapper.text()).toContain('new-result')
   expect(wrapper.text()).not.toContain('late-result')
   expect(wrapper.text()).not.toContain('original-result')
@@ -182,7 +198,7 @@ it('jumps file pages, clamps after totals shrink, and resets independently on si
   })
   const wrapper = mount(FlowRunDiagnostics, { props })
   await flushPromises()
-  const filePager = () => wrapper.findAllComponents(ListPager)[1]!
+  const filePager = () => wrapper.findAllComponents(ListPager)[0]!
   await filePager().get('input[aria-label="跳转页码"]').setValue('3')
   await filePager().get('form').trigger('submit')
   await flushPromises()
@@ -204,7 +220,7 @@ it('jumps file pages, clamps after totals shrink, and resets independently on si
 
   await chooseSelect(filePager(), '20', '每页条数')
   expect(filePager().props('page')).toBe(0)
-  expect(wrapper.findAllComponents(ListPager).map((pager) => pager.props('size'))).toEqual([50, 20])
+  expect(filePager().props('size')).toBe(20)
   expect(query(requests.at(-1)!).get('limit')).toBe('20')
   await button(filePager(), '下一页').trigger('click')
   await flushPromises()
