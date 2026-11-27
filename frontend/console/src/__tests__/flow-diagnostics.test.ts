@@ -1,18 +1,21 @@
-import { expect, it } from 'vitest'
+import { afterEach, expect, it } from 'vitest'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import ListPager from '../components/ListPager.vue'
 import FlowRunDiagnostics from '../views/flows/components/FlowRunDiagnostics.vue'
 import InvocationDialog from '../views/models/components/InvocationDialog.vue'
-import { authorize, deferred, fakeApi } from './support'
+import { authorize, chooseSelect, deferred, fakeApi } from './support'
 const runId = '11111111-1111-4111-8111-111111111111',
   invocationId = '22222222-2222-4222-8222-222222222222',
   fileId = '33333333-3333-4333-8333-333333333333'
 const props = { id: runId, refresh: 1, steps: null }
-const page = <T>(items: T[], next: number | null = null) => ({
+const page = <T>(items: T[], total = items.length) => ({
   available: true,
   items,
-  truncated: next !== null,
-  next_offset: next,
+  truncated: false,
+  next_offset: null,
+  total,
 })
+afterEach(() => localStorage.clear())
 const invocation = (id: string) => ({
   invocation_id: id,
   operation: 'text.generate',
@@ -46,7 +49,8 @@ it('keeps an opened invocation through polling and clears it when authority chan
 })
 const button = (wrapper: VueWrapper, text: string) =>
   wrapper.findAll('button').find((item) => item.text() === text)!
-const section = (path: string) => new URLSearchParams(path.split('?')[1]).get('section')
+const query = (path: string) => new URLSearchParams(path.split('?')[1])
+const section = (path: string) => query(path).get('section')
 function defaults(path: string) {
   if (section(path) === 'models') return { run_id: runId, models: page([invocation(invocationId)]) }
   return {
@@ -121,7 +125,7 @@ it('correlates exact workflow and step, agent, role and generated file source', 
   expect(wrapper.text()).toContain('角色 writer')
   expect(wrapper.text()).toContain(`来源调用 ${invocationId}`)
 })
-it('paginates at the returned offset and rejects late pages after refresh', async () => {
+it('polls both sections on their current pages and ignores a superseded page', async () => {
   authorize(['flow:read', 'model_invocation:read'])
   const oldPage = deferred<unknown>(),
     paths: string[] = []
@@ -129,27 +133,90 @@ it('paginates at the returned offset and rejects late pages after refresh', asyn
   fakeApi((path) => {
     paths.push(path)
     if (section(path) === 'models') {
-      if (path.includes('offset=50')) return oldPage.promise
+      const next = query(path).get('offset') === '50'
+      if (next && !refreshed) return oldPage.promise
       return {
         run_id: runId,
-        models: page([invocation(refreshed ? 'new-result' : 'original-result')], 50),
+        models: page([invocation(next ? 'new-result' : 'original-result')], 130),
       }
     }
     return defaults(path)
   })
   const wrapper = mount(FlowRunDiagnostics, { props })
   await flushPromises()
-  await button(wrapper, '加载更多调用').trigger('click')
+  const [models, files] = wrapper.findAllComponents(ListPager)
+  expect(models!.text()).toContain('共 3 页')
+  expect(files!.text()).toContain('共 1 页')
+  await button(models!, '下一页').trigger('click')
   await flushPromises()
+  expect(models!.props('loading')).toBe(true)
   refreshed = true
   await wrapper.setProps({ refresh: 2 })
   await flushPromises()
-  oldPage.resolve({ run_id: runId, models: page([invocation('late-result')]) })
+  oldPage.resolve({ run_id: runId, models: page([invocation('late-result')], 130) })
   await flushPromises()
-  expect(paths.some((path) => path.includes('section=models&offset=50&limit=50'))).toBe(true)
+  expect(paths.map((path) => [section(path), query(path).get('offset')])).toEqual([
+    ['models', '0'],
+    ['files', '0'],
+    ['models', '50'],
+    ['models', '50'],
+    ['files', '0'],
+  ])
+  expect(paths.every((path) => query(path).get('include_total') === 'true')).toBe(true)
+  expect(models!.text()).toContain('第 2 页')
   expect(wrapper.text()).toContain('new-result')
   expect(wrapper.text()).not.toContain('late-result')
   expect(wrapper.text()).not.toContain('original-result')
+})
+it('jumps file pages, clamps after totals shrink, and resets independently on size or Run change', async () => {
+  authorize(['flow:read', 'model_invocation:read'])
+  const requests: string[] = []
+  let total = 130
+  fakeApi((path) => {
+    requests.push(path)
+    if (section(path) === 'models') return defaults(path)
+    const offset = Number(query(path).get('offset'))
+    const items =
+      offset < total ? [{ file_id: `file-${offset}`, slot: 'input', invocation_id: null }] : []
+    return { run_id: runId, files: page(items, total) }
+  })
+  const wrapper = mount(FlowRunDiagnostics, { props })
+  await flushPromises()
+  const filePager = () => wrapper.findAllComponents(ListPager)[1]!
+  await filePager().get('input[aria-label="跳转页码"]').setValue('3')
+  await filePager().get('form').trigger('submit')
+  await flushPromises()
+  expect(filePager().props('page')).toBe(2)
+  expect(wrapper.text()).toContain('file-100')
+  expect(wrapper.text()).not.toContain('file-0')
+
+  total = 75
+  await wrapper.setProps({ refresh: 2 })
+  await flushPromises()
+  expect(filePager().props('page')).toBe(1)
+  expect(wrapper.text()).toContain('file-50')
+  expect(
+    requests
+      .filter((path) => section(path) === 'files')
+      .slice(-2)
+      .map((path) => query(path).get('offset')),
+  ).toEqual(['100', '50'])
+
+  await chooseSelect(filePager(), '20', '每页条数')
+  expect(filePager().props('page')).toBe(0)
+  expect(wrapper.findAllComponents(ListPager).map((pager) => pager.props('size'))).toEqual([50, 20])
+  expect(query(requests.at(-1)!).get('limit')).toBe('20')
+  await button(filePager(), '下一页').trigger('click')
+  await flushPromises()
+  expect(filePager().props('page')).toBe(1)
+
+  await wrapper.setProps({ id: 'another-run' })
+  await flushPromises()
+  expect(filePager().props('page')).toBe(0)
+  expect(filePager().props('size')).toBe(20)
+  const newRun = requests.slice(-2)
+  expect(newRun.every((path) => path.startsWith('/flow-runs/another-run/diagnostics?'))).toBe(true)
+  expect(newRun.map((path) => query(path).get('offset'))).toEqual(['0', '0'])
 })
 it('does not fetch unauthorized resource panels', async () => {
   authorize(['flow:read'])
@@ -182,11 +249,14 @@ it('clears revoked panels and ignores their outstanding results', async () => {
 it('shows missing Step positions explicitly and clears all data on Run access loss', async () => {
   authorize(['flow:read', 'model_invocation:read'])
   let lost = false
+  const lateFiles = deferred<unknown>()
   fakeApi((path) => {
     if (lost)
-      return new Response(JSON.stringify({ code: 'flow_not_found', detail: '流程不可访问' }), {
-        status: 404,
-      })
+      return section(path) === 'files'
+        ? lateFiles.promise
+        : new Response(JSON.stringify({ code: 'flow_not_found', detail: '流程不可访问' }), {
+            status: 404,
+          })
     if (section(path) === 'models')
       return {
         run_id: runId,
@@ -200,7 +270,10 @@ it('shows missing Step positions explicitly and clears all data on Run access lo
   lost = true
   await wrapper.setProps({ refresh: 2 })
   await flushPromises()
-  expect(wrapper.emitted('unavailable')).toBeTruthy()
+  expect(wrapper.emitted('unavailable')).toEqual([['流程不可访问']])
+  lateFiles.resolve(defaults('/diagnostics?section=files'))
+  await flushPromises()
   expect(wrapper.text()).not.toContain(invocationId)
   expect(wrapper.text()).not.toContain(fileId)
+  expect(wrapper.findAllComponents(ListPager)).toHaveLength(0)
 })

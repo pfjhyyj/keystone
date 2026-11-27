@@ -1,4 +1,4 @@
-import { request } from './client'
+import { request, requestPage } from './client'
 import type { EstimateResult, PriceSource } from './pricing'
 export interface Channel {
   id: string
@@ -100,6 +100,7 @@ export interface CloudBillReport {
   limit: number
   fetched_at: string
   has_more: boolean
+  total?: number | null
   items: {
     product: string
     product_code: string
@@ -144,12 +145,13 @@ export interface ModelOptions {
 export const modelApi = {
   options: () => request<ModelOptions>('/model-access/options'),
   channels: (offset: number) => request<Channel[]>(`/model-channels?offset=${offset}&limit=50`),
-  entries: (offset: number) => request<ModelEntry[]>(`/model-entries?offset=${offset}&limit=50`),
+  channelsPage: (offset: number, limit: number) =>
+    requestPage<Channel>('/model-channels', offset, limit),
+  entriesPage: (offset: number, limit: number) =>
+    requestPage<ModelEntry>('/model-entries', offset, limit),
 
-  calls: (offset: number, filters: Record<string, string>) =>
-    request<Invocation[]>(
-      `/model-invocations?${new URLSearchParams({ ...filters, offset: String(offset), limit: '50' })}`,
-    ),
+  calls: (offset: number, limit: number, filters: Record<string, string>) =>
+    requestPage<Invocation>(`/model-invocations?${new URLSearchParams(filters)}`, offset, limit),
   summary: (filters: Record<string, string>) =>
     request<Costs>(`/model-invocations/summary?${new URLSearchParams(filters)}`),
 }

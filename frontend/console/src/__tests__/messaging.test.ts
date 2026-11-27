@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 import * as confirmation from '../utils/confirm'
 import AppSelect from '../components/AppSelect.vue'
+import ListPager from '../components/ListPager.vue'
 import { makeRouter } from '../router'
 import ChannelsView from '../views/messaging/ChannelsView.vue'
 import ChannelDetailView from '../views/messaging/ChannelDetailView.vue'
@@ -290,13 +291,20 @@ describe('an app channel page', () => {
 
     const wrapper = mount(GroupsPanel, { props: { channel: app }, attachTo: document.body })
     await flushPromises()
-    expect(reads).toContain(`/messaging/destinations?channel_id=${app.id}&offset=0&limit=50`)
+    const groupsPath = reads.find((path) => path.startsWith('/messaging/destinations?'))!
+    expect(Object.fromEntries(new URLSearchParams(groupsPath.split('?')[1]))).toEqual({
+      channel_id: app.id,
+      offset: '0',
+      limit: String(wrapper.getComponent(ListPager).props('size')),
+    })
     expect(wrapper.text()).toContain('ops.daily')
     await button(wrapper, '添加群').trigger('click')
     await flushPromises()
     expect(reads).toContain(`/messaging/channels/${app.id}/chats`)
-    const [chatSelect] = wrapper.findAllComponents(AppSelect)
-    chatSelect!.vm.$emit('update:modelValue', 'oc_ops')
+    const chatSelect = wrapper
+      .findAllComponents(AppSelect)
+      .find((node) => node.vm.$attrs['aria-label'] === '群')!
+    chatSelect.vm.$emit('update:modelValue', 'oc_ops')
     await flushPromises()
     await wrapper.get('[role=dialog] input[placeholder="ops.alerts"]').setValue('ops.alerts')
     await wrapper.get('[role=dialog] form').trigger('submit')
@@ -349,8 +357,10 @@ describe('an app channel page', () => {
     await button(body(), '设置执行用户').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('交给群里所有人')
-    const [userSelect] = wrapper.findAllComponents(AppSelect)
-    userSelect!.vm.$emit('update:modelValue', alice.id)
+    const userSelect = wrapper
+      .findAllComponents(AppSelect)
+      .find((node) => node.vm.$attrs['aria-label'] === '执行用户')!
+    userSelect.vm.$emit('update:modelValue', alice.id)
     await flushPromises()
     await wrapper.get('[role=dialog] form').trigger('submit')
     await flushPromises()
@@ -407,9 +417,11 @@ describe('an app channel page', () => {
     try {
       await button(wrapper, '绑定成员').trigger('click')
       await flushPromises()
-      const [userSelect, contactSelect] = wrapper.findAllComponents(AppSelect)
-      userSelect!.vm.$emit('update:modelValue', alice.id)
-      const search = contactSelect!.vm.$attrs['remote-method'] as (q: string) => void
+      const selects = wrapper.findAllComponents(AppSelect)
+      const userSelect = selects.find((node) => node.vm.$attrs['aria-label'] === '用户')!
+      const contactSelect = selects.find((node) => node.vm.$attrs['aria-label'] === '飞书账号')!
+      userSelect.vm.$emit('update:modelValue', alice.id)
+      const search = contactSelect.vm.$attrs['remote-method'] as (q: string) => void
       // Partial input never reaches Feishu; rapid typing only looks up the last value.
       search('138')
       search('13800000000')
@@ -421,7 +433,7 @@ describe('an app channel page', () => {
         ['/messaging/accounts/lookup', { channel_id: app.id, mobile: '13900000000' }],
       ])
       expect(wrapper.text()).toContain('爱丽丝')
-      contactSelect!.vm.$emit('update:modelValue', '13900000000')
+      contactSelect.vm.$emit('update:modelValue', '13900000000')
       await flushPromises()
       await wrapper.get('[role=dialog] form').trigger('submit')
       await flushPromises()
@@ -463,7 +475,15 @@ describe('message records', () => {
     const router = await routed(`/messaging/records?channel=${channel.id}`)
     const wrapper = mount(RecordsView, { global: { plugins: [router] } })
     await flushPromises()
-    expect(reads).toContain(`/messaging/deliveries?offset=0&limit=50&channel_id=${channel.id}`)
+    const deliveryPath = reads.find((path) => path.startsWith('/messaging/deliveries?'))!
+    const initialQuery = {
+      channel_id: channel.id,
+      offset: '0',
+      limit: String(wrapper.get('#pane-sent').getComponent(ListPager).props('size')),
+    }
+    expect(Object.fromEntries(new URLSearchParams(deliveryPath.split('?')[1]))).toEqual(
+      initialQuery,
+    )
     const sent = wrapper.get('#pane-sent')
     expect(sent.text()).toContain('结果未知')
     expect(sent.text()).toContain('send_unconfirmed')
@@ -477,8 +497,30 @@ describe('message records', () => {
     statusSelect!.vm.$emit('update:modelValue', 'failed')
     statusSelect!.vm.$emit('change', 'failed')
     await flushPromises()
-    expect(reads.at(-1)).toBe(
-      `/messaging/deliveries?offset=0&limit=50&channel_id=${channel.id}&status=failed`,
-    )
+    const [path, query] = reads.at(-1)!.split('?')
+    expect(path).toBe('/messaging/deliveries')
+    expect(Object.fromEntries(new URLSearchParams(query))).toEqual({
+      ...initialQuery,
+      status: 'failed',
+    })
+
+    const receivedPager = received.getComponent(ListPager)
+    const receivedSize = receivedPager.props('size')
+    const readCount = reads.length
+    try {
+      sent.getComponent(ListPager).vm.$emit('size-change', receivedSize === 100 ? 50 : 100)
+      await flushPromises()
+      expect(receivedPager.props('size')).toBe(receivedSize)
+      expect(reads).toHaveLength(readCount + 1)
+      const [resizedPath, resizedQuery] = reads.at(-1)!.split('?')
+      expect(resizedPath).toBe('/messaging/deliveries')
+      expect(Object.fromEntries(new URLSearchParams(resizedQuery))).toEqual({
+        ...initialQuery,
+        status: 'failed',
+        limit: receivedSize === 100 ? '50' : '100',
+      })
+    } finally {
+      localStorage.clear()
+    }
   })
 })

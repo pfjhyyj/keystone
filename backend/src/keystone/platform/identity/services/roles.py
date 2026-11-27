@@ -1,5 +1,6 @@
 from sqlalchemy import delete, select
 
+from keystone.core.database import count_list
 from keystone.core.errors import ServiceError
 from keystone.platform.identity.models import (
     Role,
@@ -32,12 +33,12 @@ class RoleService:
     async def role_view(self, session, role):
         return role_view(role, await role_permissions(session, role))
 
-    async def list_roles(self, offset, limit):
+    async def list_roles(self, offset, limit, *, total=None):
         async with self.context.access("role:read") as (session, _):
             catalog = permission_catalog(session)
-            roles = await session.scalars(
-                select(Role).order_by(Role.key).offset(offset).limit(limit)
-            )
+            statement = select(Role)
+            await count_list(session, statement, total)
+            roles = await session.scalars(statement.order_by(Role.key).offset(offset).limit(limit))
             roles = roles.all()
             if not roles:
                 return []

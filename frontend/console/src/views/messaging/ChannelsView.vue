@@ -15,7 +15,7 @@ import FeishuAppGuide from './components/FeishuAppGuide.vue'
 import { providerText } from './labels'
 
 const router = inject(routerKey, undefined)
-const list = usePagedList('messaging:manage', messagingApi.channels)
+const list = usePagedList('messaging.channels', 'messaging:manage', messagingApi.channelsPage)
 const { busy, error, notice, run } = useAction()
 const dialog = ref(false),
   editing = ref<MessageChannel | null>(null)
@@ -172,7 +172,10 @@ async function remove(row: MessageChannel) {
       :page="list.page.value"
       :count="list.rows.value.length"
       :loading="busy || list.loading.value"
-      @change="(value: number) => (list.page.value = value)"
+      :size="list.size.value"
+      :total="list.total.value"
+      @change="list.page.value = $event"
+      @size-change="list.setSize"
     />
     <ChannelDialog v-if="dialog" :channel="editing" @close="dialog = false" @saved="saved" />
   </section>

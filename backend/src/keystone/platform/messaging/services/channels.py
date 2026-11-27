@@ -6,6 +6,7 @@ from datetime import timedelta
 from pydantic import SecretStr
 from sqlalchemy import delete, func, select
 
+from keystone.core.database import count_list
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.identity.services.authorization import role_grants
@@ -166,16 +167,16 @@ class ChannelService:
     def __init__(self, identity, vault):
         self.identity, self.vault = identity, vault
 
-    async def channels(self, offset, limit):
+    async def channels(self, offset, limit, *, total=None):
         async with self.identity.access("messaging:manage") as (session, _):
-            rows = (
-                await session.scalars(
-                    select(MessageChannel)
-                    .order_by(MessageChannel.name, MessageChannel.id)
-                    .offset(offset)
-                    .limit(limit)
-                )
-            ).all()
+            statement = (
+                select(MessageChannel)
+                .order_by(MessageChannel.name, MessageChannel.id)
+                .offset(offset)
+                .limit(limit)
+            )
+            await count_list(session, statement, total)
+            rows = (await session.scalars(statement)).all()
             # Shown only for group bots, whose single destination is created with the channel.
             destinations = {
                 row.channel_id: row
@@ -329,7 +330,7 @@ class ChannelService:
         except feishu_app.Unknown:
             raise ServiceError(504, "message_provider_unavailable", "飞书暂时无法访问") from None
 
-    async def destinations(self, offset, limit, provider=None, channel_id=None):
+    async def destinations(self, offset, limit, provider=None, channel_id=None, *, total=None):
         async with self.identity.access("messaging:manage") as (session, _):
             query = select(MessageDestination)
             if channel_id is not None:
@@ -338,11 +339,9 @@ class ChannelService:
                 query = query.join(
                     MessageChannel, MessageDestination.channel_id == MessageChannel.id
                 ).where(MessageChannel.provider == provider)
-            rows = (
-                await session.scalars(
-                    query.order_by(MessageDestination.key).offset(offset).limit(limit)
-                )
-            ).all()
+            statement = query.order_by(MessageDestination.key).offset(offset).limit(limit)
+            await count_list(session, statement, total)
+            rows = (await session.scalars(statement)).all()
             labels = await executor_labels(session, rows)
             return [destination_view(row, labels.get(row.executing_user_id)) for row in rows]
 

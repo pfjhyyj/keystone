@@ -68,7 +68,7 @@ class AliyunBailian(ResponseBilling):
                 502, "model_billing_invalid_response", "阿里云余额格式无效"
             ) from None
 
-    async def bills(self, http, base, secret, period, offset):
+    async def bills(self, http, base, secret, period, offset, *, limit=50):
         payload = await self.query(http, base, secret, "QueryBillOverview", BillingCycle=period)
         try:
             data = payload["Data"]
@@ -78,7 +78,7 @@ class AliyunBailian(ResponseBilling):
             if not isinstance(items, list) or len(items) > 10000:
                 raise ValueError()
             projected = []
-            for item in items[offset : offset + 50]:
+            for item in items[offset : offset + limit]:
                 unit = item["Currency"]
                 if unit not in {"CNY", "USD", "JPY"}:
                     raise ValueError()
@@ -101,7 +101,12 @@ class AliyunBailian(ResponseBilling):
                         ),
                     }
                 )
-            return {"items": projected, "has_more": offset + 50 < len(items)}
+            # QueryBillOverview returns the unpaginated monthly overview.
+            return {
+                "items": projected,
+                "has_more": offset + limit < len(items),
+                "total": len(items),
+            }
         except (ValueError, KeyError, TypeError):
             raise AdapterError(
                 502, "model_billing_invalid_response", "阿里云账单格式无效"

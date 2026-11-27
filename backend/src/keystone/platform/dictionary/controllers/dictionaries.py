@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Request
 
-from keystone.core.http import Page
+from keystone.core.http import ListTotal, Page
 from keystone.platform.dictionary import schemas
 from keystone.platform.dictionary.services.dictionaries import DictionaryService
 from keystone.platform.identity.controllers.dependencies import access_context
@@ -15,8 +15,8 @@ def _service(request: Request) -> DictionaryService:
 
 
 @router.get("")
-async def listing(request: Request, page: Page):
-    return await _service(request).listing(page.offset, page.limit)
+async def listing(request: Request, page: Page, total: ListTotal):
+    return await _service(request).listing(page.offset, page.limit, total=total)
 
 
 @router.post("", status_code=201)
@@ -40,8 +40,8 @@ async def resolve(key: str, identifier: UUID, request: Request):
 
 
 @router.get("/{identifier}/items")
-async def items(identifier: UUID, request: Request, page: Page):
-    return await _service(request).items(identifier, page.offset, page.limit)
+async def items(identifier: UUID, request: Request, page: Page, total: ListTotal):
+    return await _service(request).items(identifier, page.offset, page.limit, total=total)
 
 
 @router.post("/{identifier}/items", status_code=201)

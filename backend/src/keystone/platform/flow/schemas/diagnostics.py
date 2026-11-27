@@ -22,6 +22,7 @@ class FlowFileDiagnostics(Input):
     items: list[FlowFileDiagnostic] = []
     truncated: bool = False
     next_offset: int | None = None
+    total: int | None = Field(None, ge=0, exclude_if=lambda value: value is None)
 
 
 def source_invocation(slot):

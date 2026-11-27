@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request
 
-from keystone.core.http import Page
+from keystone.core.http import ListTotal, Page
 from keystone.platform.audit.services.query import AuditService
 from keystone.platform.identity.controllers.dependencies import access_context
 
@@ -19,6 +19,7 @@ def _service(request: Request) -> AuditService:
 async def logs(
     request: Request,
     page: Page,
+    total: ListTotal,
     since: datetime | None = None,
     until: datetime | None = None,
     actor_id: UUID | None = None,
@@ -39,4 +40,5 @@ async def logs(
         outcome=outcome,
         offset=page.offset,
         limit=page.limit,
+        total=total,
     )

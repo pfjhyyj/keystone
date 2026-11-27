@@ -1,11 +1,12 @@
 """Database lifecycle; no implicit DDL or SQLite fallback."""
 
 import asyncio
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 
 from alembic.migration import MigrationContext
 from psycopg.errors import ConnectionTimeout
-from sqlalchemy import MetaData, text
+from sqlalchemy import MetaData, func, select, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -14,6 +15,16 @@ from sqlalchemy.orm import DeclarativeBase
 from keystone.core.catalog import Catalog
 from keystone.core.config import Settings
 from keystone.core.errors import ServiceError
+
+
+async def list_count(session, statement) -> int:
+    rows = statement.order_by(None).limit(None).offset(None).subquery()
+    return await session.scalar(select(func.count()).select_from(rows))
+
+
+async def count_list(session, statement, report: Callable[[int], None] | None) -> None:
+    if report is not None:
+        report(await list_count(session, statement))
 
 
 class Base(DeclarativeBase):

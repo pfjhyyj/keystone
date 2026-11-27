@@ -1,15 +1,38 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { request } from '../../../api/client'
 import type { Channel, CloudBillReport } from '../../../api/models'
+import AppSelect from '../../../components/AppSelect.vue'
+import ListPager from '../../../components/ListPager.vue'
 import MoneyAmount from '../../../components/MoneyAmount.vue'
+import { usePageSize } from '../../../composables/usePagedList'
 import { shanghaiInput, statisticsTime } from '../../usage/time'
 
 const props = defineProps<{ channel: Channel }>()
+const MAX_BILL_OFFSET = 10_000
+const billSizes = [20, 50, 100] as const
+const { size, setSize } = usePageSize('cloud-bills', billSizes)
 const period = ref(shanghaiInput(new Date().toISOString()).slice(0, 7))
 const report = ref<CloudBillReport | null>(null),
   busy = ref(false),
   error = ref('')
+const total = computed(() => {
+  const value = report.value?.total
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null
+})
+const page = computed(() =>
+  report.value ? Math.floor(report.value.offset / report.value.limit) : 0,
+)
+const maxPage = computed(() => Math.floor(MAX_BILL_OFFSET / size.value))
+const totalBeyondLimit = computed(
+  () => total.value !== null && Math.ceil(total.value / size.value) - 1 > maxPage.value,
+)
+// The shared pager can jump to any page in a known total; bills have a lower offset ceiling.
+const numbered = computed(() => total.value !== null && !totalBeyondLimit.value)
+const canNext = computed(() => {
+  if (!report.value || page.value >= maxPage.value) return false
+  return total.value === null ? report.value.has_more : (page.value + 1) * size.value < total.value
+})
 let controller: AbortController | null = null
 function reset() {
   controller?.abort()
@@ -17,9 +40,24 @@ function reset() {
   error.value = ''
   busy.value = false
 }
-watch([period, () => props.channel.id], reset)
+watch([period, () => props.channel.id, () => props.channel.has_billing_api_key], reset, {
+  flush: 'sync',
+})
 onBeforeUnmount(() => controller?.abort())
-async function load(offset = 0) {
+function changeSize(value: number) {
+  const previous = size.value
+  if (value === previous) return
+  setSize(value)
+  if (size.value !== previous && (report.value || busy.value)) void load()
+}
+async function load(target = 0) {
+  if (
+    !props.channel.has_billing_api_key ||
+    !Number.isInteger(target) ||
+    target < 0 ||
+    target > maxPage.value
+  )
+    return
   controller?.abort()
   const pending = new AbortController()
   controller = pending
@@ -27,8 +65,13 @@ async function load(offset = 0) {
   busy.value = true
   error.value = ''
   try {
+    const query = new URLSearchParams({
+      period: period.value,
+      offset: String(target * size.value),
+      limit: String(size.value),
+    })
     const result = await request<CloudBillReport>(
-      `/model-channels/${props.channel.id}/bills?${new URLSearchParams({ period: period.value, offset: String(offset) })}`,
+      `/model-channels/${props.channel.id}/bills?${query}`,
       'GET',
       undefined,
       true,
@@ -77,18 +120,44 @@ async function load(offset = 0) {
           </template>
         </dl>
       </article>
-      <div class="bill-pagination">
-        <el-button
-          :disabled="busy || report.offset === 0"
-          @click="load(Math.max(0, report.offset - report.limit))"
-          >上一页账单</el-button
-        >
-        <span>第 {{ Math.floor(report.offset / report.limit) + 1 }} 页</span>
-        <el-button :disabled="busy || !report.has_more" @click="load(report.offset + report.limit)"
-          >下一页账单</el-button
-        >
-      </div>
+      <ListPager
+        v-if="numbered"
+        :page="page"
+        :count="report.items.length"
+        :loading="busy"
+        :size="size"
+        :total="total"
+        :size-options="billSizes"
+        @change="load"
+        @size-change="changeSize"
+      />
+      <template v-else>
+        <p v-if="total === null">上游未提供账单总条数。</p>
+        <p v-else>共 {{ total }} 条账单；最多可查询至第 {{ maxPage + 1 }} 页。</p>
+        <p v-if="total === null && report.has_more && page === maxPage">已达到可查询的分页上限。</p>
+      </template>
     </template>
+    <div v-if="!numbered && channel.has_billing_api_key" class="bill-pagination">
+      <template v-if="report">
+        <el-button :disabled="busy || page === 0" @click="load(page - 1)">上一页账单</el-button>
+        <span>第 {{ page + 1 }} 页 · 本页 {{ report.items.length }} 条</span>
+        <el-button :disabled="busy || !canNext" @click="load(page + 1)">下一页账单</el-button>
+      </template>
+      <AppSelect
+        class="bill-size"
+        aria-label="每页账单条数"
+        :model-value="String(size)"
+        :disabled="busy"
+        @update:model-value="changeSize(Number($event))"
+      >
+        <el-option
+          v-for="option in billSizes"
+          :key="option"
+          :value="String(option)"
+          :label="`${option} 条/页`"
+        />
+      </AppSelect>
+    </div>
   </section>
 </template>
 <style scoped>
@@ -135,5 +204,8 @@ dd {
   align-items: center;
   gap: 12px;
   margin-top: 16px;
+}
+.bill-size {
+  width: 120px;
 }
 </style>

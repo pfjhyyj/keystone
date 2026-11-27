@@ -1,4 +1,4 @@
-import { request } from './client'
+import { request, requestPage } from './client'
 export interface ManagedUser {
   id: string
   username: string
@@ -39,10 +39,10 @@ export const adminApi = {
     request<ManagedUser[]>(
       `/users?${new URLSearchParams({ offset: String(offset), limit: '50', q })}`,
     ),
-  roles: (offset: number) => request<Role[]>(`/roles?offset=${offset}&limit=50`),
+  usersPage: (offset: number, limit: number, q = '') =>
+    requestPage<ManagedUser>(`/users?${new URLSearchParams({ q })}`, offset, limit),
+  rolesPage: (offset: number, limit: number) => requestPage<Role>('/roles', offset, limit),
   permissions: () => request<Permission[]>('/permissions'),
-  audit: (offset: number, filters: Record<string, string>) =>
-    request<AuditLog[]>(
-      `/audit-logs?${new URLSearchParams({ ...filters, offset: String(offset), limit: '50' })}`,
-    ),
+  auditPage: (offset: number, limit: number, filters: Record<string, string>) =>
+    requestPage<AuditLog>(`/audit-logs?${new URLSearchParams(filters)}`, offset, limit),
 }

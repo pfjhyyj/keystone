@@ -148,6 +148,7 @@ def test_permissions_filter_before_pagination_without_default_history_window(cli
     first = client.get(path, params={"section": "models", "limit": 1})
     assert first.status_code == 200, first.text
     page = first.json()["models"]
+    assert "total" not in page and first.json()["files"] is None
     assert page["available"] and page["truncated"] and page["next_offset"] == 1
     assert [item["invocation_id"] for item in page["items"]] == [str(ids[1])]
     assert page["items"][0]["workflow_id"] == "workflow-original"
@@ -168,10 +169,43 @@ def test_permissions_filter_before_pagination_without_default_history_window(cli
         "private-exception-secret",
     ):
         assert value not in first.text
+
+    async def add_other_run_facts(session):
+        invocation = await session.get(ModelInvocation, ids[1])
+        other_run = uuid4()
+        session.add_all(
+            (
+                FileReference(owner=f"flow:{other_run}", file_id=UUID(files[1]), slot="input"),
+                ModelInvocation(
+                    user_id=invocation.user_id,
+                    model_entry_id=invocation.model_entry_id,
+                    channel_id=invocation.channel_id,
+                    provider_model=invocation.provider_model,
+                    operation=invocation.operation,
+                    flow_context={**invocation.flow_context, "flow_run_id": str(other_run)},
+                ),
+            )
+        )
+
+    query(client, add_other_run_facts)
+    counted = client.get(path, params={"include_total": True, "limit": 1})
+    assert counted.status_code == 200, counted.text
+    assert counted.json()["models"] == {**page, "total": 2}
+    assert counted.json()["files"]["total"] == 4
+    beyond = client.get(path, params={"include_total": True, "limit": 1, "offset": 4})
+    assert beyond.status_code == 200, beyond.text
+    for section, total in (("models", 2), ("files", 4)):
+        value = beyond.json()[section]
+        assert value["total"] == total and value["items"] == []
+        assert not value["truncated"] and value["next_offset"] is None
+    files_only = client.get(path, params={"section": "files", "include_total": True})
+    assert files_only.json()["models"] is None and files_only.json()["files"]["total"] == 4
+
     file_rows = []
     for offset in range(4):
         response = client.get(path, params={"section": "files", "limit": 1, "offset": offset})
         assert response.status_code == 200, response.text
+        assert "total" not in response.json()["files"]
         file_rows += response.json()["files"]["items"]
     assert {row["file_id"] for row in file_rows} == set(files)
     assert {row["invocation_id"] for row in file_rows} == {None, str(ids[1]), str(ids[3])}
@@ -184,9 +218,10 @@ def test_permissions_filter_before_pagination_without_default_history_window(cli
 
 def test_run_visibility_never_grants_other_resource_permissions(client):
     run_id, ids, _ = seed(client)
+    path = f"/api/v1/flow-runs/{run_id}/diagnostics"
     # A PAT can read Run file IDs/slots without gaining model invocation facts.
     limited = bearer(token(client, ["flow:read"])["token"])
-    response = client.get(f"/api/v1/flow-runs/{run_id}/diagnostics", headers=limited)
+    response = client.get(path, headers=limited)
     assert response.status_code == 200, response.text
     assert response.json()["models"] == {
         "available": False,
@@ -196,9 +231,13 @@ def test_run_visibility_never_grants_other_resource_permissions(client):
     }
     assert len(response.json()["files"]["items"]) == 4
     assert all(item["invocation_id"] is None for item in response.json()["files"]["items"])
+    counted = client.get(path, params={"include_total": True}, headers=limited)
+    assert counted.status_code == 200, counted.text
+    assert counted.json()["models"] == response.json()["models"]
+    assert counted.json()["files"]["total"] == 4
 
     metadata_only = bearer(token(client, ["flow:read", "test_files.asset:inspect"])["token"])
-    metadata = client.get(f"/api/v1/flow-runs/{run_id}/diagnostics", headers=metadata_only)
+    metadata = client.get(path, headers=metadata_only)
     assert metadata.status_code == 200, metadata.text
     assert metadata.json()["models"]["available"] is False
     assert len(metadata.json()["files"]["items"]) == 4
@@ -211,8 +250,19 @@ def test_run_visibility_never_grants_other_resource_permissions(client):
         run.actor_id = admin.id
 
     query(client, move)
-    assert client.get(f"/api/v1/flow-runs/{run_id}/diagnostics").status_code == 404
+    assert client.get(path, params={"include_total": True}).status_code == 404
     assert client.get(f"/api/v1/flow-runs/{uuid4()}/diagnostics").status_code == 404
+
+
+def test_totals_include_zero_for_visible_empty_sections(client):
+    accepted, _ = accept(client)
+    assert accepted.status_code == 202, accepted.text
+    run_id = accepted.json()["id"]
+    response = client.get(f"/api/v1/flow-runs/{run_id}/diagnostics?include_total=true")
+    assert response.status_code == 200, response.text
+    models, files = response.json()["models"], response.json()["files"]
+    assert models["available"] and models["total"] == 0 and models["items"] == []
+    assert files["total"] == 0 and files["items"] == []
 
 
 def test_flow_manager_does_not_gain_read_all_model_scope(client):

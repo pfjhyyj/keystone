@@ -1,5 +1,6 @@
 from sqlalchemy import select
 
+from keystone.core.database import count_list
 from keystone.core.time_range import history_range
 from keystone.platform.audit.models import AuditLog
 from keystone.platform.audit.schemas import view
@@ -23,6 +24,7 @@ class AuditService:
         outcome=None,
         offset=0,
         limit=50,
+        total=None,
     ):
         async with self.identity.access("audit:read") as (session, _):
             since, until = await history_range(session, since, until, error_code="invalid_range")
@@ -39,6 +41,7 @@ class AuditService:
             }.items():
                 if value is not None:
                     statement = statement.where(getattr(AuditLog, key) == value)
+            await count_list(session, statement, total)
             rows = await session.scalars(
                 statement.order_by(AuditLog.occurred_at.desc(), AuditLog.id.desc())
                 .offset(offset)

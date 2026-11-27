@@ -15,6 +15,7 @@ const props = defineProps<{
   rows: UsageGroup[]
   dimension: Dimension
   page: number
+  size: number
   total: number
   loading: boolean
   order: string
@@ -25,6 +26,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   dimension: [value: Dimension]
   page: [value: number]
+  'size-change': [value: number]
   order: [value: { order: string; unit: string }]
   drill: [filters: Record<string, string>]
 }>()
@@ -69,10 +71,7 @@ const label = (row: UsageGroup) => groupLabel(props.dimension, row)
         /></AppSelect>
       </div>
     </div>
-    <p>
-      共
-      {{ total }} 组。点击分组进入对应调用明细；单次平均费用以该单位已有金额的调用为分母。
-    </p>
+    <p>点击分组进入对应调用明细；单次平均费用以该单位已有金额的调用为分母。</p>
     <div class="table-scroll">
       <el-table :data="rows" :fit="true" native-scrollbar stripe class="data-table">
         <el-table-column :label="dimensions[dimension]" min-width="200"
@@ -153,7 +152,10 @@ const label = (row: UsageGroup) => groupLabel(props.dimension, row)
       :page="page"
       :count="rows.length"
       :loading="loading"
+      :size="size"
+      :total="total"
       @change="emit('page', $event)"
+      @size-change="emit('size-change', $event)"
     />
   </section>
 </template>

@@ -52,6 +52,7 @@ class InvocationDiagnostics(Input):
     items: list[InvocationDiagnostic] = []
     truncated: bool = False
     next_offset: int | None = None
+    total: int | None = Field(None, ge=0, exclude_if=lambda value: value is None)
 
 
 class ImageSource(Input):

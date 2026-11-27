@@ -157,16 +157,25 @@ def test_bill_query_requires_management_and_never_changes_invocation_costs(clien
     assert response.status_code == 200, response.text
     assert response.json()["scope"] == "cloud_account"
     assert response.json()["items"][0]["amounts"]["应付金额"] == "1.23456789"
+    assert response.json()["total"] == 1
+    assert response.json()["limit"] == json.loads(sent[0].content)["Limit"] == 50
     assert "cloud-account-secret" not in response.text and len(sent) == 1
+    for limit in (20, 50, 100):
+        response = client.get(path, params={"period": period(), "limit": limit})
+        assert response.status_code == 200, response.text
+        assert response.json()["limit"] == json.loads(sent[-1].content)["Limit"] == limit
+        assert response.json()["total"] == 1 and response.json()["has_more"] is False
     assert client.get("/api/v1/model-invocations").json() == []
     for invalid in (
         {"period": "2026-13"},
         {"period": "2000-01"},
         {"period": "2099-01"},
         {"period": period(), "offset": -1},
+        {"period": period(), "limit": 25},
+        {"period": period(), "limit": 101},
     ):
         assert client.get(path, params=invalid).status_code == 422
-    assert len(sent) == 1
+    assert len(sent) == 4
 
 
 @pytest.mark.parametrize("race", ["credentials", "revoke"])

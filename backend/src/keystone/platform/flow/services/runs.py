@@ -6,6 +6,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 from sqlalchemy import exists, select, text
 
+from keystone.core.database import count_list
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.files.services.references import (
@@ -165,16 +166,18 @@ class FlowService:
         )
         return view(run)
 
-    async def listing(self, offset, limit, status=None):
+    async def listing(self, offset, limit, status=None, *, total=None):
         async with self.identity.access() as (session, auth):
             filters = scope(auth, diagnose=True) + ([FlowRun.status == status] if status else [])
-            rows = await session.scalars(
+            statement = (
                 select(FlowRun)
                 .where(*filters)
                 .order_by(FlowRun.created_at.desc(), FlowRun.id)
                 .offset(offset)
                 .limit(limit)
             )
+            await count_list(session, statement, total)
+            rows = await session.scalars(statement)
             return [view(row) for row in rows]
 
     async def detail(self, identifier):

@@ -22,8 +22,8 @@ import { time } from '../labels'
 
 const props = defineProps<{ channel: MessageChannel }>()
 const emit = defineEmits<{ changed: [] }>()
-const list = usePagedList('messaging:manage', (offset) =>
-  messagingApi.members(props.channel.id, offset),
+const list = usePagedList('messaging.members', 'messaging:manage', (offset, limit) =>
+  messagingApi.membersPage(props.channel.id, offset, limit),
 )
 const { busy, error, notice, run } = useAction()
 const dialog = ref(false),
@@ -210,7 +210,10 @@ async function unbind(row: MessageAccount) {
       :page="list.page.value"
       :count="list.rows.value.length"
       :loading="busy || list.loading.value"
-      @change="(value: number) => (list.page.value = value)"
+      :size="list.size.value"
+      :total="list.total.value"
+      @change="list.page.value = $event"
+      @size-change="list.setSize"
     />
     <AppDialog
       v-if="dialog"

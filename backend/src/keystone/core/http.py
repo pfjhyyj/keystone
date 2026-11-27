@@ -2,12 +2,13 @@
 
 import logging
 import re
+from collections.abc import Callable
 from http import HTTPStatus
 from time import monotonic
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, Header, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import iter_route_contexts
@@ -30,6 +31,22 @@ class Pagination:
 
 
 Page = Annotated[Pagination, Depends()]
+
+
+def _list_total(
+    response: Response,
+    include: Annotated[str | None, Header(alias="X-Keystone-List-Total")] = None,
+) -> Callable[[int], None] | None:
+    if include != "1":
+        return None
+
+    def report(value: int) -> None:
+        response.headers["X-Total-Count"] = str(value)
+
+    return report
+
+
+ListTotal = Annotated[Callable[[int], None] | None, Depends(_list_total)]
 
 
 def validate_http_routes(app: FastAPI) -> None:

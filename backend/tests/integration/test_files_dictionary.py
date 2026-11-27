@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select, text, update
 from support.business_api import create_app
 from support.business_catalog import install_catalog
-from test_identity import bearer, initialize_database, login, query, token
+from test_identity import LIST_TOTAL, bearer, initialize_database, login, query, token
 
 from keystone.core.asyncio import new_event_loop
 from keystone.core.config import Settings
@@ -33,6 +33,33 @@ FILE_PERMISSIONS = [
     "test_files.asset:content_read",
     "test_files.asset:manage",
 ]
+
+
+def test_dictionary_totals_count_only_items_in_the_requested_dictionary(client):
+    root = "/api/v1/dictionaries"
+    definitions = []
+    for key in ("review", "source"):
+        response = client.post(root, json={"key": key, "name": key})
+        assert response.status_code == 201, response.text
+        definitions.append(response.json()["id"])
+    items = f"{root}/{definitions[0]}/items"
+    other_items = f"{root}/{definitions[1]}/items"
+    for path, value in ((items, "first"), (items, "second"), (other_items, "unrelated")):
+        response = client.post(path, json={"value": value, "label": value})
+        assert response.status_code == 201, response.text
+
+    for path in (root, items):
+        ordinary = client.get(path, params={"limit": 1})
+        counted = client.get(path, params={"limit": 1}, headers=LIST_TOTAL)
+        assert ordinary.status_code == counted.status_code == 200
+        assert "X-Total-Count" not in ordinary.headers and counted.headers["X-Total-Count"] == "2"
+        assert counted.json() == ordinary.json() and len(counted.json()) == 1
+        empty = client.get(path, params={"offset": 2}, headers=LIST_TOTAL)
+        assert empty.status_code == 200 and empty.headers["X-Total-Count"] == "2"
+        assert empty.json() == []
+
+    missing = client.get(f"{root}/{uuid4()}/items", headers=LIST_TOTAL)
+    assert missing.status_code == 404 and "X-Total-Count" not in missing.headers
 
 
 def test_dictionary_audits_all_written_defaults(client):

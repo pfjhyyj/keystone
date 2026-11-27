@@ -202,11 +202,17 @@ async def test_accounting_errors_do_not_redirect_retry_or_expose_upstream_body(p
 
 
 @pytest.mark.parametrize("provider", ["aliyun_bailian", "volcengine"])
-async def test_monthly_bills_keep_reported_decimal_amounts_and_bounded_product_pages(provider):
+@pytest.mark.parametrize("requested_limit", [None, 20, 50, 100])
+async def test_monthly_bills_keep_reported_decimal_amounts_and_bounded_product_pages(
+    provider, requested_limit
+):
+    limit = requested_limit or 50
+
     def respond(request):
         if provider == "aliyun_bailian":
             assert request.method == "GET" and request.url.params["BillingCycle"] == "2026-09"
             assert request.url.params["Action"] == "QueryBillOverview"
+            assert {"Limit", "Offset", "PageSize"}.isdisjoint(request.url.params)
             item = {
                 "Currency": "CNY",
                 "ProductName": "百炼",
@@ -220,7 +226,7 @@ async def test_monthly_bills_keep_reported_decimal_amounts_and_bounded_product_p
                 200,
                 json={
                     "Success": True,
-                    "Data": {"BillingCycle": "2026-09", "Items": {"Item": [item] * 51}},
+                    "Data": {"BillingCycle": "2026-09", "Items": {"Item": [item] * 149}},
                 },
             )
         assert request.method == "POST" and request.url.params["Action"] == "ListBillDetail"
@@ -229,7 +235,7 @@ async def test_monthly_bills_keep_reported_decimal_amounts_and_bounded_product_p
             "BillPeriod": "2026-09",
             "GroupTerm": 2,
             "GroupPeriod": 0,
-            "Limit": 50,
+            "Limit": limit,
             "Offset": 50,
             "NeedRecordNum": 1,
             "IgnoreZero": 0,
@@ -252,10 +258,20 @@ async def test_monthly_bills_keep_reported_decimal_amounts_and_bounded_product_p
     http = HttpClient()
     http.transport = lambda _: httpx2.MockTransport(respond)
     result = await BillingClient(http).bills(
-        provider, CHANNELS[provider].api_base, keys().encoded().get_secret_value(), "2026-09", 50
+        provider,
+        CHANNELS[provider].api_base,
+        keys().encoded().get_secret_value(),
+        "2026-09",
+        50,
+        **({"limit": requested_limit} if requested_limit is not None else {}),
     )
-    assert len(result["items"]) == 1
-    assert result["has_more"] is (provider == "volcengine")
+    if provider == "aliyun_bailian":
+        assert len(result["items"]) == min(limit, 99)
+        assert result["has_more"] is (limit < 99)
+        assert result["total"] == 149
+    else:
+        assert len(result["items"]) == 1 and result["has_more"]
+        assert result["total"] == 52
     assert result["items"][0]["amounts"]["应付金额"] == "-0.123456789012345678"
     assert "secret" not in json.dumps(result)
 
@@ -272,6 +288,8 @@ async def test_monthly_bills_keep_reported_decimal_amounts_and_bounded_product_p
         ("volcengine", "currency"),
         ("volcengine", "period"),
         ("volcengine", "oversize"),
+        ("volcengine", "invalid_total"),
+        ("volcengine", "inconsistent_total"),
     ],
 )
 async def test_bill_response_rejects_errors_inexact_values_wrong_periods_and_unbounded_pages(
@@ -327,6 +345,10 @@ async def test_bill_response_rejects_errors_inexact_values_wrong_periods_and_unb
             payload["Data"]["BillingCycle"] = "2026-08"
         else:
             rows[0]["BillPeriod"] = "2026-08"
+    elif invalid == "invalid_total":
+        payload["Result"]["Total"] = -1
+    elif invalid == "inconsistent_total":
+        payload["Result"]["Total"] = 0
     else:
         rows.extend([rows[0]] * (10001 if provider == "aliyun_bailian" else 51))
     http = HttpClient()

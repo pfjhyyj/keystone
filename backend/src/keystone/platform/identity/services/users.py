@@ -1,5 +1,6 @@
 from sqlalchemy import or_, select
 
+from keystone.core.database import count_list
 from keystone.platform.identity.models import (
     User,
     UserRole,
@@ -15,19 +16,17 @@ class UserService:
         self.context = context
         self.passwords = passwords
 
-    async def list_users(self, offset, limit, q):
+    async def list_users(self, offset, limit, q, *, total=None):
         async with self.context.access("user:read") as (session, _):
-            rows = await session.scalars(
-                select(User)
-                .where(
-                    or_(
-                        User.username.icontains(q, autoescape=True),
-                        User.display_name.icontains(q, autoescape=True),
-                    )
+            statement = select(User).where(
+                or_(
+                    User.username.icontains(q, autoescape=True),
+                    User.display_name.icontains(q, autoescape=True),
                 )
-                .order_by(User.username)
-                .offset(offset)
-                .limit(limit)
+            )
+            await count_list(session, statement, total)
+            rows = await session.scalars(
+                statement.order_by(User.username).offset(offset).limit(limit)
             )
             users = rows.all()
             if not users:

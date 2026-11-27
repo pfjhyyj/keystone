@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response
 
-from keystone.core.http import Page
+from keystone.core.http import ListTotal, Page
 from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.messaging import schemas
 from keystone.platform.messaging.services.accounts import AccountService
@@ -19,8 +19,8 @@ def _channels(request: Request) -> ChannelService:
 
 
 @router.get("/channels")
-async def channels(request: Request, page: Page):
-    return await _channels(request).channels(page.offset, page.limit)
+async def channels(request: Request, page: Page, total: ListTotal):
+    return await _channels(request).channels(page.offset, page.limit, total=total)
 
 
 @router.post("/channels", status_code=201)
@@ -57,10 +57,13 @@ async def channel_chats(
 async def destinations(
     request: Request,
     page: Page,
+    total: ListTotal,
     provider: Literal["feishu_webhook", "feishu_app"] | None = None,
     channel_id: UUID | None = None,
 ):
-    return await _channels(request).destinations(page.offset, page.limit, provider, channel_id)
+    return await _channels(request).destinations(
+        page.offset, page.limit, provider, channel_id, total=total
+    )
 
 
 @router.post("/destinations", status_code=201)
@@ -97,8 +100,8 @@ def _accounts(request: Request) -> AccountService:
 
 
 @router.get("/accounts")
-async def accounts(request: Request, page: Page, channel_id: UUID | None = None):
-    return await _accounts(request).accounts(page.offset, page.limit, channel_id)
+async def accounts(request: Request, page: Page, total: ListTotal, channel_id: UUID | None = None):
+    return await _accounts(request).accounts(page.offset, page.limit, channel_id, total=total)
 
 
 # POST keeps the email or mobile out of URLs and request logs.
@@ -127,11 +130,12 @@ async def test_account(identifier: UUID, request: Request, card: bool = False):
 async def inbounds(
     request: Request,
     page: Page,
+    total: ListTotal,
     channel_id: UUID | None = None,
     status: Literal["received", "processed", "rejected", "expired", "failed"] | None = None,
 ):
     return await InboundService(access_context(request)).listing(
-        page.offset, page.limit, channel_id, status
+        page.offset, page.limit, channel_id, status, total=total
     )
 
 
@@ -156,10 +160,11 @@ async def create_bind_code(request: Request):
 async def deliveries(
     request: Request,
     page: Page,
+    total: ListTotal,
     channel_id: UUID | None = None,
     status: Literal["pending", "cancelled", "sending", "succeeded", "failed", "unknown", "expired"]
     | None = None,
 ):
     return await DeliveryService(access_context(request)).listing(
-        page.offset, page.limit, channel_id, status
+        page.offset, page.limit, channel_id, status, total=total
     )

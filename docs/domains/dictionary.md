@@ -149,7 +149,7 @@ sequenceDiagram
 
 ### 6.1 控制台
 
-/console/dictionary 要求 read，manage 控制编辑。目录、选项各按 50 条分页，切换父字典清空旧编辑并丢弃迟到响应。key/value 创建后只读，编辑表单始终提交 description/sort_order。
+/console/dictionary 要求 read，manage 控制编辑。字典和选项列表分别分页并记忆每页条数，切换父字典清空旧编辑并丢弃迟到响应。key/value 创建后只读，编辑表单始终提交 description/sort_order。
 
 父字典停用与子项停用分别展示，更新后同步父状态；只读用户可浏览所有状态，无删除、导入导出或拖动排序。
 

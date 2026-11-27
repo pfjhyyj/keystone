@@ -109,7 +109,7 @@ class Volcengine(ResponseBilling):
                 502, "model_billing_invalid_response", "火山引擎余额格式无效"
             ) from None
 
-    async def bills(self, http, base, secret, period, offset):
+    async def bills(self, http, base, secret, period, offset, *, limit=50):
         payload = await self.query(
             http,
             base,
@@ -119,7 +119,7 @@ class Volcengine(ResponseBilling):
                 "BillPeriod": period,
                 "GroupTerm": 2,
                 "GroupPeriod": 0,
-                "Limit": 50,
+                "Limit": limit,
                 "Offset": offset,
                 "NeedRecordNum": 1,
                 "IgnoreZero": 0,
@@ -128,7 +128,12 @@ class Volcengine(ResponseBilling):
         try:
             data = payload["Result"]
             rows, total = data["List"], data["Total"]
-            if not isinstance(rows, list) or len(rows) > 50 or type(total) is not int or total < 0:
+            if (
+                not isinstance(rows, list)
+                or len(rows) > limit
+                or type(total) is not int
+                or total < 0
+            ):
                 raise ValueError()
             if data.get("Offset", offset) != offset or offset + len(rows) > total:
                 raise ValueError()
@@ -157,7 +162,7 @@ class Volcengine(ResponseBilling):
                 )
             if not rows and offset < total:
                 raise ValueError()
-            return {"items": items, "has_more": offset + len(rows) < total}
+            return {"items": items, "has_more": offset + len(rows) < total, "total": total}
         except (ValueError, KeyError, TypeError):
             raise AdapterError(
                 502, "model_billing_invalid_response", "火山引擎账单格式无效"

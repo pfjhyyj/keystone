@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from sqlalchemy import select
 
+from keystone.core.database import count_list
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
@@ -77,17 +78,12 @@ class ChannelService:
             "has_billing_api_key": bool(row.billing_api_key_encrypted),
         }
 
-    async def channels(self, offset, limit):
+    async def channels(self, offset, limit, *, total=None):
         async with self.identity.access("model:manage") as (session, _):
-            return [
-                schemas.channel_view(row)
-                for row in await session.scalars(
-                    select(Channel)
-                    .order_by(Channel.created_at.desc(), Channel.id)
-                    .offset(offset)
-                    .limit(limit)
-                )
-            ]
+            statement = select(Channel).order_by(Channel.created_at.desc(), Channel.id)
+            await count_list(session, statement, total)
+            rows = await session.scalars(statement.offset(offset).limit(limit))
+            return [schemas.channel_view(row) for row in rows]
 
     async def save_channel(self, data, identifier=None):
         action = "model.channel.update" if identifier else "model.channel.create"
@@ -192,7 +188,7 @@ class ChannelService:
                 raise ServiceError(409, "model_billing_credentials_required", "请先配置云账务凭据")
             secret = self.clients.credentials.decrypt(encrypted, identifier, "billing")
             report = await self.clients.billing.bills(
-                provider, base, secret, data.period, data.offset
+                provider, base, secret, data.period, data.offset, limit=data.limit
             )
             async with self.identity.access("model:manage") as (session, _):
                 row = await self.identity.existing(session, Channel, identifier)
@@ -204,8 +200,9 @@ class ChannelService:
                 "scope": "cloud_account",
                 "period": data.period,
                 "offset": data.offset,
-                "limit": 50,
+                "limit": data.limit,
                 "fetched_at": utcnow().isoformat(),
+                "total": None,
                 **report,
             }
 

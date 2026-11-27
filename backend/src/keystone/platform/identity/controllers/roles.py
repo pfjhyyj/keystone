@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Request
 
-from keystone.core.http import Page
+from keystone.core.http import ListTotal, Page
 from keystone.platform.identity import schemas
 from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.identity.services.roles import RoleService
@@ -20,8 +20,8 @@ async def permissions(request: Request):
 
 
 @router.get("/roles")
-async def roles(request: Request, page: Page):
-    return await _service(request).list_roles(page.offset, page.limit)
+async def roles(request: Request, page: Page, total: ListTotal):
+    return await _service(request).list_roles(page.offset, page.limit, total=total)
 
 
 @router.post("/roles", status_code=201)

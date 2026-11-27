@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
+from keystone.core.database import count_list
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.identity.adapters.security import digest
@@ -17,12 +18,14 @@ class TokenService:
     def __init__(self, context: AccessContext):
         self.context = context
 
-    async def list_tokens(self, offset, limit):
+    async def list_tokens(self, offset, limit, *, total=None):
         async with self.context.access(session_only=True) as (session, auth):
+            statement = select(PersonalAccessToken).where(
+                PersonalAccessToken.user_id == auth.user.id
+            )
+            await count_list(session, statement, total)
             rows = await session.scalars(
-                select(PersonalAccessToken)
-                .where(PersonalAccessToken.user_id == auth.user.id)
-                .order_by(PersonalAccessToken.created_at.desc(), PersonalAccessToken.id)
+                statement.order_by(PersonalAccessToken.created_at.desc(), PersonalAccessToken.id)
                 .offset(offset)
                 .limit(limit)
             )

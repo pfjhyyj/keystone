@@ -1,5 +1,6 @@
 from sqlalchemy import and_, false, or_, select
 
+from keystone.core.database import count_list
 from keystone.core.errors import ServiceError
 from keystone.platform.identity.services.access import AccessContext
 from keystone.platform.model_access import schemas
@@ -63,7 +64,14 @@ class ModelEntryService:
         return await self.selection(model_key)
 
     async def entries(
-        self, offset, limit, *, catalog=False, operation="text.generate", delivery="sync"
+        self,
+        offset,
+        limit,
+        *,
+        catalog=False,
+        operation="text.generate",
+        delivery="sync",
+        total=None,
     ):
         async with self.identity.access("model:invoke" if catalog else "model:manage") as (
             session,
@@ -92,6 +100,7 @@ class ModelEntryService:
                         ),
                     )
                 )
+            await count_list(session, statement, total)
             rows = await session.scalars(
                 statement.order_by(ModelEntry.key).offset(offset).limit(limit)
             )

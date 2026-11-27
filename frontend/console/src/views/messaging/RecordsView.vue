@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
+import { computed, inject, ref, shallowRef, watch } from 'vue'
 import { routeLocationKey, routerKey } from 'vue-router'
-import { can } from '../../stores/session'
+import { can, sessionVersion } from '../../stores/session'
 import {
   messagingApi,
   type MessageChannel,
@@ -19,16 +19,41 @@ const route = inject(routeLocationKey, undefined),
 const channelId = ref(typeof route?.query.channel === 'string' ? route.query.channel : ''),
   sentStatus = ref(''),
   receivedStatus = ref('')
-const sent = usePagedList('message_delivery:read', (offset) =>
-  messagingApi.deliveries(offset, { channelId: channelId.value, status: sentStatus.value }),
+const sent = usePagedList('messaging.sent-records', 'message_delivery:read', (offset, limit) =>
+  messagingApi.deliveriesPage(offset, limit, {
+    channelId: channelId.value,
+    status: sentStatus.value,
+  }),
 )
-const received = usePagedList('message_delivery:read', (offset) =>
-  messagingApi.inbounds(offset, { channelId: channelId.value, status: receivedStatus.value }),
+const received = usePagedList(
+  'messaging.received-records',
+  'message_delivery:read',
+  (offset, limit) =>
+    messagingApi.inboundsPage(offset, limit, {
+      channelId: channelId.value,
+      status: receivedStatus.value,
+    }),
 )
-// Channel names need the manage permission; without it the filter is hidden.
-const channels = usePagedList('messaging:manage', messagingApi.channels)
+// The channel filter uses options, not the page size from the channel management table.
+const channels = shallowRef<MessageChannel[]>([])
+watch(
+  [() => can('messaging:manage'), sessionVersion],
+  async ([allowed], _, onCleanup) => {
+    channels.value = []
+    if (!allowed) return
+    let current = true
+    onCleanup(() => (current = false))
+    try {
+      const options = await messagingApi.channels(0)
+      if (current) channels.value = options
+    } catch {
+      // Keep raw channel IDs as labels when the options are unavailable.
+    }
+  },
+  { immediate: true },
+)
 const channelName = (id: string) =>
-  channels.rows.value.find((row: MessageChannel) => row.id === id)?.name ?? id.slice(0, 8)
+  channels.value.find((row) => row.id === id)?.name ?? id.slice(0, 8)
 const TABS = ['sent', 'received']
 const localTab = ref('')
 const tab = computed({
@@ -62,7 +87,7 @@ function filterChannel(value: string) {
               aria-label="渠道"
               @update:model-value="filterChannel($event ?? '')"
               ><el-option value="" label="全部渠道" /><el-option
-                v-for="item in channels.rows.value"
+                v-for="item in channels"
                 :key="item.id"
                 :label="item.name"
                 :value="item.id"
@@ -142,7 +167,10 @@ function filterChannel(value: string) {
           :page="sent.page.value"
           :count="sent.rows.value.length"
           :loading="sent.loading.value"
-          @change="(value: number) => (sent.page.value = value)"
+          :size="sent.size.value"
+          :total="sent.total.value"
+          @change="sent.page.value = $event"
+          @size-change="sent.setSize"
         />
       </el-tab-pane>
       <el-tab-pane label="收到的操作" name="received">
@@ -157,7 +185,7 @@ function filterChannel(value: string) {
               aria-label="渠道"
               @update:model-value="filterChannel($event ?? '')"
               ><el-option value="" label="全部渠道" /><el-option
-                v-for="item in channels.rows.value"
+                v-for="item in channels"
                 :key="item.id"
                 :label="item.name"
                 :value="item.id"
@@ -240,7 +268,10 @@ function filterChannel(value: string) {
           :page="received.page.value"
           :count="received.rows.value.length"
           :loading="received.loading.value"
-          @change="(value: number) => (received.page.value = value)"
+          :size="received.size.value"
+          :total="received.total.value"
+          @change="received.page.value = $event"
+          @size-change="received.setSize"
         />
       </el-tab-pane>
     </el-tabs>

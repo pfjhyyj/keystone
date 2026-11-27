@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 
+from keystone.core.database import count_list, list_count
 from keystone.core.errors import ServiceError
 from keystone.platform.audit.services.writer import Actor
 from keystone.platform.identity.services.access import AccessContext
@@ -93,7 +94,9 @@ class InvocationService:
                 confirmed.add((source.file_id, source.invocation_id, source.artifact_key))
         return confirmed
 
-    async def flow_diagnostics_in_transaction(self, session, auth, run_id, offset, limit):
+    async def flow_diagnostics_in_transaction(
+        self, session, auth, run_id, offset, limit, *, include_total=False
+    ):
         """Trusted caller authorizes Run and holds the current identity transaction.
 
         No default history window: an authorized historical Run keeps its facts.
@@ -101,20 +104,20 @@ class InvocationService:
         """
         if "model_invocation:read" not in auth.permissions:
             return InvocationDiagnostics(available=False)
+        statement = select(
+            ModelInvocation.id,
+            ModelInvocation.operation,
+            ModelInvocation.status,
+            ModelInvocation.flow_context,
+            ModelInvocation.error_code,
+        ).where(
+            *history_scope(auth),
+            ModelInvocation.flow_context["flow_run_id"].astext == str(run_id),
+        )
+        total = await list_count(session, statement) if include_total else None
         rows = list(
             await session.execute(
-                select(
-                    ModelInvocation.id,
-                    ModelInvocation.operation,
-                    ModelInvocation.status,
-                    ModelInvocation.flow_context,
-                    ModelInvocation.error_code,
-                )
-                .where(
-                    *history_scope(auth),
-                    ModelInvocation.flow_context["flow_run_id"].astext == str(run_id),
-                )
-                .order_by(ModelInvocation.created_at, ModelInvocation.id)
+                statement.order_by(ModelInvocation.created_at, ModelInvocation.id)
                 .offset(offset)
                 .limit(limit + 1)
             )
@@ -125,17 +128,18 @@ class InvocationService:
             items=[diagnostic(row) for row in rows[:limit]],
             truncated=truncated,
             next_offset=offset + limit if truncated else None,
+            total=total,
         )
 
-    async def invocations(self, offset, limit, **filters):
+    async def invocations(self, offset, limit, *, total=None, **filters):
         async with self.identity.access("model_invocation:read") as (session, auth):
-            rows = await session.scalars(
+            statement = (
                 select(ModelInvocation)
                 .where(*await history_filters(session, auth, **filters))
                 .order_by(ModelInvocation.created_at.desc(), ModelInvocation.id)
-                .offset(offset)
-                .limit(limit)
             )
+            await count_list(session, statement, total)
+            rows = await session.scalars(statement.offset(offset).limit(limit))
             return await self._views(session, list(rows))
 
     async def invocation(self, identifier):

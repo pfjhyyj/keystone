@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from keystone.core.database import count_list
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services.writer import Actor
@@ -104,7 +105,7 @@ class EnvironmentService:
             backup_enabled=self.backups.enabled,
         )
 
-    async def listing(self, offset, limit):
+    async def listing(self, offset, limit, *, total=None):
         async with self.context.access("environment:use", session_only=self.session_only) as (
             session,
             auth,
@@ -129,10 +130,13 @@ class EnvironmentService:
                     limit -= 1
                 else:
                     offset -= 1
+            statement = select(Environment).where(Environment.owner_id == auth.user.id)
+            if total is not None:
+                await count_list(
+                    session, statement, lambda count: total(count + int(placeholder is not None))
+                )
             environments = await session.scalars(
-                select(Environment)
-                .where(Environment.owner_id == auth.user.id)
-                .order_by(Environment.kind, Environment.key, Environment.id)
+                statement.order_by(Environment.kind, Environment.key, Environment.id)
                 .offset(offset)
                 .limit(limit)
             )

@@ -27,7 +27,7 @@ class RequestCost(Protocol):
 
 @runtime_checkable
 class CloudBills(Protocol):
-    async def bills(self, http, base, secret, period, offset): ...
+    async def bills(self, http, base, secret, period, offset, *, limit=50): ...
 
 
 @runtime_checkable

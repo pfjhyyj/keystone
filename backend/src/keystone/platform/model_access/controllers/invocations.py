@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request
 
+from keystone.core.http import ListTotal
 from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.model_access.schemas.statistics import (
     InvocationFilters,
@@ -40,8 +41,12 @@ async def statistics_options(request: Request, query: Annotated[StatisticsOption
 
 
 @router.get("/model-invocations")
-async def invocations(request: Request, query: Annotated[InvocationListQuery, Query()]):
-    return await _service(request).invocations(query.offset, query.limit, **query.filters())
+async def invocations(
+    request: Request, query: Annotated[InvocationListQuery, Query()], total: ListTotal
+):
+    return await _service(request).invocations(
+        query.offset, query.limit, total=total, **query.filters()
+    )
 
 
 @router.get("/model-invocations/{identifier}")

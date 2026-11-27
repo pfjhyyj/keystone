@@ -4,7 +4,11 @@ import { usePagedList } from '../../../composables/usePagedList'
 import ListPager from '../../../components/ListPager.vue'
 defineProps<{ disabled: boolean }>()
 const model = defineModel<string>({ required: true })
-const { rows, page, loading, error } = usePagedList('model:manage', modelApi.channels)
+const { rows, page, size, total, loading, error, setSize } = usePagedList(
+  'models.channel-picker',
+  'model:manage',
+  modelApi.channelsPage,
+)
 </script>
 <template>
   <div class="subject-picker">
@@ -22,11 +26,13 @@ const { rows, page, loading, error } = usePagedList('model:manage', modelApi.cha
       /></AppSelect>
     </div>
     <ListPager
-      v-if="page || rows.length >= 50"
       :page="page"
       :count="rows.length"
       :loading="loading || disabled"
+      :size="size"
+      :total="total"
       @change="page = $event"
+      @size-change="setSize"
     />
     <el-alert v-if="error" role="alert" type="error" show-icon :closable="false">{{
       error

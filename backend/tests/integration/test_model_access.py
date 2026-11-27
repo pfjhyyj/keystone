@@ -81,8 +81,16 @@ def test_history_windows_match_audit_and_model_queries(client):
         {"until": until.isoformat()},
         {"since": since.isoformat(), "until": until.isoformat()},
     ):
-        rows = client.get("/api/v1/model-invocations", params=bounds).json()
-        assert {r["id"] for r in rows} == set(identifiers[1:3])
+        response = client.get("/api/v1/model-invocations", params=bounds)
+        assert "X-Total-Count" not in response.headers
+        assert {r["id"] for r in response.json()} == set(identifiers[1:3])
+        counted = client.get(
+            "/api/v1/model-invocations",
+            params={**bounds, "offset": 1, "limit": 1},
+            headers={"X-Keystone-List-Total": "1"},
+        )
+        assert counted.headers["X-Total-Count"] == "2"
+        assert [r["id"] for r in counted.json()] == [identifiers[1]]
         logs = client.get(
             "/api/v1/audit-logs", params={**bounds, "action": "model.invocation.recover"}
         ).json()
@@ -235,6 +243,25 @@ def edit_channel(client, row, **changes):
     return client.patch(
         f"/api/v1/model-channels/{row['id']}", json={**{k: row[k] for k in fields}, **changes}
     )
+
+
+def test_management_list_totals_are_opt_in_and_not_limited_by_page(client):
+    first = channel(client)
+    second = channel(client, name="disabled", is_active=False)
+    entry(client, first, "first")
+    entry(client, second, "second", is_active=False)
+
+    for path in ("/api/v1/model-channels", "/api/v1/model-entries"):
+        params = {"offset": 1, "limit": 1}
+        default = client.get(path, params=params)
+        assert default.status_code == 200 and len(default.json()) == 1
+        assert "X-Total-Count" not in default.headers
+        counted = client.get(path, params=params, headers={"X-Keystone-List-Total": "1"})
+        assert counted.status_code == 200 and counted.json() == default.json()
+        assert counted.headers["X-Total-Count"] == "2"
+        empty = client.get(path, params={"offset": 2}, headers={"X-Keystone-List-Total": "1"})
+        assert empty.status_code == 200 and empty.json() == []
+        assert empty.headers["X-Total-Count"] == "2"
 
 
 def internal_service(client, secret):
@@ -708,14 +735,27 @@ def test_history_self_all_and_pat_permissions_are_independent(client):
     login(client, "alice", "changed-password-123")
     call = invoke(client).json()["invocation_id"]
     assert client.get("/api/v1/model-invocations/" + admin_call).status_code == 404
-    assert len(client.get("/api/v1/model-invocations").json()) == 1
-    assert client.get("/api/v1/model-channels").status_code == 403
+    total = {"X-Keystone-List-Total": "1"}
+    response = client.get(
+        "/api/v1/model-invocations", params={"status": "succeeded"}, headers=total
+    )
+    assert [row["id"] for row in response.json()] == [call]
+    assert response.headers["X-Total-Count"] == "1"
+    empty = client.get("/api/v1/model-invocations", params={"status": "failed"}, headers=total)
+    assert empty.status_code == 200 and empty.json() == []
+    assert empty.headers["X-Total-Count"] == "0"
+    for path in ("/api/v1/model-channels", "/api/v1/model-entries"):
+        denied = client.get(path, headers=total)
+        assert denied.status_code == 403
+        assert "X-Total-Count" not in denied.headers
     read_pat = token(client, ["model_invocation:read"])["token"]
     assert (
         client.get("/api/v1/model-invocations/" + call, headers=bearer(read_pat)).status_code == 200
     )
     invoke_pat = token(client, ["model:invoke"])["token"]
-    assert client.get("/api/v1/model-invocations", headers=bearer(invoke_pat)).status_code == 403
+    denied = client.get("/api/v1/model-invocations", headers={**bearer(invoke_pat), **total})
+    assert denied.status_code == 403
+    assert "X-Total-Count" not in denied.headers
     assert (
         client.get("/api/v1/model-invocations/summary", headers=bearer(invoke_pat)).status_code
         == 403
@@ -725,7 +765,9 @@ def test_history_self_all_and_pat_permissions_are_independent(client):
     assert client.get("/api/v1/model-invocations", headers=bearer(all_only)).status_code == 403
     manage_only = token(client, ["model:manage"])["token"]
     assert client.get("/api/v1/_test/model-options", headers=bearer(manage_only)).status_code == 403
-    assert len(client.get("/api/v1/model-invocations").json()) == 2
+    response = client.get("/api/v1/model-invocations", headers=total, params={"limit": 1})
+    assert response.status_code == 200 and len(response.json()) == 1
+    assert response.headers["X-Total-Count"] == "2"
 
 
 def test_inflight_completion_after_user_revocation_and_channel_disable(client, monkeypatch):

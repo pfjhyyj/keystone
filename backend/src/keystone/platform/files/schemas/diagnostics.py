@@ -21,3 +21,4 @@ class ReferenceDiagnostics(Input):
     items: list[ReferenceDiagnostic] = []
     truncated: bool = False
     next_offset: int | None = None
+    total: int | None = None

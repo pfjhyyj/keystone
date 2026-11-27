@@ -15,11 +15,16 @@ const query = ref(''),
 const {
   rows,
   page,
+  size,
+  total,
   loading,
   error: listError,
   reload,
   search,
-} = usePagedList('user:read', (offset) => adminApi.users(offset, applied.value))
+  setSize,
+} = usePagedList('users.list', 'user:read', (offset, limit) =>
+  adminApi.usersPage(offset, limit, applied.value),
+)
 const { busy, error, notice, run } = useAction()
 const mode = ref<'create' | 'edit' | 'password' | 'active' | 'revoke' | null>(null)
 const target = ref<ManagedUser | null>(null),
@@ -234,7 +239,10 @@ function submit() {
       :page="page"
       :count="rows.length"
       :loading="loading || busy"
+      :size="size"
+      :total="total"
       @change="page = $event"
+      @size-change="setSize"
     />
     <AppDialog
       v-if="mode && mode !== 'active' && mode !== 'revoke'"

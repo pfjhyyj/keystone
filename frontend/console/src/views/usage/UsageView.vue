@@ -20,6 +20,7 @@ import {
   type UsageStatistics,
 } from '../../api/modelUsage'
 import { uuidPattern } from '../../api/client'
+import { usePageSize } from '../../composables/usePagedList'
 import { shanghaiInput, shanghaiDate, statisticsRange } from './time'
 import AppSelect from '../../components/AppSelect.vue'
 import InvocationDialog from '../models/components/InvocationDialog.vue'
@@ -66,9 +67,14 @@ const sortUnit = computed(() => text('sort_unit') || 'USD')
 const bucket = computed(() =>
   ['hour', 'day', 'month'].includes(text('bucket')) ? text('bucket') : 'day',
 )
-const safePage = (value: string) => (/^\d+$/.test(value) ? Math.min(2000, Number(value)) : 0)
-const page = computed(() => safePage(text('page'))),
-  groupPage = computed(() => safePage(text('group_page')))
+const MAX_USAGE_OFFSET = 100_000
+const { size: callSize, setSize: setCallSize } = usePageSize('usage-calls')
+const { size: groupSize, setSize: setGroupSize } = usePageSize('usage-groups')
+const resizing = reactive({ page: false, group_page: false })
+const safePage = (value: string, size: number) =>
+  /^\d+$/.test(value) ? Math.min(Math.floor(MAX_USAGE_OFFSET / size), Number(value)) : 0
+const page = computed(() => safePage(text('page'), callSize.value)),
+  groupPage = computed(() => safePage(text('group_page'), groupSize.value))
 const selected = computed(() =>
   new RegExp(`^${uuidPattern}$`).test(text('invocation')) ? text('invocation') : '',
 )
@@ -101,6 +107,7 @@ const validation = ref(''),
   statsError = ref(''),
   statsLoading = ref(false)
 const calls = ref<Invocation[]>([]),
+  callsTotal = ref<number | null>(null),
   callsError = ref(''),
   callsLoading = ref(false)
 const preset = ref('custom')
@@ -144,6 +151,43 @@ async function navigate(patch: Record<string, string | null>, replace = false) {
     if (query[key] === null || query[key] === '') delete query[key]
   await router[replace ? 'replace' : 'push']({ path: '/model-usage', query })
 }
+async function changeSize(key: 'page' | 'group_page', size: number) {
+  const [currentSize, setSize] =
+    key === 'page' ? [callSize, setCallSize] : [groupSize, setGroupSize]
+  if (resizing[key] || size === currentSize.value) return
+  // Do not load the old page with the new size (or the reset page with the old size).
+  resizing[key] = true
+  try {
+    await navigate(
+      key === 'page' ? { page: null, invocation: null, run: null } : { group_page: null },
+    )
+    if (alive && !text(key)) setSize(size)
+  } finally {
+    resizing[key] = false
+  }
+}
+let pageCorrection = Promise.resolve()
+async function reconcilePage(
+  key: 'page' | 'group_page',
+  target: number,
+  size: number,
+  total: number | null,
+  isCurrent: () => boolean,
+) {
+  const last = total === null ? target : Math.max(0, Math.ceil(total / size) - 1)
+  const next = Math.min(target, last)
+  const requested = text(key)
+  if (next !== target || (/^\d+$/.test(requested) && Number(requested) > next)) {
+    // Both lists can resolve together; merge each correction against the latest route.
+    const correction = pageCorrection.then(async () => {
+      if (isCurrent() && text(key) === requested)
+        await navigate({ [key]: next ? String(next) : null }, true)
+    })
+    pageCorrection = correction.catch(() => {})
+    await correction
+  }
+  return next === target && isCurrent()
+}
 const localInput = shanghaiInput
 watch(
   () => JSON.stringify({ filters: current.value, range: text('range') }),
@@ -177,16 +221,27 @@ const statsKey = computed(() =>
     order_by: ordering.value,
     sort_unit: sortUnit.value,
     bucket: bucket.value,
-    offset: String(groupPage.value * 50),
+    offset: String(groupPage.value * groupSize.value),
+    limit: String(groupSize.value),
     scope: scope.value,
   }),
 )
 async function loadStatistics() {
-  const generation = ++statsGeneration
+  const generation = ++statsGeneration,
+    key = statsKey.value
+  const isCurrent = () =>
+    alive &&
+    generation === statsGeneration &&
+    allowed.value &&
+    !resizing.group_page &&
+    key === statsKey.value
+  if (resizing.group_page) return
   statistics.value = null
   statsError.value = ''
   statsLoading.value = false
-  if (!allowed.value || !(await ensureRange())) return
+  if (!allowed.value || !(await ensureRange()) || !isCurrent()) return
+  const target = groupPage.value,
+    size = groupSize.value
   statsLoading.value = true
   try {
     const result = await usageApi.statistics({
@@ -195,44 +250,62 @@ async function loadStatistics() {
       order_by: ordering.value,
       sort_unit: sortUnit.value,
       bucket: bucket.value,
-      offset: String(groupPage.value * 50),
-      limit: '50',
+      offset: String(target * size),
+      limit: String(size),
     })
-    if (alive && generation === statsGeneration && allowed.value) statistics.value = result
+    if (
+      isCurrent() &&
+      (await reconcilePage('group_page', target, size, result.total_groups, isCurrent))
+    )
+      statistics.value = result
   } catch (reason) {
-    if (alive && generation === statsGeneration && allowed.value)
-      statsError.value = reason instanceof Error ? reason.message : '统计查询失败'
+    if (isCurrent()) statsError.value = reason instanceof Error ? reason.message : '统计查询失败'
   } finally {
     if (alive && generation === statsGeneration) statsLoading.value = false
   }
 }
-watch([statsKey, allowed], loadStatistics, { immediate: true })
+watch([statsKey, allowed, () => resizing.group_page], loadStatistics, { immediate: true })
 const callsKey = computed(() =>
   JSON.stringify({
     ...current.value,
     page: page.value,
+    size: callSize.value,
     active: tab.value === 'details',
     scope: scope.value,
   }),
 )
 async function loadCalls() {
-  const generation = ++callsGeneration
+  const generation = ++callsGeneration,
+    key = callsKey.value
+  const isCurrent = () =>
+    alive &&
+    generation === callsGeneration &&
+    allowed.value &&
+    !resizing.page &&
+    key === callsKey.value
+  if (resizing.page) return
   calls.value = []
+  callsTotal.value = null
   callsError.value = ''
   callsLoading.value = false
-  if (!allowed.value || tab.value !== 'details' || !(await ensureRange())) return
+  if (!allowed.value || tab.value !== 'details' || !(await ensureRange()) || !isCurrent()) return
+  const target = page.value,
+    size = callSize.value
   callsLoading.value = true
   try {
-    const result = await modelApi.calls(page.value * 50, current.value)
-    if (alive && generation === callsGeneration && allowed.value) calls.value = result
+    const { items, total } = await modelApi.calls(target * size, size, current.value)
+    if (isCurrent() && (await reconcilePage('page', target, size, total, isCurrent))) {
+      calls.value = items
+      callsTotal.value = total
+    }
   } catch (reason) {
-    if (alive && generation === callsGeneration && allowed.value)
+    if (isCurrent())
       callsError.value = reason instanceof Error ? reason.message : '调用记录查询失败'
   } finally {
     if (alive && generation === callsGeneration) callsLoading.value = false
   }
 }
-watch([callsKey, allowed], loadCalls, { immediate: true })
+watch([callsKey, allowed, () => resizing.page], loadCalls, { immediate: true })
 // Per-group series load only on the analysis tab; the chart draws the first page of groups.
 const series = ref<UsageStatistics | null>(null),
   seriesScope = ref(''),
@@ -741,6 +814,7 @@ onScopeDispose(() => {
               :dimension="grouping"
               :cost-basis="costBasis"
               :page="groupPage"
+              :size="groupSize"
               :total="statistics.total_groups"
               :order="ordering"
               :unit="sortUnit"
@@ -748,9 +822,10 @@ onScopeDispose(() => {
               @order="
                 navigate({ order_by: $event.order, sort_unit: $event.unit, group_page: null })
               "
-              :loading="statsLoading"
+              :loading="statsLoading || resizing.group_page"
               @dimension="navigate({ group_by: $event, group_page: null })"
               @page="navigate({ group_page: String($event) })"
+              @size-change="changeSize('group_page', $event)"
               @drill="drill" /></template
         ></el-tab-pane>
         <el-tab-pane label="维度分析" name="analysis"
@@ -776,14 +851,16 @@ onScopeDispose(() => {
             :dimension="grouping"
             :cost-basis="costBasis"
             :page="groupPage"
+            :size="groupSize"
             :total="statistics.total_groups"
             :order="ordering"
             :unit="sortUnit"
             :units="statistics.summary.costs.map((cost) => cost.unit)"
             @order="navigate({ order_by: $event.order, sort_unit: $event.unit, group_page: null })"
-            :loading="statsLoading"
+            :loading="statsLoading || resizing.group_page"
             @dimension="navigate({ group_by: $event, group_page: null })"
             @page="navigate({ group_page: String($event) })"
+            @size-change="changeSize('group_page', $event)"
             @drill="drill"
         /></el-tab-pane>
         <el-tab-pane label="调用明细" name="details"
@@ -792,8 +869,11 @@ onScopeDispose(() => {
             v-if="!callsError"
             :rows="calls"
             :page="page"
-            :loading="callsLoading"
+            :size="callSize"
+            :total="callsTotal"
+            :loading="callsLoading || resizing.page"
             @page="navigate({ page: String($event), invocation: null, run: null })"
+            @size-change="changeSize('page', $event)"
             @select="openDetail('invocation', $event)"
             @flow="openDetail('run', $event)"
             @drill="drill"

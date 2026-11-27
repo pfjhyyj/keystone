@@ -1,4 +1,4 @@
-import { request } from './client'
+import { requestPage } from './client'
 export interface Definition {
   id: string
   key: string
@@ -19,7 +19,8 @@ export interface DictionaryItem {
   updated_at: string
 }
 export const dictionaryApi = {
-  list: (offset: number) => request<Definition[]>(`/dictionaries?offset=${offset}&limit=50`),
-  items: (id: string, offset: number) =>
-    request<DictionaryItem[]>(`/dictionaries/${id}/items?offset=${offset}&limit=50`),
+  listPage: (offset: number, limit: number) =>
+    requestPage<Definition>('/dictionaries', offset, limit),
+  itemsPage: (id: string, offset: number, limit: number) =>
+    requestPage<DictionaryItem>(`/dictionaries/${id}/items`, offset, limit),
 }

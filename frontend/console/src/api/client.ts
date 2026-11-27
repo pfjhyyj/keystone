@@ -127,13 +127,26 @@ function sessionActivityHeaders(path: string): Record<string, string> {
   return { 'X-Keystone-Session-Active': active ? '1' : '0' }
 }
 
-export async function request<T>(
+interface RequestOptions {
+  method?: string
+  body?: unknown
+  observe?: boolean
+  signal?: AbortSignal
+  timeout?: number
+  extraHeaders?: Record<string, string>
+}
+
+async function fetchJson<T>(
   path: string,
-  method = 'GET',
-  body?: unknown,
-  observe = true,
-  signal?: AbortSignal,
-  timeout = 15000,
+  decode: (data: unknown, response: Response) => T,
+  {
+    method = 'GET',
+    body,
+    observe = true,
+    signal,
+    timeout = 15000,
+    extraHeaders,
+  }: RequestOptions = {},
 ): Promise<T> {
   const work = sessionWork(signal, timeout)
   try {
@@ -144,6 +157,7 @@ export async function request<T>(
       signal: work.signal,
       headers: {
         ...headers(path),
+        ...extraHeaders,
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -161,12 +175,55 @@ export async function request<T>(
           })
     work.assert()
     work.signal.throwIfAborted()
-    return result as T
+    return decode(result, response)
   } catch (error) {
     return work.rethrow(error)
   } finally {
     work.close()
   }
+}
+
+export function request<T>(
+  path: string,
+  method = 'GET',
+  body?: unknown,
+  observe = true,
+  signal?: AbortSignal,
+  timeout = 15000,
+): Promise<T> {
+  return fetchJson(path, (data) => data as T, { method, body, observe, signal, timeout })
+}
+
+export interface PageResult<T> {
+  items: T[]
+  total: number | null
+}
+
+export function requestPage<T>(
+  path: string,
+  offset: number,
+  limit: number,
+): Promise<PageResult<T>> {
+  const separator = path.indexOf('?')
+  const base = separator === -1 ? path : path.slice(0, separator)
+  const filters = new URLSearchParams(separator === -1 ? '' : path.slice(separator + 1))
+  filters.delete('offset')
+  filters.delete('limit')
+  const params = new URLSearchParams([
+    ['offset', String(offset)],
+    ['limit', String(limit)],
+    ...filters,
+  ])
+  return fetchJson(
+    `${base}?${params}`,
+    (data, response) => {
+      if (!Array.isArray(data)) throw new ApiError(502, 'invalid_response', '列表响应格式不正确。')
+      const raw = response.headers.get('X-Total-Count')
+      const total = raw !== null && /^[0-9]+$/.test(raw) ? Number(raw) : NaN
+      return { items: data as T[], total: Number.isSafeInteger(total) ? total : null }
+    },
+    { extraHeaders: { 'X-Keystone-List-Total': '1' } },
+  )
 }
 
 export const uuidPattern =

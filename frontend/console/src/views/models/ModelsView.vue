@@ -24,8 +24,8 @@ import UpstreamModelPicker from './components/UpstreamModelPicker.vue'
 import ChannelBalance from './components/ChannelBalance.vue'
 import PricingDialog from './components/PricingDialog.vue'
 const pricingEntry = ref<ModelEntry | null>(null)
-const channels = usePagedList('model:manage', modelApi.channels),
-  entries = usePagedList('model:manage', modelApi.entries)
+const channels = usePagedList('models.channels', 'model:manage', modelApi.channelsPage),
+  entries = usePagedList('models.entries', 'model:manage', modelApi.entriesPage)
 const { busy, error, notice, run } = useAction()
 const options = ref<ModelOptions | null>(null),
   optionsError = ref('')
@@ -432,7 +432,10 @@ onMounted(() => {
             :page="channels.page.value"
             :count="channels.rows.value.length"
             :loading="busy || channels.loading.value"
+            :size="channels.size.value"
+            :total="channels.total.value"
             @change="channels.page.value = $event"
+            @size-change="channels.setSize"
           />
         </section>
       </el-tab-pane>
@@ -580,7 +583,10 @@ onMounted(() => {
             :page="entries.page.value"
             :count="entries.rows.value.length"
             :loading="busy || entries.loading.value"
+            :size="entries.size.value"
+            :total="entries.total.value"
             @change="entries.page.value = $event"
+            @size-change="entries.setSize"
           />
         </section>
       </el-tab-pane>

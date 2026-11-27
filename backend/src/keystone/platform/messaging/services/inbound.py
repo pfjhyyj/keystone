@@ -20,6 +20,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
+from keystone.core.database import count_list
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.audit.services import writer as audit
@@ -793,19 +794,19 @@ class InboundService:
     def __init__(self, identity):
         self.identity = identity
 
-    async def listing(self, offset, limit, channel_id=None, status=None):
+    async def listing(self, offset, limit, channel_id=None, status=None, *, total=None):
         from keystone.platform.messaging.services.deliveries import filters
 
         async with self.identity.access("message_delivery:read") as (session, _):
-            rows = (
-                await session.scalars(
-                    select(MessageInbound)
-                    .where(*filters(MessageInbound, channel_id, status))
-                    .order_by(MessageInbound.received_at.desc(), MessageInbound.id.desc())
-                    .offset(offset)
-                    .limit(limit)
-                )
-            ).all()
+            statement = (
+                select(MessageInbound)
+                .where(*filters(MessageInbound, channel_id, status))
+                .order_by(MessageInbound.received_at.desc(), MessageInbound.id.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            await count_list(session, statement, total)
+            rows = (await session.scalars(statement)).all()
             users = {
                 user["id"]: user["label"]
                 for user in await users_in_transaction(

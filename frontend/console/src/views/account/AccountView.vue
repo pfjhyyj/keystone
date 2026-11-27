@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
-import { request } from '../../api/client'
-import type { PersonalToken } from '../../api/client'
+import { request, requestPage, type PersonalToken } from '../../api/client'
 import {
   changePassword as updatePassword,
   identity,
@@ -10,12 +9,14 @@ import {
   sessionVersion,
 } from '../../stores/session'
 import { useAction } from '../../composables/useAction'
+import { usePagedList } from '../../composables/usePagedList'
+import ListPager from '../../components/ListPager.vue'
 import { confirmAction } from '../../utils/confirm'
 import PermissionPicker from '../roles/components/PermissionPicker.vue'
 import FeishuBindings from './components/FeishuBindings.vue'
 const route = useRoute(),
   router = useRouter()
-const { busy, error, run } = useAction()
+const { busy: actionBusy, error, run } = useAction()
 const creating = ref(false)
 const tokenCatalog = computed(() =>
   (identity.value?.permissions ?? []).map((key) => ({ key, name: key, description: '' })),
@@ -23,8 +24,7 @@ const tokenCatalog = computed(() =>
 const currentPassword = ref(''),
   newPassword = ref(''),
   confirmation = ref('')
-const tokens = ref<PersonalToken[]>([]),
-  tokenName = ref(''),
+const tokenName = ref(''),
   tokenDays = ref(30),
   selected = ref<string[]>([]),
   revealed = ref('')
@@ -36,9 +36,24 @@ const active = computed(() =>
       ? String(route.query.tab)
       : 'profile',
 )
+const {
+  rows: tokens,
+  page,
+  size,
+  total,
+  loading: tokensLoading,
+  error: tokensError,
+  reload: reloadTokens,
+  search: resetTokens,
+  setSize,
+} = usePagedList(
+  'account.personal-tokens',
+  () => active.value === 'tokens' && identity.value?.credential_kind === 'session',
+  (offset, limit) => requestPage<PersonalToken>('/auth/tokens', offset, limit),
+)
+const busy = computed(() => actionBusy.value || tokensLoading.value)
 function clearForms() {
   creating.value = false
-  tokens.value = []
   revealed.value = ''
   selected.value = []
   currentPassword.value = ''
@@ -57,11 +72,7 @@ async function changePassword() {
     }
   })
 }
-async function loadTokens() {
-  await run(async () => {
-    tokens.value = await request<PersonalToken[]>('/auth/tokens')
-  })
-}
+
 async function createToken() {
   await run(async () => {
     revealed.value = ''
@@ -73,7 +84,8 @@ async function createToken() {
     revealed.value = created.token ?? ''
     tokenName.value = ''
     selected.value = []
-    tokens.value = await request<PersonalToken[]>('/auth/tokens')
+    if (page.value) page.value = 0
+    else await reloadTokens()
   })
 }
 async function revokeToken(id: string) {
@@ -91,22 +103,19 @@ async function revokeToken(id: string) {
   await run(async () => {
     await request(`/auth/tokens/${id}`, 'DELETE')
     revealed.value = ''
-    tokens.value = await request<PersonalToken[]>('/auth/tokens')
+    await reloadTokens()
   })
 }
 function tab(value: string | number) {
   if (!busy.value) void router.replace({ path: '/account', query: { tab: String(value) } })
 }
-watch(
-  active,
-  (value) => {
-    clearForms()
-    error.value = ''
-    if (value === 'tokens') void loadTokens()
-  },
-  { immediate: true },
-)
+watch(active, (value) => {
+  clearForms()
+  error.value = ''
+  if (value !== 'tokens') page.value = 0
+})
 watch(sessionVersion, clearForms, { flush: 'sync' })
+watch(sessionVersion, resetTokens)
 onBeforeRouteUpdate(() => !busy.value)
 onBeforeUnmount(clearForms)
 </script>
@@ -217,6 +226,9 @@ onBeforeUnmount(clearForms)
               :rows="3"
             /><el-button @click="revealed = ''">我已保存，关闭明文</el-button></el-alert
           >
+          <el-alert v-if="tokensError" type="error" :closable="false" show-icon>{{
+            tokensError
+          }}</el-alert>
           <el-table
             :fit="false"
             native-scrollbar
@@ -264,7 +276,15 @@ onBeforeUnmount(clearForms)
               ></el-table-column
             ><template #empty><el-empty description="尚无个人令牌。" :image-size="64" /></template
           ></el-table>
-          <p v-if="tokens.length === 50">此处显示最近 50 条；完整分页查询由 API 提供。</p>
+          <ListPager
+            :page="page"
+            :count="tokens.length"
+            :loading="busy"
+            :size="size"
+            :total="total"
+            @change="page = $event"
+            @size-change="setSize"
+          />
         </div>
       </el-tab-pane>
       <el-tab-pane label="飞书绑定" name="feishu" :disabled="forced">

@@ -42,3 +42,11 @@ class CloudBillingCredentials(Input):
 class CloudBillQuery(Input):
     period: str = Field(pattern=r"^20\d{2}-(0[1-9]|1[0-2])$")
     offset: int = Field(default=0, ge=0, le=10000)
+    limit: int = 50
+
+    @field_validator("limit")
+    @classmethod
+    def page_size(cls, value):
+        if value not in {20, 50, 100}:
+            raise ValueError("Bill page size must be 20, 50, or 100")
+        return value

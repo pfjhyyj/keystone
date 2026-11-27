@@ -12,6 +12,7 @@ import ModelManager from '../views/models/ModelsView.vue'
 import { modelOptionsFixture } from './model-options.fixture'
 import FlowManager from '../views/flows/FlowsView.vue'
 import FlowRunDialog from '../views/flows/components/FlowRunDialog.vue'
+import ListPager from '../components/ListPager.vue'
 import { authorize, deferred, fakeApi, chooseSelect, selectControl } from './support'
 
 const id = '11111111-1111-4111-8111-111111111111',
@@ -568,7 +569,8 @@ it('does not fetch start catalogs, files or models for a Flow reader', async () 
   })
   const wrapper = mount(FlowManager)
   await flushPromises()
-  expect(paths).toEqual(['/flow-runs?offset=0&limit=50'])
+  const size = wrapper.getComponent(ListPager).props('size')
+  expect(paths).toEqual([`/flow-runs?offset=0&limit=${size}`])
   expect(wrapper.text()).not.toContain('发起流程')
 })
 

@@ -5,6 +5,8 @@ import UsageView from '../views/usage/UsageView.vue'
 import DashboardView from '../views/overview/DashboardView.vue'
 import StatisticsPicker from '../views/usage/components/StatisticsPicker.vue'
 import MoneyAmount from '../components/MoneyAmount.vue'
+import ListPager from '../components/ListPager.vue'
+import UsageCalls from '../views/usage/components/UsageCalls.vue'
 import { compactMoney } from '../api/models'
 import { ElOption, ElSelect } from 'element-plus'
 import { type UsageMetrics, type UsageStatistics } from '../api/modelUsage'
@@ -161,6 +163,7 @@ it('opens actual cost details from the dashboard with distinct follow-up filters
   }
 })
 afterEach(() => {
+  localStorage.clear()
   vi.useRealTimers()
   vi.restoreAllMocks()
 })
@@ -329,6 +332,133 @@ it('preserves submitted bounds and filters through drill-down, pagination, detai
     expect(params.get('source')).toBe('flow')
   }
 })
+it('uses the group count, resets only the group page on resize, and keeps chart requests independent', async () => {
+  authorize(['model_invocation:read'])
+  const requests: URLSearchParams[] = []
+  fakeApi((path) => {
+    if (!path.startsWith('/model-invocations/statistics?')) return []
+    requests.push(new URLSearchParams(path.split('?')[1]))
+    return result({ total_groups: 153 })
+  })
+  const { wrapper, router } = await page({ tab: 'analysis', group_page: '2', page: '3' })
+  const pager = () => wrapper.get('#pane-analysis').getComponent(ListPager)
+  expect(pager().props()).toMatchObject({ total: 153, count: 1, page: 2, size: 50 })
+  expect(
+    requests.filter((params) => !params.has('series')).map((params) => params.get('offset')),
+  ).toEqual(['100'])
+  pager().vm.$emit('size-change', 100)
+  await flushPromises()
+  expect(router.currentRoute.value.query).toMatchObject({
+    tab: 'analysis',
+    page: '3',
+    since,
+    until,
+  })
+  expect(router.currentRoute.value.query).not.toHaveProperty('group_page')
+  expect(pager().props()).toMatchObject({ page: 0, size: 100, total: 153 })
+  const pages = (series: boolean) =>
+    requests
+      .filter((params) => params.has('series') === series)
+      .map((params) => [params.get('offset'), params.get('limit')])
+  expect(pages(false)).toEqual([
+    ['100', '50'],
+    ['0', '100'],
+  ])
+  expect(pages(true)).toEqual([['0', '8']])
+  const reopened = await page({ group_page: '1' })
+  expect(reopened.wrapper.get('#pane-overview').getComponent(ListPager).props()).toMatchObject({
+    page: 1,
+    size: 100,
+  })
+})
+
+it('loads invocation counts, resets only the call page on resize, and ignores a stale invocation response', async () => {
+  authorize(['model_invocation:read'])
+  const requests: URLSearchParams[] = []
+  const stale = deferred<Response>()
+  const optIns: (string | null)[] = []
+  const counted = (rows: ReturnType<typeof calls>, total: number) =>
+    Response.json(rows, { headers: { 'X-Total-Count': String(total) } })
+  fakeApi((path, init) => {
+    if (path.startsWith('/model-invocations/statistics?')) return result({ total_groups: 153 })
+    if (!path.startsWith('/model-invocations?')) return []
+    const params = new URLSearchParams(path.split('?')[1])
+    requests.push(params)
+    optIns.push(new Headers(init.headers).get('X-Keystone-List-Total'))
+    return params.get('limit') === '50' ? stale.promise : counted(calls(), 62)
+  })
+  const { wrapper, router } = await page({
+    tab: 'details',
+    page: '1',
+    group_page: '2',
+    source: 'flow',
+  })
+  const pager = () => wrapper.getComponent(UsageCalls).getComponent(ListPager)
+  expect(pager().props('loading')).toBe(true)
+  pager().vm.$emit('size-change', 20)
+  await flushPromises()
+  expect(router.currentRoute.value.query).toMatchObject({
+    tab: 'details',
+    group_page: '2',
+    source: 'flow',
+    since,
+    until,
+  })
+  expect(router.currentRoute.value.query).not.toHaveProperty('page')
+  expect(pager().props()).toMatchObject({ page: 0, size: 20, total: 62, count: 1, loading: false })
+  expect(
+    requests.map((params) => [params.get('offset'), params.get('limit'), params.get('source')]),
+  ).toEqual([
+    ['50', '50', 'flow'],
+    ['0', '20', 'flow'],
+  ])
+  expect(optIns).toEqual(['1', '1'])
+  stale.resolve(counted([{ ...calls()[0]!, model_name: '旧请求的模型' }], 5))
+  await flushPromises()
+  expect(wrapper.text()).not.toContain('旧请求的模型')
+  expect(pager().props()).toMatchObject({ total: 62 })
+  const reopened = await page({ tab: 'details', page: '2' })
+  expect(reopened.wrapper.getComponent(UsageCalls).getComponent(ListPager).props()).toMatchObject({
+    page: 2,
+    size: 20,
+  })
+  expect(requests.at(-1)?.get('offset')).toBe('40')
+})
+
+it('bounds usage offsets by page size and corrects both out-of-range URL pages', async () => {
+  authorize(['model_invocation:read'])
+  const groupRequests: URLSearchParams[] = []
+  const callRequests: string[] = []
+  fakeApi((path) => {
+    const params = new URLSearchParams(path.split('?')[1])
+    if (path.startsWith('/model-invocations?')) {
+      callRequests.push(params.get('offset')!)
+      return Response.json(calls(), { headers: { 'X-Total-Count': '112' } })
+    }
+    if (!path.startsWith('/model-invocations/statistics?')) return []
+    groupRequests.push(params)
+    return result({ total_groups: 121 })
+  })
+  const { wrapper, router } = await page()
+  const pager = () => wrapper.get('#pane-overview').getComponent(ListPager)
+  pager().vm.$emit('size-change', 100)
+  await flushPromises()
+  groupRequests.length = 0
+  await router.push({
+    path: '/model-usage',
+    query: { since, until, tab: 'details', group_page: '2000', page: '2001' },
+  })
+  await flushPromises()
+  expect(groupRequests.map((params) => [params.get('offset'), params.get('limit')])).toEqual([
+    ['100000', '100'],
+    ['100', '100'],
+  ])
+  expect(callRequests).toEqual(['100000', '100'])
+  expect(router.currentRoute.value.query).toMatchObject({ group_page: '1', page: '2' })
+  expect(pager().props('page')).toBe(1)
+  expect(wrapper.getComponent(UsageCalls).getComponent(ListPager).props('page')).toBe(2)
+})
+
 it('persists grouping, unit-specific ranking and bucket choices in links', async () => {
   authorize(['model_invocation:read'])
   const paths: string[] = []
@@ -643,8 +773,12 @@ it('draws per Flow definition series on the analysis tab and exports every group
   expect(
     paths
       .filter((path) => path.includes('series=true'))
-      .map((path) => new URLSearchParams(path.split('?')[1]).get('offset')),
-  ).toEqual(['0', '20'])
+      .map((path) => new URLSearchParams(path.split('?')[1]))
+      .map((params) => [params.get('offset'), params.get('limit')]),
+  ).toEqual([
+    ['0', '20'],
+    ['20', '20'],
+  ])
   expect(click).toHaveBeenCalledOnce()
   const text = await created[0]!.text()
   const lines = text.replace('﻿', '').trim().split('\r\n')

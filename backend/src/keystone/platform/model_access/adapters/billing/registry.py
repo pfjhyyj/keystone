@@ -52,9 +52,9 @@ class BillingClient:
                 raise AdapterError(503, "model_provider_unavailable", "当前服务商尚未开放账务查询")
             return await adapter.query_balance(self.http, base, secret)
 
-    async def bills(self, provider, base, secret, period, offset):
+    async def bills(self, provider, base, secret, period, offset, *, limit=50):
         with adapter_errors():
             adapter = self.adapter(provider, base)
             if not isinstance(adapter, CloudBills):
                 raise AdapterError(409, "model_billing_unavailable", "当前渠道未接入云账户月账单")
-            return await adapter.bills(self.http, base, secret, period, offset)
+            return await adapter.bills(self.http, base, secret, period, offset, limit=limit)

@@ -1,4 +1,4 @@
-import { request } from './client'
+import { request, requestPage } from './client'
 export type MessageProvider = 'feishu_webhook' | 'feishu_app'
 export interface MessageConnection {
   state: 'connected' | 'connecting' | 'refused' | 'lost' | 'offline'
@@ -109,21 +109,23 @@ export interface RecordFilter {
   channelId?: string
   status?: string
 }
-const recordQuery = (offset: number, filter: RecordFilter) =>
+const recordQuery = (filter: RecordFilter) =>
   new URLSearchParams({
-    offset: String(offset),
-    limit: '50',
     ...(filter.channelId ? { channel_id: filter.channelId } : {}),
     ...(filter.status ? { status: filter.status } : {}),
-  }).toString()
+  })
 export const messagingApi = {
   channels: (offset: number) =>
     request<MessageChannel[]>(`/messaging/channels?offset=${offset}&limit=50`),
+  channelsPage: (offset: number, limit: number) =>
+    requestPage<MessageChannel>('/messaging/channels', offset, limit),
   channel: (id: string) => request<MessageChannel>(`/messaging/channels/${id}`),
   // Group bot keys live on their channel; only app channels list their groups separately.
-  groups: (channelId: string, offset: number) =>
-    request<MessageDestination[]>(
-      `/messaging/destinations?channel_id=${channelId}&offset=${offset}&limit=50`,
+  groupsPage: (channelId: string, offset: number, limit: number) =>
+    requestPage<MessageDestination>(
+      `/messaging/destinations?${new URLSearchParams({ channel_id: channelId })}`,
+      offset,
+      limit,
     ),
   chats: (channelId: string, pageToken?: string) =>
     request<{ items: MessageChat[]; page_token: string | null }>(
@@ -131,9 +133,11 @@ export const messagingApi = {
         pageToken ? `?page_token=${encodeURIComponent(pageToken)}` : ''
       }`,
     ),
-  members: (channelId: string, offset: number) =>
-    request<MessageAccount[]>(
-      `/messaging/accounts?channel_id=${channelId}&offset=${offset}&limit=50`,
+  membersPage: (channelId: string, offset: number, limit: number) =>
+    requestPage<MessageAccount>(
+      `/messaging/accounts?${new URLSearchParams({ channel_id: channelId })}`,
+      offset,
+      limit,
     ),
   // POST keeps the email or mobile out of URLs and request logs.
   lookup: (channelId: string, contact: string) =>
@@ -141,10 +145,10 @@ export const messagingApi = {
       channel_id: channelId,
       ...contactField(contact),
     }),
-  deliveries: (offset: number, filter: RecordFilter = {}) =>
-    request<MessageDelivery[]>(`/messaging/deliveries?${recordQuery(offset, filter)}`),
-  inbounds: (offset: number, filter: RecordFilter = {}) =>
-    request<MessageInbound[]>(`/messaging/inbounds?${recordQuery(offset, filter)}`),
+  deliveriesPage: (offset: number, limit: number, filter: RecordFilter = {}) =>
+    requestPage<MessageDelivery>(`/messaging/deliveries?${recordQuery(filter)}`, offset, limit),
+  inboundsPage: (offset: number, limit: number, filter: RecordFilter = {}) =>
+    requestPage<MessageInbound>(`/messaging/inbounds?${recordQuery(filter)}`, offset, limit),
   // The signed-in user's own code; it is shown once and only its digest is stored.
   bindCode: () => request<BindCode>('/messaging/bind-codes', 'POST'),
   myBindings: () => request<MyBinding[]>('/messaging/me/accounts'),

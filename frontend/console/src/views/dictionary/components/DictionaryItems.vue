@@ -12,11 +12,16 @@ defineEmits<{ close: [] }>()
 const {
   rows,
   page,
+  size,
+  total,
   loading,
   error: listError,
   reload,
   search,
-} = usePagedList('dictionary:read', (offset) => dictionaryApi.items(props.dictionary.id, offset))
+  setSize,
+} = usePagedList('dictionary.items', 'dictionary:read', (offset, limit) =>
+  dictionaryApi.itemsPage(props.dictionary.id, offset, limit),
+)
 const { busy, error, notice, run } = useAction()
 const open = ref(false),
   editing = ref<DictionaryItem | null>(null)
@@ -129,7 +134,10 @@ async function save() {
       :page="page"
       :count="rows.length"
       :loading="loading || busy"
+      :size="size"
+      :total="total"
       @change="page = $event"
+      @size-change="setSize"
     />
     <AppDialog
       protect-changes

@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from keystone.core.database import count_list
 from keystone.core.errors import ServiceError
 from keystone.platform.dictionary.models import Dictionary, DictionaryItem
 from keystone.platform.dictionary.schemas import ItemCreate, ItemEdit, item_view, view
@@ -131,28 +132,26 @@ class DictionaryService:
             )
             return item_view(row) if item else view(row)
 
-    async def listing(self, offset, limit):
+    async def listing(self, offset, limit, *, total=None):
         async with self.identity.access("dictionary:read") as (session, _):
-            return [
-                view(row)
-                for row in await session.scalars(
-                    select(Dictionary).order_by(Dictionary.key).offset(offset).limit(limit)
-                )
-            ]
+            statement = select(Dictionary)
+            await count_list(session, statement, total)
+            rows = await session.scalars(
+                statement.order_by(Dictionary.key).offset(offset).limit(limit)
+            )
+            return [view(row) for row in rows]
 
-    async def items(self, identifier, offset, limit):
+    async def items(self, identifier, offset, limit, *, total=None):
         async with self.identity.access("dictionary:read") as (session, _):
             await self.identity.existing(session, Dictionary, identifier)
-            return [
-                item_view(row)
-                for row in await session.scalars(
-                    select(DictionaryItem)
-                    .where(DictionaryItem.dictionary_id == identifier)
-                    .order_by(DictionaryItem.sort_order, DictionaryItem.id)
-                    .offset(offset)
-                    .limit(limit)
-                )
-            ]
+            statement = select(DictionaryItem).where(DictionaryItem.dictionary_id == identifier)
+            await count_list(session, statement, total)
+            rows = await session.scalars(
+                statement.order_by(DictionaryItem.sort_order, DictionaryItem.id)
+                .offset(offset)
+                .limit(limit)
+            )
+            return [item_view(row) for row in rows]
 
     async def options(self, key, offset, limit):
         async with self.identity.access("dictionary:read") as (session, _):

@@ -108,17 +108,17 @@ class FlowDiagnostics:
     def __init__(self, flows, models, files):
         self.flows, self.models, self.files = flows, models, files
 
-    async def execute(self, identifier, offset=0, limit=50, section="all"):
+    async def execute(self, identifier, offset=0, limit=50, section="all", *, include_total=False):
         async with self.flows.identity.access("flow:read") as (session, auth):
             await self.flows.visible(session, auth, identifier)
             result = Diagnostics(run_id=identifier)
             if section in {"all", "models"}:
                 result.models = await self.models.flow_diagnostics_in_transaction(
-                    session, auth, identifier, offset, limit
+                    session, auth, identifier, offset, limit, include_total=include_total
                 )
             if section in {"all", "files"}:
                 references = await self.files.flow_diagnostics_in_transaction(
-                    session, identifier, offset, limit
+                    session, identifier, offset, limit, include_total=include_total
                 )
                 candidates = [
                     ImageSource(
@@ -141,6 +141,7 @@ class FlowDiagnostics:
                 result.files = FlowFileDiagnostics(
                     truncated=references.truncated,
                     next_offset=references.next_offset,
+                    total=references.total,
                     items=[
                         FlowFileDiagnostic(
                             file_id=row.file_id,

@@ -13,7 +13,7 @@ import pytest
 from fastapi import WebSocketDisconnect
 from pydantic import SecretStr
 from sqlalchemy import update
-from test_identity import browser_headers, create_user, login, token
+from test_identity import LIST_TOTAL, browser_headers, create_user, login, token
 from test_identity import client as client
 
 from keystone.core.config import Settings
@@ -250,7 +250,9 @@ def test_unknown_create_reuses_reservation_and_stop_drains_control(client):
     root = "/api/v1/environments"
     path = f"{root}/{workspace}"
 
-    assert [item["id"] for item in client.get(root).json()] == [str(workspace)]
+    counted = client.get(root, headers=LIST_TOTAL)
+    assert counted.status_code == 200 and counted.headers["X-Total-Count"] == "1"
+    assert [item["id"] for item in counted.json()] == [str(workspace)]
     assert client.post(f"{root}/{other}/open").status_code == 404
 
     with ThreadPoolExecutor(1) as executor:
@@ -337,18 +339,31 @@ class FirstUseRuntime:
 
 def test_default_environment_is_created_on_first_use_and_initialized_once(client):
     login(client)
+    root = "/api/v1/environments"
+    unconfigured = client.get(root, headers=LIST_TOTAL)
+    assert unconfigured.status_code == 200 and unconfigured.headers["X-Total-Count"] == "0"
+    assert unconfigured.json() == []
+
     runtime = FirstUseRuntime()
     client.app.state.opensandbox = runtime
-    root = "/api/v1/environments"
-
-    [placeholder] = client.get(root).json()
+    ordinary = client.get(root, params={"limit": 1})
+    counted = client.get(root, params={"limit": 1}, headers=LIST_TOTAL)
+    assert ordinary.status_code == counted.status_code == 200
+    assert "X-Total-Count" not in ordinary.headers and counted.headers["X-Total-Count"] == "1"
+    assert counted.json() == ordinary.json()
+    [placeholder] = counted.json()
     assert placeholder["id"] is None and placeholder["key"] == "default"
+    empty = client.get(root, params={"offset": 1, "limit": 1}, headers=LIST_TOTAL)
+    assert empty.status_code == 200 and empty.headers["X-Total-Count"] == "1"
+    assert empty.json() == []
     assert client.post(root, json={"kind": "chromium", "key": "missing"}).status_code == 404
 
     first = client.post(root, json={"kind": "chromium", "key": "default"}).json()
     again = client.post(root, json={"kind": "chromium", "key": "default"}).json()
     assert first["id"] == again["id"] and first["name"] == "默认环境"
-    assert [item["id"] for item in client.get(root).json()] == [first["id"]]
+    counted = client.get(root, headers=LIST_TOTAL)
+    assert counted.status_code == 200 and counted.headers["X-Total-Count"] == "1"
+    assert [item["id"] for item in counted.json()] == [first["id"]]
 
     path = f"{root}/{first['id']}"
     opened = client.post(path + "/open").json()

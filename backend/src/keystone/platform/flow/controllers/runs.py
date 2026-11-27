@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response
 
-from keystone.core.http import Page
+from keystone.core.http import ListTotal, Page
 from keystone.platform.flow.schemas.diagnostics import Diagnostics, DiagnosticSection
 from keystone.platform.flow.schemas.step_diagnostics import MAX_ATTACHMENTS, StepAttempts
 from keystone.platform.flow.services.runs import FlowService
@@ -21,9 +21,10 @@ def _service(request: Request) -> FlowService:
 async def listing(
     request: Request,
     page: Page,
+    total: ListTotal,
     status: Literal["pending", "running", "succeeded", "failed", "cancelled"] | None = None,
 ):
-    return await _service(request).listing(page.offset, page.limit, status)
+    return await _service(request).listing(page.offset, page.limit, status, total=total)
 
 
 @router.get("/flow-runs/{identifier}")
@@ -92,8 +93,12 @@ async def costs(
 
 @router.get("/flow-runs/{identifier}/diagnostics", response_model=Diagnostics)
 async def diagnostics(
-    identifier: UUID, request: Request, page: Page, section: DiagnosticSection = "all"
+    identifier: UUID,
+    request: Request,
+    page: Page,
+    section: DiagnosticSection = "all",
+    include_total: bool = False,
 ):
     return await request.app.state.runtime.flow_diagnostics(access_context(request)).execute(
-        identifier, page.offset, page.limit, section
+        identifier, page.offset, page.limit, section, include_total=include_total
     )

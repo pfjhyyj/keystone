@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response
 
-from keystone.core.http import Page
+from keystone.core.http import ListTotal, Page
 from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.schemas.cloud_billing import CloudBillQuery
@@ -22,8 +22,8 @@ async def options(request: Request):
 
 
 @router.get("/model-channels")
-async def channels(request: Request, page: Page):
-    return await _service(request).channels(page.offset, page.limit)
+async def channels(request: Request, page: Page, total: ListTotal):
+    return await _service(request).channels(page.offset, page.limit, total=total)
 
 
 @router.post("/model-channels", status_code=201)

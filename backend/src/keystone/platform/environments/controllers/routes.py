@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 
 from keystone.core.errors import ServiceError
-from keystone.core.http import Page
+from keystone.core.http import ListTotal, Page
 from keystone.core.time import utcnow
 from keystone.platform.environments.adapters.opensandbox import RuntimeUnavailable
 from keystone.platform.environments.schemas.environments import EnvironmentRequest
@@ -27,8 +27,10 @@ def _service(connection, context):
 
 
 @router.get("")
-async def environments(request: Request, page: Page):
-    return await _service(request, access_context(request)).listing(page.offset, page.limit)
+async def environments(request: Request, page: Page, total: ListTotal):
+    return await _service(request, access_context(request)).listing(
+        page.offset, page.limit, total=total
+    )
 
 
 @router.post("")

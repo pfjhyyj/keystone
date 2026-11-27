@@ -5,6 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import delete, func, select, text
 
+from keystone.core.database import list_count
 from keystone.core.errors import ServiceError
 from keystone.platform.audit.services import writer as audit
 from keystone.platform.audit.services.writer import Actor, record
@@ -148,23 +149,28 @@ class FileReferenceService:
     def __init__(self, identity: AccessContext):
         self.identity = identity
 
-    async def flow_diagnostics_in_transaction(self, session, run_id, offset, limit):
+    async def flow_diagnostics_in_transaction(
+        self, session, run_id, offset, limit, *, include_total=False
+    ):
         """Trusted caller authorizes this Run under its current identity transaction.
 
         References never supply inspect or content grants. Filter before pagination.
         """
+        statement = (
+            select(
+                FileReference.file_id,
+                FileReference.slot,
+                File.checksum_sha256,
+                File.size_bytes,
+                File.content_type,
+            )
+            .join(File, File.id == FileReference.file_id)
+            .where(FileReference.owner == f"flow:{run_id}")
+        )
+        total = await list_count(session, statement) if include_total else None
         rows = list(
             await session.execute(
-                select(
-                    FileReference.file_id,
-                    FileReference.slot,
-                    File.checksum_sha256,
-                    File.size_bytes,
-                    File.content_type,
-                )
-                .join(File, File.id == FileReference.file_id)
-                .where(FileReference.owner == f"flow:{run_id}")
-                .order_by(FileReference.slot, FileReference.file_id)
+                statement.order_by(FileReference.slot, FileReference.file_id)
                 .offset(offset)
                 .limit(limit + 1)
             )
@@ -183,6 +189,7 @@ class FileReferenceService:
             ],
             truncated=truncated,
             next_offset=offset + limit if truncated else None,
+            total=total,
         )
 
     async def release_in_transaction(self, session, auth, references):

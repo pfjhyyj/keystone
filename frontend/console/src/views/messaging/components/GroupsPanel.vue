@@ -20,8 +20,8 @@ import StatusTag from '../../../components/StatusTag.vue'
 
 const props = defineProps<{ channel: MessageChannel }>()
 const emit = defineEmits<{ changed: [] }>()
-const list = usePagedList('messaging:manage', (offset) =>
-  messagingApi.groups(props.channel.id, offset),
+const list = usePagedList('messaging.groups', 'messaging:manage', (offset, limit) =>
+  messagingApi.groupsPage(props.channel.id, offset, limit),
 )
 const { busy, error, notice, run } = useAction()
 const dialog = ref(false),
@@ -254,7 +254,10 @@ async function remove(row: MessageDestination) {
       :page="list.page.value"
       :count="list.rows.value.length"
       :loading="busy || list.loading.value"
-      @change="(value: number) => (list.page.value = value)"
+      :size="list.size.value"
+      :total="list.total.value"
+      @change="list.page.value = $event"
+      @size-change="list.setSize"
     />
     <AppDialog
       v-if="dialog"

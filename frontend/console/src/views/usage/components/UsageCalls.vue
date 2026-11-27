@@ -17,6 +17,8 @@ const props = withDefaults(
   defineProps<{
     rows: Invocation[]
     page: number
+    size: number
+    total: number | null
     loading: boolean
     costBasis?: 'actual' | 'estimated'
   }>(),
@@ -51,6 +53,7 @@ const displayRows = computed(() =>
 )
 defineEmits<{
   page: [value: number]
+  'size-change': [value: number]
   select: [value: string]
   flow: [value: string]
   drill: [filters: Record<string, string>]
@@ -189,7 +192,10 @@ defineEmits<{
       :page="page"
       :count="rows.length"
       :loading="loading"
+      :size="size"
+      :total="total"
       @change="$emit('page', $event)"
+      @size-change="$emit('size-change', $event)"
     />
   </section>
 </template>

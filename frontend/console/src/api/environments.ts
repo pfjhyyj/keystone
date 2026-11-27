@@ -1,4 +1,4 @@
-import { request } from './client'
+import { request, requestPage } from './client'
 
 export type SessionState = 'starting' | 'ready' | 'stopping' | 'review' | 'stopped' | 'failed'
 export interface EnvironmentSession {
@@ -26,6 +26,8 @@ const sessionPath = (id: string, sessionId: string) =>
   `${path(id)}/sessions/${encodeURIComponent(sessionId)}`
 export const environmentsApi = {
   list: (offset: number) => request<Environment[]>(`/environments?offset=${offset}&limit=50`),
+  listPage: (offset: number, limit: number) =>
+    requestPage<Environment>('/environments', offset, limit),
   ensure: (kind: string, key: string) =>
     request<Environment>('/environments', 'POST', { kind, key }),
   open: (id: string) =>

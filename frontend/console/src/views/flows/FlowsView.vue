@@ -9,9 +9,10 @@ const status = ref(''),
   applied = ref(''),
   selected = ref('')
 const flowReadable = () => can('flow:read') || can('flow:diagnose')
-const { rows, page, loading, error, refresh, reload, search } = usePagedList(
+const { rows, page, size, total, loading, error, refresh, reload, search, setSize } = usePagedList(
+  'flows.runs',
   flowReadable,
-  (offset) => flowApi.runs(offset, applied.value),
+  (offset, limit) => flowApi.runsPage(offset, limit, applied.value),
 )
 watch(sessionVersion, () => {
   selected.value = ''
@@ -100,7 +101,15 @@ onScopeDispose(() => clearInterval(timer))
           <template #empty><el-empty :image-size="64" description="暂无符合条件的运行" /></template
         ></el-table>
       </div>
-      <ListPager :page="page" :count="rows.length" :loading="loading" @change="page = $event" />
+      <ListPager
+        :page="page"
+        :count="rows.length"
+        :loading="loading"
+        :size="size"
+        :total="total"
+        @change="page = $event"
+        @size-change="setSize"
+      />
     </section>
     <FlowRunDialog
       v-if="selected"

@@ -10,7 +10,16 @@ import ListPager from '../../components/ListPager.vue'
 import PermissionPicker from './components/PermissionPicker.vue'
 import { confirmAction } from '../../utils/confirm'
 
-const { rows, page, loading, error: listError, reload } = usePagedList('role:read', adminApi.roles)
+const {
+  rows,
+  page,
+  size,
+  total,
+  loading,
+  error: listError,
+  reload,
+  setSize,
+} = usePagedList('roles.list', 'role:read', adminApi.rolesPage)
 const { busy, error, notice, run } = useAction()
 const catalog = ref<Permission[]>([])
 const catalogError = ref('')
@@ -199,7 +208,10 @@ onMounted(loadCatalog)
       :page="page"
       :count="rows.length"
       :loading="loading || busy"
+      :size="size"
+      :total="total"
       @change="page = $event"
+      @size-change="setSize"
     />
     <AppDialog
       protect-changes

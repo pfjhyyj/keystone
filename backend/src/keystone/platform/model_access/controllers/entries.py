@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Request, Response
 
-from keystone.core.http import Page
+from keystone.core.http import ListTotal, Page
 from keystone.platform.identity.controllers.dependencies import access_context
 from keystone.platform.model_access import schemas
 from keystone.platform.model_access.schemas.pricing import PricingEdit, PricingPreview
@@ -32,8 +32,8 @@ async def preview_pricing(identifier: UUID, data: PricingPreview, request: Reque
 
 
 @router.get("/model-entries")
-async def entries(request: Request, page: Page):
-    return await _service(request).entries(page.offset, page.limit)
+async def entries(request: Request, page: Page, total: ListTotal):
+    return await _service(request).entries(page.offset, page.limit, total=total)
 
 
 @router.post("/model-entries", status_code=201)

@@ -1,4 +1,4 @@
-import { failure, headers, request, sessionWork } from './client'
+import { failure, headers, request, requestPage, sessionWork } from './client'
 import type { ModelOperation } from './models'
 export interface FlowRun {
   definition_revision: string | null
@@ -41,6 +41,7 @@ export interface DiagnosticPage<T> {
   items: T[]
   truncated: boolean
   next_offset: number | null
+  total?: number
 }
 export interface InvocationDiagnostic {
   invocation_id: string
@@ -104,13 +105,15 @@ export const flowApi = {
       work.close()
     }
   },
-  diagnostics: (id: string, section: DiagnosticSection, offset = 0) =>
+  diagnostics: (id: string, section: DiagnosticSection, offset = 0, limit = 50) =>
     request<Diagnostics>(
-      `/flow-runs/${id}/diagnostics?${new URLSearchParams({ section, offset: String(offset), limit: '50' })}`,
+      `/flow-runs/${id}/diagnostics?${new URLSearchParams({ section, offset: String(offset), limit: String(limit), include_total: 'true' })}`,
     ),
-  runs: (offset: number, status: string) =>
-    request<FlowRun[]>(
-      `/flow-runs?${new URLSearchParams({ offset: String(offset), limit: '50', ...(status ? { status } : {}) })}`,
+  runsPage: (offset: number, limit: number, status: string) =>
+    requestPage<FlowRun>(
+      status ? `/flow-runs?${new URLSearchParams({ status })}` : '/flow-runs',
+      offset,
+      limit,
     ),
   detail: (id: string) => request<FlowRun>(`/flow-runs/${id}`),
 }

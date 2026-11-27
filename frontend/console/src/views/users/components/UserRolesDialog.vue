@@ -10,7 +10,16 @@ import ListPager from '../../../components/ListPager.vue'
 const props = defineProps<{ user: ManagedUser }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 const assigned = ref([...props.user.role_ids])
-const { rows, page, loading, error: listError, reload } = usePagedList('role:read', adminApi.roles)
+const {
+  rows,
+  page,
+  size,
+  total,
+  loading,
+  error: listError,
+  reload,
+  setSize,
+} = usePagedList('users.role-picker', 'role:read', adminApi.rolesPage)
 const { busy, error, run } = useAction()
 let alive = true
 onScopeDispose(() => {
@@ -86,7 +95,10 @@ async function toggle(role: Role) {
       :page="page"
       :count="rows.length"
       :loading="loading || busy"
+      :size="size"
+      :total="total"
       @change="page = $event"
+      @size-change="setSize"
     />
   </AppDialog>
 </template>

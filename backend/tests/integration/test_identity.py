@@ -27,6 +27,7 @@ PASSWORD = "test-password-123"
 NEW_PASSWORD = "changed-password-123"
 ORIGIN = "http://testserver"
 BROWSER = {"Origin": ORIGIN, "X-Keystone-Request": "1"}
+LIST_TOTAL = {"X-Keystone-List-Total": "1"}
 
 
 def initialize_database(settings):
@@ -151,7 +152,7 @@ def test_lists_batch_only_current_page_associations(client, resource):
     table = "user_roles" if resource == "users" else "role_permissions"
     engine = client.app.state.runtime.database.engine.sync_engine
 
-    def page(**params):
+    def page(*, headers=None, expected_total=None, **params):
         statements, associations = [], []
 
         def capture(connection, cursor, statement, parameters, context, many):
@@ -161,10 +162,13 @@ def test_lists_batch_only_current_page_associations(client, resource):
 
         event.listen(engine, "before_cursor_execute", capture)
         try:
-            response = client.get(f"/api/v1/{resource}", params=params)
+            response = client.get(f"/api/v1/{resource}", params=params, headers=headers)
         finally:
             event.remove(engine, "before_cursor_execute", capture)
         assert response.status_code == 200, response.text
+        assert response.headers.get("X-Total-Count") == (
+            str(expected_total) if expected_total is not None else None
+        )
         rows = response.json()
         assert len(associations) == (1 if rows else 0)
         if rows:
@@ -176,13 +180,16 @@ def test_lists_batch_only_current_page_associations(client, resource):
     second, second_count = page(offset=1, limit=1)
     assert count == single_count == second_count
     assert first == rows[:1] and second == rows[1:2]
-    assert page(offset=100)[0] == []
+    assert page(limit=1, headers={"X-Keystone-List-Total": "0"}) == (first, single_count)
+    assert page(limit=1, headers=LIST_TOTAL, expected_total=len(rows)) == (first, single_count + 1)
+    assert page(offset=100, headers=LIST_TOTAL, expected_total=len(rows))[0] == []
     if resource == "users":
         by_id = {row["id"]: row for row in rows}
         assert set(by_id[alice["id"]]["role_ids"]) == {empty["id"], reader["id"]}
         assert by_id[bob["id"]]["role_ids"] == []
-        assert page(q="ALICE")[0] == [by_id[alice["id"]]]
-        assert page(q="missing")[0] == []
+        assert page(q="ALICE", headers=LIST_TOTAL, expected_total=1)[0] == [by_id[alice["id"]]]
+        assert page(q="ALICE", offset=1, headers=LIST_TOTAL, expected_total=1)[0] == []
+        assert page(q="missing", headers=LIST_TOTAL, expected_total=0)[0] == []
     else:
         by_key = {row["key"]: row for row in rows}
         assert by_key["empty"]["permissions"] == []
@@ -445,7 +452,8 @@ def test_pat_scopes_revocation_and_disable_never_revive_credentials(client):
     limited = token(client, ["user:read"])
     assert client.get("/api/v1/users", headers=bearer(limited["token"])).status_code == 200
     assert client.get("/api/v1/roles", headers=bearer(limited["token"])).status_code == 403
-    assert client.get("/api/v1/auth/tokens", headers=bearer(limited["token"])).status_code == 403
+    denied = client.get("/api/v1/auth/tokens", headers={**bearer(limited["token"]), **LIST_TOTAL})
+    assert denied.status_code == 403 and "X-Total-Count" not in denied.headers
     assert (
         client.post(
             "/api/v1/auth/password",
@@ -454,8 +462,9 @@ def test_pat_scopes_revocation_and_disable_never_revive_credentials(client):
         ).status_code
         == 403
     )
-    listing = client.get("/api/v1/auth/tokens").json()
-    assert "token" not in listing[0] and "token_digest" not in listing[0]
+    listing = client.get("/api/v1/auth/tokens")
+    assert listing.status_code == 200 and "X-Total-Count" not in listing.headers
+    assert not {"token", "token_digest"} & listing.json()[0].keys()
     assert client.delete(f"/api/v1/auth/tokens/{limited['id']}").status_code == 204
     assert client.get("/api/v1/users", headers=bearer(limited["token"])).status_code == 401
     # Last admin cannot be disabled, even by an all-scope PAT.
@@ -475,6 +484,12 @@ def test_pat_scopes_revocation_and_disable_never_revive_credentials(client):
     )
     login(client, "alice", NEW_PASSWORD)
     personal = token(client, [])
+    owned = client.get("/api/v1/auth/tokens", params={"limit": 1}, headers=LIST_TOTAL)
+    assert owned.status_code == 200 and owned.headers["X-Total-Count"] == "1"
+    assert [row["id"] for row in owned.json()] == [personal["id"]]
+    empty = client.get("/api/v1/auth/tokens", params={"offset": 1}, headers=LIST_TOTAL)
+    assert empty.status_code == 200 and empty.headers["X-Total-Count"] == "1"
+    assert empty.json() == []
     old_cookie = client.cookies.get("keystone_session")
     login(client)
     assert (
@@ -639,7 +654,8 @@ def test_global_audit_requires_permission_and_pat_scope(client):
     narrowed = token(client, [])
     for headers in ({}, bearer(reader_pat["token"])):
         assert client.get("/api/v1/audit-logs", headers=headers).status_code == 200
-    assert client.get("/api/v1/audit-logs", headers=bearer(narrowed["token"])).status_code == 403
+    denied = client.get("/api/v1/audit-logs", headers={**bearer(narrowed["token"]), **LIST_TOTAL})
+    assert denied.status_code == 403 and "X-Total-Count" not in denied.headers
 
 
 def test_audit_transaction_rollback_actor_and_deleted_target(client, monkeypatch):
@@ -656,10 +672,28 @@ def test_audit_transaction_rollback_actor_and_deleted_target(client, monkeypatch
         ).status_code
         == 204
     )
-    logs = client.get("/api/v1/audit-logs", params={"target_id": role_value["id"]}).json()
-    deleted = next(row for row in logs if row["action"] == "identity.role.delete")
+    logs = client.get("/api/v1/audit-logs", params={"target_id": role_value["id"]})
+    assert logs.status_code == 200 and "X-Total-Count" not in logs.headers
+    deleted = next(row for row in logs.json() if row["action"] == "identity.role.delete")
     assert deleted["actor_id"] == admin["id"] and deleted["details"]["key"] == "temporary"
     assert deleted["details"]["credential_id"] == personal["id"]
+
+    filters = {
+        "target_id": role_value["id"],
+        "actor_id": admin["id"],
+        "action": "identity.role.delete",
+        "outcome": "success",
+        "limit": 1,
+    }
+    for extra, expected_total, expected_rows in (
+        ({}, "1", [deleted]),
+        ({"offset": 1}, "1", []),
+        ({"until": (utcnow() - timedelta(days=1)).isoformat()}, "0", []),
+    ):
+        response = client.get("/api/v1/audit-logs", params={**filters, **extra}, headers=LIST_TOTAL)
+        assert response.status_code == 200 and response.headers["X-Total-Count"] == expected_total
+        assert response.json() == expected_rows
+
     original = audit.record
 
     async def fail_success(*args, **kwargs):

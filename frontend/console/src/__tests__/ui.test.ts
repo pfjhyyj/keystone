@@ -6,8 +6,9 @@ import { defineComponent, h, ref } from 'vue'
 import { useUnsavedChanges } from '../composables/useUnsavedChanges'
 import AppDialog from '../components/AppDialog.vue'
 import AppSelect from '../components/AppSelect.vue'
+import ListPager from '../components/ListPager.vue'
 import AccountView from '../views/account/AccountView.vue'
-import { identity } from '../stores/session'
+import { identity, refreshSession } from '../stores/session'
 import * as confirmation from '../utils/confirm'
 import { makeRouter } from '../router'
 import { authorize, chooseSelect, deferred, fakeApi } from './support'
@@ -83,6 +84,79 @@ it('does not revoke a personal token until the user confirms', async () => {
   await flushPromises()
   expect(deletes).toEqual(['/auth/tokens/token-one'])
   confirm.mockRestore()
+})
+
+it('pages through personal tokens and remembers the page size but not the tab page', async () => {
+  authorize([])
+  const rows = Array.from({ length: 53 }, (_, index) => ({
+    id: `token-${index + 1}`,
+    name: `令牌 ${index + 1}`,
+    permissions: [],
+    expires_at: '2030-01-01T00:00:00Z',
+    revoked_at: null,
+  }))
+  const reads: [number, number][] = []
+  let session = identity.value!
+  fakeApi((path, init) => {
+    if (path === '/auth/me') return session
+    expect(path.split('?')[0]).toBe('/auth/tokens')
+    expect(new Headers(init.headers).get('X-Keystone-List-Total')).toBe('1')
+    const query = new URLSearchParams(path.split('?')[1])
+    const offset = Number(query.get('offset'))
+    const limit = Number(query.get('limit'))
+    reads.push([offset, limit])
+    return Response.json(rows.slice(offset, offset + limit), {
+      headers: { 'X-Total-Count': String(rows.length) },
+    })
+  })
+  const router = makeRouter(createMemoryHistory('/console/'))
+  await router.push('/account?tab=tokens')
+  const wrapper = mount(AccountView, { global: { plugins: [router] } })
+  await flushPromises()
+  const pager = wrapper.getComponent(ListPager)
+  const next = () => pager.findAll('button').find((button) => button.text() === '下一页')!
+  try {
+    expect(pager.props('total')).toBe(53)
+    expect(pager.text()).toContain('第 1 页')
+    expect(pager.text()).toContain('共 2 页')
+    pager.vm.$emit('size-change', 50)
+    await flushPromises()
+    expect(reads.at(-1)).toEqual([0, 50])
+    await next().trigger('click')
+    await flushPromises()
+    expect(reads.at(-1)).toEqual([50, 50])
+    expect(wrapper.findAll('.token-list tbody td').map((cell) => cell.text())).toContain('令牌 53')
+    expect(next().attributes('disabled')).toBeDefined()
+    expect(pager.text()).toContain('第 2 页')
+    expect(pager.text()).toContain('共 2 页')
+
+    const readCount = reads.length
+    await router.push('/account?tab=profile')
+    await flushPromises()
+    expect(reads).toHaveLength(readCount)
+    await router.push('/account?tab=tokens')
+    await flushPromises()
+    expect(reads.at(-1)).toEqual([0, 50])
+
+    await next().trigger('click')
+    await flushPromises()
+    expect(reads.at(-1)).toEqual([50, 50])
+    session = { ...session, user: { ...session.user, id: 'another-account' } }
+    await refreshSession()
+    await flushPromises()
+    expect(reads.at(-1)).toEqual([0, 50])
+
+    pager.vm.$emit('size-change', 100)
+    await flushPromises()
+    wrapper.unmount()
+    const remounted = mount(AccountView, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(remounted.getComponent(ListPager).props('size')).toBe(100)
+    expect(reads.at(-1)).toEqual([0, 100])
+    remounted.unmount()
+  } finally {
+    localStorage.clear()
+  }
 })
 
 it('validates a required Element selection through the native form', async () => {

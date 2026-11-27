@@ -6,6 +6,7 @@ never the email or mobile used to look it up.
 
 from sqlalchemy import select
 
+from keystone.core.database import count_list
 from keystone.core.errors import ServiceError
 from keystone.platform.identity.services.subjects import users_in_transaction
 from keystone.platform.messaging.adapters import feishu_app, feishu_errors
@@ -45,18 +46,18 @@ class AccountService:
     def __init__(self, identity, vault):
         self.identity, self.vault = identity, vault
 
-    async def accounts(self, offset, limit, channel_id=None):
+    async def accounts(self, offset, limit, channel_id=None, *, total=None):
         async with self.identity.access("messaging:manage") as (session, _):
             query = select(ExternalAccount)
             if channel_id is not None:
                 query = query.where(ExternalAccount.channel_id == channel_id)
-            rows = (
-                await session.scalars(
-                    query.order_by(ExternalAccount.created_at.desc(), ExternalAccount.id)
-                    .offset(offset)
-                    .limit(limit)
-                )
-            ).all()
+            statement = (
+                query.order_by(ExternalAccount.created_at.desc(), ExternalAccount.id)
+                .offset(offset)
+                .limit(limit)
+            )
+            await count_list(session, statement, total)
+            rows = (await session.scalars(statement)).all()
             labels = {
                 user["id"]: user["label"]
                 for user in await users_in_transaction(session, {row.user_id for row in rows})

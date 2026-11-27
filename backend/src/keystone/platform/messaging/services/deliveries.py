@@ -11,6 +11,7 @@ from datetime import datetime
 
 from sqlalchemy import select
 
+from keystone.core.database import count_list
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
 from keystone.platform.identity.services.subjects import users_in_transaction
@@ -204,20 +205,20 @@ class DeliveryService:
     def __init__(self, identity):
         self.identity = identity
 
-    async def listing(self, offset, limit, channel_id=None, status=None):
+    async def listing(self, offset, limit, channel_id=None, status=None, *, total=None):
         async with self.identity.access("message_delivery:read") as (session, _):
-            rows = (
-                await session.execute(
-                    select(MessageDelivery, MessageDestination.key)
-                    .outerjoin(
-                        MessageDestination, MessageDelivery.destination_id == MessageDestination.id
-                    )
-                    .where(*filters(MessageDelivery, channel_id, status))
-                    .order_by(MessageDelivery.created_at.desc(), MessageDelivery.id.desc())
-                    .offset(offset)
-                    .limit(limit)
+            statement = (
+                select(MessageDelivery, MessageDestination.key)
+                .outerjoin(
+                    MessageDestination, MessageDelivery.destination_id == MessageDestination.id
                 )
-            ).all()
+                .where(*filters(MessageDelivery, channel_id, status))
+                .order_by(MessageDelivery.created_at.desc(), MessageDelivery.id.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            await count_list(session, statement, total)
+            rows = (await session.execute(statement)).all()
             users = {
                 row["id"]: row["label"]
                 for row in await users_in_transaction(

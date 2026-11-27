@@ -294,7 +294,7 @@ describe('roles and audit', () => {
           .trigger('click')
         await flushPromises()
         const next = new URLSearchParams(paths.at(-1)!.split('?')[1])
-        expect(next.get('offset')).toBe('50')
+        expect(next.get('offset')).toBe(first.get('limit'))
         expect(next.get('since')).toBe(first.get('since'))
         expect(next.get('until')).toBe(first.get('until'))
         expect(next.get('action')).toBeNull()

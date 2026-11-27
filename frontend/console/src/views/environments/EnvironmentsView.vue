@@ -8,7 +8,7 @@ import ListPager from '../../components/ListPager.vue'
 import StatusTag from '../../components/StatusTag.vue'
 import { backupText, canBackup, stateTag, stateText, unsettled } from './labels'
 
-const list = usePagedList('environment:use', environmentsApi.list)
+const list = usePagedList('environments.list', 'environment:use', environmentsApi.listPage)
 const { busy, error, notice, run } = useAction()
 
 async function check(row: Environment) {
@@ -145,7 +145,10 @@ async function backup(row: Environment) {
       :page="list.page.value"
       :count="list.rows.value.length"
       :loading="busy || list.loading.value"
-      @change="(value: number) => (list.page.value = value)"
+      :size="list.size.value"
+      :total="list.total.value"
+      @change="list.page.value = $event"
+      @size-change="list.setSize"
     />
   </section>
 </template>

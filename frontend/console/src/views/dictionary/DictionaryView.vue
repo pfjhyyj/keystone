@@ -11,11 +11,14 @@ import DictionaryItems from './components/DictionaryItems.vue'
 const {
   rows,
   page,
+  size,
+  total,
   loading,
   error: listError,
   reload,
   search,
-} = usePagedList('dictionary:read', dictionaryApi.list)
+  setSize,
+} = usePagedList('dictionary.definitions', 'dictionary:read', dictionaryApi.listPage)
 const { busy, error, notice, run } = useAction()
 const selected = ref<Definition | null>(null),
   editing = ref<Definition | null>(null),
@@ -56,6 +59,10 @@ function refresh() {
 function changePage(value: number) {
   selected.value = null
   page.value = value
+}
+function changeSize(value: number) {
+  selected.value = null
+  setSize(value)
 }
 </script>
 <template>
@@ -140,7 +147,10 @@ function changePage(value: number) {
           :page="page"
           :count="rows.length"
           :loading="busy || loading"
+          :size="size"
+          :total="total"
           @change="changePage"
+          @size-change="changeSize"
         />
       </div>
       <DictionaryItems

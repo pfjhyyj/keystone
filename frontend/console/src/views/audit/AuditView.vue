@@ -30,8 +30,10 @@ const applied = ref<Record<string, string>>({
   }),
   validation = ref(''),
   selected = ref<AuditLog | null>(null)
-const { rows, page, loading, error, reload, search } = usePagedList('audit:read', (offset) =>
-  adminApi.audit(offset, applied.value),
+const { rows, page, size, total, loading, error, reload, search, setSize } = usePagedList(
+  'audit.logs',
+  'audit:read',
+  (offset, limit) => adminApi.auditPage(offset, limit, applied.value),
 )
 const actors: Record<string, string> = { user: '用户', system: '系统', anonymous: '匿名' }
 const outcomes: Record<string, string> = { success: '成功', failure: '失败', denied: '拒绝' }
@@ -197,7 +199,15 @@ function reset() {
           ><el-empty :image-size="64" description="没有符合条件的审计记录。" /></template
       ></el-table>
     </div>
-    <ListPager :page="page" :count="rows.length" :loading="loading" @change="page = $event" />
+    <ListPager
+      :page="page"
+      :count="rows.length"
+      :loading="loading"
+      :size="size"
+      :total="total"
+      @change="page = $event"
+      @size-change="setSize"
+    />
     <AppDialog drawer v-if="selected" title="审计详情" @close="selected = null"
       ><dl>
         <dt>操作者</dt>

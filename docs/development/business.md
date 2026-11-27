@@ -48,17 +48,19 @@ uv run --locked keystone-api
 ```vue
 <script setup lang="ts">
 import { ref } from 'vue'
-import { request } from '../../api/client'
+import { request, requestPage } from '../../api/client'
+import ListPager from '../../components/ListPager.vue'
 import { useAction } from '../../composables/useAction'
 import { usePagedList } from '../../composables/usePagedList'
 import { can } from '../../stores/session'
 
 type Note = { id: string; title: string }
 const title = ref('')
-const notes = usePagedList<Note>('notes.note:read', (offset) =>
-  request<Note[]>(`/notes/notes?offset=${offset}`),
+const { rows, page, size, total, loading, error, reload, setSize } = usePagedList<Note>(
+  'notes.list',
+  'notes.note:read',
+  (offset, limit) => requestPage<Note>('/notes/notes', offset, limit),
 )
-const { rows, loading, error, reload } = notes
 const { busy, error: saveError, run } = useAction()
 async function save() {
   await run(async () => {
@@ -79,9 +81,13 @@ async function save() {
     </form>
     <p v-if="loading">正在加载</p>
     <ul><li v-for="row in rows" :key="row.id">{{ row.title }}</li></ul>
+    <ListPager :page="page" :count="rows.length" :loading="loading" :size="size" :total="total"
+      @change="page = $event" @size-change="setSize" />
   </section>
 </template>
 ```
+
+`usePagedList` 按列表键在浏览器记住每页条数，默认 50 条。`requestPage` 发送 `X-Keystone-List-Total: 1`。支持精确总数的列表保持 JSON 数组响应，通过 `X-Total-Count` 返回当前权限和筛选范围内的未分页总数；后端可注入 `ListTotal`，在同一授权事务内调用 `count_list`，不带请求头时跳过计数。没有总数的接口仍可翻页，不显示猜测值。
 
 在 `src/router/index.ts` 的 routes 中增加路由，在 navigation 中增加菜单：
 

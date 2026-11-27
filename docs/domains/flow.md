@@ -328,7 +328,7 @@ sequenceDiagram
 | POST /flow-runs/{id}/cancel | flow:cancel＋本人或 manage |
 | GET /flow-runs/{id}/steps | Run 可见；最多 32 关联流程/500 步骤，只含名称/位置/时间 |
 | GET /flow-runs/{id}/costs | Run＋模型记录权限；当前费用窗口最近 30 天 |
-| GET /flow-runs/{id}/diagnostics | section=all/models/files，默认 50、最高 100，offset 分页 |
+| GET /flow-runs/{id}/diagnostics | section=all/models/files，默认 50、最高 100，offset 分页；include_total=true 返回各可见板块的精确总数 |
 | GET /flow-runs/{id}/step-attempts | flow:diagnose，按 workflow_id 和 step_id 读取最多 50 次已记录的尝试 |
 | GET /flow-runs/{id}/step-attachment | flow:diagnose，按步骤、尝试和附件位置读取显式开放的本次运行文件 |
 | GET /flow-model-defaults | flow:configure，列出已装配流程的模型用途及当前默认模型 key |
@@ -336,12 +336,12 @@ sequenceDiagram
 | PUT /flow-model-defaults/{definition}/{role} | flow:configure＋model:invoke，设定默认模型，审计 flow.model_default.save |
 | GET /flow-model-defaults/{definition}/{role}/current | 受理同等权限，当前默认模型与输出选项，见[当前模型与输出选项](#当前模型与输出选项) |
 
-诊断在短身份事务组合公开 Service，前后复查 Run；模型调用先按独立读取范围过滤，文件仅列当前 Run 的引用，再分页。模型调用不可见时返回 available=false。未请求的板块返回 null，列表通过 truncated/next_offset 分页。
+诊断在短身份事务组合公开 Service，前后复查 Run；模型调用先按独立读取范围过滤，文件仅列当前 Run 的引用。分页和总数共用这些过滤条件。模型调用不可见时返回 available=false 且不返回 total；未请求的板块返回 null。默认不返回 total，truncated/next_offset 仍可用于翻页。
 
 - 模型：read/read_all 独立判断，返回调用、操作、角色/节点/Agent、原 Step 位置及安全错误，不因 flow:manage 扩权。
 - 文件：Run 可见后列出关联 File ID/slot，不授予内容读取权；同 Run 可见图片调用与原 Manifest 的产物键、摘要、大小、MIME 全部匹配才补 invocation_id，不按名称/时间猜测。
 
-不返回检查点、私有 result/cost_context、供应商任务/下载地址、原文异常、秘密或本地路径。控制台各板块独立加载，失权清相应数据，迟到结果丢弃；仅活动 Run 自动轮询，终态缺步骤/费用可手动刷新。
+不返回检查点、私有 result/cost_context、供应商任务/下载地址、原文异常、秘密或本地路径。控制台按板块独立分页，轮询刷新当前页；失权清相应数据，迟到结果丢弃。仅活动 Run 自动轮询，终态缺步骤/费用可手动刷新。
 
 ### 阶段详情
 
