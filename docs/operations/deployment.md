@@ -25,7 +25,9 @@ API 与 Worker 使用同一份代码、锁文件和镜像，分别启动进程�
 
 ## 2. 运行配置与初始化
 
-由实际部署环境配置应用进程、数据库连接、文件卷、精确的浏览器 Origin 和入口代理；后端参数见[配置说明](configuration.md)。API/Worker 镜像以 UID 10001 运行，挂载的节点目录和本地正式文件目录须可写。控制台镜像默认通过 Docker 内部 DNS 转发到同网络中名为 `api` 的服务、端口 8000；其他部署拓扑需调整 `frontend/console/docker/nginx.conf` 后构建。
+由实际部署环境配置应用进程、数据库连接、文件卷和入口代理；后端参数见[配置说明](configuration.md)。API/Worker 镜像以 UID 10001 运行，挂载的节点目录和本地正式文件目录须可写。控制台镜像默认通过 Docker 内部 DNS 转发到同网络中名为 `api` 的服务、端口 8000；其他部署拓扑需调整 `frontend/console/docker/nginx.conf` 后构建。
+
+按[浏览器同源规则](../domains/identity.md#7-最小实现约定)配置入口。各级反向代理都须保留浏览器请求的原始 `Host`，包括对外域名和端口（如有），不能改成内部上游地址。Nginx 使用 `proxy_set_header Host $http_host;`，不要使用会丢失端口的 `$host`。
 
 容器运行时将配置只读挂载到 init、API、Worker 的 `/app/keystone.toml`（可用 `KEYSTONE_CONFIG_FILE` 覆盖位置），不把真实配置或秘密写入镜像。容器内建议使用绝对挂载路径，见[单宿主配置示例](../../deploy/stack/keystone.toml.example)。
 
@@ -78,7 +80,7 @@ rg --fixed-strings '替换为调用记录 UUID 或 X-Request-ID' .artifacts/logs
 ```bash
 cd deploy/stack
 cp .env.example .env                    # 填写镜像、POSTGRES_PASSWORD
-cp keystone.toml.example keystone.toml  # 填写 HTTPS browser_origins 等
+cp keystone.toml.example keystone.toml  # 按需填写应用配置
 docker compose up -d --wait postgres
 docker compose run --rm init            # 首次安装与每次升级各显式执行一次
 docker compose up -d --wait
@@ -87,7 +89,7 @@ docker compose up -d --wait
 | 项 | 约定 |
 |---|---|
 | 配置 | Compose 固定 `env=production`、数据库地址和监听地址。Compose 所需变量放私有 `.env`；凭据加密密钥写入私有挂载 TOML，该栈不从 `.env` 转发 `KEYSTONE_CREDENTIAL_KEY` |
-| 入口 | 控制台默认只监听 127.0.0.1:8080，由宿主上的 HTTPS 反向代理对外；production 要求 browser_origins 为 HTTPS。启用交互环境时，反向代理须对以 `/api/v1/environments` 开头的路径转发 WebSocket 升级，读超时不少于 230 秒（打开和结束会话最长等待提供方约 220 秒） |
+| 入口 | 控制台默认只监听 127.0.0.1:8080，由宿主上的 HTTPS 反向代理对外。启用交互环境时，反向代理须对以 `/api/v1/environments` 开头的路径转发 WebSocket 升级，读超时不少于 230 秒（打开和结束会话最长等待提供方约 220 秒） |
 | 卷 | `postgres_data` 为数据库，`file_data` 承载节点目录和本地正式文件，按[联合备份](backup-restore.md)处理 |
 | 主机与 Worker 身份 | 容器 hostname 固定为 KEYSTONE_HOST_ID，Worker 身份固定为 KEYSTONE_WORKER_ID，重建容器不改变；增加 Worker 时按[第 4.1 节](#41-共同条件与增加实例)另加固定身份服务 |
 | 停止 | Worker 的 stop_grace_period 默认 60s，须大于 worker_shutdown_seconds 并留出收尾时间 |
@@ -104,6 +106,8 @@ docker compose up -d --wait
 ## 3. 更新与恢复
 
 发布前停写，在原版本排空或受控取消 Flow，同步终态并核对外部请求及文件 I/O 已收尾。停止所有节点的旧 API、Worker 和 CLI，禁用自动重启后再[联合备份](backup-restore.md)和迁移。不支持滚动升级或混跑；保留旧执行的原版本恢复路径。迁移边界见[迁移说明](../../backend/migrations/README.md#初始化与已有数据库)。
+
+升级时可清理旧配置：顶层 TOML `browser_origins` 会被忽略，`KEYSTONE_BROWSER_ORIGINS` 不再使用。请按[入口约定](#2-运行配置与初始化)确认各级代理保留原始 `Host`。
 
 `0011` 只建绑定表，不回填记录。首次认领不改写已有文件或 Worker 登记：
 

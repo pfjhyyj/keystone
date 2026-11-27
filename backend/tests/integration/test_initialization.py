@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy import func, select, text
+from test_identity import BROWSER, ORIGIN
 
 from keystone.bootstrap import create_app
 from keystone.composition import build_catalog
@@ -28,7 +29,6 @@ def configuration(empty_database_url, tmp_path):
         file_coordination_root=tmp_path,
         file_storages={"local": {"driver": "filesystem", "root": str(tmp_path)}},
         initial_admin_password=PASSWORD,
-        browser_origins=["http://127.0.0.1:5173"],
     )
 
 
@@ -46,14 +46,14 @@ def test_init_prepares_all_dependencies_and_preserves_existing_accounts(
     assert (tmp_path / ".keystone-storage").read_bytes() == marker
 
     with TestClient(
-        create_app(settings), backend_options={"loop_factory": new_event_loop}
+        create_app(settings), base_url=ORIGIN, backend_options={"loop_factory": new_event_loop}
     ) as client:
         assert client.get("/api/v1/ready").status_code == 200
         assert (
             client.post(
                 "/api/v1/auth/login",
                 json={"username": "admin", "password": PASSWORD},
-                headers={"Origin": "http://127.0.0.1:5173", "X-Keystone-Request": "1"},
+                headers=BROWSER,
             ).status_code
             == 200
         )

@@ -11,7 +11,12 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
       proxy: {
         // The environment screen is a WebSocket under the same API prefix.
-        '/api': { target: env.KEYSTONE_API_PROXY ?? 'http://127.0.0.1:8000', ws: true },
+        '/api': {
+          target: env.KEYSTONE_API_PROXY ?? 'http://127.0.0.1:8000',
+          // Same-origin checks use the browser-facing Host, including its port.
+          changeOrigin: false,
+          ws: true,
+        },
       },
     },
   }

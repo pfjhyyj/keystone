@@ -25,7 +25,7 @@ from keystone.platform.identity.services.initialize import initialize_admin
 pytestmark = pytest.mark.postgres
 PASSWORD = "test-password-123"
 NEW_PASSWORD = "changed-password-123"
-ORIGIN = "http://127.0.0.1:5173"
+ORIGIN = "http://testserver"
 BROWSER = {"Origin": ORIGIN, "X-Keystone-Request": "1"}
 
 
@@ -63,18 +63,24 @@ def client(empty_database_url, tmp_path):
     )
     initialize_database(settings)
     with TestClient(
-        create_app(settings), backend_options={"loop_factory": new_event_loop}
+        create_app(settings), base_url=ORIGIN, backend_options={"loop_factory": new_event_loop}
     ) as browser:
         yield browser
 
 
+def browser_headers(client):
+    url = client.base_url
+    return {**BROWSER, "Origin": f"{url.scheme}://{url.netloc.decode('ascii')}"}
+
+
 def login(client, username="admin", password=PASSWORD):
+    headers = browser_headers(client)
     response = client.post(
-        "/api/v1/auth/login", json={"username": username, "password": password}, headers=BROWSER
+        "/api/v1/auth/login", json={"username": username, "password": password}, headers=headers
     )
     assert response.status_code == 200, response.text
     assert "httponly" in response.headers["set-cookie"].lower()
-    client.headers.update({**BROWSER, "X-CSRF-Token": response.json()["csrf_token"]})
+    client.headers.update({**headers, "X-CSRF-Token": response.json()["csrf_token"]})
     return response.json()["user"]
 
 
@@ -283,15 +289,41 @@ def test_login_csrf_cookie_and_forced_password_change(client):
         ).status_code
         == 403
     )
+    logout = "/api/v1/auth/logout"
+    foreign_origin = "http://evil.example"
+    preflight = client.options(
+        logout,
+        headers={
+            "Origin": foreign_origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "x-keystone-request, x-csrf-token",
+        },
+    )
+    assert "access-control-allow-origin" not in preflight.headers
+
     admin = login(client)
     assert client.cookies.get("keystone_session").startswith("ks_")
     assert "is_administrator" not in client.get("/api/v1/auth/me").json()
     user = create_user(client)
     session_secret = client.cookies.get("keystone_session")
-    client.headers["X-CSRF-Token"] = "wrong"
-    assert client.post("/api/v1/auth/logout").status_code == 403
-    client.headers["Origin"] = "https://evil.example"
-    assert client.post("/api/v1/auth/logout").status_code == 403
+    csrf = client.post(logout, headers={"X-CSRF-Token": "wrong"})
+    assert csrf.status_code == 403
+    assert csrf.json()["code"] == "csrf_required"
+
+    rejected = client.post(
+        logout,
+        headers={
+            "Origin": foreign_origin,
+            "Forwarded": "proto=http;host=evil.example",
+            "X-Forwarded-Host": "evil.example",
+            "X-Forwarded-Proto": "http",
+        },
+    )
+    assert rejected.status_code == 403
+    assert rejected.json()["code"] == "invalid_origin"
+    assert "access-control-allow-origin" not in rejected.headers
+    assert foreign_origin not in rejected.text
+    assert client.get("/api/v1/auth/me").json()["user"]["id"] == admin["id"]
     login(client, "alice")  # Existing cookie must not prevent a new login.
     assert client.get("/api/v1/auth/me").json()["user"]["password_change_required"] is True
     assert client.get("/api/v1/users").json()["code"] == "password_change_required"
@@ -815,18 +847,28 @@ def test_login_limit_and_production_cookie(client):
     assert response.status_code == 429 and response.headers["retry-after"] == "60"
     # Invalid inputs do not become confirmed actors; the limiter stores no raw username.
     assert "unknown" not in repr(client.app.state.login_limiter.buckets)
-    runtime = client.app.state.runtime
-    runtime.settings.env = "production"
-    runtime.settings.browser_origins = ["https://keystone.test"]
-    response = client.post(
-        "/api/v1/auth/login",
-        json={"username": "admin", "password": PASSWORD},
-        headers={"Origin": "https://keystone.test", "X-Keystone-Request": "1"},
+    client.app.state.runtime.settings.env = "production"
+    client.base_url = "https://keystone.test:8443"
+    path = "/api/v1/auth/login"
+    credentials = {"username": "admin", "password": PASSWORD}
+    headers = browser_headers(client)
+    insecure_origin = "http://keystone.test:8443"
+    internal_url = f"{insecure_origin}{path}"
+    rejected = client.post(
+        internal_url, json=credentials, headers={**headers, "Origin": insecure_origin}
     )
-    assert response.status_code == 200
+    assert rejected.status_code == 403
+    assert rejected.json()["code"] == "invalid_origin"
+    response = client.post(path, json=credentials, headers=headers)
+    assert response.status_code == 200, response.text
     cookie = response.headers["set-cookie"].lower()
     assert "__host-keystone_session=" in cookie
     assert "httponly" in cookie and "secure" in cookie and "samesite=lax" in cookie
+    assert client.get("/api/v1/auth/me").status_code == 200
+
+    # TLS termination changes the backend transport, not the browser's Origin.
+    terminated = client.post(internal_url, json=credentials, headers=headers)
+    assert terminated.status_code == 200, terminated.text
 
 
 def test_unchanged_role_grants_keep_original_creation_audit(client):

@@ -141,7 +141,7 @@ install_catalog()
 from keystone.core.config import Settings
 Path({str(pid_file)!r}).write_text(str(os.getpid()))
 uvicorn.run(create_app(Settings(config_file=None)), host='127.0.0.1', port={port},
-    loop='keystone.core.asyncio:new_event_loop', access_log=False)
+    loop='keystone.core.asyncio:new_event_loop', access_log=False, proxy_headers=False)
 """
     with (root / "api.log").open("w", encoding="utf8") as output:
         process = subprocess.Popen(
@@ -159,7 +159,7 @@ uvicorn.run(create_app(Settings(config_file=None)), host='127.0.0.1', port={port
                     if process.poll() is not None or time.monotonic() > deadline:
                         raise RuntimeError((root / "api.log").read_text(encoding="utf8"))
                     time.sleep(0.1)
-                headers = {"Origin": "http://127.0.0.1:5173", "X-Keystone-Request": "1"}
+                headers = {"Origin": base, "X-Keystone-Request": "1"}
                 login = client.post(
                     "/api/v1/auth/login",
                     headers=headers,

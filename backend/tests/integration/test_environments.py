@@ -13,7 +13,7 @@ import pytest
 from fastapi import WebSocketDisconnect
 from pydantic import SecretStr
 from sqlalchemy import update
-from test_identity import ORIGIN, create_user, login, token
+from test_identity import browser_headers, create_user, login, token
 from test_identity import client as client
 
 from keystone.core.config import Settings
@@ -30,6 +30,15 @@ from keystone.platform.identity.schemas.credentials import Credential
 from keystone.platform.identity.services.access import AccessContext
 
 pytestmark = pytest.mark.postgres
+
+
+def screen_connection(client, path, *, origin=None):
+    # Starlette resolves relative socket URLs against ws://testserver, not client.base_url.
+    url = client.base_url.join(path)
+    ws_url = url.copy_with(scheme="wss" if url.scheme == "https" else "ws")
+    if origin is None:
+        origin = browser_headers(client)["Origin"]
+    return client.websocket_connect(str(ws_url), headers={"Origin": origin})
 
 
 class BackupRuntime:
@@ -213,6 +222,7 @@ class Runtime:
 
 
 def test_unknown_create_reuses_reservation_and_stop_drains_control(client):
+    client.base_url = "http://screen.test:5173"
     owner = login(client)
     outsider = create_user(client)
     database = client.app.state.runtime.database
@@ -261,14 +271,16 @@ def test_unknown_create_reuses_reservation_and_stop_drains_control(client):
 
     runtime.discoverable = True
     assert client.post(run + "/check").json()["state"] == "ready"
-    with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(run + "/screen", headers={"Origin": "https://other"}):
-            pytest.fail("Untrusted origin was accepted")
-    with client.websocket_connect(run + "/screen", headers={"Origin": ORIGIN}) as screen:
+    for origin in ("http://other.test:5173", "http://screen.test", "https://screen.test:5173"):
+        with pytest.raises(WebSocketDisconnect) as rejected:
+            with screen_connection(client, run + "/screen", origin=origin):
+                pytest.fail(f"Untrusted origin was accepted: {origin}")
+        assert rejected.value.code == 1008
+    with screen_connection(client, run + "/screen") as screen:
         screen.send_bytes(b"frame")
         assert screen.receive_bytes() == b"frame"
         with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect(run + "/screen", headers={"Origin": ORIGIN}):
+            with screen_connection(client, run + "/screen"):
                 pytest.fail("Second controller was accepted")
         stopped = client.post(run + "/stop")
         assert stopped.json()["state"] == "stopped", stopped.text
@@ -410,7 +422,7 @@ def test_screen_hold_is_shared_across_processes_and_released_on_close(client):
         control_until=utcnow() + timedelta(minutes=1),
     )
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(screen, headers={"Origin": ORIGIN}):
+        with screen_connection(client, screen):
             pytest.fail("A hold recorded by another process was ignored")
 
     _update_session(client, session_id, control_until=utcnow() - timedelta(seconds=1))
@@ -420,7 +432,7 @@ def test_screen_hold_is_shared_across_processes_and_released_on_close(client):
             run = await session.get(EnvironmentSession, session_id)
             return run.control_owner, run.control_kind
 
-    with client.websocket_connect(screen, headers={"Origin": ORIGIN}):
+    with screen_connection(client, screen):
         owner, kind = client.portal.call(holder)
         assert owner not in {None, other} and kind == "human"
     deadline = time.monotonic() + 5
@@ -470,7 +482,7 @@ def test_automation_holds_registers_actions_and_enforces_scope(client):
     # The screen cannot take input while automation holds the session.
     path = f"/api/v1/environments/{grant.environment_id}/sessions/{grant.session_id}"
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(path + "/screen", headers={"Origin": ORIGIN}):
+        with screen_connection(client, path + "/screen"):
             pytest.fail("Screen took input during automation")
     assert client.post(path + "/stop").json()["code"] == "environment_in_use"
 
@@ -496,11 +508,11 @@ def test_automation_holds_registers_actions_and_enforces_scope(client):
     fails("environment_control_lost", act, grant, 5, "snapshot", None)
 
     # After the hold ends the user can take over the same session.
-    with client.websocket_connect(path + "/screen", headers={"Origin": ORIGIN}):
+    with screen_connection(client, path + "/screen"):
         pass
     grant = client.portal.call(automation.acquire, "chromium", "default", other)
     client.portal.call(automation.release, grant)
-    with client.websocket_connect(path + "/screen", headers={"Origin": ORIGIN}):
+    with screen_connection(client, path + "/screen"):
         pass
 
 
@@ -528,7 +540,7 @@ def test_next_segment_continues_only_from_the_handed_back_session(client):
 
     # The user finishes in the screen and presses "continue".
     path = f"/api/v1/environments/{grant.environment_id}/sessions/{grant.session_id}"
-    with client.websocket_connect(path + "/screen", headers={"Origin": ORIGIN}):
+    with screen_connection(client, path + "/screen"):
         pass
     point = client.portal.call(automation.handover, "chromium", "default")
     assert point.session_id == grant.session_id

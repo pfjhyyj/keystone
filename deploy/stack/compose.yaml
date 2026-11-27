@@ -1,6 +1,7 @@
 # Application stack on one host: PostgreSQL, API, Worker and console from prebuilt images.
 # Migrations never run on `up`; run `docker compose run --rm init` explicitly, see
-# docs/operations/deployment.md. TLS terminates in front of the console port.
+# docs/operations/deployment.md. Terminate HTTPS in front of the console port and
+# pass through the original browser Host header, including any explicit port.
 name: keystone-stack
 
 x-backend: &backend

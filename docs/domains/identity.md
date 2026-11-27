@@ -359,7 +359,11 @@ Flow 当前用 flow:manage 扩大读取范围，而 Model Access 使用独立 re
 | PAT | 到期必填，默认最大 90 天，界面默认 30 天 |
 | 列表 | 默认 50、最高 100，offset 最高 100000，不查询总数 |
 
-Cookie 使用 HttpOnly、SameSite=Lax、Path=/；生产使用 Secure 和 __Host-keystone_session，开发名为 keystone_session。生产须配置精确 HTTPS KEYSTONE_BROWSER_ORIGINS。登录检查 Origin 和 X-Keystone-Request: 1，Cookie 写请求另检查绑定会话的 X-CSRF-Token；CSRF 通过登录及 /auth/me 返回，仅在前端内存保存。
+浏览器访问的前端、API 和 WebSocket 必须同源。不支持跨源 Cookie 接入，不提供 CORS；PAT 的认证与授权不变。
+
+校验 `Origin` 时，后端用请求的 `Host`（对外主机名及端口，如有）和协议构造预期来源，并要求精确匹配。开发环境取请求的传输协议（WebSocket 的 `ws` / `wss` 对应 `http` / `https`）；生产环境固定按对外 `https` 校验，即使 TLS 在代理终止。后端不信任 `X-Forwarded-Host` 或 `X-Forwarded-Proto` 来确定来源。
+
+Cookie 使用 `HttpOnly`、`SameSite=Lax`、`Path=/`；生产使用 `Secure` 和 `__Host-keystone_session`，开发名为 `keystone_session`。登录和 Cookie 写请求都检查 `Origin` 和 `X-Keystone-Request: 1`，Cookie 写请求另检查绑定会话的 `X-CSRF-Token`；CSRF 值通过登录及 `/auth/me` 返回，仅在前端内存保存。
 
 单 API 进程登录限流：60 秒内每用户名 5 次、全局 60 次，最多 4096 个摘要键，重启清空。Nginx 另按来源 IP 每分钟 10 次、burst 5；API 不信任任意 X-Forwarded-For。多 API/代理部署须另确认共享限流与可信代理。
 

@@ -17,7 +17,7 @@ docker compose -f $composeFile run --build --rm api keystone init
 docker compose -f $composeFile up -d --build
 ```
 
-后续启动时沿用同一个 OpenSandbox 密钥和备份密钥。备份密钥应由部署方保存在配置系统或独立密钥库中；丢失后无法解密已有备份。打开 [本机工作台](http://127.0.0.1:8080/workbench/)，用刚设置的管理员账号登录，选中「默认环境」并点「打开浏览器」：第一次使用时自动创建环境和空间卷，在画面里的 Chromium 地址栏输入目标网址。关闭工作台后可以重新连接原运行。若端口已被占用，可设置 `WORKBENCH_HTTP_PORT` 或 `KEYSTONE_POSTGRES_PORT`；如通过反向代理访问，再设置实际入口的 `KEYSTONE_BROWSER_ORIGINS`。
+后续启动时沿用同一个 OpenSandbox 密钥和备份密钥。备份密钥应由部署方保存在配置系统或独立密钥库中；丢失后无法解密已有备份。打开 [本机工作台](http://127.0.0.1:8080/workbench/)，用刚设置的管理员账号登录，选中「默认环境」并点「打开浏览器」：第一次使用时自动创建环境和空间卷，在画面里的 Chromium 地址栏输入目标网址。关闭工作台后可以重新连接原运行。若端口已被占用，可设置 `WORKBENCH_HTTP_PORT` 或 `KEYSTONE_POSTGRES_PORT`；如通过 HTTP 反向代理访问，须保留原始 `Host`（含端口）。
 
 连接画面后，可点「粘贴文本」，把本机的文字粘贴到弹窗并点「发送到剪贴板」，再在远程 Chromium 中按 `Ctrl+V` 或右键粘贴。支持中文和多行文字；文件和图片不通过此入口传输。
 

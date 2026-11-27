@@ -3,9 +3,11 @@
 import logging
 import secrets
 from math import ceil
+from urllib.parse import urlsplit
 
 from fastapi import Request, Response, WebSocket
 from starlette.datastructures import MutableHeaders
+from starlette.requests import HTTPConnection
 
 from keystone.core.errors import ServiceError
 from keystone.core.time import utcnow
@@ -21,10 +23,49 @@ def cookie_name(settings):
     return "__Host-keystone_session" if settings.env == "production" else "keystone_session"
 
 
+def _origin_tuple(value: str) -> tuple[str, str, int] | None:
+    if any(ord(char) <= 32 or char.isspace() or char in "\\?#," for char in value):
+        return None
+    try:
+        url = urlsplit(value)
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.path
+            or url.username is not None
+        ):
+            return None
+        port = url.port
+    except ValueError:
+        return None
+    host = url.hostname
+    authority = f"[{host}]" if ":" in host else host
+    if port is not None:
+        authority = f"{authority}:{port}"
+    if url.netloc.lower() != authority:
+        return None
+    return url.scheme, host, port if port is not None else (443 if url.scheme == "https" else 80)
+
+
+def _require_trusted_origin(connection: HTTPConnection):
+    origins = connection.headers.getlist("origin")
+    hosts = connection.headers.getlist("host")
+    if len(origins) == len(hosts) == 1:
+        scheme = connection.scope["scheme"]
+        scheme = {"ws": "http", "wss": "https"}.get(scheme, scheme)
+        # Production HTTPS may terminate at the proxy; it must preserve the public Host.
+        if connection.app.state.runtime.settings.env == "production":
+            scheme = "https"
+        origin = _origin_tuple(origins[0])
+        if origin is not None and origin == _origin_tuple(f"{scheme}://{hosts[0]}"):
+            return
+    raise ServiceError(
+        403, "invalid_origin", "请求来源不受信任。请从与 API 同源的页面打开，代理须保留 Host。"
+    )
+
+
 def browser_origin(request):
-    settings = request.app.state.runtime.settings
-    if request.headers.get("origin") not in settings.browser_origins:
-        raise ServiceError(403, "invalid_origin", "请求来源不受信任")
+    _require_trusted_origin(request)
     if request.headers.get("x-keystone-request") != "1":
         raise ServiceError(403, "csrf_required", "缺少请求保护信息")
 
@@ -129,9 +170,8 @@ def clear_cookie(request, response):
 
 
 def socket_access_context(socket: WebSocket) -> AccessContext:
+    _require_trusted_origin(socket)
     runtime = socket.app.state.runtime
-    if socket.headers.get("origin") not in runtime.settings.browser_origins:
-        raise ServiceError(403, "invalid_origin", "请求来源不受信任")
     secret = socket.cookies.get(cookie_name(runtime.settings))
     return AccessContext(
         runtime.database,

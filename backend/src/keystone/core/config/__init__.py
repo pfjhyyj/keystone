@@ -64,6 +64,7 @@ class Settings(
     @classmethod
     def resolve_file_paths(cls, values):
         values = dict(values)
+        values.pop("browser_origins", None)  # Existing TOML files can drop this now-unused setting.
         config = values.get("config_file", "keystone.toml")
         base = Path(config).resolve().parent if config is not None else Path.cwd()
         return normalize_file_paths(values, base)
@@ -86,11 +87,6 @@ class Settings(
     def require_credential_key_for_s3_only_storage(self):
         if self.credential_key is None and self.s3_only_storage:
             raise ValueError("S3-only file storage requires KEYSTONE_CREDENTIAL_KEY")
-        return self
-
-    @model_validator(mode="after")
-    def secure_production_origins(self):
-        self.validate_browser_origins(production=self.env == "production")
         return self
 
     @field_validator("credential_key")

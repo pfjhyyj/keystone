@@ -97,10 +97,8 @@ class Deployment:
             {
                 "POSTGRES_PASSWORD": password,
                 "KEYSTONE_DATABASE_URL": f"postgresql+psycopg://keystone:{password}@postgres:5432/keystone",
-                "KEYSTONE_ENV": "test",
                 "KEYSTONE_CREDENTIAL_KEY": credential_key,
                 "KEYSTONE_INITIAL_ADMIN_PASSWORD": PASSWORD,
-                "KEYSTONE_BROWSER_ORIGINS": json.dumps([self.origin]),
                 "KEYSTONE_BACKEND_IMAGE": images["backend"],
                 "KEYSTONE_CONSOLE_IMAGE": images["console"],
             }
@@ -380,7 +378,19 @@ def exercise(source, restored, checks):
         request(client, "GET", "/ready")
         login(client)
         assert "role:read" in request(client, "GET", "/auth/me")["permissions"]
-        # CSRF still applies when requests go through the actual Nginx entrypoint.
+        # Same-origin and CSRF checks apply through the actual Nginx entrypoint.
+        for origin in (
+            source.origin.rsplit(":", 1)[0],  # Omit the published non-default port.
+            source.origin.replace("http://", "https://", 1),
+        ):
+            request(
+                client,
+                "POST",
+                "/dictionaries",
+                403,
+                headers={"Origin": origin},
+                json={"key": "bad", "name": "Bad"},
+            )
         assert (
             client.post(
                 "/api/v1/dictionaries",
@@ -482,7 +492,7 @@ def exercise(source, restored, checks):
             if provider == "openrouter":
                 assert response.headers["content-type"].startswith("text/event-stream")
         passed(
-            "Nginx assets/deep links, login/CSRF, files, roles, dictionary, "
+            "Nginx assets/deep links, login/origin/CSRF, files, roles, dictionary, "
             "three mock providers/SSE"
         )
         command(

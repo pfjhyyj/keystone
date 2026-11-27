@@ -11,7 +11,7 @@
 
 ## 1. 读取方式
 
-**后端**：从 `backend/` 启动，默认读取当前目录的 `keystone.toml`；其他路径设置 `KEYSTONE_CONFIG_FILE=/path/to/keystone.toml`。优先级为程序直接传入的参数、进程环境变量、TOML、代码默认值；API、Worker 和 CLI 规则相同，不读取后端 `.env`。TOML 不展开 `${...}`，秘密通过环境变量覆盖。相对的文件存储路径（含环境变量覆盖）以配置文件所在目录为基准。默认 TOML 不存在时可使用纯环境变量；显式指定的路径不存在、语法错误、字段未知或值不合法时直接报错。修改后重启相应 API/Worker。
+**后端**：从 `backend/` 启动，默认读取当前目录的 `keystone.toml`；其他路径设置 `KEYSTONE_CONFIG_FILE=/path/to/keystone.toml`。优先级为程序直接传入的参数、进程环境变量、TOML、代码默认值；API、Worker 和 CLI 规则相同，不读取后端 `.env`。TOML 不展开 `${...}`，秘密通过环境变量覆盖。相对的文件存储路径（含环境变量覆盖）以配置文件所在目录为基准。默认 TOML 不存在时可使用纯环境变量；显式指定的路径不存在、TOML 语法错误、字段值不合法或遇到未作兼容处理的未知字段时直接报错。修改后重启相应 API/Worker。
 
 **前端**：`pnpm dev` 默认代理 `http://127.0.0.1:8000`，需要改变时设置 `KEYSTONE_API_PROXY`；Vite 按进程环境、`.env.[mode].local`、`.env.[mode]`、`.env.local`、`.env` 读取。前端不读取后端 TOML，浏览器不接收数据库或存储秘密。
 
@@ -27,7 +27,6 @@
 | `database_url` | `KEYSTONE_DATABASE_URL` | 必须使用 `postgresql+psycopg`；示例连接本机 55432 端口 |
 | `database_connect_timeout_seconds` | `KEYSTONE_DATABASE_CONNECT_TIMEOUT_SECONDS` | 默认 10，范围 1–60；业务连接池新建连接的等待上限，超时在事务开始前返回 `database_connection_busy` |
 | `host` / `port` | `KEYSTONE_HOST` / `KEYSTONE_PORT` | `127.0.0.1` / `8000` |
-| `browser_origins` | `KEYSTONE_BROWSER_ORIGINS` | 精确的浏览器来源数组；生产要求 HTTPS |
 | `opensandbox_url` / `opensandbox_key` / `browser_runtime_image` | `KEYSTONE_OPENSANDBOX_URL` / `KEYSTONE_OPENSANDBOX_KEY` / `KEYSTONE_BROWSER_RUNTIME_IMAGE` | 可选的[交互环境](../domains/environments/README.md)；OpenSandbox 地址、API Key 和固定的浏览器运行镜像，三者必须同时配置；API 与 Worker 共用 |
 | `browser_backup_key` | `KEYSTONE_BROWSER_BACKUP_KEY` | 可选；32 字节十六进制备份密钥。设置后启用浏览器环境备份，且 `file_default_storage` 必须是本地 `filesystem` |
 | `log_level` | `KEYSTONE_LOG_LEVEL` | `INFO` |
@@ -51,7 +50,7 @@
 | `model_send_interval_ms` / `model_cooldown_seconds` / `model_cooldown_max_seconds` | `KEYSTONE_MODEL_SEND_INTERVAL_MS` 等 | 同站点/Token 的发送间隔与 429 冷却，范围与语义见[发送与协调](../reference/model-access.md#发送与协调) |
 | `initial_admin_password` | `KEYSTONE_INITIAL_ADMIN_PASSWORD` | 可选，仅供空安装首次初始化；设置后交互式 `keystone init` 也直接采用，已有用户时忽略 |
 
-嵌套环境变量用双下划线 `__` 分隔层级，例如 `KEYSTONE_FILE_STORAGES__LOCAL__ROOT=/data/files` 只覆盖 `local` 源的根目录。源名称以小写字母开头，可包含数字、单下划线和连字符，不能含连续双下划线；环境变量中的名称使用大写。通过环境变量覆盖数组使用 JSON，例如 `KEYSTONE_BROWSER_ORIGINS='["https://console.example.com"]'`。
+嵌套环境变量用双下划线 `__` 分隔层级，例如 `KEYSTONE_FILE_STORAGES__LOCAL__ROOT=/data/files` 只覆盖 `local` 源的根目录。源名称以小写字母开头，可包含数字、单下划线和连字符，不能含连续双下划线；环境变量中的名称使用大写。
 
 `browser_backup_key` 由部署方保存在 Keystone 配置之外的安全位置；不要从备份文件、数据库或空间卷推导，轮换时不覆盖仍被旧备份引用的密钥。运行镜像见 [`deploy/environments/browser`](../../deploy/environments/browser/README.md)。
 
@@ -61,7 +60,7 @@
 
 模型渠道和凭据在[控制台手动配置](../domains/model-access.md#51-配置)，保存后无需重启。
 
-更改开发数据库密码或宿主端口时，同步修改 `database_url`（URL 特殊字符需编码）。`POSTGRES_PASSWORD` 仅初始化空数据库卷，已有数据库改密须执行实际数据库操作。修改浏览器入口或 API 地址时同步 Origin 与 Vite 代理。
+更改开发数据库密码或宿主端口时，同步修改 `database_url`（URL 特殊字符需编码）。`POSTGRES_PASSWORD` 仅初始化空数据库卷，已有数据库改密须执行实际数据库操作。
 
 ## 4. 文件存储与部署拓扑
 

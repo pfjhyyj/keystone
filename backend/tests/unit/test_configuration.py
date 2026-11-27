@@ -23,7 +23,6 @@ def write_config(directory):
         """port = 8100
 file_coordination_root = "coordination"
 file_default_storage = "local"
-browser_origins = ["http://localhost:5173"]
 [file_storages.local]
 driver = "filesystem"
 root = "local files"
@@ -47,7 +46,6 @@ async def test_default_toml_and_environment_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("KEYSTONE_FILE_STORAGES__LOCAL__ROOT", "overridden files")
     settings = Settings()
     assert settings.port == 8200
-    assert settings.browser_origins == ["http://localhost:5173"]
     assert settings.file_coordination_root == tmp_path / "coordination"
     assert settings.file_storages["local"].root == tmp_path / "overridden files"
     assert settings.file_storages["cloud"].bucket == "documents"
@@ -191,6 +189,14 @@ def s3_settings(tmp_path):
             }
         },
     }
+
+
+def test_legacy_browser_origins_are_ignored(tmp_path, monkeypatch):
+    config = tmp_path / "keystone.toml"
+    config.write_text('browser_origins = ["http://localhost:5173"]\n', encoding="utf-8")
+    monkeypatch.setenv("KEYSTONE_BROWSER_ORIGINS", "not-read")
+    settings = Settings(config_file=config, env="production")
+    assert "browser_origins" not in settings.model_dump()
 
 
 def test_environment_overrides_top_level_toml_credential_key(tmp_path, monkeypatch):

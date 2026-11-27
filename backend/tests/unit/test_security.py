@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from pydantic import ValidationError
+from starlette.datastructures import Headers
 
 from keystone.composition import PLATFORM_CATALOG
 from keystone.core.catalog import Catalog
@@ -11,6 +12,7 @@ from keystone.core.database import Database
 from keystone.core.errors import ServiceError
 from keystone.platform.audit.services.writer import Actor, record, validate_details
 from keystone.platform.identity.adapters.security import csrf_token
+from keystone.platform.identity.controllers.dependencies import browser_origin
 from keystone.platform.identity.schemas import PasswordChange, PasswordReset, UserCreate
 from keystone.platform.identity.services.authorization import permission_catalog
 from keystone.platform.identity.services.login_limits import LoginLimiter
@@ -68,11 +70,39 @@ def test_new_password_length_without_complexity_requirements():
                 schema(password=password, **extra)
 
 
-def test_production_requires_https_origins_and_csrf_is_session_bound():
-    with pytest.raises(ValidationError):
-        Settings(config_file=None, env="production", browser_origins=["http://example.test"])
+def test_csrf_is_session_bound():
     assert csrf_token("first-session-secret") != csrf_token("second-session-secret")
     assert csrf_token("first-session-secret") != "first-session-secret"
+
+
+@pytest.mark.parametrize(
+    ("origin", "accepted"),
+    [
+        ("http://127.0.0.1:5186", True),
+        ("http://127.0.0.1:5187", False),
+        ("https://127.0.0.1:5186", False),
+        ("http://localhost:5186", False),
+        ("http://127.0.0.1:5186/studio/", False),
+        ("http://user@127.0.0.1:5186", False),
+        ("null", False),
+    ],
+)
+def test_development_browser_origin_matches_the_actual_entrypoint(origin, accepted):
+    connection = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                runtime=SimpleNamespace(settings=Settings(config_file=None, env="development"))
+            )
+        ),
+        scope={"scheme": "http"},
+        headers=Headers({"host": "127.0.0.1:5186", "origin": origin, "x-keystone-request": "1"}),
+    )
+    if accepted:
+        browser_origin(connection)
+    else:
+        with pytest.raises(ServiceError) as rejected:
+            browser_origin(connection)
+        assert rejected.value.code == "invalid_origin"
 
 
 def test_audit_allowlist_rejects_nested_secret_fields():

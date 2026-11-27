@@ -30,7 +30,7 @@ services:
       KEYSTONE_BROWSER_RUNTIME_IMAGE: ${KEYSTONE_BROWSER_RUNTIME_IMAGE:-keystone-browser-chromium:local}
       KEYSTONE_BROWSER_BACKUP_KEY: ${KEYSTONE_BROWSER_BACKUP_KEY:-}
       KEYSTONE_FILE_MAX_BYTES: ${KEYSTONE_FILE_MAX_BYTES:-268435456}
-      KEYSTONE_BROWSER_ORIGINS: '${KEYSTONE_BROWSER_ORIGINS:-["http://127.0.0.1:${WORKBENCH_HTTP_PORT:-8080}","http://localhost:${WORKBENCH_HTTP_PORT:-8080}"]}'
+
     volumes:
       - workbench_api_files:/data/files
     depends_on:

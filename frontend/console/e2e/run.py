@@ -1,7 +1,6 @@
 """Run the console browser suite with an isolated PostgreSQL database and local API."""
 
 import argparse
-import json
 import os
 import shutil
 import socket
@@ -106,7 +105,6 @@ def main():
                         "KEYSTONE_FILE_COORDINATION_ROOT": str(root),
                         "KEYSTONE_FILE_STORAGES__LOCAL__DRIVER": "filesystem",
                         "KEYSTONE_FILE_STORAGES__LOCAL__ROOT": str(root),
-                        "KEYSTONE_BROWSER_ORIGINS": json.dumps(["http://127.0.0.1:5175"]),
                         "PYTHONPATH": os.pathsep.join(
                             str(console.parents[1] / directory)
                             for directory in ("backend/tests", "examples")

@@ -4,14 +4,8 @@ host = "127.0.0.1"
 port = 8000
 log_level = "INFO"
 
-
 database_url = "postgresql+psycopg://keystone:keystone_local_only@127.0.0.1:55432/keystone"
-browser_origins = [
-    "http://127.0.0.1:5173",
-    "http://localhost:5173",
-    "http://127.0.0.1:8080",
-    "http://localhost:8080",
-]
+
 session_hours = 72
 pat_max_days = 90
 

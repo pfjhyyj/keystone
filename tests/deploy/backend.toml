@@ -1,5 +1,5 @@
 # Container verification fixture, mounted read-only for init, API and Worker.
-# Secrets and dynamically assigned browser origins are supplied by the runner.
+# Secrets are supplied by the runner.
 file_coordination_root = "/data/files"
 file_default_storage = "local"
 
