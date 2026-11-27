@@ -8,6 +8,11 @@ from pydantic import SecretStr
 
 from keystone.core.errors import ServiceError
 
+MISSING_KEY_HINT = (
+    "未配置 credential_key。新部署请运行 uv run --locked keystone init-credential-key 并重启；"
+    "已有加密凭据请恢复原密钥。"
+)
+
 
 def credential_unavailable():
     return ServiceError(503, "credential_unavailable", "凭据或加密密钥不可用")
@@ -20,7 +25,8 @@ class CredentialVault:
 
     def _key_bytes(self) -> bytes:
         if self._key is None:
-            raise self.unavailable()
+            error = self.unavailable()
+            raise ServiceError(error.status, error.code, MISSING_KEY_HINT)
         return self._key.get_secret_value().encode("ascii")
 
     def _keyed_digest(self, message):

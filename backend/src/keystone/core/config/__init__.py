@@ -17,6 +17,10 @@ from keystone.core.config.maintenance import MaintenanceSettings
 from keystone.core.config.model_access import ModelAccessSettings
 
 
+class CredentialKeyRequired(ValueError):
+    pass
+
+
 # Domain models contribute flat fields; only this root reads deployment configuration.
 class Settings(
     BaseSettings,
@@ -86,7 +90,7 @@ class Settings(
     @model_validator(mode="after")
     def require_credential_key_for_s3_only_storage(self):
         if self.credential_key is None and self.s3_only_storage:
-            raise ValueError("S3-only file storage requires KEYSTONE_CREDENTIAL_KEY")
+            raise CredentialKeyRequired("S3-only file storage requires KEYSTONE_CREDENTIAL_KEY")
         return self
 
     @field_validator("credential_key")

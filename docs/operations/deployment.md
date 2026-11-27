@@ -120,6 +120,7 @@ docker compose up -d --wait
 
 | 现象 | 处理 |
 |---|---|
+| `credential_key_required` / `invalid_credential_key` | 检查私有 TOML 或 `KEYSTONE_CREDENTIAL_KEY`；新部署可用 [`init-credential-key`](configuration.md#41-凭据加密密钥)，有加密凭据时恢复原密钥 |
 | 绑定缺失 | 确认连接正确的数据库并完成 `keystone init` |
 | 绑定冲突 | 核对[已绑定拓扑](configuration.md#4-文件存储与部署拓扑)、原节点目录或原密钥；Worker 还须核对制品与公共配置 |
 | `deployment_binding_busy` | 检查 PostgreSQL 可用性和绑定锁竞争 |

@@ -41,9 +41,11 @@ def test_model_scope_is_bound_to_configured_key(key):
     with pytest.raises(ServiceError) as error:
         another.decrypt(model.encrypt(SecretStr("sk"), "c", "inference"), "c", "inference")
     assert error.value.code == "model_credential_unavailable"
+    assert "init-credential-key" not in error.value.detail
 
 
 def test_model_scope_requires_a_configured_key():
     with pytest.raises(ServiceError) as error:
         ChannelCredentials(None).scope("https://api.test", "sk")
     assert error.value.code == "model_credential_unavailable"
+    assert "keystone init-credential-key" in error.value.detail

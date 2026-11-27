@@ -266,6 +266,8 @@ def test_messaging_credentials_require_configured_key(client):
         )
         assert response.status_code == 503
         assert response.json()["code"] == "message_credential_unavailable"
+        assert "keystone init-credential-key" in response.json()["detail"]
+        assert HOOK not in response.text
         assert keyless.get(ROOT + "/channels").json() == []
 
 

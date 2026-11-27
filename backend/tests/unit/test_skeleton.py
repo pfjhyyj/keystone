@@ -46,10 +46,10 @@ def settings(**values):
 
 
 def test_cli_reports_safe_configuration_hint_without_raw_exception(monkeypatch, caplog):
-    for failure in ("missing_storage", "driver_error"):
+    for failure in ("missing_storage", "invalid_settings"):
 
         def configuration(failure=failure):
-            if failure == "driver_error":
+            if failure == "invalid_settings":
                 raise RuntimeError("password=hidden-cli-secret")
             return settings()
 
@@ -65,7 +65,7 @@ def test_cli_reports_safe_configuration_hint_without_raw_exception(monkeypatch, 
             assert "file_storages" in caplog.text
             assert "keystone.toml" in caplog.text
         else:
-            assert "invalid_configuration_or_database" in caplog.text
+            assert "code=invalid_configuration detail=" in caplog.text
             assert "detail=" in caplog.text
 
 

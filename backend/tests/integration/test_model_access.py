@@ -783,6 +783,8 @@ def test_model_credentials_require_configured_key(client, monkeypatch):
         )
         assert created.status_code == 503, created.text
         assert created.json()["code"] == "model_credential_unavailable"
+        assert "keystone init-credential-key" in created.json()["detail"]
+        assert SECRET not in created.text
         assert [row["id"] for row in keyless.get("/api/v1/model-channels").json()] == [stored["id"]]
         assert invoke(keyless).json()["code"] == "model_credential_unavailable"
         assert keyless.get("/api/v1/model-invocations").json() == []

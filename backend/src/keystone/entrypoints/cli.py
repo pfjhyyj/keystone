@@ -15,6 +15,7 @@ from keystone.core.database import Database
 from keystone.core.errors import ServiceError
 from keystone.core.logging import configure_logging, safe_exception
 from keystone.core.migrations import expected_heads, migration_config, migration_scripts
+from keystone.entrypoints.configuration import load_settings
 from keystone.model_registry import MIGRATION_CHAINS
 from keystone.platform.files.adapters.storage import StorageRegistry
 from keystone.platform.identity.adapters.security import Passwords
@@ -199,7 +200,7 @@ def main() -> None:
             else:
                 print("私有 keystone.toml 已配置 credential_key，未更改。")
             return
-        settings = Settings()
+        settings = load_settings(Settings)
         configure_logging(settings.log_level)
         if args.command == "init-storage":
             StorageRegistry(settings).initialize()

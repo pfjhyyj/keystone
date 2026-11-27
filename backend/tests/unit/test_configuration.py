@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 import pytest
@@ -5,6 +6,8 @@ from cryptography.fernet import Fernet
 from pydantic import SecretStr, ValidationError
 
 from keystone.core.config import Settings
+from keystone.core.errors import ServiceError
+from keystone.entrypoints import api, cli, configuration, worker
 from keystone.platform.files.adapters.storage import StorageRegistry
 
 
@@ -250,6 +253,30 @@ def test_malformed_credential_key_is_rejected_without_echoing_input(key, monkeyp
     if key:
         assert key not in str(rejected.value)
         assert key not in rejected.value.json()
+
+
+@pytest.mark.parametrize("entrypoint", [api, cli, worker])
+def test_startup_reports_invalid_credential_key_without_echo(
+    entrypoint, tmp_path, monkeypatch, caplog
+):
+    monkeypatch.chdir(tmp_path)
+    config = tmp_path / "keystone.toml"
+    secret = "bad-key-must-not-reach-logs"
+    config.write_text(f'credential_key = "{secret}"\n', encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["keystone", "init"] if entrypoint is cli else ["keystone"])
+    with pytest.raises(SystemExit, match="1"):
+        entrypoint.main()
+    assert "code=invalid_credential_key" in caplog.text
+    assert "keystone init-credential-key" in caplog.text
+    assert secret not in caplog.text
+    assert "数据库" not in caplog.text
+
+
+def test_startup_reports_missing_key_for_s3_only_storage(s3_settings):
+    with pytest.raises(ServiceError) as rejected:
+        configuration.load_settings(lambda: Settings(config_file=None, **s3_settings))
+    assert rejected.value.code == "credential_key_required"
+    assert "keystone init-credential-key" in rejected.value.detail
 
 
 @pytest.mark.parametrize("name", ["file_transfer_slots", "file_temp_bytes"])
