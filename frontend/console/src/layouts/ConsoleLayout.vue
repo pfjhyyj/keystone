@@ -15,10 +15,12 @@ import {
   Menu,
   Monitor,
   Platform,
+  Search,
   Setting,
   Tickets,
   User,
 } from '@element-plus/icons-vue'
+import CommandPalette from '../components/CommandPalette.vue'
 import {
   can,
   clearSession,
@@ -34,8 +36,14 @@ const route = useRoute(),
   router = useRouter()
 const collapsed = ref(false),
   mobileOpen = ref(false),
+  paletteOpen = ref(false),
   logoutBusy = ref(false),
   logoutError = ref('')
+const shortcutLabel =
+  typeof navigator !== 'undefined' &&
+  /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent)
+    ? '⌘K'
+    : 'Ctrl K'
 const groups = [
   { title: '工作台', paths: ['/', '/environments'] },
   {
@@ -130,6 +138,7 @@ watch(
   () => route.fullPath,
   () => {
     mobileOpen.value = false
+    paletteOpen.value = false
     logoutError.value = ''
   },
 )
@@ -173,13 +182,23 @@ function changed(event: StorageEvent) {
     void refreshSession()
   }
 }
+function shortcut(event: KeyboardEvent) {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
+  if (event.key.toLowerCase() !== 'k') return
+  if (!identity.value || identity.value.user.password_change_required) return
+  event.preventDefault()
+  mobileOpen.value = false
+  paletteOpen.value = !paletteOpen.value
+}
 onMounted(() => {
   window.addEventListener('focus', focused)
   window.addEventListener('storage', changed)
+  window.addEventListener('keydown', shortcut)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('focus', focused)
   window.removeEventListener('storage', changed)
+  window.removeEventListener('keydown', shortcut)
 })
 </script>
 <template>
@@ -256,6 +275,18 @@ onBeforeUnmount(() => {
           >
         </div>
         <div class="header-trailing">
+          <button
+            v-if="!identity.user.password_change_required"
+            type="button"
+            class="cmdk-trigger"
+            aria-label="打开快捷命令栏"
+            data-testid="command-palette-trigger"
+            @click="paletteOpen = true"
+          >
+            <el-icon aria-hidden="true"><Search /></el-icon>
+            <span class="cmdk-trigger-label">跳转…</span>
+            <kbd class="cmdk-trigger-kbd">{{ shortcutLabel }}</kbd>
+          </button>
           <el-dropdown trigger="click" @command="command"
             ><el-button text class="user-menu" :disabled="logoutBusy" aria-label="账户菜单"
               ><el-avatar :size="28">{{ identity.user.display_name.slice(0, 1) }}</el-avatar
@@ -294,5 +325,11 @@ onBeforeUnmount(() => {
         ></RouterView>
       </main>
     </div>
+    <CommandPalette
+      v-if="!identity.user.password_change_required"
+      v-model="paletteOpen"
+      :collapsed="collapsed"
+      @toggle-sidebar="collapsed = !collapsed"
+    />
   </div>
 </template>
