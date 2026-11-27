@@ -227,17 +227,18 @@ uv run --locked keystone retry-file-delete --file-id <文件 UUID>
 
 ## 历史保留与清理
 
-默认只自动清理已完成的 DBOS 维护任务。过期凭据、审计、已结束的消息投递与入站记录需要显式开启自动清理。业务实体、FlowRun、业务工作流检查点、文件引用、ModelInvocation、费用与调用幂等记录不在删除范围内。
+默认自动清理超过保留期的审计日志和已完成的 DBOS 维护任务。过期凭据、已结束的消息投递与入站记录仍需显式开启自动清理。业务实体、FlowRun、业务工作流检查点、文件引用、ModelInvocation、费用与调用幂等记录不在删除范围内。
 
 ### 保留规则
 
 | 配置 | 默认 | 规则 |
 |---|---:|---|
 | `maintenance_cleanup_enabled` | true | 是否自动清理 DBOS 维护历史 |
-| `history_cleanup_enabled` | false | 是否自动清理过期凭据、审计与消息历史 |
+| `audit_cleanup_enabled` | true | 是否自动清理过期审计日志 |
+| `history_cleanup_enabled` | false | 是否自动清理过期凭据与消息历史 |
 | `session_retention_days` | 30 | 从会话过期或撤销的较早时刻起保留 |
 | `pat_retention_days` | 90 | 从 PAT 过期或撤销的较早时刻起保留；任何 FlowRun 引用均阻止物理删除，包括终态 Run |
-| `audit_retention_days` | 365 | 按 occurred_at 保留；删除结果写运行日志，不递归生成审计 |
+| `audit_retention_days` | 30 | 按 `occurred_at` 保留；删除结果写运行日志，不递归生成审计 |
 | `maintenance_retention_days` | 14 | 仅删除白名单内、已完成且超过保留期的维护工作流叶节点 |
 | `message_delivery_retention_days` | 30 | 按最后更新时间保留已结束的投递（含不再重试的 unknown）与入站记录；pending、sending 的投递和 received 的入站不删除，过期绑定码直接删除 |
 
@@ -264,6 +265,6 @@ uv run --locked keystone prune-history --apply
 
 ### 自动维护
 
-任一自动清理开关启用时，Worker 共用 `keystone.history.retention`：每 3 分钟运行一轮（最大迟到 60 秒），启动时扫描一次，不补历史触发，合并活动执行。每轮只处理已启用的类别；专用队列全局并发为 1，不占业务 Flow 队列。两个开关均关闭时暂停计划，残留 tick 和任务仍在执行入口检查开关。手动命令始终可预览或清理各类历史，不受自动开关影响。
+任一自动清理开关启用时，Worker 共用 `keystone.history.retention`：每 3 分钟运行一轮（最大迟到 60 秒），启动时扫描一次，不补历史触发，合并活动执行。每轮只处理已启用的类别；专用队列全局并发为 1，不占业务 Flow 队列。所有开关均关闭时暂停计划，残留 tick 和任务仍在执行入口检查开关。手动命令始终可预览或清理各类历史，不受自动开关影响。
 
-升级后首次启动也会扫描已有 DBOS 历史；如需暂缓，发布前设置 `maintenance_cleanup_enabled = false`。归档与备份要求见[备份与恢复](backup-restore.md)。
+升级后的 Worker 首次启动也会处理已有审计和 DBOS 历史。如果需要保留超过 30 天的审计日志，应在启动前提高 `audit_retention_days`、完成归档，或设置 `audit_cleanup_enabled = false` 暂缓；`history_cleanup_enabled = false` 不会关闭审计清理。如需暂缓 DBOS 维护历史清理，设置 `maintenance_cleanup_enabled = false`。归档与备份要求见[备份与恢复](backup-restore.md)。

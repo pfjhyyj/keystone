@@ -35,6 +35,7 @@ def config_digest(settings):
         "file_upload_timeout_seconds",
         "file_unreferenced_grace_seconds",
         "history_cleanup_enabled",
+        "audit_cleanup_enabled",
         "maintenance_cleanup_enabled",
         "session_retention_days",
         "pat_retention_days",

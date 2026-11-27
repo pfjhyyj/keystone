@@ -140,17 +140,19 @@ def register_maintenance(runtime, health):
         installers.append(install)
 
     application_cleanup = runtime.settings.history_cleanup_enabled
+    audit_cleanup = runtime.settings.audit_cleanup_enabled
     maintenance_cleanup = runtime.settings.maintenance_cleanup_enabled
 
     async def prune_history():
         return await runtime.history_retention().execute(
             apply=True,
             include_application=application_cleanup,
+            include_audit=audit_cleanup,
             include_maintenance=maintenance_cleanup,
         )
 
     tasks, install = history_jobs.register(
-        prune_history, enabled=application_cleanup or maintenance_cleanup
+        prune_history, enabled=application_cleanup or audit_cleanup or maintenance_cleanup
     )
     bindings.extend(tasks)
     installers.append(install)

@@ -9,6 +9,10 @@ database_url = "postgresql+psycopg://keystone:keystone_local_only@127.0.0.1:5543
 session_hours = 72
 pat_max_days = 90
 
+# Audit logs are automatically pruned after 30 days by default.
+# audit_cleanup_enabled = true
+# audit_retention_days = 30
+
 # Node-local work directory. Relative paths are based on this TOML.
 file_coordination_root = "../.data/files"
 file_default_storage = "local"

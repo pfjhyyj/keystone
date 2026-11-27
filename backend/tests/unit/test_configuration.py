@@ -97,6 +97,24 @@ def test_worker_identity_is_independent_of_shared_config_digest():
     assert config_digest(original) == config_digest(extra)
 
 
+@pytest.mark.parametrize(
+    ("field", "default", "env_value", "expected"),
+    [
+        ("audit_cleanup_enabled", True, "false", False),
+        ("audit_retention_days", 30, "60", 60),
+    ],
+)
+def test_audit_retention_settings_are_shared(field, default, env_value, expected, monkeypatch):
+    from keystone.worker.identity import config_digest
+
+    original = Settings(config_file=None)
+    assert getattr(original, field) == default
+    monkeypatch.setenv(f"KEYSTONE_{field.upper()}", env_value)
+    overridden = Settings(config_file=None)
+    assert getattr(overridden, field) == expected
+    assert config_digest(overridden) != config_digest(original)
+
+
 def test_worker_shared_config_digest_checks_storage_secrets_without_exposing_them(tmp_path):
     from keystone.worker.identity import config_digest
 

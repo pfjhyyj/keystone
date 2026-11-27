@@ -120,12 +120,13 @@ def test_history_retention_never_deletes_another_application_or_its_parent(clien
             engine.destroy()
 
 
-@pytest.mark.parametrize("policy", ["default", "off", "application-only"])
+@pytest.mark.parametrize("policy", ["default", "off", "application-only", "audit-only"])
 def test_worker_history_cleanup_policy(client, tmp_path, monkeypatch, policy):
     runtime = client.app.state.runtime
     if policy != "default":
         runtime.settings.maintenance_cleanup_enabled = False
         runtime.settings.history_cleanup_enabled = policy == "application-only"
+        runtime.settings.audit_cleanup_enabled = policy == "audit-only"
 
     engine = runtime.flow_engine.client
     queue = "retention-probe"
@@ -151,6 +152,9 @@ def test_worker_history_cleanup_policy(client, tmp_path, monkeypatch, policy):
         )
         engine.cancel_workflow(identifier)
 
+    session_id = uuid4()
+    admin_id = UUID(client.get("/api/v1/auth/me").json()["user"]["id"])
+
     async def seed(session):
         await session.execute(
             text(
@@ -164,12 +168,21 @@ def test_worker_history_cleanup_policy(client, tmp_path, monkeypatch, policy):
                 "old": int((utcnow() - timedelta(days=15)).timestamp() * 1000),
             },
         )
-        session.add(
+        session.add_all(
             AuditLog(
-                occurred_at=utcnow() - timedelta(days=400),
+                occurred_at=utcnow() - timedelta(days=days),
                 actor_type="system",
-                action="retention.worker_probe",
+                action=f"retention.worker_probe.{age}",
                 outcome="success",
+            )
+            for age, days in (("old", 31), ("recent", 29))
+        )
+        session.add(
+            LoginSession(
+                id=session_id,
+                user_id=admin_id,
+                token_digest=uuid4().hex * 2,
+                expires_at=utcnow() - timedelta(days=31),
             )
         )
 
@@ -187,6 +200,7 @@ def test_worker_history_cleanup_policy(client, tmp_path, monkeypatch, policy):
             patch.setattr(DBOSClient, "list_workflows", observe_listing)
             preview = client.portal.call(runtime.history_retention().execute)
         assert [len(parents) for parents in parent_queries] == [600]
+        assert preview["audit"] == preview["sessions"] == 1
         assert preview["maintenance"] == {
             "examined": 600,
             "eligible": 600,
@@ -194,15 +208,17 @@ def test_worker_history_cleanup_policy(client, tmp_path, monkeypatch, policy):
             "next_offset": 600,
         }
 
-    def audit_count():
-        return query(
-            client,
-            lambda session: session.scalar(
-                select(func.count())
-                .select_from(AuditLog)
-                .where(AuditLog.action == "retention.worker_probe")
-            ),
+    async def retained_records(session):
+        actions = set(
+            await session.scalars(
+                select(AuditLog.action).where(
+                    AuditLog.action.in_(
+                        ("retention.worker_probe.old", "retention.worker_probe.recent")
+                    )
+                )
+            )
         )
+        return actions, await session.get(LoginSession, session_id) is not None
 
     with worker(client, tmp_path) as (process, log):
         wait_for(
@@ -234,7 +250,12 @@ def test_worker_history_cleanup_policy(client, tmp_path, monkeypatch, policy):
             assert len(remaining) <= 2
         else:
             assert remaining == set(ids)
-        assert audit_count() == (0 if policy == "application-only" else 1)
+        actions, session_retained = query(client, retained_records)
+        expected_actions = {"retention.worker_probe.recent"}
+        if policy in {"off", "application-only"}:
+            expected_actions.add("retention.worker_probe.old")
+        assert actions == expected_actions
+        assert session_retained is (policy != "application-only")
 
 
 def test_status_requires_current_identity_and_reports_backlog(client):
@@ -285,6 +306,7 @@ def test_status_requires_current_identity_and_reports_backlog(client):
 def test_retention_preserves_active_recent_and_run_linked_credentials_and_calls(client):
     runtime = client.app.state.runtime
     assert runtime.settings.history_cleanup_enabled is False
+    runtime.settings.audit_cleanup_enabled = False
     admin_id = UUID(client.get("/api/v1/auth/me").json()["user"]["id"])
     personal = token(client, client.get("/api/v1/auth/me").json()["permissions"])
     file_id = upload(client).json()["id"]
