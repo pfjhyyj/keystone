@@ -274,9 +274,9 @@ async def create(self, data: NoteCreate):
 
 适用场景见[执行入口](../execution.md#1-选择执行入口)。最小步骤：
 
-1. 在业务包的 `schemas/` 中声明 `FlowDefinition`（key/revision、输入输出模型、入口、所需权限、文件路径和模型角色）与 `FlowPackage`，保持轻量导入；模块根目录只放 `__init__.py` 与 `catalog.py`。
-2. 在 `workflows/` 中用 `@DBOS.workflow(name=definition.entrypoint)` 注册稳定入口；步骤使用平台的 `safe_step` 错误边界，Agent 使用 `DBOSDurability`。
-3. `composition.FLOW_PACKAGES` 加入该包；包的 execution_modules 显式列出 workflows 内的执行模块，API 不导入执行代码。
+1. 在业务包的 `schemas/` 中声明 `FlowDefinition`（key/revision、输入输出模型、入口、所需权限、文件路径和模型角色）与 `FlowPackage`。这里只放轻量声明，例如 API 与 Worker 共用的契约常量和视图类型，不导入执行器或 Worker 助手；模块根目录只放 `__init__.py` 与 `catalog.py`。
+2. 每个 Flow 统一使用 `workflows/<flow>/workflow.py` 注册入口，不按编排复杂度改变目录结构；该 Flow 专用的执行助手按需放在同一包内。用 `@DBOS.workflow(name=definition.entrypoint)` 注册稳定入口；步骤使用平台的 `safe_step` 错误边界，Agent 使用 `DBOSDurability`。
+3. `composition.FLOW_PACKAGES` 加入该包；包的 `execution_modules` 显式列出注册入口的执行模块。API 只依赖轻量声明，不直接或间接导入 `workflows/`。
 4. 权限必须已声明；文件路径在启动时按 Schema 编译；模型角色须声明 model:invoke 权限，发起时在业务 input 外提交 model_bindings。
 5. 在测试中通过 `ExecutionIdentity`、`reconcile_one` 和 Worker 子进程验证执行与恢复。
 
